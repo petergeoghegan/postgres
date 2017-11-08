@@ -887,6 +887,14 @@ _bt_delitems_delete(Relation rel, Buffer buf,
 	 * weren't included in our target-item list), but it will almost always be
 	 * true and it doesn't seem worth an additional page scan to check it.
 	 * Remember that BTP_HAS_GARBAGE is only a hint anyway.
+	 *
+	 * XXX: Maybe there would be some benefit to not unsetting BTP_HAS_GARBAGE
+	 * in high contention cases, especially with unique indexes.  Our concern
+	 * is that we may lose some information about items being dead due to a
+	 * concurrent page split that misses that BTP_HAS_GARBAGE should have been
+	 * set.  (Page splits don't preserve LP-deadness; we're not strictly
+	 * guaranteed to kill all LP_DEAD items if there is a page split, which may
+	 * matter.)
 	 */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	opaque->btpo_flags &= ~BTP_HAS_GARBAGE;

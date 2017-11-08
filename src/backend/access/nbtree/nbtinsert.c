@@ -62,7 +62,7 @@ static void _bt_findinsertloc(Relation rel,
 				  IndexTuple newtup,
 				  BTStack stack,
 				  Relation heapRel);
-static void _bt_insertonpg(Relation rel, Buffer buf, Buffer cbuf,
+static void _bt_insertonpg(Relation rel, Relation heapRel, Buffer buf, Buffer cbuf,
 			   BTStack stack,
 			   IndexTuple itup,
 			   OffsetNumber newitemoff,
@@ -70,7 +70,7 @@ static void _bt_insertonpg(Relation rel, Buffer buf, Buffer cbuf,
 static Buffer _bt_split(Relation rel, Buffer buf, Buffer cbuf,
 		  OffsetNumber firstright, OffsetNumber newitemoff, Size newitemsz,
 		  IndexTuple newitem, bool newitemonleft);
-static void _bt_insert_parent(Relation rel, Buffer buf, Buffer rbuf,
+static void _bt_insert_parent(Relation rel, Relation heapRel, Buffer buf, Buffer rbuf,
 				  BTStack stack, bool is_root, bool is_only);
 static OffsetNumber _bt_findsplitloc(Relation rel, Page page,
 				 OffsetNumber newitemoff,
@@ -202,7 +202,7 @@ top:
 		/* do the insertion */
 		_bt_findinsertloc(rel, &buf, &offset, natts, itup_scankey, itup,
 						  stack, heapRel);
-		_bt_insertonpg(rel, buf, InvalidBuffer, stack, itup, offset, false);
+		_bt_insertonpg(rel, heapRel, buf, InvalidBuffer, stack, itup, offset, false);
 	}
 	else
 	{
@@ -732,6 +732,7 @@ _bt_findinsertloc(Relation rel,
  */
 static void
 _bt_insertonpg(Relation rel,
+			   Relation heapRel,
 			   Buffer buf,
 			   Buffer cbuf,
 			   BTStack stack,
@@ -801,7 +802,7 @@ _bt_insertonpg(Relation rel,
 		 * for the reasoning).
 		 *----------
 		 */
-		_bt_insert_parent(rel, buf, rbuf, stack, is_root, is_only);
+		_bt_insert_parent(rel, heapRel, buf, rbuf, stack, is_root, is_only);
 	}
 	else
 	{
@@ -937,6 +938,29 @@ _bt_insertonpg(Relation rel,
 			_bt_relbuf(rel, metabuf);
 		if (BufferIsValid(cbuf))
 			_bt_relbuf(rel, cbuf);
+		if (heapRel && rel->rd_index->indisunique)
+		{
+			/*
+			 * Eagerly remove garbage from leaf page for unique indexes.
+			 *
+			 * High contention, UPDATE-heavy workloads may benefit from eager
+			 * page defragmentation.  Consolidation of free space occurs in a
+			 * "retail" fashion within PageIndexMultiDelete() when 2 items or
+			 * less are dead.
+			 *
+			 * We may end up doing more work in total this way, but that will
+			 * be spread out among backends, and increase overall scalability.
+			 * We especially want to avoid a "free space on page crunch", where
+			 * one backend frantically tries to find enough space for its index
+			 * tuple while holding an exclusive buffer lock on the first page
+			 * its value could be on (this only happens for unique indexes).
+			 */
+			page = BufferGetPage(buf);
+			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+
+			if (P_ISLEAF(lpageop) && P_HAS_GARBAGE(lpageop))
+				_bt_vacuum_one_page(rel, buf, heapRel);
+		}
 		_bt_relbuf(rel, buf);
 	}
 }
@@ -1453,6 +1477,10 @@ _bt_findsplitloc(Relation rel,
 	/*
 	 * Scan through the data items and calculate space usage for a split at
 	 * each possible position.
+	 *
+	 * XXX: We may need to account for LP_DEAD here.  Just because we couldn't
+	 * avert a page split doesn't mean we want to go on to lose the
+	 * LP_DEAD-ness.
 	 */
 	olddataitemstoleft = 0;
 	goodenoughfound = false;
@@ -1626,6 +1654,7 @@ _bt_checksplitloc(FindSplitData *state,
  */
 static void
 _bt_insert_parent(Relation rel,
+				  Relation heapRel,
 				  Buffer buf,
 				  Buffer rbuf,
 				  BTStack stack,
@@ -1716,7 +1745,7 @@ _bt_insert_parent(Relation rel,
 				 RelationGetRelationName(rel), bknum, rbknum);
 
 		/* Recursively update the parent */
-		_bt_insertonpg(rel, pbuf, buf, stack->bts_parent,
+		_bt_insertonpg(rel, heapRel, pbuf, buf, stack->bts_parent,
 					   new_item, stack->bts_offset + 1,
 					   is_only);
 
@@ -1778,7 +1807,7 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 	elog(DEBUG1, "finishing incomplete split of %u/%u",
 		 BufferGetBlockNumber(lbuf), BufferGetBlockNumber(rbuf));
 
-	_bt_insert_parent(rel, lbuf, rbuf, stack, was_root, was_only);
+	_bt_insert_parent(rel, NULL, lbuf, rbuf, stack, was_root, was_only);
 }
 
 /*
