@@ -1398,7 +1398,7 @@ grow_single(Tuplesortstate *state)
 		goto noalloc;
 
 	/* OK, do it */
-	FREEMEM(state, GetMemoryChunkSpace(state->memtuples));
+	FREEMEM(state, GetMemoryChunkSpace(state->single));
 	state->memtupsize = newmemtupsize;
 	state->single = (Datum *)
 		repalloc_huge(state->single,
@@ -1721,7 +1721,10 @@ puttuple_common(Tuplesortstate *state, SortTuple *tuple)
 			/*
 			 * Save the tuple into the unsorted array (there must be space)
 			 */
-			state->memtuples[state->memtupcount++] = *tuple;
+			if (state->single)
+				state->single[state->memtupcount++] = tuple->datum1;
+			else
+				state->memtuples[state->memtupcount++] = *tuple;
 
 			/*
 			 * If we are over the memory limit, dump all tuples.
@@ -2047,7 +2050,10 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 			if (nmoved != tuplen)
 				elog(ERROR, "bogus tuple length in backward scan");
 			if (state->single)
+			{
 				readtup_single(state, &stup->datum1, state->result_tape);
+				stup->tuple = NULL;
+			}
 			else
 				READTUP(state, stup, state->result_tape, tuplen);
 
@@ -2403,8 +2409,16 @@ inittapes(Tuplesortstate *state)
 	 */
 	tapeSpace = (int64) maxTapes * TAPE_BUFFER_OVERHEAD;
 
-	if (tapeSpace + GetMemoryChunkSpace(state->memtuples) < state->allowedMem)
-		USEMEM(state, tapeSpace);
+	if (!state->single)
+	{
+		if (tapeSpace + GetMemoryChunkSpace(state->memtuples) < state->allowedMem)
+			USEMEM(state, tapeSpace);
+	}
+	else
+	{
+		if (tapeSpace + GetMemoryChunkSpace(state->single) < state->allowedMem)
+			USEMEM(state, tapeSpace);
+	}
 
 	/*
 	 * Make sure that the temp file(s) underlying the tape set are created in
@@ -2874,7 +2888,10 @@ mergereadnext(Tuplesortstate *state, int srcTape, SortTuple *stup)
 		return false;
 	}
 	if (state->single)
+	{
 		readtup_single(state, &stup->datum1, srcTape);
+		stup->tuple = NULL;
+	}
 	else
 		READTUP(state, stup, srcTape, tuplen);
 
@@ -4345,7 +4362,7 @@ static void
 readtup_single(Tuplesortstate *state, Datum *stup, int tapenum)
 {
 	LogicalTapeReadExact(state->tapeset, tapenum,
-						 (void *) &stup, sizeof(Datum));
+						 (void *) stup, sizeof(Datum));
 }
 
 /*
