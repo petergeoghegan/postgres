@@ -291,9 +291,10 @@ struct Tuplesortstate
 	 * H.  In state SORTEDONTAPE, the array is not used.
 	 */
 	SortTuple  *memtuples;		/* array of SortTuple structs */
+	Datum	   *single;			/* array of Datums */
 	int			memtupcount;	/* number of tuples currently present */
-	int			memtupsize;		/* allocated length of memtuples array */
-	bool		growmemtuples;	/* memtuples' growth still underway? */
+	int			memtupsize;		/* allocated length of memtuples/single */
+	bool		growmemtuples;	/* array's growth still underway? */
 
 	/*
 	 * Memory for tuples is sometimes allocated using a simple slab allocator,
@@ -642,6 +643,8 @@ static void writetup_datum(Tuplesortstate *state, int tapenum,
 						   SortTuple *stup);
 static void readtup_datum(Tuplesortstate *state, SortTuple *stup,
 						  int tapenum, unsigned int len);
+static void writetup_single(Tuplesortstate *state, int tapenum, Datum *stup);
+static void readtup_single(Tuplesortstate *state, Datum *stup, int tapenum);
 static int	worker_get_identifier(Tuplesortstate *state);
 static void worker_freeze_result_tape(Tuplesortstate *state);
 static void worker_nomergeruns(Tuplesortstate *state);
@@ -754,6 +757,7 @@ tuplesort_begin_common(int workMem, SortCoordinate coordinate,
 	state->growmemtuples = true;
 	state->slabAllocatorUsed = false;
 	state->memtuples = (SortTuple *) palloc(state->memtupsize * sizeof(SortTuple));
+	state->single = NULL;
 
 	USEMEM(state, GetMemoryChunkSpace(state->memtuples));
 
@@ -1163,7 +1167,11 @@ tuplesort_begin_datum(Oid datumType, Oid sortOperator, Oid sortCollation,
 	 * keys are typically only of value to pass-by-reference types.
 	 */
 	if (!state->sortKeys->abbrev_converter)
+	{
 		state->onlyKey = state->sortKeys;
+		if (!state->tuples)
+			state->single = (Datum *) palloc(state->memtupsize * sizeof(Datum));
+	}
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -1425,6 +1433,120 @@ noalloc:
 	return false;
 }
 
+static bool
+grow_single(Tuplesortstate *state)
+{
+	int			newmemtupsize;
+	int			memtupsize = state->memtupsize;
+	int64		memNowUsed = state->allowedMem - state->availMem;
+
+	/* Forget it if we've already maxed out memtuples, per comment above */
+	if (!state->growmemtuples)
+		return false;
+
+	/* Select new value of memtupsize */
+	if (memNowUsed <= state->availMem)
+	{
+		/*
+		 * We've used no more than half of allowedMem; double our usage,
+		 * clamping at INT_MAX tuples.
+		 */
+		if (memtupsize < INT_MAX / 2)
+			newmemtupsize = memtupsize * 2;
+		else
+		{
+			newmemtupsize = INT_MAX;
+			state->growmemtuples = false;
+		}
+	}
+	else
+	{
+		/*
+		 * This will be the last increment of memtupsize.  Abandon doubling
+		 * strategy and instead increase as much as we safely can.
+		 *
+		 * To stay within allowedMem, we can't increase memtupsize by more
+		 * than availMem / sizeof(SortTuple) elements.  In practice, we want
+		 * to increase it by considerably less, because we need to leave some
+		 * space for the tuples to which the new array slots will refer.  We
+		 * assume the new tuples will be about the same size as the tuples
+		 * we've already seen, and thus we can extrapolate from the space
+		 * consumption so far to estimate an appropriate new size for the
+		 * memtuples array.  The optimal value might be higher or lower than
+		 * this estimate, but it's hard to know that in advance.  We again
+		 * clamp at INT_MAX tuples.
+		 *
+		 * This calculation is safe against enlarging the array so much that
+		 * LACKMEM becomes true, because the memory currently used includes
+		 * the present array; thus, there would be enough allowedMem for the
+		 * new array elements even if no other memory were currently used.
+		 *
+		 * We do the arithmetic in float8, because otherwise the product of
+		 * memtupsize and allowedMem could overflow.  Any inaccuracy in the
+		 * result should be insignificant; but even if we computed a
+		 * completely insane result, the checks below will prevent anything
+		 * really bad from happening.
+		 */
+		double		grow_ratio;
+
+		grow_ratio = (double) state->allowedMem / (double) memNowUsed;
+		if (memtupsize * grow_ratio < INT_MAX)
+			newmemtupsize = (int) (memtupsize * grow_ratio);
+		else
+			newmemtupsize = INT_MAX;
+
+		/* We won't make any further enlargement attempts */
+		state->growmemtuples = false;
+	}
+
+	/* Must enlarge array by at least one element, else report failure */
+	if (newmemtupsize <= memtupsize)
+		goto noalloc;
+
+	/*
+	 * On a 32-bit machine, allowedMem could exceed MaxAllocHugeSize.  Clamp
+	 * to ensure our request won't be rejected.  Note that we can easily
+	 * exhaust address space before facing this outcome.  (This is presently
+	 * impossible due to guc.c's MAX_KILOBYTES limitation on work_mem, but
+	 * don't rely on that at this distance.)
+	 */
+	if ((Size) newmemtupsize >= MaxAllocHugeSize / sizeof(Datum))
+	{
+		newmemtupsize = (int) (MaxAllocHugeSize / sizeof(Datum));
+		state->growmemtuples = false;	/* can't grow any more */
+	}
+
+	/*
+	 * We need to be sure that we do not cause LACKMEM to become true, else
+	 * the space management algorithm will go nuts.  The code above should
+	 * never generate a dangerous request, but to be safe, check explicitly
+	 * that the array growth fits within availMem.  (We could still cause
+	 * LACKMEM if the memory chunk overhead associated with the memtuples
+	 * array were to increase.  That shouldn't happen because we chose the
+	 * initial array size large enough to ensure that palloc will be treating
+	 * both old and new arrays as separate chunks.  But we'll check LACKMEM
+	 * explicitly below just in case.)
+	 */
+	if (state->availMem < (int64) ((newmemtupsize - memtupsize) * sizeof(Datum)))
+		goto noalloc;
+
+	/* OK, do it */
+	FREEMEM(state, GetMemoryChunkSpace(state->single));
+	state->memtupsize = newmemtupsize;
+	state->single = (Datum *)
+		repalloc_huge(state->single,
+					  state->memtupsize * sizeof(Datum));
+	USEMEM(state, GetMemoryChunkSpace(state->single));
+	if (LACKMEM(state))
+		elog(ERROR, "unexpected out-of-memory situation in tuplesort");
+	return true;
+
+noalloc:
+	/* If for any reason we didn't realloc, shut off future attempts */
+	state->growmemtuples = false;
+	return false;
+}
+
 /*
  * Accept one tuple while collecting input data for sort.
  *
@@ -1651,10 +1773,16 @@ puttuple_common(Tuplesortstate *state, SortTuple *tuple)
 			 */
 			if (state->memtupcount >= state->memtupsize - 1)
 			{
-				(void) grow_memtuples(state);
+				if (state->single)
+					(void) grow_single(state);
+				else
+					(void) grow_memtuples(state);
 				Assert(state->memtupcount < state->memtupsize);
 			}
-			state->memtuples[state->memtupcount++] = *tuple;
+			if (state->single)
+				state->single[state->memtupcount++] = tuple->datum1;
+			else
+				state->memtuples[state->memtupcount++] = *tuple;
 
 			/*
 			 * Check if it's time to switch over to a bounded heapsort. We do
@@ -1728,7 +1856,10 @@ puttuple_common(Tuplesortstate *state, SortTuple *tuple)
 			/*
 			 * Save the tuple into the unsorted array (there must be space)
 			 */
-			state->memtuples[state->memtupcount++] = *tuple;
+			if (state->single)
+				state->single[state->memtupcount++] = tuple->datum1;
+			else
+				state->memtuples[state->memtupcount++] = *tuple;
 
 			/*
 			 * If we are over the memory limit, dump all tuples.
@@ -1915,7 +2046,15 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 			{
 				if (state->current < state->memtupcount)
 				{
-					*stup = state->memtuples[state->current++];
+					if (!state->single)
+						*stup = state->memtuples[state->current++];
+					else
+					{
+						stup->datum1 = state->single[state->current++];
+						stup->tuple = NULL;
+						stup->isnull1 = false;
+						stup->srctape = 0;
+					}
 					return true;
 				}
 				state->eof_reached = true;
@@ -1947,7 +2086,15 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 					if (state->current <= 0)
 						return false;
 				}
-				*stup = state->memtuples[state->current - 1];
+				if (!state->single)
+					*stup = state->memtuples[state->current - 1];
+				else
+				{
+					stup->datum1 = state->single[state->current - 1];
+					stup->tuple = NULL;
+					stup->isnull1 = false;
+					stup->srctape = 0;
+				}
 				return true;
 			}
 			break;
@@ -1973,7 +2120,15 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 
 				if ((tuplen = getlen(state, state->result_tape, true)) != 0)
 				{
-					READTUP(state, stup, state->result_tape, tuplen);
+					if (state->single)
+					{
+						readtup_single(state, &stup->datum1, state->result_tape);
+						stup->tuple = NULL;
+						stup->srctape = 0;
+						stup->isnull1 = false;
+					}
+					else
+						READTUP(state, stup, state->result_tape, tuplen);
 
 					/*
 					 * Remember the tuple we return, so that we can recycle
@@ -2061,7 +2216,15 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 										  tuplen);
 			if (nmoved != tuplen)
 				elog(ERROR, "bogus tuple length in backward scan");
-			READTUP(state, stup, state->result_tape, tuplen);
+			if (state->single)
+			{
+				readtup_single(state, &stup->datum1, state->result_tape);
+				stup->tuple = NULL;
+				stup->srctape = 0;
+				stup->isnull1 = false;
+			}
+			else
+				READTUP(state, stup, state->result_tape, tuplen);
 
 			/*
 			 * Remember the tuple we return, so that we can recycle its memory
@@ -2461,8 +2624,16 @@ inittapestate(Tuplesortstate *state, int maxTapes)
 	 */
 	tapeSpace = (int64) maxTapes * TAPE_BUFFER_OVERHEAD;
 
-	if (tapeSpace + GetMemoryChunkSpace(state->memtuples) < state->allowedMem)
-		USEMEM(state, tapeSpace);
+	if (!state->single)
+	{
+		if (tapeSpace + GetMemoryChunkSpace(state->memtuples) < state->allowedMem)
+			USEMEM(state, tapeSpace);
+	}
+	else
+	{
+		if (tapeSpace + GetMemoryChunkSpace(state->single) < state->allowedMem)
+			USEMEM(state, tapeSpace);
+	}
 
 	/*
 	 * Make sure that the temp file(s) underlying the tape set are created in
@@ -2909,7 +3080,15 @@ mergereadnext(Tuplesortstate *state, int srcTape, SortTuple *stup)
 		state->mergeactive[srcTape] = false;
 		return false;
 	}
-	READTUP(state, stup, srcTape, tuplen);
+	if (state->single)
+	{
+		readtup_single(state, &stup->datum1, srcTape);
+		stup->tuple = NULL;
+		stup->srctape = 0;
+		stup->isnull1 = false;
+	}
+	else
+		READTUP(state, stup, srcTape, tuplen);
 
 	return true;
 }
@@ -2989,11 +3168,22 @@ dumptuples(Tuplesortstate *state, bool alltuples)
 #endif
 
 	memtupwrite = state->memtupcount;
-	for (i = 0; i < memtupwrite; i++)
+	if (state->single)
 	{
-		WRITETUP(state, state->tp_tapenum[state->destTape],
-				 &state->memtuples[i]);
-		state->memtupcount--;
+		for (i = 0; i < memtupwrite; i++)
+		{
+			writetup_single(state, state->tp_tapenum[state->destTape], &state->single[i]);
+			state->memtupcount--;
+		}
+	}
+	else
+	{
+		for (i = 0; i < memtupwrite; i++)
+		{
+			WRITETUP(state, state->tp_tapenum[state->destTape],
+					 &state->memtuples[i]);
+			state->memtupcount--;
+		}
 	}
 
 	/*
@@ -3313,8 +3503,13 @@ tuplesort_sort_memtuples(Tuplesortstate *state)
 	{
 		/* Can we use the single-key sort function? */
 		if (state->onlyKey != NULL)
-			qsort_ssup(state->memtuples, state->memtupcount,
-					   state->onlyKey);
+		{
+			if (!state->single)
+				qsort_ssup(state->memtuples, state->memtupcount,
+						   state->onlyKey);
+			else
+				qsort_single(state->single, state->memtupcount);
+		}
 		else
 			qsort_tuple(state->memtuples,
 						state->memtupcount,
@@ -4353,6 +4548,29 @@ readtup_datum(Tuplesortstate *state, SortTuple *stup,
 	if (state->randomAccess)	/* need trailing length word? */
 		LogicalTapeReadExact(state->tapeset, tapenum,
 							 &tuplen, sizeof(tuplen));
+}
+
+static void
+writetup_single(Tuplesortstate *state, int tapenum, Datum *stup)
+{
+	unsigned int tuplen;
+	unsigned int writtenlen;
+
+	tuplen = sizeof(Datum);
+
+	writtenlen = tuplen + sizeof(unsigned int);
+
+	LogicalTapeWrite(state->tapeset, tapenum,
+					 (void *) &writtenlen, sizeof(writtenlen));
+	LogicalTapeWrite(state->tapeset, tapenum,
+					 stup, tuplen);
+}
+
+static void
+readtup_single(Tuplesortstate *state, Datum *stup, int tapenum)
+{
+	LogicalTapeReadExact(state->tapeset, tapenum,
+						 (void *) stup, sizeof(Datum));
 }
 
 /*

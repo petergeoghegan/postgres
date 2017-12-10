@@ -28,6 +28,7 @@
 use strict;
 
 my $SUFFIX;
+my $ELEMENT;
 my $EXTRAARGS;
 my $EXTRAPARAMS;
 my $CMPPARAMS;
@@ -35,12 +36,14 @@ my $CMPPARAMS;
 emit_qsort_boilerplate();
 
 $SUFFIX      = 'tuple';
+$ELEMENT     = 'SortTuple';
 $EXTRAARGS   = ', SortTupleComparator cmp_tuple, Tuplesortstate *state';
 $EXTRAPARAMS = ', cmp_tuple, state';
 $CMPPARAMS   = ', state';
 emit_qsort_implementation();
 
 $SUFFIX      = 'ssup';
+$ELEMENT     = 'SortTuple';
 $EXTRAARGS   = ', SortSupport ssup';
 $EXTRAPARAMS = ', ssup';
 $CMPPARAMS   = ', ssup';
@@ -51,6 +54,13 @@ print <<'EOM';
 						(b)->datum1, (b)->isnull1, ssup)
 
 EOM
+emit_qsort_implementation();
+
+$SUFFIX      = 'single';
+$ELEMENT     = 'Datum';
+$EXTRAARGS   = '';
+$EXTRAPARAMS = '';
+$CMPPARAMS   = '';
 emit_qsort_implementation();
 
 sub emit_qsort_boilerplate
@@ -109,36 +119,48 @@ sub emit_qsort_boilerplate
  * overrun, so that judgment seems wrong.
  */
 
-static void
-swapfunc(SortTuple *a, SortTuple *b, size_t n)
+static inline int
+cmp_single(Datum *a, Datum *b)
 {
-	do
-	{
-		SortTuple 	t = *a;
-		*a++ = *b;
-		*b++ = t;
-	} while (--n > 0);
+	int32		x = DatumGetInt32(*a);
+	int32		y = DatumGetInt32(*b);
+
+	if (x > y)
+		return 1;
+	else if (x == y)
+		return 0;
+	else
+		return -1;
 }
 
-#define swap(a, b)						\
-	do { 								\
-		SortTuple t = *(a);				\
-		*(a) = *(b);					\
-		*(b) = t;						\
-	} while (0);
-
-#define vecswap(a, b, n) if ((n) > 0) swapfunc(a, b, n)
-
 EOM
-
-	return;
 }
 
 sub emit_qsort_implementation
 {
 	print <<EOM;
-static SortTuple *
-med3_$SUFFIX(SortTuple *a, SortTuple *b, SortTuple *c$EXTRAARGS)
+static void
+swapfunc_$SUFFIX($ELEMENT *a, $ELEMENT *b, size_t n)
+{
+	do
+	{
+		$ELEMENT 	t = *a;
+		*a++ = *b;
+		*b++ = t;
+	} while (--n > 0);
+}
+
+#define swap_$SUFFIX(a, b)        				\\
+	do { 							\\
+		$ELEMENT t = *(a);				\\
+		*(a) = *(b);					\\
+		*(b) = t;					\\
+	} while (0);
+
+#define vecswap_$SUFFIX(a, b, n) if ((n) > 0) swapfunc_$SUFFIX(a, b, n)
+
+static $ELEMENT *
+med3_$SUFFIX($ELEMENT *a, $ELEMENT *b, $ELEMENT *c$EXTRAARGS)
 {
 	return cmp_$SUFFIX(a, b$CMPPARAMS) < 0 ?
 		(cmp_$SUFFIX(b, c$CMPPARAMS) < 0 ? b :
@@ -148,9 +170,9 @@ med3_$SUFFIX(SortTuple *a, SortTuple *b, SortTuple *c$EXTRAARGS)
 }
 
 static void
-qsort_$SUFFIX(SortTuple *a, size_t n$EXTRAARGS)
+qsort_$SUFFIX($ELEMENT *a, size_t n$EXTRAARGS)
 {
-	SortTuple  *pa,
+	$ELEMENT  *pa,
 			   *pb,
 			   *pc,
 			   *pd,
@@ -168,7 +190,7 @@ loop:
 	{
 		for (pm = a + 1; pm < a + n; pm++)
 			for (pl = pm; pl > a && cmp_$SUFFIX(pl - 1, pl$CMPPARAMS) > 0; pl--)
-				swap(pl, pl - 1);
+				swap_$SUFFIX(pl, pl - 1);
 		return;
 	}
 	presorted = 1;
@@ -198,7 +220,7 @@ loop:
 		}
 		pm = med3_$SUFFIX(pl, pm, pn$EXTRAPARAMS);
 	}
-	swap(a, pm);
+	swap_$SUFFIX(a, pm);
 	pa = pb = a + 1;
 	pc = pd = a + (n - 1);
 	for (;;)
@@ -207,7 +229,7 @@ loop:
 		{
 			if (r == 0)
 			{
-				swap(pa, pb);
+				swap_$SUFFIX(pa, pb);
 				pa++;
 			}
 			pb++;
@@ -217,7 +239,7 @@ loop:
 		{
 			if (r == 0)
 			{
-				swap(pc, pd);
+				swap_$SUFFIX(pc, pd);
 				pd--;
 			}
 			pc--;
@@ -225,15 +247,15 @@ loop:
 		}
 		if (pb > pc)
 			break;
-		swap(pb, pc);
+		swap_$SUFFIX(pb, pc);
 		pb++;
 		pc--;
 	}
 	pn = a + n;
 	d1 = Min(pa - a, pb - pa);
-	vecswap(a, pb - d1, d1);
+	vecswap_$SUFFIX(a, pb - d1, d1);
 	d1 = Min(pd - pc, pn - pd - 1);
-	vecswap(pb, pn - d1, d1);
+	vecswap_$SUFFIX(pb, pn - d1, d1);
 	d1 = pb - pa;
 	d2 = pd - pc;
 	if (d1 <= d2)
