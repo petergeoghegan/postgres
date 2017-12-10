@@ -1959,7 +1959,12 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 				if ((tuplen = getlen(state, state->result_tape, true)) != 0)
 				{
 					if (state->single)
+					{
 						readtup_single(state, &stup->datum1, state->result_tape);
+						stup->tuple = NULL;
+						stup->tupindex = 0;
+						stup->isnull1 = false;
+					}
 					else
 						READTUP(state, stup, state->result_tape, tuplen);
 
@@ -2053,6 +2058,8 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 			{
 				readtup_single(state, &stup->datum1, state->result_tape);
 				stup->tuple = NULL;
+				stup->tupindex = 0;
+				stup->isnull1 = false;
 			}
 			else
 				READTUP(state, stup, state->result_tape, tuplen);
@@ -2891,6 +2898,8 @@ mergereadnext(Tuplesortstate *state, int srcTape, SortTuple *stup)
 	{
 		readtup_single(state, &stup->datum1, srcTape);
 		stup->tuple = NULL;
+		stup->tupindex = 0;
+		stup->isnull1 = false;
 	}
 	else
 		READTUP(state, stup, srcTape, tuplen);
