@@ -454,6 +454,38 @@ XLogDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 	return count;
 }
 
+static void
+XLogDumpWriteFPI(RelFileNode rnode, ForkNumber	forknum, BlockNumber blk,
+				 int block_id, XLogReaderState *record)
+{
+	char		fpath[MAXPGPATH];
+	char		tmp[BLCKSZ];
+	int			fd;
+
+	RestoreBlockImage(record, block_id, tmp);
+	snprintf(fpath, MAXPGPATH, "%u_%u_%u_%s_%u_%X-%08X.fpi",
+			 rnode.spcNode, rnode.dbNode, rnode.relNode,
+			 forkNames[forknum], blk,
+			 (uint32) (record->ReadRecPtr >> 32),
+			 (uint32) record->ReadRecPtr);
+
+	fd = open(fpath, O_RDWR | O_CREAT | O_APPEND | PG_BINARY, S_IRUSR | S_IWUSR);
+	if (fd < 0)
+	{
+		fprintf(stderr,
+				_("path could not be opened: \n"));
+		exit(1);
+	}
+
+	if ((int) write(fd, tmp, BLCKSZ) != BLCKSZ)
+	{
+		fprintf(stderr,
+				_("path could not be written to: \n"));
+		exit(1);
+	}
+	close(fd);
+}
+
 /*
  * Calculate the size of a record, split into !FPI and FPI parts.
  */
@@ -581,6 +613,8 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 					printf(" FPW");
 				else
 					printf(" FPW for WAL verification");
+
+				XLogDumpWriteFPI(rnode, forknum, blk, block_id, record);
 			}
 		}
 		putchar('\n');
@@ -591,10 +625,6 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 		putchar('\n');
 		for (block_id = 0; block_id <= record->max_block_id; block_id++)
 		{
-			char		fpath[MAXPGPATH];
-			char		tmp[BLCKSZ];
-			int			fd;
-
 			if (!XLogRecHasBlockRef(record, block_id))
 				continue;
 
@@ -627,25 +657,8 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 						   record->blocks[block_id].hole_offset,
 						   record->blocks[block_id].hole_length);
 				}
-				RestoreBlockImage(record, block_id, tmp);
-				snprintf(fpath, MAXPGPATH, "%u_%u_%u_%s_%u.fpi",
-						 rnode.spcNode, rnode.dbNode, rnode.relNode,
-						 forkNames[forknum], blk);
-				fd = open(fpath, O_RDWR | O_CREAT | O_APPEND | PG_BINARY, S_IRUSR | S_IWUSR);
-				if (fd < 0)
-				{
-					fprintf(stderr,
-							_("path could not be opened: \n"));
-					exit(1);
-				}
 
-				if ((int) write(fd, tmp, BLCKSZ) != BLCKSZ)
-				{
-					fprintf(stderr,
-							_("path could not be written to: \n"));
-					exit(1);
-				}
-				close(fd);
+				XLogDumpWriteFPI(rnode, forknum, blk, block_id, record);
 			}
 			putchar('\n');
 		}
