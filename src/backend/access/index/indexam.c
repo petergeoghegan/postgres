@@ -610,7 +610,8 @@ index_fetch_heap(IndexScanDesc scan)
 											scan->xs_snapshot,
 											&scan->xs_ctup,
 											&all_dead,
-											!scan->xs_continue_hot);
+											!scan->xs_continue_hot,
+											false);
 	LockBuffer(scan->xs_cbuf, BUFFER_LOCK_UNLOCK);
 
 	if (got_heap_tuple)

@@ -2030,6 +2030,12 @@ heap_fetch(Relation relation,
  * globally dead; *all_dead is set true if all members of the HOT chain
  * are vacuumable, false if not.
  *
+ * If aggressive is true (and all_dead is not NULL), then checking
+ * non-visibility of heap tuples uses a more aggressive strategy that doesn't
+ * depend on hint bits having already been set.  Callers that are confident
+ * that there is a good chance that the tuple is already dead to all can use
+ * this.
+ *
  * Unlike heap_fetch, the caller must already have pin and (at least) share
  * lock on the buffer; it is still pinned/locked at exit.  Also unlike
  * heap_fetch, we do not report any pgstats count; caller may do so if wanted.
@@ -2037,7 +2043,7 @@ heap_fetch(Relation relation,
 bool
 heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 					   Snapshot snapshot, HeapTuple heapTuple,
-					   bool *all_dead, bool first_call)
+					   bool *all_dead, bool first_call, bool aggressive)
 {
 	Page		dp = (Page) BufferGetPage(buffer);
 	TransactionId prev_xmax = InvalidTransactionId;
@@ -2149,9 +2155,15 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 		 * Note: if you change the criterion here for what is "dead", fix the
 		 * planner's get_actual_variable_range() function to match.
 		 */
-		if (all_dead && *all_dead &&
-			!HeapTupleIsSurelyDead(heapTuple, RecentGlobalXmin))
-			*all_dead = false;
+		if (all_dead && *all_dead)
+		{
+			if (!aggressive && !HeapTupleIsSurelyDead(heapTuple, RecentGlobalXmin))
+				*all_dead = false;
+			else if (aggressive &&
+					 HeapTupleSatisfiesVacuum(heapTuple, RecentGlobalXmin,
+											  buffer) != HEAPTUPLE_DEAD)
+				*all_dead = false;
+		}
 
 		/*
 		 * Check to see if HOT chain continues past this tuple; if so fetch
@@ -2181,7 +2193,7 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
  */
 bool
 heap_hot_search(ItemPointer tid, Relation relation, Snapshot snapshot,
-				bool *all_dead)
+				bool *all_dead, bool aggressive)
 {
 	bool		result;
 	Buffer		buffer;
@@ -2190,7 +2202,7 @@ heap_hot_search(ItemPointer tid, Relation relation, Snapshot snapshot,
 	buffer = ReadBuffer(relation, ItemPointerGetBlockNumber(tid));
 	LockBuffer(buffer, BUFFER_LOCK_SHARE);
 	result = heap_hot_search_buffer(tid, relation, buffer, snapshot,
-									&heapTuple, all_dead, true);
+									&heapTuple, all_dead, true, aggressive);
 	LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 	ReleaseBuffer(buffer);
 	return result;

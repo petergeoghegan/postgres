@@ -138,9 +138,9 @@ extern bool heap_fetch(Relation relation, Snapshot snapshot,
 		   Relation stats_relation);
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 					   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
-					   bool *all_dead, bool first_call);
+					   bool *all_dead, bool first_call, bool aggressive);
 extern bool heap_hot_search(ItemPointer tid, Relation relation,
-				Snapshot snapshot, bool *all_dead);
+				Snapshot snapshot, bool *all_dead, bool aggressive);
 
 extern void heap_get_latest_tid(Relation relation, Snapshot snapshot,
 					ItemPointer tid);

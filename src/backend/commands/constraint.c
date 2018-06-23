@@ -102,7 +102,8 @@ unique_key_recheck(PG_FUNCTION_ARGS)
 	 * removed.
 	 */
 	tmptid = new_row->t_self;
-	if (!heap_hot_search(&tmptid, trigdata->tg_relation, SnapshotSelf, NULL))
+	if (!heap_hot_search(&tmptid, trigdata->tg_relation, SnapshotSelf, NULL,
+						 false))
 	{
 		/*
 		 * All rows in the HOT chain are dead, so skip the check.

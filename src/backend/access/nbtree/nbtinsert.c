@@ -23,6 +23,7 @@
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/tqual.h"
 
@@ -283,6 +284,12 @@ top:
 			/* start over... */
 			if (stack)
 				_bt_freestack(stack);
+			/*
+			 * Since conflicting xact committed or aborted, refresh
+			 * RecentGlobalXmin so that _bt_check_unique() has some chance of
+			 * marking duplicates dead.
+			 */
+			RecentGlobalXmin = GetOldestXmin(rel, PROCARRAY_FLAGS_VACUUM);
 			goto top;
 		}
 	}
@@ -351,6 +358,7 @@ _bt_check_unique(Relation rel, IndexTuple itup, Relation heapRel,
 	BTPageOpaque opaque;
 	Buffer		nbuf = InvalidBuffer;
 	bool		found = false;
+	TransactionId oldest = InvalidTransactionId;
 
 	/* Assume unique until we find a duplicate */
 	*is_unique = true;
@@ -406,6 +414,10 @@ _bt_check_unique(Relation rel, IndexTuple itup, Relation heapRel,
 				if (!_bt_isequal(itupdesc, page, offset, indnkeyatts, itup_scankey))
 					break;		/* we're past all the equal tuples */
 
+				/* Be very very aggressive */
+				if (oldest == InvalidTransactionId)
+					oldest = RecentGlobalXmin = GetOldestXmin(rel, PROCARRAY_FLAGS_VACUUM);
+
 				/* okay, we gotta fetch the heap tuple ... */
 				curitup = (IndexTuple) PageGetItem(page, curitemid);
 				htid = curitup->t_tid;
@@ -427,7 +439,7 @@ _bt_check_unique(Relation rel, IndexTuple itup, Relation heapRel,
 				 * have just a single index entry for the entire chain.
 				 */
 				else if (heap_hot_search(&htid, heapRel, &SnapshotDirty,
-										 &all_dead))
+										 &all_dead, true))
 				{
 					TransactionId xwait;
 
@@ -480,7 +492,8 @@ _bt_check_unique(Relation rel, IndexTuple itup, Relation heapRel,
 					 * entry.
 					 */
 					htid = itup->t_tid;
-					if (heap_hot_search(&htid, heapRel, SnapshotSelf, NULL))
+					if (heap_hot_search(&htid, heapRel, SnapshotSelf, NULL,
+										false))
 					{
 						/* Normal case --- it's still live */
 					}
@@ -539,8 +552,7 @@ _bt_check_unique(Relation rel, IndexTuple itup, Relation heapRel,
 				{
 					/*
 					 * The conflicting tuple (or whole HOT chain) is dead to
-					 * everyone, so we may as well mark the index entry
-					 * killed.
+					 * everyone, so mark the index entry killed.
 					 */
 					ItemIdMarkDead(curitemid);
 					opaque->btpo_flags |= BTP_HAS_GARBAGE;
