@@ -1706,9 +1706,10 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
  * by inserts and page splits, so there is no need to consult the LSN.
  *
  * If the pin was released after reading the page, then we re-read it.  If it
- * has been modified since we read it (as determined by the LSN), we dare not
- * flag any entries because it is possible that the old entry was vacuumed
- * away and the TID was re-used by a completely different heap tuple.
+ * has been modified since we read it (as determined by the LSN), we revisit
+ * the heap to reverify that the heap tuple is still dead to everyone, since
+ * it is possible that the old entry was vacuumed away and the TID was re-used
+ * by a completely different heap tuple.
  */
 void
 _bt_killitems(IndexScanDesc scan)
@@ -1721,6 +1722,7 @@ _bt_killitems(IndexScanDesc scan)
 	int			i;
 	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
+	bool		safe = true;
 
 	Assert(BTScanPosIsValid(so->currPos));
 
@@ -1754,14 +1756,10 @@ _bt_killitems(IndexScanDesc scan)
 			return;
 
 		page = BufferGetPage(buf);
-		if (BufferGetLSNAtomic(buf) == so->currPos.lsn)
-			so->currPos.buf = buf;
-		else
-		{
-			/* Modified while not pinned means hinting is not safe. */
-			_bt_relbuf(scan->indexRelation, buf);
-			return;
-		}
+		so->currPos.buf = buf;
+		/* Modified while not pinned means hinting is not safe. */
+		if (BufferGetLSNAtomic(buf) != so->currPos.lsn)
+			safe = false;
 	}
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -1783,9 +1781,18 @@ _bt_killitems(IndexScanDesc scan)
 			ItemId		iid = PageGetItemId(page, offnum);
 			IndexTuple	ituple = (IndexTuple) PageGetItem(page, iid);
 
-			if (ItemPointerEquals(&ituple->t_tid, &kitem->heapTid))
+			if (!ItemIdIsDead(iid) &&
+				ItemPointerEquals(&ituple->t_tid, &kitem->heapTid))
 			{
-				/* found the item */
+				bool	alldead = true;
+
+				/* In unsafe case, make sure item is still live */
+				if (!safe && heap_hot_search(&ituple->t_tid,
+											 scan->heapRelation, SnapshotSelf,
+											 &alldead))
+					break;
+				if (!alldead)
+					break;
 				ItemIdMarkDead(iid);
 				killedsomething = true;
 				break;			/* out of inner search loop */
