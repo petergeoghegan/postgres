@@ -836,10 +836,11 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 	Page		npage;
 	BlockNumber nblkno;
 	OffsetNumber last_off;
-	Size		last_truncextra;
 	Size		pgspc;
 	Size		itupsz;
 	bool		isleaf;
+	int			indnatts = IndexRelationGetNumberOfAttributes(wstate->index);
+	int			indnkeyatts = IndexRelationGetNumberOfKeyAttributes(wstate->index);
 
 	/*
 	 * This is a handy place to check for cancel interrupts during the btree
@@ -850,55 +851,24 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 	npage = state->btps_page;
 	nblkno = state->btps_blkno;
 	last_off = state->btps_lastoff;
-	last_truncextra = state->btps_lastextra;
 	state->btps_lastextra = truncextra;
 
 	pgspc = PageGetFreeSpace(npage);
 	itupsz = IndexTupleSize(itup);
 	itupsz = MAXALIGN(itupsz);
-	/* Leaf case has slightly different rules due to suffix truncation */
 	isleaf = (state->btps_level == 0);
 
 	/*
-	 * Check whether the new item can fit on a btree page on current level at
-	 * all.
-	 *
-	 * Every newly built index will treat heap TID as part of the keyspace,
-	 * which imposes the requirement that new high keys must occasionally have
-	 * a heap TID appended within _bt_truncate().  That may leave a new pivot
-	 * tuple one or two MAXALIGN() quantums larger than the original
-	 * firstright tuple it's derived from.  v4 deals with the problem by
-	 * decreasing the limit on the size of tuples inserted on the leaf level
-	 * by the same small amount.  Enforce the new v4+ limit on the leaf level,
-	 * and the old limit on internal levels, since pivot tuples may need to
-	 * make use of the reserved space.  This should never fail on internal
-	 * pages.
+	 * DEBUG: Check v3 "1/3 of a page" limit, which matches v4 internal page
+	 * limit, but doesn't vary based on whether this is leaf or internal page
 	 */
 	if (unlikely(itupsz > BTMaxItemSize(npage)))
-		_bt_check_third_page(wstate->index, wstate->heap, isleaf, npage,
-							 itup);
+		_bt_check_third_page(wstate->index, wstate->heap, false, npage, itup);
 
 	/*
-	 * Check to see if current page will fit new item, with space left over to
-	 * append a heap TID during suffix truncation when page is a leaf page.
-	 *
-	 * It is guaranteed that we can fit at least 2 non-pivot tuples plus a
-	 * high key with heap TID when finishing off a leaf page, since we rely on
-	 * _bt_check_third_page() rejecting oversized non-pivot tuples.  On
-	 * internal pages we can always fit 3 pivot tuples with larger internal
-	 * page tuple limit (includes page high key).
-	 *
-	 * Most of the time, a page is only "full" in the sense that the soft
-	 * fillfactor-wise limit has been exceeded.  However, we must always leave
-	 * at least two items plus a high key on each page before starting a new
-	 * page.  Disregard fillfactor and insert on "full" current page if we
-	 * don't have the minimum number of items yet.  (Note that we deliberately
-	 * assume that suffix truncation neither enlarges nor shrinks new high key
-	 * when applying soft limit, except when last tuple has a posting list.)
+	 * DEBUG: Don't add space for heap TID to itupsz here
 	 */
-	Assert(last_truncextra == 0 || isleaf);
-	if (pgspc < itupsz + (isleaf ? MAXALIGN(sizeof(ItemPointerData)) : 0) ||
-		(pgspc + last_truncextra < state->btps_full && last_off > P_FIRSTKEY))
+	if (pgspc < itupsz || (pgspc < state->btps_full && last_off > P_FIRSTKEY))
 	{
 		/*
 		 * Finish off the page and write it out.
@@ -932,17 +902,14 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		 * Move 'last' into the high key position on opage.  _bt_blnewpage()
 		 * allocated empty space for a line pointer when opage was first
 		 * created, so this is a matter of rearranging already-allocated space
-		 * on page, and initializing high key line pointer. (Actually, leaf
-		 * pages must also swap oitup with a truncated version of oitup, which
-		 * is sometimes larger than oitup, though never by more than the space
-		 * needed to append a heap TID.)
+		 * on page, and initializing high key line pointer.
 		 */
 		hii = PageGetItemId(opage, P_HIKEY);
 		*hii = *ii;
 		ItemIdSetUnused(ii);	/* redundant */
 		((PageHeader) opage)->pd_lower -= sizeof(ItemIdData);
 
-		if (isleaf)
+		if (indnkeyatts != indnatts && isleaf)
 		{
 			IndexTuple	lastleft;
 			IndexTuple	truncated;
@@ -973,7 +940,6 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 			ii = PageGetItemId(opage, OffsetNumberPrev(last_off));
 			lastleft = (IndexTuple) PageGetItem(opage, ii);
 
-			Assert(IndexTupleSize(oitup) > last_truncextra);
 			truncated = _bt_truncate(wstate->index, lastleft, oitup,
 									 wstate->inskey);
 			if (!PageIndexTupleOverwrite(opage, P_HIKEY, (Item) truncated,
