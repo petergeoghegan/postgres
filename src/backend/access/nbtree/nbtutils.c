@@ -115,8 +115,11 @@ _bt_mkscankey(Relation rel, IndexTuple itup)
 		_bt_metaversion(rel, &key->heapkeyspace, &key->allequalimage);
 	else
 	{
-		/* Utility statement callers can set these fields themselves */
-		key->heapkeyspace = true;
+		/*
+		 * XXX Continue to work with v4 indexes, while making sure new indexes are
+		 * v3 indexes
+		 */
+		key->heapkeyspace = false;
 		key->allequalimage = false;
 	}
 	key->anynullkeys = false;	/* initial assumption */
@@ -2691,6 +2694,9 @@ bool
 _bt_allequalimage(Relation rel, bool debugmessage)
 {
 	bool		allequalimage = true;
+
+	/* v3 indexes don't support allequalimage */
+	return false;
 
 	/* INCLUDE indexes don't support deduplication */
 	if (IndexRelationGetNumberOfAttributes(rel) !=
