@@ -2161,7 +2161,7 @@ _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 		 * attribute to the new pivot tuple.
 		 */
 		Assert(natts != nkeyatts);
-		newsize = IndexTupleSize(pivot) + MAXALIGN(sizeof(ItemPointerData));
+		newsize = SHORTALIGN(IndexTupleSize(pivot) + sizeof(ItemPointerData));
 		tidpivot = palloc0(newsize);
 		memcpy(tidpivot, pivot, IndexTupleSize(pivot));
 		/* cannot leak memory here */
@@ -2175,7 +2175,7 @@ _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 		 * It's necessary to add a heap TID attribute to the new pivot tuple.
 		 */
 		Assert(natts == nkeyatts);
-		newsize = IndexTupleSize(firstright) + MAXALIGN(sizeof(ItemPointerData));
+		newsize = SHORTALIGN(IndexTupleSize(firstright) + sizeof(ItemPointerData));
 		pivot = palloc0(newsize);
 		memcpy(pivot, firstright, IndexTupleSize(firstright));
 	}

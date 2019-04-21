@@ -855,7 +855,6 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 
 	pgspc = PageGetFreeSpace(npage);
 	itupsz = IndexTupleSize(itup);
-	itupsz = MAXALIGN(itupsz);
 	/* Leaf case has slightly different rules due to suffix truncation */
 	isleaf = (state->btps_level == 0);
 

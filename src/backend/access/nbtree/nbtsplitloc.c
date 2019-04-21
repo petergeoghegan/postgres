@@ -180,7 +180,7 @@ _bt_findsplitloc(Relation rel,
 	state.leftspace = leftspace;
 	state.rightspace = rightspace;
 	state.olddataitemstotal = olddataitemstotal;
-	state.minfirstrightsz = SIZE_MAX;
+	state.minfirstrightsz = 1;
 	state.newitemoff = newitemoff;
 
 	/*
@@ -628,8 +628,10 @@ _bt_afternewitemoff(FindSplitData *state, OffsetNumber maxoff,
 	 * possibly-truncated existing high key isn't counted in
 	 * olddataitemstotal, and must be subtracted from maxoff.)
 	 */
+#if 0
 	if (state->newitemsz != state->minfirstrightsz)
 		return false;
+#endif
 	if (state->newitemsz * (maxoff - 1) != state->olddataitemstotal)
 		return false;
 
@@ -1011,7 +1013,7 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 
 		itemid = PageGetItemId(state->page, split->firstoldonright);
 
-		return MAXALIGN(ItemIdGetLength(itemid)) + sizeof(ItemIdData);
+		return (ItemIdGetLength(itemid)) + sizeof(ItemIdData);
 	}
 
 	lastleftuple = _bt_split_lastleft(state, split);

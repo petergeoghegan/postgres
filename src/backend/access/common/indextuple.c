@@ -130,7 +130,6 @@ index_form_tuple(TupleDesc tupleDescriptor,
 									   values, isnull);
 #endif
 	size = hoff + data_size;
-	size = MAXALIGN(size);		/* be conservative */
 
 	tp = (char *) palloc0(size);
 	tuple = (IndexTuple) tp;

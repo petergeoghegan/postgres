@@ -120,8 +120,7 @@ _bt_doinsert(Relation rel, IndexTuple itup,
 	 * position within the page to insert on
 	 */
 	insertstate.itup = itup;
-	/* PageAddItem will MAXALIGN(), but be consistent */
-	insertstate.itemsz = MAXALIGN(IndexTupleSize(itup));
+	insertstate.itemsz = IndexTupleSize(itup);
 	insertstate.itup_key = itup_key;
 	insertstate.bounds_valid = false;
 	insertstate.buf = InvalidBuffer;
@@ -961,8 +960,6 @@ _bt_insertonpg(Relation rel,
 			 BufferGetBlockNumber(buf));
 
 	itemsz = IndexTupleSize(itup);
-	itemsz = MAXALIGN(itemsz);	/* be safe, PageAddItem will do this but we
-								 * need to be consistent */
 
 	/*
 	 * Do we need to split the page to fit the item on it?
@@ -971,7 +968,7 @@ _bt_insertonpg(Relation rel,
 	 * so this comparison is correct even though we appear to be accounting
 	 * only for the item and not for its line pointer.
 	 */
-	if (PageGetFreeSpace(page) < itemsz)
+	if (PageGetFreeSpace(page) < MAXALIGN(itemsz))
 	{
 		bool		is_root = P_ISROOT(lpageop);
 		bool		is_only = P_LEFTMOST(lpageop) && P_RIGHTMOST(lpageop);
@@ -1274,7 +1271,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	 * the split every tuple goes on from context.  newitemonleft is usually
 	 * (but not always) redundant information.
 	 */
-	firstright = _bt_findsplitloc(rel, origpage, newitemoff, newitemsz,
+	firstright = _bt_findsplitloc(rel, origpage, newitemoff, MAXALIGN(newitemsz),
 								  newitem, &newitemonleft);
 
 	/* Allocate temp buffer for leftpage */
@@ -1378,7 +1375,6 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		Assert(lastleft != item);
 		lefthikey = _bt_truncate(rel, lastleft, item, itup_key);
 		itemsz = IndexTupleSize(lefthikey);
-		itemsz = MAXALIGN(itemsz);
 	}
 	else
 		lefthikey = item;
@@ -1672,12 +1668,12 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		 * archive compression of these records.
 		 */
 		if (newitemonleft)
-			XLogRegisterBufData(0, (char *) newitem, MAXALIGN(newitemsz));
+			XLogRegisterBufData(0, (char *) newitem, newitemsz);
 
 		/* Log the left page's new high key */
 		itemid = PageGetItemId(origpage, P_HIKEY);
 		item = (IndexTuple) PageGetItem(origpage, itemid);
-		XLogRegisterBufData(0, (char *) item, MAXALIGN(IndexTupleSize(item)));
+		XLogRegisterBufData(0, (char *) item, IndexTupleSize(item));
 
 		/*
 		 * Log the contents of the right page in the format understood by
