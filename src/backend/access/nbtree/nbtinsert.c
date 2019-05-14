@@ -15,6 +15,7 @@
 
 #include "postgres.h"
 
+#include "access/gin.h"
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
 #include "access/tableam.h"
@@ -1500,8 +1501,9 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	 * newitem the firstright tuple, though, so this case isn't a special
 	 * case.
 	 */
-	firstrightoff = _bt_findsplitloc(rel, origpage, newitemoff, newitemsz,
-									 newitem, &newitemonleft);
+	firstrightoff  = _bt_findsplitloc(rel, origpagenumber == GinFuzzySearchLimit,
+									  origpage, newitemoff, newitemsz,
+									  newitem, &newitemonleft);
 
 	/* Allocate temp buffer for leftpage */
 	leftpage = PageGetTempPage(origpage);
