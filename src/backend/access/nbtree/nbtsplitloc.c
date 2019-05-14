@@ -42,6 +42,7 @@ typedef struct
 {
 	/* context data for _bt_recsplitloc */
 	Relation	rel;			/* index relation */
+	bool		instrument;
 	Page		origpage;		/* page undergoing split */
 	IndexTuple	newitem;		/* new item (cause of page split) */
 	Size		newitemsz;		/* size of newitem (includes line pointer) */
@@ -128,6 +129,7 @@ static inline IndexTuple _bt_split_firstright(FindSplitData *state,
  */
 OffsetNumber
 _bt_findsplitloc(Relation rel,
+				 bool instrument,
 				 Page origpage,
 				 OffsetNumber newitemoff,
 				 Size newitemsz,
@@ -175,6 +177,7 @@ _bt_findsplitloc(Relation rel,
 	/* Passed-in newitemsz is MAXALIGNED but does not include line pointer */
 	newitemsz += sizeof(ItemIdData);
 	state.rel = rel;
+	state.instrument = instrument;
 	state.origpage = origpage;
 	state.newitem = newitem;
 	state.newitemsz = newitemsz;
@@ -206,6 +209,8 @@ _bt_findsplitloc(Relation rel,
 	 */
 	olddataitemstoleft = 0;
 
+	if (instrument)
+		elog(WARNING, "Adding split points with newitemoffset %u...", newitemoff);
 	for (offnum = P_FIRSTDATAKEY(opaque);
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
@@ -428,6 +433,21 @@ _bt_findsplitloc(Relation rel,
 	return firstrightoff;
 }
 
+static void
+print_itup(IndexTuple itup, Relation indexRel, char *extra)
+{
+	Datum		values[INDEX_MAX_KEYS];
+	bool		isnull[INDEX_MAX_KEYS];
+	char	   *key_desc;
+
+	index_deform_tuple(itup, RelationGetDescr(indexRel), values, isnull);
+
+	key_desc = BuildIndexValueDescription(indexRel, values, isnull);
+	elog(WARNING, "%s %s", key_desc, extra);
+
+	pfree(key_desc);
+}
+
 /*
  * Subroutine to record a particular point between two tuples (possibly the
  * new item) on page (ie, combination of firstrightoff and newitemonleft
@@ -545,6 +565,7 @@ _bt_recsplitloc(FindSplitData *state,
 	/* Record split if legal */
 	if (leftfree >= 0 && rightfree >= 0)
 	{
+		IndexTuple lastleft, firstright;
 		Assert(state->nsplits < state->maxsplits);
 
 		/* Determine smallest firstright tuple size among legal splits */
@@ -555,6 +576,16 @@ _bt_recsplitloc(FindSplitData *state,
 		state->splits[state->nsplits].rightfree = rightfree;
 		state->splits[state->nsplits].firstrightoff = firstrightoff;
 		state->splits[state->nsplits].newitemonleft = newitemonleft;
+		if (state->instrument && firstrightoff >= state->newitemoff - 3 &&
+			firstrightoff <= state->newitemoff + 3)
+		{
+			lastleft = _bt_split_lastleft(state, &state->splits[state->nsplits]);
+			firstright = _bt_split_firstright(state, &state->splits[state->nsplits]);
+			elog(WARNING, "firstrightoff %u", firstrightoff);
+			print_itup(lastleft, state->rel, "lastleft");
+			print_itup(firstright, state->rel, "firstright");
+		}
+
 		state->nsplits++;
 	}
 }
