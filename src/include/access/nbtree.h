@@ -1059,7 +1059,7 @@ extern Buffer _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child);
  */
 extern OffsetNumber _bt_findsplitloc(Relation rel, Page page,
 									 OffsetNumber newitemoff, Size newitemsz, IndexTuple newitem,
-									 bool *newitemonleft);
+									 BTScanInsert itup_key, bool *newitemonleft);
 
 /*
  * prototypes for functions in nbtpage.c
@@ -1137,6 +1137,9 @@ extern bool _bt_check_natts(Relation rel, bool heapkeyspace, Page page,
 extern void _bt_check_third_page(Relation rel, Relation heap,
 								 bool needheaptidspace, Page page, IndexTuple newtup);
 extern bool _bt_allequalimage(Relation rel, bool debugmessage);
+extern bool _bt_replace_lastatt(Relation rel, IndexTuple lastleft,
+								IndexTuple firstright, int keepnatts,
+								BTScanInsert itup_key, Datum *final, bool instr);
 
 /*
  * prototypes for functions in nbtvalidate.c

@@ -537,7 +537,7 @@ CopyIndexTuple(IndexTuple source)
  */
 IndexTuple
 index_truncate_tuple(TupleDesc sourceDescriptor, IndexTuple source,
-					 int leavenatts)
+					 int leavenatts, bool replacelast, Datum newlast)
 {
 	TupleDesc	truncdesc;
 	Datum		values[INDEX_MAX_KEYS];
@@ -547,7 +547,7 @@ index_truncate_tuple(TupleDesc sourceDescriptor, IndexTuple source,
 	Assert(leavenatts <= sourceDescriptor->natts);
 
 	/* Easy case: no truncation actually required */
-	if (leavenatts == sourceDescriptor->natts)
+	if (leavenatts == sourceDescriptor->natts && !replacelast)
 		return CopyIndexTuple(source);
 
 	/* Create temporary descriptor to scribble on */
@@ -557,6 +557,12 @@ index_truncate_tuple(TupleDesc sourceDescriptor, IndexTuple source,
 
 	/* Deform, form copy of tuple with fewer attributes */
 	index_deform_tuple(source, truncdesc, values, isnull);
+	if (replacelast)
+	{
+		/* cannot have NULL truncated att */
+		isnull[leavenatts - 1] = false;
+		values[leavenatts - 1] = newlast;
+	}
 	truncated = index_form_tuple(truncdesc, values, isnull);
 	truncated->t_tid = source->t_tid;
 	Assert(IndexTupleSize(truncated) <= IndexTupleSize(source));
