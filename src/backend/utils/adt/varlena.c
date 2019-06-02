@@ -3159,6 +3159,41 @@ bttext_pattern_sortsupport(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+Datum
+bttext_truncate(Datum lastleft, bool leftnull, Datum firstright,
+				bool rightnull)
+{
+	text	   *arg1;
+	text	   *arg2;
+	char	   *a1p,
+			   *a2p;
+	int			len2;
+	int			i;
+
+	if (leftnull || rightnull)
+	{
+		/*
+		 * FIXME: Have this generate very small string when left side is NULL
+		 * in NULLS FIRST attribute
+		 */
+		return firstright;
+	}
+
+	arg1 = DatumGetTextPP(lastleft);
+	arg2 = DatumGetTextPP(firstright);
+	a1p = VARDATA_ANY(arg1);
+	a2p = VARDATA_ANY(arg2);
+
+	len2 = VARSIZE_ANY_EXHDR(arg2);
+
+	for (i = 0; i < len2; i++)
+	{
+		if (a1p[i] != a2p[i])
+			break;
+	}
+
+	return PointerGetDatum(text_substring(firstright, 0, i + 2, false));
+}
 
 /*-------------------------------------------------------------
  * byteaoctetlen
