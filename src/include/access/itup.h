@@ -156,6 +156,7 @@ extern void index_deform_tuple(IndexTuple tup, TupleDesc tupleDescriptor,
 							   Datum *values, bool *isnull);
 extern IndexTuple CopyIndexTuple(IndexTuple source);
 extern IndexTuple index_truncate_tuple(TupleDesc sourceDescriptor,
-									   IndexTuple source, int leavenatts);
+									   IndexTuple source, int leavenatts,
+									   bool replacelast, Datum newlast);
 
 #endif							/* ITUP_H */

@@ -1520,7 +1520,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	 * case.
 	 */
 	firstrightoff = _bt_findsplitloc(rel, origpage, newitemoff, newitemsz,
-									 newitem, &newitemonleft);
+									 newitem, itup_key, &newitemonleft);
 
 	/* Allocate temp buffer for leftpage */
 	leftpage = PageGetTempPage(origpage);

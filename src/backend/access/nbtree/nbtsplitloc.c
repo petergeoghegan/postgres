@@ -52,6 +52,7 @@ typedef struct
 	int			rightspace;		/* space available for items on right page */
 	int			olddataitemstotal;	/* space taken by old items */
 	Size		minfirstrightsz;	/* smallest firstright size */
+	BTScanInsert itup_key;
 
 	/* candidate split point data */
 	int			maxsplits;		/* maximum number of splits */
@@ -132,6 +133,7 @@ _bt_findsplitloc(Relation rel,
 				 OffsetNumber newitemoff,
 				 Size newitemsz,
 				 IndexTuple newitem,
+				 BTScanInsert itup_key,
 				 bool *newitemonleft)
 {
 	BTPageOpaque opaque;
@@ -184,6 +186,7 @@ _bt_findsplitloc(Relation rel,
 	state.rightspace = rightspace;
 	state.olddataitemstotal = olddataitemstotal;
 	state.minfirstrightsz = SIZE_MAX;
+	state.itup_key = itup_key;
 	state.newitemoff = newitemoff;
 
 	/* newitem cannot be a posting list item */
@@ -399,8 +402,10 @@ _bt_findsplitloc(Relation rel,
 	{
 		Assert(state.is_leaf);
 		/* Shouldn't try to truncate away extra user attributes */
+#if 0
 		Assert(perfectpenalty ==
 			   IndexRelationGetNumberOfKeyAttributes(state.rel));
+#endif
 		/* No need to resort splits -- no change in fillfactormult/deltas */
 		state.interval = state.nsplits;
 	}
@@ -956,9 +961,12 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 	 * penalty on internal pages.  This can save cycles in the common case
 	 * where most or all splits (not just splits within interval) have
 	 * firstright tuples that are the same size.
+	 *
+	 * XXX: Assume unrealistically low perfect penalty, to temporarily disable
+	 * optimization
 	 */
 	if (!state->is_leaf)
-		return state->minfirstrightsz;
+		return 1;
 
 	/*
 	 * Use leftmost and rightmost tuples from leftmost and rightmost splits in
@@ -972,10 +980,13 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 	 * If initial split interval can produce a split point that will at least
 	 * avoid appending a heap TID in new high key, we're done.  Finish split
 	 * with default strategy and initial split interval.
+	 *
+	 * XXX: Assume unrealistically low perfect penalty, to temporarily disable
+	 * optimization
 	 */
 	perfectpenalty = _bt_keep_natts_fast(state->rel, leftmost, rightmost);
 	if (perfectpenalty <= indnkeyatts)
-		return perfectpenalty;
+		return 1;
 
 	/*
 	 * Work out how caller should finish split when even their "perfect"
@@ -1011,7 +1022,7 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 		 * to the immediate right of the split point.  This must happen just
 		 * before a final decision is made, within _bt_bestsplitloc().
 		 */
-		return indnkeyatts;
+		return 1000;
 	}
 
 	/*
@@ -1024,7 +1035,10 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 	 * concurrent inserters of the same duplicate value.
 	 */
 	else if (state->is_rightmost)
+	{
 		*strategy = SPLIT_SINGLE_VALUE;
+		return 5000;
+	}
 	else
 	{
 		ItemId		itemid;
@@ -1035,7 +1049,10 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 		perfectpenalty = _bt_keep_natts_fast(state->rel, hikey,
 											 state->newitem);
 		if (perfectpenalty <= indnkeyatts)
+		{
 			*strategy = SPLIT_SINGLE_VALUE;
+			return 5000;
+		}
 		else
 		{
 			/*
@@ -1046,7 +1063,7 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 		}
 	}
 
-	return perfectpenalty;
+	return 10000;
 }
 
 /*
@@ -1138,6 +1155,12 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 {
 	IndexTuple	lastleft;
 	IndexTuple	firstright;
+	IndexTuple	pivot;
+	int			keepnatts;
+	int			tupsize;
+	int			base;
+	bool		replacelast;
+	Datum		final = (Datum) 0;
 
 	if (!state->is_leaf)
 	{
@@ -1155,7 +1178,30 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 	lastleft = _bt_split_lastleft(state, split);
 	firstright = _bt_split_firstright(state, split);
 
-	return _bt_keep_natts_fast(state->rel, lastleft, firstright);
+	/* Determine how many attributes must be kept in truncated tuple */
+	keepnatts = _bt_keep_natts_fast(state->rel, lastleft, firstright);
+	if (keepnatts > IndexRelationGetNumberOfKeyAttributes(state->rel))
+		return 5000;
+
+	base = 100 * keepnatts;
+
+	replacelast = _bt_replace_lastatt(state->rel, lastleft, firstright,
+									  keepnatts, state->itup_key, &final,
+									  false);
+
+	/* Return base cost plus size of new high key */
+	if (!replacelast)
+		return base + IndexTupleSize(firstright);
+
+	pivot = index_truncate_tuple(RelationGetDescr(state->rel),
+								 firstright, keepnatts, replacelast,
+								 final);
+
+	tupsize = IndexTupleSize(pivot);
+	pfree(pivot);
+
+	/* Return base cost plus size of new high key */
+	return base + tupsize;
 }
 
 /*

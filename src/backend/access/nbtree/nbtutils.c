@@ -21,6 +21,7 @@
 #include "access/reloptions.h"
 #include "access/relscan.h"
 #include "catalog/catalog.h"
+#include "catalog/pg_collation.h"
 #include "commands/progress.h"
 #include "lib/qunique.h"
 #include "miscadmin.h"
@@ -28,7 +29,9 @@
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/pg_locale.h"
 #include "utils/rel.h"
+#include "utils/varlena.h"
 
 
 typedef struct BTSortArrayContext
@@ -2203,6 +2206,8 @@ _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 	TupleDesc	itupdesc = RelationGetDescr(rel);
 	int16		nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
 	int			keepnatts;
+	bool		replacelast;
+	Datum		final = (Datum) 0;
 	IndexTuple	pivot;
 	IndexTuple	tidpivot;
 	ItemPointer pivotheaptid;
@@ -2216,14 +2221,18 @@ _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 
 	/* Determine how many attributes must be kept in truncated tuple */
 	keepnatts = _bt_keep_natts(rel, lastleft, firstright, itup_key);
+	replacelast = _bt_replace_lastatt(rel, lastleft, firstright,
+									  keepnatts, itup_key, &final, false);
 
 #ifdef DEBUG_NO_TRUNCATE
 	/* Force truncation to be ineffective for testing purposes */
 	keepnatts = nkeyatts + 1;
+	replacelast = false;
 #endif
 
 	pivot = index_truncate_tuple(itupdesc, firstright,
-								 Min(keepnatts, nkeyatts));
+								 Min(keepnatts, nkeyatts), replacelast,
+								 final);
 
 	if (BTreeTupleIsPosting(pivot))
 	{
@@ -2235,7 +2244,7 @@ _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 		Assert(keepnatts == nkeyatts || keepnatts == nkeyatts + 1);
 		Assert(IndexRelationGetNumberOfAttributes(rel) == nkeyatts);
 		pivot->t_info &= ~INDEX_SIZE_MASK;
-		pivot->t_info |= MAXALIGN(BTreeTupleGetPostingOffset(firstright));
+		pivot->t_info |= MAXALIGN(BTreeTupleGetPostingOffset(pivot));
 	}
 
 	/*
@@ -2391,6 +2400,85 @@ _bt_keep_natts(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 		   keepnatts == _bt_keep_natts_fast(rel, lastleft, firstright));
 
 	return keepnatts;
+}
+
+bool
+_bt_replace_lastatt(Relation rel, IndexTuple lastleft, IndexTuple firstright,
+					int keepnatts, BTScanInsert itup_key, Datum *final,
+					bool instr)
+{
+	int			nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
+	TupleDesc	itupdesc = RelationGetDescr(rel);
+	ScanKey		scankey;
+	Oid			foutoid;
+	Datum		datum1,
+				datum2;
+	bool		isNull1,
+				isNull2;
+
+	Assert(itup_key->heapkeyspace);
+
+	if (keepnatts > nkeyatts)
+		return false;
+
+	/* Get scankey for attribute that we're about to truncate */
+	scankey = itup_key->scankeys + keepnatts - 1;
+
+	/* pg_proc OID 360 == bttextcmp() */
+	if (scankey->sk_func.fn_oid != 360)
+		return false;
+	if (!lc_collate_is_c(scankey->sk_collation))
+	{
+		/*
+		 * Deliberately warn unconditionally when not using the C collation --
+		 * want to notice when testing code incorrectly during development
+		 */
+		elog(WARNING, "collation %u not C collation in %s",
+			 scankey->sk_collation, RelationGetRelationName(rel));
+		return false;
+	}
+
+	datum1 = index_getattr(lastleft, keepnatts, itupdesc, &isNull1);
+	datum2 = index_getattr(firstright, keepnatts, itupdesc, &isNull2);
+
+	/*
+	 * XXX For now, refuse truncation if either datum is NULL.  Note that we
+	 * usually have NULLS LAST, so this doesn't actually miss all that much
+	 * (firstright datum is usually NULL, so we won't miss any opportunity to
+	 * generate a particularly small string for new high key)
+	 */
+	if (isNull1 || isNull2)
+		return false;
+
+	if (instr)
+	{
+		bool		typisvarlena;
+		char	   *val1 = NULL;
+		char	   *val2 = NULL;
+
+		getTypeOutputInfo(rel->rd_opcintype[keepnatts - 1], &foutoid,
+						  &typisvarlena);
+		if (!isNull1)
+			val1 = OidOutputFunctionCall(foutoid, datum1);
+		if (!isNull2)
+			val2 = OidOutputFunctionCall(foutoid, datum2);
+		elog(WARNING, "lastleft: %s, firstright: %s", val1, val2);
+		if (val1)
+			pfree(val1);
+		if (val2)
+			pfree(val2);
+	}
+
+	*final = bttext_truncate(datum1, isNull1, datum2, isNull2);
+	if (instr && *final)
+	{
+		char	   *val2 = NULL;
+
+		val2 = OidOutputFunctionCall(foutoid, *final);
+		elog(WARNING, "new right datum: %s", val2);
+	}
+
+	return true;
 }
 
 /*

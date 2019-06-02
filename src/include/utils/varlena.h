@@ -35,5 +35,7 @@ extern bool SplitGUCList(char *rawstring, char separator,
 						 List **namelist);
 extern text *replace_text_regexp(text *src_text, void *regexp,
 								 text *replace_text, bool glob);
+extern Datum bttext_truncate(Datum lastleft, bool leftnull, Datum firstright,
+							 bool rightnull);
 
 #endif
