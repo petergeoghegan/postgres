@@ -1074,6 +1074,9 @@ typedef struct BTScanOpaqueData
 	 */
 	int			markItemIndex;	/* itemIndex, or -1 if not valid */
 
+	StringInfoData debugstr;
+	int			log_btree_verbosity;
+
 	/* keep these last in struct for efficiency */
 	BTScanPosData currPos;		/* current position data */
 	BTScanPosData markPos;		/* marked position, if any */
@@ -1182,7 +1185,7 @@ extern IndexTuple _bt_swap_posting(IndexTuple newitem, IndexTuple oposting,
  */
 extern bool _bt_doinsert(Relation rel, IndexTuple itup,
 						 IndexUniqueCheck checkUnique, bool indexUnchanged,
-						 Relation heapRel);
+						 Relation heapRel, StringInfo debugstr);
 extern void _bt_finish_split(Relation rel, Relation heaprel, Buffer lbuf,
 							 BTStack stack);
 extern Buffer _bt_getstackbuf(Relation rel, Relation heaprel, BTStack stack,
@@ -1191,7 +1194,7 @@ extern Buffer _bt_getstackbuf(Relation rel, Relation heaprel, BTStack stack,
 /*
  * prototypes for functions in nbtsplitloc.c
  */
-extern OffsetNumber _bt_findsplitloc(Relation rel, Page origpage,
+extern OffsetNumber _bt_findsplitloc(Relation rel, StringInfo debugstr, Page origpage,
 									 OffsetNumber newitemoff, Size newitemsz, IndexTuple newitem,
 									 bool *newitemonleft);
 
@@ -1222,7 +1225,7 @@ extern void _bt_pageinit(Page page, Size size);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
 								OffsetNumber *deletable, int ndeletable,
 								BTVacuumPosting *updatable, int nupdatable);
-extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
+extern int	_bt_delitems_delete_check(Relation rel, Buffer buf,
 									  Relation heapRel,
 									  TM_IndexDeleteOp *delstate);
 extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
@@ -1233,11 +1236,13 @@ extern void _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate);
 /*
  * prototypes for functions in nbtsearch.c
  */
+extern char * dump_scankey_flags(ScanKey cur);
 extern BTStack _bt_search(Relation rel, Relation heaprel, BTScanInsert key,
-						  Buffer *bufP, int access, Snapshot snapshot);
+						  Buffer *bufP, int access, Snapshot snapshot,
+						  StringInfo debugstr);
 extern Buffer _bt_moveright(Relation rel, Relation heaprel, BTScanInsert key,
 							Buffer buf, bool forupdate, BTStack stack,
-							int access, Snapshot snapshot);
+							int access, Snapshot snapshot, StringInfo debugstr);
 extern OffsetNumber _bt_binsrch_insert(Relation rel, BTInsertState insertstate);
 extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum);
 extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
@@ -1275,6 +1280,7 @@ extern IndexTuple _bt_truncate(Relation rel, IndexTuple lastleft,
 							   IndexTuple firstright, BTScanInsert itup_key);
 extern int	_bt_keep_natts_fast(Relation rel, IndexTuple lastleft,
 								IndexTuple firstright);
+extern char *_nbtree_print_itup(IndexTuple itup, Relation rel);
 extern bool _bt_check_natts(Relation rel, bool heapkeyspace, Page page,
 							OffsetNumber offnum);
 extern void _bt_check_third_page(Relation rel, Relation heap,

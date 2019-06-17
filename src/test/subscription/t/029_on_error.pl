@@ -72,6 +72,7 @@ $node_publisher->append_conf(
 	qq[
 logical_decoding_work_mem = 64kB
 max_prepared_transactions = 10
+log_btree_verbosity = 0
 ]);
 $node_publisher->start;
 
@@ -82,6 +83,7 @@ $node_subscriber->append_conf(
 	'postgresql.conf',
 	qq[
 max_prepared_transactions = 10
+log_btree_verbosity = 0
 ]);
 $node_subscriber->start;
 

@@ -10,6 +10,7 @@ create index skippy_idx on skippy_tbl(bar);
 insert into skippy_tbl select i from generate_series(1,500) i;
 vacuum analyze skippy_tbl;
 
+set log_btree_verbosity=1;
 set track_io_timing to off;
 set enable_seqscan to off;
 
