@@ -5588,6 +5588,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 	/* No hope if no relation or it doesn't have indexes */
 	if (rel == NULL || rel->indexlist == NIL)
 		return false;
+	elog(DEBUG1, "*** Begin get_actual_variable_range() ***");
 	/* If it has indexes it must be a plain relation */
 	rte = root->simple_rte_array[rel->relid];
 	Assert(rte->rtekind == RTE_RELATION);
@@ -5732,6 +5733,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 		}
 	}
 
+	elog(DEBUG1, "*** End get_actual_variable_range() ***");
 	return have_data;
 }
 
