@@ -17,6 +17,7 @@
 
 #include "access/nbtree.h"
 #include "access/relscan.h"
+#include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/predicate.h"
@@ -75,6 +76,63 @@ _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp)
 	}
 }
 
+static void
+print_itup(BlockNumber blk, IndexTuple left, IndexTuple right, Relation rel,
+		   char *extra)
+{
+	bool		isnull[INDEX_MAX_KEYS];
+	Datum		values[INDEX_MAX_KEYS];
+	char	   *lkey_desc = NULL;
+	char	   *rkey_desc;
+
+	/* Avoid infinite recursion -- don't instrument catalog indexes */
+	if (!IsCatalogRelation(rel))
+	{
+		TupleDesc	itupdesc = RelationGetDescr(rel);
+		int			natts;
+		int			indnkeyatts = rel->rd_index->indnkeyatts;
+
+		natts = BTreeTupleGetNAtts(left, rel);
+		itupdesc->natts = Min(indnkeyatts, natts);
+		memset(&isnull, 0xFF, sizeof(isnull));
+		index_deform_tuple(left, itupdesc, values, isnull);
+		rel->rd_index->indnkeyatts = natts;
+
+		/*
+		 * Since the regression tests should pass when the instrumentation
+		 * patch is applied, be prepared for BuildIndexValueDescription() to
+		 * return NULL due to security considerations.
+		 */
+		lkey_desc = BuildIndexValueDescription(rel, values, isnull);
+		if (lkey_desc && right)
+		{
+			/*
+			 * Revolting hack: modify tuple descriptor to have number of key
+			 * columns actually present in caller's pivot tuples
+			 */
+			natts = BTreeTupleGetNAtts(right, rel);
+			itupdesc->natts = Min(indnkeyatts, natts);
+			memset(&isnull, 0xFF, sizeof(isnull));
+			index_deform_tuple(right, itupdesc, values, isnull);
+			rel->rd_index->indnkeyatts = natts;
+			rkey_desc = BuildIndexValueDescription(rel, values, isnull);
+			elog(DEBUG1, "%s blk %u sk > %s, sk <= %s %s",
+				 RelationGetRelationName(rel), blk, lkey_desc, rkey_desc,
+				 extra);
+			pfree(rkey_desc);
+		}
+		else
+			elog(DEBUG1, "%s blk %u sk check %s %s",
+				 RelationGetRelationName(rel), blk, lkey_desc, extra);
+
+		/* Cleanup */
+		itupdesc->natts = IndexRelationGetNumberOfAttributes(rel);
+		rel->rd_index->indnkeyatts = indnkeyatts;
+		if (lkey_desc)
+			pfree(lkey_desc);
+	}
+}
+
 /*
  *	_bt_search() -- Search the tree for a particular scankey,
  *		or more precisely for the first leaf page it could be on.
@@ -111,6 +169,10 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 	if (!BufferIsValid(*bufP))
 		return (BTStack) NULL;
 
+	if (!IsCatalogRelation(rel))
+		elog(DEBUG1, "==================== _bt_search %s begin ====================",
+			 RelationGetRelationName(rel));
+
 	/* Loop iterates once per level descended in the tree */
 	for (;;)
 	{
@@ -121,6 +183,7 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 		IndexTuple	itup;
 		BlockNumber child;
 		BTStack		new_stack;
+		IndexTuple	right;
 
 		/*
 		 * Race -- the page we just grabbed may have split since we read its
@@ -152,6 +215,43 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 		itup = (IndexTuple) PageGetItem(page, itemid);
 		Assert(BTreeTupleIsPivot(itup) || !key->heapkeyspace);
 		child = BTreeTupleGetDownLink(itup);
+
+		/*
+		 * Every downlink is between two separator keys, provided you pretend
+		 * that even rightmost pages have a positive infinity high key.  The
+		 * key to the left of the downlink is a strict lower bound for items
+		 * that can be found by following the downlink, whereas the right
+		 * separator is a <= bound.
+		 */
+		if (offnum == PageGetMaxOffsetNumber(page))
+		{
+			/*
+			 * XXX: This is correct even on rightmost page, since "high key"
+			 * position item will be negative infinity item, which is printed
+			 * blank.  If you assume that even rightmost pages have a positive
+			 * infinity high key (and don't expect the instrumentation of the
+			 * tuple to say either positive or negative infinity) then it
+			 * makes sense.
+			 *
+			 * An internal page with only one downlink is rare though possible
+			 * (see comments above _bt_binsrch()).  Note that even in that
+			 * case there are two separators (positive and negative infinity).
+			 */
+			itemid = PageGetItemId(page, P_HIKEY);
+			right = (IndexTuple) PageGetItem(page, itemid);
+			print_itup(BufferGetBlockNumber(*bufP), itup, right, rel,
+					   "(<= separator is high key)");
+		}
+		else if (OffsetNumberNext(offnum) <= PageGetMaxOffsetNumber(page))
+		{
+			itemid = PageGetItemId(page, OffsetNumberNext(offnum));
+			right = (IndexTuple) PageGetItem(page, itemid);
+			print_itup(BufferGetBlockNumber(*bufP), itup, right, rel, "");
+		}
+
+		if (!IsCatalogRelation(rel))
+			elog(DEBUG1, "-------------------- %s descending to child blk %u --------------------",
+				 RelationGetRelationName(rel), child);
 
 		/*
 		 * We need to save the location of the pivot tuple we chose in a new
@@ -199,6 +299,9 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 							  snapshot);
 	}
 
+	if (!IsCatalogRelation(rel))
+		elog(DEBUG1, "==================== _bt_search %s end ====================",
+			 RelationGetRelationName(rel));
 	return stack_in;
 }
 
@@ -271,6 +374,9 @@ _bt_moveright(Relation rel,
 
 	for (;;)
 	{
+		IndexTuple hikey;
+		ItemId	 itemid;
+
 		page = BufferGetPage(buf);
 		TestForOldSnapshot(snapshot, rel, page);
 		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -302,14 +408,40 @@ _bt_moveright(Relation rel,
 			continue;
 		}
 
-		if (P_IGNORE(opaque) || _bt_compare(rel, key, page, P_HIKEY) >= cmpval)
+		if (P_IGNORE(opaque))
 		{
+			/* step right one page */
+			elog(DEBUG1, "%s blk %u must move right because page is ignorable",
+				 RelationGetRelationName(rel), BufferGetBlockNumber(buf));
+			buf = _bt_relandgetbuf(rel, buf, opaque->btpo_next, access);
+			continue;
+		}
+		else if (_bt_compare(rel, key, page, P_HIKEY) >= cmpval)
+		{
+			/*
+			 * Very unlikely to catch this -- repeated moving right at same
+			 * point in index suggests corruption masked by moving right
+			 */
+			itemid = PageGetItemId(page, P_HIKEY);
+			hikey = (IndexTuple) PageGetItem(page, itemid);
+			print_itup(BufferGetBlockNumber(buf), hikey, NULL, rel,
+					   "high key move right");
 			/* step right one page */
 			buf = _bt_relandgetbuf(rel, buf, opaque->btpo_next, access);
 			continue;
 		}
 		else
+		{
+			/*
+			 * No need to move right (common case), but report that to be
+			 * consistent
+			 */
+			itemid = PageGetItemId(page, P_HIKEY);
+			hikey = (IndexTuple) PageGetItem(page, itemid);
+			print_itup(BufferGetBlockNumber(buf), hikey, NULL, rel,
+					   "high key no move right");
 			break;
+		}
 	}
 
 	if (P_IGNORE(opaque))
@@ -883,6 +1015,11 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	{
 		/* Notify any other workers that we're done with this scan key. */
 		_bt_parallel_done(scan);
+
+		if (!IsCatalogRelation(scan->indexRelation))
+			elog(DEBUG1, "%s preprocessing determined that keys are contradictory",
+				 RelationGetRelationName(scan->indexRelation));
+
 		return false;
 	}
 
@@ -894,6 +1031,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 */
 	if (scan->parallel_scan != NULL)
 	{
+		/* XXX: No instrumentation for parallel scans */
 		status = _bt_parallel_seize(scan, &blkno);
 		if (!status)
 			return false;
@@ -1092,6 +1230,15 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	{
 		bool		match;
 
+		if (!IsCatalogRelation(scan->indexRelation))
+			elog(DEBUG1, "%s sk could not be formed, so descending to %s leaf page in whole index",
+				 RelationGetRelationName(scan->indexRelation),
+				 ScanDirectionIsForward(dir) ? "leftmost" : "rightmost");
+
+		/*
+		 * Note that _bt_endpoint() will call _bt_readpage() -- it will be
+		 * called, though not from usual place
+		 */
 		match = _bt_endpoint(scan, dir);
 
 		if (!match)
@@ -1114,6 +1261,9 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	for (i = 0; i < keysCount; i++)
 	{
 		ScanKey		cur = startKeys[i];
+		Oid			typOutput;
+		bool		varlenatype;
+		char	   *val;
 
 		Assert(cur->sk_attno == i + 1);
 
@@ -1137,6 +1287,27 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				return false;
 			}
 			memcpy(inskey.scankeys + i, subkey, sizeof(ScanKeyData));
+
+			/* Report row comparison header's first insertion scankey entry */
+			if (!IsCatalogRelation(rel))
+			{
+				if (subkey->sk_subtype != InvalidOid)
+					getTypeOutputInfo(subkey->sk_subtype,
+									  &typOutput, &varlenatype);
+				else
+					getTypeOutputInfo(rel->rd_opcintype[i],
+									  &typOutput, &varlenatype);
+				val = OidOutputFunctionCall(typOutput, subkey->sk_argument);
+				if (val)
+				{
+					elog(DEBUG1, "%s sk subkey attr %d val: %s (%s, %s)",
+						 RelationGetRelationName(rel), subkey->sk_attno, val,
+						 (subkey->sk_flags & SK_BT_NULLS_FIRST) != 0 ? "NULLS FIRST" : "NULLS LAST",
+						 (subkey->sk_flags & SK_BT_DESC) != 0 ? "DESC" : "ASC");
+
+					pfree(val);
+				}
+			}
 
 			/*
 			 * If the row comparison is the last positioning key we accepted,
@@ -1171,6 +1342,32 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 					memcpy(inskey.scankeys + keysCount, subkey,
 						   sizeof(ScanKeyData));
 					keysCount++;
+
+					/*
+					 * The need to separately report additional
+					 * subkeys-as-insertion-scankey is an artifact of the way
+					 * extra keys are added here more or less as an
+					 * opportunistic optimization used when row comparison is
+					 * the last positioning key.
+					 */
+					if (!IsCatalogRelation(rel))
+					{
+						if (subkey->sk_subtype != InvalidOid)
+							getTypeOutputInfo(subkey->sk_subtype,
+											  &typOutput, &varlenatype);
+						else
+							getTypeOutputInfo(rel->rd_opcintype[i],
+											  &typOutput, &varlenatype);
+						val = OidOutputFunctionCall(typOutput, subkey->sk_argument);
+						if (val)
+						{
+							elog(DEBUG1, "%s sk extra subkey attr %d val: %s  (%s, %s)",
+								 RelationGetRelationName(rel), subkey->sk_attno, val,
+								 (subkey->sk_flags & SK_BT_NULLS_FIRST) != 0 ? "NULLS FIRST" : "NULLS LAST",
+								 (subkey->sk_flags & SK_BT_DESC) != 0 ? "DESC" : "ASC");
+							pfree(val);
+						}
+					}
 					if (subkey->sk_flags & SK_ROW_END)
 					{
 						used_all_subkeys = true;
@@ -1244,6 +1441,38 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 									   cur->sk_collation,
 									   cmp_proc,
 									   cur->sk_argument);
+			}
+
+			/*
+			 * Most index scans have insertion scan key entries reported here
+			 */
+			if (!IsCatalogRelation(rel))
+			{
+				if (!(cur->sk_flags & SK_ISNULL))
+				{
+					if (cur->sk_subtype != InvalidOid)
+						getTypeOutputInfo(cur->sk_subtype,
+										  &typOutput, &varlenatype);
+					else
+						getTypeOutputInfo(rel->rd_opcintype[i],
+										  &typOutput, &varlenatype);
+					val = OidOutputFunctionCall(typOutput, cur->sk_argument);
+					if (val)
+					{
+						elog(DEBUG1, "%s sk attr %d val: %s (%s, %s)",
+							 RelationGetRelationName(rel), i, val,
+							 (cur->sk_flags & SK_BT_NULLS_FIRST) != 0 ? "NULLS FIRST" : "NULLS LAST",
+							 (cur->sk_flags & SK_BT_DESC) != 0 ? "DESC" : "ASC");
+						pfree(val);
+					}
+				}
+				else
+				{
+					elog(DEBUG1, "%s sk attr %d val: NULL (%s, %s)",
+						 RelationGetRelationName(rel), i,
+						 (cur->sk_flags & SK_BT_NULLS_FIRST) != 0 ? "NULLS FIRST" : "NULLS LAST",
+						 (cur->sk_flags & SK_BT_DESC) != 0 ? "DESC" : "ASC");
+				}
 			}
 		}
 	}
@@ -1347,6 +1576,12 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	inskey.scantid = NULL;
 	inskey.keysz = keysCount;
 
+	/* Report additional insertion scan key details */
+	if (!IsCatalogRelation(rel))
+		elog(DEBUG1, "%s _bt_first with %d keys, nextkey=%d, goback=%d",
+			 RelationGetRelationName(rel), inskey.keysz, inskey.nextkey,
+			 goback);
+
 	/*
 	 * Use the manufactured insertion scan key to descend the tree and
 	 * position ourselves on the target leaf page.
@@ -1402,6 +1637,13 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 */
 	if (goback)
 		offnum = OffsetNumberPrev(offnum);
+
+	/* Report _bt_readpage()'s starting offset */
+	if (!IsCatalogRelation(rel))
+		elog(DEBUG1, "%s blk %u initial leaf page offset is %u out of %lu",
+			 RelationGetRelationName(rel),
+			 BufferGetBlockNumber(buf), offnum,
+			 PageGetMaxOffsetNumber(BufferGetPage(buf)));
 
 	/* remember which buffer we have pinned, if any */
 	Assert(!BTScanPosIsValid(so->currPos));
@@ -1632,6 +1874,12 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			offnum = OffsetNumberNext(offnum);
 		}
 
+		/* Report which offset/item terminated index scan */
+		if (!continuescan && !IsCatalogRelation(scan->indexRelation))
+			elog(DEBUG1, "%s blk %u non-pivot offnum %u ended forward scan",
+				 RelationGetRelationName(scan->indexRelation),
+				 BufferGetBlockNumber(so->currPos.buf), offnum);
+
 		/*
 		 * We don't need to visit page to the right when the high key
 		 * indicates that no more matches will be found there.
@@ -1651,6 +1899,31 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 
 			truncatt = BTreeTupleGetNAtts(itup, scan->indexRelation);
 			_bt_checkkeys(scan, itup, truncatt, dir, &continuescan);
+
+			/*
+			 * Report if high key check was effective.  This is also a
+			 * reasonably useful way of indicating the progress of a large
+			 * range scan that visits many leaf pages.
+			 */
+			if (continuescan)
+				print_itup(BufferGetBlockNumber(so->currPos.buf), itup,
+						   NULL, scan->indexRelation,
+						   "continuescan high key check did not end forward scan");
+			else
+				print_itup(BufferGetBlockNumber(so->currPos.buf), itup,
+						   NULL, scan->indexRelation,
+						   "continuescan high key check ended forward scan");
+		}
+		else if (continuescan && P_RIGHTMOST(opaque) &&
+				 !IsCatalogRelation(scan->indexRelation))
+		{
+			/*
+			 * Report that range scan reached end of entire index -- this
+			 * won't be caught by above non-pivot elog().
+			 */
+			elog(DEBUG1, "%s blk %u non-pivot offnum %u (last in whole index) ended forward scan",
+				 RelationGetRelationName(scan->indexRelation),
+				 BufferGetBlockNumber(so->currPos.buf), offnum);
 		}
 
 		if (!continuescan)
@@ -1749,6 +2022,18 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			}
 
 			offnum = OffsetNumberPrev(offnum);
+		}
+
+		if (!IsCatalogRelation(scan->indexRelation))
+		{
+			if (!continuescan)
+				elog(DEBUG1, "%s blk %u non-pivot offnum %u ended backwards scan",
+					 RelationGetRelationName(scan->indexRelation),
+					 BufferGetBlockNumber(so->currPos.buf), offnum);
+			else
+				elog(DEBUG1, "%s blk %u backwards scan must continue to left sibling",
+					 RelationGetRelationName(scan->indexRelation),
+					 BufferGetBlockNumber(so->currPos.buf));
 		}
 
 		Assert(itemIndex >= 0);
