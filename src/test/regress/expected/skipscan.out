@@ -4,6 +4,7 @@ create table foo (bar int4);
 create index skippy on foo(bar);
 insert into foo select i from generate_series(1,500) i;
 analyze foo;
+set log_btree_verbosity=1;
 set track_io_timing to off;
 set enable_seqscan to off;
 -- prewarm
