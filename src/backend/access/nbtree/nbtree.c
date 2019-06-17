@@ -22,6 +22,7 @@
 #include "access/nbtxlog.h"
 #include "access/relscan.h"
 #include "access/xlog.h"
+#include "catalog/catalog.h"
 #include "commands/progress.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
@@ -204,6 +205,10 @@ btinsert(Relation rel, Datum *values, bool *isnull,
 	bool		result;
 	IndexTuple	itup;
 
+	if (!IsCatalogRelation(rel))
+		elog(DEBUG1, "%s call to btinsert()",
+			 RelationGetRelationName(rel));
+
 	/* generate an index tuple */
 	itup = index_form_tuple(RelationGetDescr(rel), values, isnull);
 	itup->t_tid = *ht_ctid;
@@ -236,7 +241,12 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 	{
 		/* punt if we have any unsatisfiable array keys */
 		if (so->numArrayKeys < 0)
+		{
+			if (!IsCatalogRelation(scan->indexRelation))
+				elog(DEBUG1, "%s call to btgettuple() numArrayKeys < 0",
+					 RelationGetRelationName(scan->indexRelation));
 			return false;
+		}
 
 		_bt_start_array_keys(scan, dir);
 	}
@@ -250,9 +260,18 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 		 * _bt_first() to get the first item in the scan.
 		 */
 		if (!BTScanPosIsValid(so->currPos))
+		{
+			if (!IsCatalogRelation(scan->indexRelation))
+				elog(DEBUG1, "%s call to btgettuple() invalid currPos",
+					 RelationGetRelationName(scan->indexRelation));
+
 			res = _bt_first(scan, dir);
+		}
 		else
 		{
+			if (!IsCatalogRelation(scan->indexRelation))
+				elog(DEBUG1, "%s call to btgettuple() valid currPos",
+					 RelationGetRelationName(scan->indexRelation));
 			/*
 			 * Check to see if we should kill the previously-fetched tuple.
 			 */
@@ -298,6 +317,10 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	int64		ntids = 0;
 	ItemPointer heapTid;
+
+	if (!IsCatalogRelation(scan->indexRelation))
+		elog(DEBUG1, "%s call to btgetbitmap()",
+			 RelationGetRelationName(scan->indexRelation));
 
 	/*
 	 * If we have any array keys, initialize them.
@@ -356,6 +379,10 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	IndexScanDesc scan;
 	BTScanOpaque so;
 
+	if (!IsCatalogRelation(rel))
+		elog(DEBUG1, "%s call to btbeginscan()",
+			 RelationGetRelationName(rel));
+
 	/* no order by operators allowed */
 	Assert(norderbys == 0);
 
@@ -401,6 +428,10 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 		 ScanKey orderbys, int norderbys)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+
+	if (!IsCatalogRelation(scan->indexRelation))
+		elog(DEBUG1, "%s call to btrescan()",
+			 RelationGetRelationName(scan->indexRelation));
 
 	/* we aren't holding any read locks, but gotta drop the pins */
 	if (BTScanPosIsValid(so->currPos))
@@ -460,6 +491,10 @@ btendscan(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
+	if (!IsCatalogRelation(scan->indexRelation))
+		elog(DEBUG1, "%s call to btendscan()",
+			 RelationGetRelationName(scan->indexRelation));
+
 	/* we aren't holding any read locks, but gotta drop the pins */
 	if (BTScanPosIsValid(so->currPos))
 	{
@@ -496,6 +531,10 @@ btmarkpos(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
+	if (!IsCatalogRelation(scan->indexRelation))
+		elog(DEBUG1, "%s call to btmarkpos()",
+			 RelationGetRelationName(scan->indexRelation));
+
 	/* There may be an old mark with a pin (but no lock). */
 	BTScanPosUnpinIfPinned(so->markPos);
 
@@ -525,6 +564,10 @@ void
 btrestrpos(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+
+	if (!IsCatalogRelation(scan->indexRelation))
+		elog(DEBUG1, "%s call to btrestrpos()",
+			 RelationGetRelationName(scan->indexRelation));
 
 	/* Restore the marked positions of any array keys */
 	if (so->numArrayKeys)
@@ -877,6 +920,10 @@ btbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	Relation	rel = info->index;
 	BTCycleId	cycleid;
 
+	if (!IsCatalogRelation(rel))
+		elog(DEBUG1, "%s call to btbulkdelete()",
+			 RelationGetRelationName(rel));
+
 	/* allocate stats if first time through, else re-use existing struct */
 	if (stats == NULL)
 		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
@@ -906,6 +953,10 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	/* No-op in ANALYZE ONLY mode */
 	if (info->analyze_only)
 		return stats;
+
+	if (!IsCatalogRelation(info->index))
+		elog(DEBUG1, "%s call to btvacuumcleanup()",
+			 RelationGetRelationName(info->index));
 
 	/*
 	 * If btbulkdelete was called, we need not do anything, just return the
