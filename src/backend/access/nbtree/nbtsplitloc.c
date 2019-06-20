@@ -16,6 +16,7 @@
 
 #include "access/nbtree.h"
 #include "storage/lmgr.h"
+#include "math.h"
 
 /* limits on split interval (default strategy only) */
 #define MAX_LEAF_INTERVAL			9
@@ -64,6 +65,7 @@ typedef struct
 	int			interval;		/* current range of acceptable split points */
 } FindSplitData;
 
+static double _bt_correlation(int *lpoff, int n);
 static void _bt_recsplitloc(FindSplitData *state,
 							OffsetNumber firstoldonright, bool newitemonleft,
 							int olddataitemstoleft, Size firstoldonrightsz);
@@ -126,6 +128,8 @@ static inline IndexTuple _bt_split_firstright(FindSplitData *state,
 OffsetNumber
 _bt_findsplitloc(Relation rel,
 				 Page page,
+				 BTScanInsert itup_key,
+				 Buffer buf,
 				 OffsetNumber newitemoff,
 				 Size newitemsz,
 				 IndexTuple newitem,
@@ -148,6 +152,10 @@ _bt_findsplitloc(Relation rel,
 	bool		usemult;
 	SplitPoint	leftpage,
 				rightpage;
+	int lpoff[MaxIndexTuplesPerPage];
+	int ii = 0;
+	BlockNumber low = MaxBlockNumber, high = 0;
+	BlockNumber origpagenumber = BufferGetBlockNumber(buf);
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -205,9 +213,16 @@ _bt_findsplitloc(Relation rel,
 		 offnum = OffsetNumberNext(offnum))
 	{
 		Size		itemsz;
+		IndexTuple	tup;
 
 		itemid = PageGetItemId(page, offnum);
 		itemsz = MAXALIGN(ItemIdGetLength(itemid)) + sizeof(ItemIdData);
+		tup = (IndexTuple) PageGetItem(page, itemid);
+
+		lpoff[ii++] = ItemIdGetOffset(itemid);
+
+		low = Min(low, ItemPointerGetBlockNumberNoCheck(&tup->t_tid));
+		high = Max(high, ItemPointerGetBlockNumberNoCheck(&tup->t_tid));
 
 		/*
 		 * When item offset number is not newitemoff, neither side of the
@@ -256,6 +271,13 @@ _bt_findsplitloc(Relation rel,
 			 RelationGetRelationName(rel));
 
 	/*
+	 * Save leftmost and rightmost splits for page before original ordinal
+	 * sort order is lost by delta/fillfactormult sort
+	 */
+	leftpage = state.splits[0];
+	rightpage = state.splits[state.nsplits - 1];
+
+	/*
 	 * Start search for a split point among list of legal split points.  Give
 	 * primary consideration to equalizing available free space in each half
 	 * of the split initially (start with default strategy), while applying
@@ -280,7 +302,10 @@ _bt_findsplitloc(Relation rel,
 	}
 	else if (state.is_rightmost)
 	{
+		double		coeff;
+
 		/* Rightmost leaf page --  fillfactormult always used */
+		coeff = _bt_correlation(lpoff, ii);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
 	}
@@ -324,10 +349,66 @@ _bt_findsplitloc(Relation rel,
 	}
 	else
 	{
+		//printf("50:50\n");
 		/* Other leaf page.  50:50 page split. */
 		usemult = false;
 		/* fillfactormult not used, but be tidy */
 		fillfactormult = 0.50;
+	}
+
+	/* 842 == btint8cmp */
+	/* 351 == btint4cmp */
+	if (itup_key && (itup_key->scankeys[0].sk_func.fn_oid == 842 ||
+					 itup_key->scankeys[0].sk_func.fn_oid == 351))
+	{
+		IndexTuple	leftmost, rightmost;
+		ScanKey skey = &itup_key->scankeys[0];
+		int64 lint, rint, diff, interp;
+		TupleDesc	itupdesc = RelationGetDescr(rel);
+		Datum	datum;
+		bool	isNull;
+
+		leftmost = _bt_split_lastleft(&state, &leftpage);
+		rightmost = _bt_split_firstright(&state, &rightpage);
+
+		datum = index_getattr(leftmost, skey->sk_attno, itupdesc, &isNull);
+		if (!isNull)
+			lint = DatumGetInt64(datum);
+		else
+			lint = -1;
+
+		datum = index_getattr(rightmost, skey->sk_attno, itupdesc, &isNull);
+		if (!isNull)
+			rint = DatumGetInt64(datum);
+		else
+			rint = -1;
+
+		if (rint != -1 && lint != -1)
+			diff = rint - lint;
+		else
+			diff = -1;
+		interp = lint + (diff * leaffillfactor);
+		//interp = lint + (diff * 0.5);
+
+		//elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
+
+		if (diff > 30 || diff < -30)
+		{
+			OffsetNumber offnum;
+			BTInsertStateData insertstate;
+			// XXX destructive temporary hack
+			itup_key->scankeys[0].sk_argument = Int64GetDatum(interp);
+
+			insertstate.itup = NULL;
+			insertstate.itemsz = 0;
+			insertstate.itup_key = itup_key;
+			insertstate.bounds_valid = false;
+			insertstate.buf = buf;
+
+			/* Get matching tuple on leaf page */
+			offnum = _bt_binsrch_insert(rel, &insertstate);
+			fillfactormult = (double) offnum / ((double) maxoff - 0);
+		}
 	}
 
 	/*
@@ -342,13 +423,6 @@ _bt_findsplitloc(Relation rel,
 	state.interval = Min(Max(1, state.nsplits * 0.05),
 						 state.is_leaf ? MAX_LEAF_INTERVAL :
 						 MAX_INTERNAL_INTERVAL);
-
-	/*
-	 * Save leftmost and rightmost splits for page before original ordinal
-	 * sort order is lost by delta/fillfactormult sort
-	 */
-	leftpage = state.splits[0];
-	rightpage = state.splits[state.nsplits - 1];
 
 	/* Give split points a fillfactormult-wise delta, and sort on deltas */
 	_bt_deltasortsplits(&state, fillfactormult, usemult);
@@ -422,7 +496,65 @@ _bt_findsplitloc(Relation rel,
 	foundfirstright = _bt_bestsplitloc(&state, perfectpenalty, newitemonleft);
 	pfree(state.splits);
 
+	if (state.is_rightmost && itup_key && itup_key->scankeys[0].sk_func.fn_oid == 842)
+	{
+		IndexTuple fin;
+		ScanKey skey = &itup_key->scankeys[0];
+		int64 final;
+		TupleDesc	itupdesc = RelationGetDescr(rel);
+		Datum	datum;
+		bool	isNull;
+
+		itemid = PageGetItemId(page, Min(maxoff, foundfirstright));
+		fin =	(IndexTuple) PageGetItem(page, itemid);
+
+		datum = index_getattr(fin, skey->sk_attno, itupdesc, &isNull);
+		if (!isNull)
+			final = DatumGetInt64(datum);
+		else
+			final = -1;
+
+		//elog(WARNING, "final %ld", final);
+	}
+	//elog(DEBUG1, "splitting block at %u", foundfirstright);
 	return foundfirstright;
+}
+
+// X = offset numbers, y = lp_off
+static double
+_bt_correlation(int *lpoff, int n)
+{
+	double	sum_X = 0, sum_lpoff = 0, sum_XY = 0;
+	double	squareSum_X = 0, squareSum_lpoff = 0;
+	double	corr;
+
+	for (int i = 0; i < n; i++)
+	{
+		// sum of offsetnumber elements.
+		sum_X = sum_X + (i + 1);
+
+		// sum of lp_off elements.
+		sum_lpoff = sum_lpoff + lpoff[i];
+		//elog(WARNING, "lp off %d", lpoff[i]);
+
+		// sum of X[i] * Y[i].
+		sum_XY = sum_XY + (i + 1) * lpoff[i];
+
+		// sum of square of array elements.
+		squareSum_X = squareSum_X + (i + 1) * (i + 1);
+		squareSum_lpoff = squareSum_lpoff + lpoff[i] * lpoff[i];
+	}
+
+#if 0
+	elog(WARNING, "sum_X %lf for %d items", sum_X, n);
+	elog(WARNING, "sum_lpoff %lf", sum_lpoff);
+#endif
+	// use formula for calculating correlation coefficient.
+	corr = (double) (n * sum_XY - sum_X * sum_lpoff) /
+		   sqrt((n * squareSum_X - sum_X * sum_X) *
+				(n * squareSum_lpoff - sum_lpoff * sum_lpoff));
+
+	return corr;
 }
 
 /*
