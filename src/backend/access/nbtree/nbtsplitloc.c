@@ -428,6 +428,7 @@ _bt_findsplitloc(Relation rel,
 	foundfirstright = _bt_bestsplitloc(&state, perfectpenalty, newitemonleft);
 	pfree(state.splits);
 
+	elog(DEBUG1, "splitting block %u at %u", origpagenumber, foundfirstright);
 	return foundfirstright;
 }
 
