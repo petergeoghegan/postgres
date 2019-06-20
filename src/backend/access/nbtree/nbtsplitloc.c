@@ -126,6 +126,7 @@ static inline IndexTuple _bt_split_firstright(FindSplitData *state,
 OffsetNumber
 _bt_findsplitloc(Relation rel,
 				 Page page,
+				 BlockNumber origpagenumber,
 				 OffsetNumber newitemoff,
 				 Size newitemsz,
 				 IndexTuple newitem,
@@ -281,8 +282,13 @@ _bt_findsplitloc(Relation rel,
 	else if (state.is_rightmost)
 	{
 		/* Rightmost leaf page --  fillfactormult always used */
+		double		interp = (double) state.newitemoff / ((double) maxoff + 1);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
+		elog(DEBUG1, "rightmost split (block %u, left %u) has newitem %u out of %u",
+			 origpagenumber, opaque->btpo_prev, newitemoff, maxoff);
+		if (opaque->btpo_prev != origpagenumber - 1 || newitemoff < maxoff)
+			fillfactormult = Min(interp, 0.65);
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
 	{
