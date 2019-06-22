@@ -16,6 +16,7 @@
 
 #include "access/nbtree.h"
 #include "storage/lmgr.h"
+#include "math.h"
 
 /* limits on split interval (default strategy only) */
 #define MAX_LEAF_INTERVAL			9
@@ -64,6 +65,7 @@ typedef struct
 	int			interval;		/* current range of acceptable split points */
 } FindSplitData;
 
+static double correlationCoefficient(int *lpoff, int n);
 static void _bt_recsplitloc(FindSplitData *state,
 							OffsetNumber firstoldonright, bool newitemonleft,
 							int olddataitemstoleft, Size firstoldonrightsz);
@@ -146,9 +148,12 @@ _bt_findsplitloc(Relation rel,
 				maxoff,
 				foundfirstright;
 	double		fillfactormult;
+	double		coeff;
 	bool		usemult;
 	SplitPoint	leftpage,
 				rightpage;
+	int lpoff[MaxIndexTuplesPerPage];
+	int ii = 0;
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -210,6 +215,8 @@ _bt_findsplitloc(Relation rel,
 		itemid = PageGetItemId(page, offnum);
 		itemsz = MAXALIGN(ItemIdGetLength(itemid)) + sizeof(ItemIdData);
 
+		lpoff[ii++] = ItemIdGetOffset(itemid);
+
 		/*
 		 * When item offset number is not newitemoff, neither side of the
 		 * split can be newitem.  Record a split after the previous data item
@@ -247,6 +254,9 @@ _bt_findsplitloc(Relation rel,
 	Assert(olddataitemstoleft == olddataitemstotal);
 	if (newitemoff > maxoff)
 		_bt_recsplitloc(&state, newitemoff, false, olddataitemstotal, 0);
+
+	coeff = correlationCoefficient(lpoff, ii);
+	//elog(WARNING, "coefficient %lf", coeff);
 
 	/*
 	 * I believe it is not possible to fail to find a feasible split, but just
@@ -287,8 +297,19 @@ _bt_findsplitloc(Relation rel,
 		fillfactormult = leaffillfactor / 100.0;
 		elog(DEBUG1, "rightmost split (block %u, left %u) has newitem %u out of %u",
 			 origpagenumber, opaque->btpo_prev, newitemoff, maxoff);
+#if 0
 		if (opaque->btpo_prev != origpagenumber - 1 || newitemoff < maxoff)
 			fillfactormult = Min(interp, 0.65);
+#endif
+		if (coeff < 0)
+			coeff = (-coeff);
+		if (coeff > 0.95)
+			fillfactormult = leaffillfactor / 100.0;
+		else if (coeff > 0.8)
+			fillfactormult = 0.8;
+		else
+			fillfactormult = 0.7;
+
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
 	{
@@ -430,6 +451,42 @@ _bt_findsplitloc(Relation rel,
 
 	elog(DEBUG1, "splitting block %u at %u", origpagenumber, foundfirstright);
 	return foundfirstright;
+}
+
+// X = offset numbers, y = lp_off
+static double
+correlationCoefficient(int *lpoff, int n)
+{
+	double sum_X = 0, sum_lpoff = 0, sum_XY = 0;
+	double squareSum_X = 0, squareSum_lpoff = 0;
+
+	for (int i = 0; i < n; i++)
+	{
+		// sum of offsetnumber elements.
+		sum_X = sum_X + (i + 1);
+
+		// sum of lp_off elements.
+		sum_lpoff = sum_lpoff + lpoff[i];
+		//elog(WARNING, "lp off %d", lpoff[i]);
+
+		// sum of X[i] * Y[i].
+		sum_XY = sum_XY + (i + 1) * lpoff[i];
+
+		// sum of square of array elements.
+		squareSum_X = squareSum_X + (i + 1) * (i + 1);
+		squareSum_lpoff = squareSum_lpoff + lpoff[i] * lpoff[i];
+	}
+
+#if 0
+	elog(WARNING, "sum_X %lf for %d items", sum_X, n);
+	elog(WARNING, "sum_lpoff %lf", sum_lpoff);
+#endif
+	// use formula for calculating correlation coefficient.
+	double corr = (double) (n * sum_XY - sum_X * sum_lpoff) /
+				  sqrt((n * squareSum_X - sum_X * sum_X) *
+					   (n * squareSum_lpoff - sum_lpoff * sum_lpoff));
+
+	return corr;
 }
 
 /*
