@@ -255,8 +255,11 @@ _bt_findsplitloc(Relation rel,
 	if (newitemoff > maxoff)
 		_bt_recsplitloc(&state, newitemoff, false, olddataitemstotal, 0);
 
-	coeff = correlationCoefficient(lpoff, ii);
-	//elog(WARNING, "coefficient %lf", coeff);
+	if (state.is_rightmost)
+	{
+		coeff = correlationCoefficient(lpoff, ii);
+		//elog(WARNING, "coefficient %lf", coeff);
+	}
 
 	/*
 	 * I believe it is not possible to fail to find a feasible split, but just
