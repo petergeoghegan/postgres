@@ -295,20 +295,23 @@ _bt_findsplitloc(Relation rel,
 		double		interp = (double) state.newitemoff / ((double) maxoff + 1);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
+#if 0
 		elog(DEBUG1, "rightmost split (block %u, left %u) has newitem %u out of %u",
 			 origpagenumber, opaque->btpo_prev, newitemoff, maxoff);
+#endif
 #if 0
 		if (opaque->btpo_prev != origpagenumber - 1 || newitemoff < maxoff)
 			fillfactormult = Min(interp, 0.65);
 #endif
+		printf("%fl\n", coeff);
 		if (coeff < 0)
 			coeff = (-coeff);
-		if (coeff > 0.95)
+		if (coeff > 0.999)
 			fillfactormult = leaffillfactor / 100.0;
-		else if (coeff > 0.8)
-			fillfactormult = 0.8;
-		else
+		else if (coeff > 0.80)
 			fillfactormult = 0.7;
+		else
+			fillfactormult = 0.6;
 
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
@@ -351,6 +354,7 @@ _bt_findsplitloc(Relation rel,
 	}
 	else
 	{
+		printf("50:50\n");
 		/* Other leaf page.  50:50 page split. */
 		usemult = false;
 		/* fillfactormult not used, but be tidy */
@@ -449,7 +453,7 @@ _bt_findsplitloc(Relation rel,
 	foundfirstright = _bt_bestsplitloc(&state, perfectpenalty, newitemonleft);
 	pfree(state.splits);
 
-	elog(DEBUG1, "splitting block %u at %u", origpagenumber, foundfirstright);
+	//elog(DEBUG1, "splitting block %u at %u", origpagenumber, foundfirstright);
 	return foundfirstright;
 }
 
@@ -457,8 +461,9 @@ _bt_findsplitloc(Relation rel,
 static double
 correlationCoefficient(int *lpoff, int n)
 {
-	double sum_X = 0, sum_lpoff = 0, sum_XY = 0;
-	double squareSum_X = 0, squareSum_lpoff = 0;
+	double	sum_X = 0, sum_lpoff = 0, sum_XY = 0;
+	double	squareSum_X = 0, squareSum_lpoff = 0;
+	double	corr;
 
 	for (int i = 0; i < n; i++)
 	{
@@ -482,7 +487,7 @@ correlationCoefficient(int *lpoff, int n)
 	elog(WARNING, "sum_lpoff %lf", sum_lpoff);
 #endif
 	// use formula for calculating correlation coefficient.
-	double corr = (double) (n * sum_XY - sum_X * sum_lpoff) /
+	corr = (double) (n * sum_XY - sum_X * sum_lpoff) /
 				  sqrt((n * squareSum_X - sum_X * sum_X) *
 					   (n * squareSum_lpoff - sum_lpoff * sum_lpoff));
 
