@@ -311,10 +311,8 @@ _bt_findsplitloc(Relation rel,
 			coeff = (-coeff);
 		if (coeff > 0.999)
 			fillfactormult = leaffillfactor / 100.0;
-		else if (coeff > 0.80)
+		else //if (coeff > 0.80)
 			fillfactormult = 0.7;
-		else
-			fillfactormult = 0.6;
 
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
