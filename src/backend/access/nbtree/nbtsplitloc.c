@@ -294,10 +294,9 @@ _bt_findsplitloc(Relation rel,
 	else if (state.is_rightmost)
 	{
 		/* Rightmost leaf page --  fillfactormult always used */
-		double		interp = (double) state.newitemoff / ((double) maxoff + 1);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
-		//printf("%fl\n", coeff);
+		//printf("%s %fl\n", RelationGetRelationName(rel), coeff);
 		if (coeff < 0)
 			coeff = (-coeff);
 		if (coeff > 0.999)
