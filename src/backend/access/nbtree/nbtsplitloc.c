@@ -65,7 +65,7 @@ typedef struct
 	int			interval;		/* current range of acceptable split points */
 } FindSplitData;
 
-static double correlationCoefficient(int *lpoff, int n);
+static double _bt_correlation(int *lpoff, int n);
 static void _bt_recsplitloc(FindSplitData *state,
 							OffsetNumber firstoldonright, bool newitemonleft,
 							int olddataitemstoleft, Size firstoldonrightsz);
@@ -256,7 +256,7 @@ _bt_findsplitloc(Relation rel,
 
 	if (state.is_rightmost)
 	{
-		coeff = correlationCoefficient(lpoff, ii);
+		coeff = _bt_correlation(lpoff, ii);
 		//elog(WARNING, "coefficient %lf", coeff);
 	}
 
@@ -451,7 +451,7 @@ _bt_findsplitloc(Relation rel,
 
 // X = offset numbers, y = lp_off
 static double
-correlationCoefficient(int *lpoff, int n)
+_bt_correlation(int *lpoff, int n)
 {
 	double	sum_X = 0, sum_lpoff = 0, sum_XY = 0;
 	double	squareSum_X = 0, squareSum_lpoff = 0;
