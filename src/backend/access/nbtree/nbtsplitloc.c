@@ -480,8 +480,8 @@ _bt_correlation(int *lpoff, int n)
 #endif
 	// use formula for calculating correlation coefficient.
 	corr = (double) (n * sum_XY - sum_X * sum_lpoff) /
-				  sqrt((n * squareSum_X - sum_X * sum_X) *
-					   (n * squareSum_lpoff - sum_lpoff * sum_lpoff));
+		   sqrt((n * squareSum_X - sum_X * sum_X) *
+				(n * squareSum_lpoff - sum_lpoff * sum_lpoff));
 
 	return corr;
 }
