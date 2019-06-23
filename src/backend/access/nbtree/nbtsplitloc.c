@@ -306,7 +306,7 @@ _bt_findsplitloc(Relation rel,
 		if (opaque->btpo_prev != origpagenumber - 1 || newitemoff < maxoff)
 			fillfactormult = Min(interp, 0.65);
 #endif
-		printf("%fl\n", coeff);
+		//printf("%fl\n", coeff);
 		if (coeff < 0)
 			coeff = (-coeff);
 		if (coeff > 0.999)
@@ -357,7 +357,7 @@ _bt_findsplitloc(Relation rel,
 	}
 	else
 	{
-		printf("50:50\n");
+		//printf("50:50\n");
 		/* Other leaf page.  50:50 page split. */
 		usemult = false;
 		/* fillfactormult not used, but be tidy */
