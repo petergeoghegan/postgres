@@ -737,7 +737,7 @@ extern void _bt_finish_split(Relation rel, Buffer bbuf, BTStack stack);
 /*
  * prototypes for functions in nbtsplitloc.c
  */
-extern OffsetNumber _bt_findsplitloc(Relation rel, Page page,
+extern OffsetNumber _bt_findsplitloc(Relation rel, Page page, BlockNumber origpagenumber,
 									 OffsetNumber newitemoff, Size newitemsz, IndexTuple newitem,
 									 bool *newitemonleft);
 

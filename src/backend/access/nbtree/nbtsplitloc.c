@@ -128,6 +128,7 @@ static inline IndexTuple _bt_split_firstright(FindSplitData *state,
 OffsetNumber
 _bt_findsplitloc(Relation rel,
 				 Page page,
+				 BlockNumber origpagenumber,
 				 OffsetNumber newitemoff,
 				 Size newitemsz,
 				 IndexTuple newitem,
@@ -153,6 +154,7 @@ _bt_findsplitloc(Relation rel,
 				rightpage;
 	int lpoff[MaxIndexTuplesPerPage];
 	int ii = 0;
+	BlockNumber low = MaxBlockNumber, high = 0;
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -210,11 +212,16 @@ _bt_findsplitloc(Relation rel,
 		 offnum = OffsetNumberNext(offnum))
 	{
 		Size		itemsz;
+		IndexTuple	tup;
 
 		itemid = PageGetItemId(page, offnum);
 		itemsz = MAXALIGN(ItemIdGetLength(itemid)) + sizeof(ItemIdData);
+		tup = (IndexTuple) PageGetItem(page, itemid);
 
 		lpoff[ii++] = ItemIdGetOffset(itemid);
+
+		low = Min(low, ItemPointerGetBlockNumberNoCheck(&tup->t_tid));
+		high = Max(high, ItemPointerGetBlockNumberNoCheck(&tup->t_tid));
 
 		/*
 		 * When item offset number is not newitemoff, neither side of the
@@ -296,13 +303,16 @@ _bt_findsplitloc(Relation rel,
 		/* Rightmost leaf page --  fillfactormult always used */
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
-		//printf("%s %fl\n", RelationGetRelationName(rel), coeff);
+		//printf("%s %fl high %u low %u\n", RelationGetRelationName(rel), coeff, high, low);
 		if (coeff < 0)
 			coeff = (-coeff);
 		if (coeff > 0.999)
 			fillfactormult = leaffillfactor / 100.0;
 		else //if (coeff > 0.80)
 			fillfactormult = 0.7;
+		// needed for pk_holding_history2 to not bloat:
+		if (opaque->btpo_prev != origpagenumber - 1)
+			fillfactormult = 0.6;
 
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
