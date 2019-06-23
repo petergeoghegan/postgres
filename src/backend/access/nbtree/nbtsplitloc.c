@@ -148,7 +148,7 @@ _bt_findsplitloc(Relation rel,
 				maxoff,
 				foundfirstright;
 	double		fillfactormult;
-	double		coeff;
+	double		coeff = 0;
 	bool		usemult;
 	SplitPoint	leftpage,
 				rightpage;
