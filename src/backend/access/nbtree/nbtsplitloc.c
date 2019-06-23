@@ -312,7 +312,7 @@ _bt_findsplitloc(Relation rel,
 			fillfactormult = 0.7;
 		// needed for pk_holding_history2 to not bloat:
 		if (opaque->btpo_prev != origpagenumber - 1)
-			fillfactormult = 0.6;
+			fillfactormult = 0.55;
 
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
