@@ -386,10 +386,14 @@ _bt_findsplitloc(Relation rel,
 		else
 			diff = -1;
 		interp = lint + (diff * leaffillfactor);
-		elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
+		//elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
+
+		if (diff != -1)
 		{
 			OffsetNumber offnum;
 			BTInsertStateData insertstate;
+			// XXX destructive temporary hack
+			itup_key->scankeys[0].sk_argument = Int64GetDatum(interp);
 
 			insertstate.itup = NULL;
 			insertstate.itemsz = 0;
@@ -506,7 +510,7 @@ _bt_findsplitloc(Relation rel,
 		else
 			final = -1;
 
-		elog(WARNING, "final %ld", final);
+		//elog(WARNING, "final %ld", final);
 	}
 	//elog(DEBUG1, "splitting block at %u", foundfirstright);
 	return foundfirstright;
