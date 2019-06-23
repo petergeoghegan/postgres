@@ -128,7 +128,8 @@ static inline IndexTuple _bt_split_firstright(FindSplitData *state,
 OffsetNumber
 _bt_findsplitloc(Relation rel,
 				 Page page,
-				 BlockNumber origpagenumber,
+				 BTScanInsert itup_key,
+				 Buffer buf,
 				 OffsetNumber newitemoff,
 				 Size newitemsz,
 				 IndexTuple newitem,
@@ -154,6 +155,7 @@ _bt_findsplitloc(Relation rel,
 	int lpoff[MaxIndexTuplesPerPage];
 	int ii = 0;
 	BlockNumber low = MaxBlockNumber, high = 0;
+	BlockNumber origpagenumber = BufferGetBlockNumber(buf);
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -269,6 +271,13 @@ _bt_findsplitloc(Relation rel,
 			 RelationGetRelationName(rel));
 
 	/*
+	 * Save leftmost and rightmost splits for page before original ordinal
+	 * sort order is lost by delta/fillfactormult sort
+	 */
+	leftpage = state.splits[0];
+	rightpage = state.splits[state.nsplits - 1];
+
+	/*
 	 * Start search for a split point among list of legal split points.  Give
 	 * primary consideration to equalizing available free space in each half
 	 * of the split initially (start with default strategy), while applying
@@ -294,22 +303,59 @@ _bt_findsplitloc(Relation rel,
 	else if (state.is_rightmost)
 	{
 		double		coeff;
+		IndexTuple	leftmost,
+					rightmost;
 
 		/* Rightmost leaf page --  fillfactormult always used */
 		coeff = _bt_correlation(lpoff, ii);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
-		//printf("%s %fl high %u low %u\n", RelationGetRelationName(rel), coeff, high, low);
-		if (coeff < 0)
-			coeff = (-coeff);
-		if (coeff > 0.999)
-			fillfactormult = leaffillfactor / 100.0;
-		else //if (coeff > 0.80)
-			fillfactormult = 0.7;
-		// needed for pk_holding_history2 to not bloat:
-		if (opaque->btpo_prev != origpagenumber - 1)
-			fillfactormult = 0.55;
 
+		/* 842 == btint8cmp */
+		if (itup_key->scankeys[0].sk_func.fn_oid == 842)
+		{
+			ScanKey skey = &itup_key->scankeys[0];
+			int64 lint, rint, diff, interp;
+			TupleDesc	itupdesc = RelationGetDescr(rel);
+			Datum	datum;
+			bool	isNull;
+
+			leftmost = _bt_split_lastleft(&state, &leftpage);
+			rightmost = _bt_split_firstright(&state, &rightpage);
+
+			datum = index_getattr(leftmost, skey->sk_attno, itupdesc, &isNull);
+			if (!isNull)
+				lint = DatumGetInt64(datum);
+			else
+				lint = -1;
+
+			datum = index_getattr(rightmost, skey->sk_attno, itupdesc, &isNull);
+			if (!isNull)
+				rint = DatumGetInt64(datum);
+			else
+				rint = -1;
+
+			if (rint != -1 && lint != -1)
+				diff = rint - lint;
+			else
+				diff = -1;
+			interp = lint + (diff * 0.9);
+			elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
+			{
+				OffsetNumber offnum;
+				BTInsertStateData insertstate;
+
+				insertstate.itup = NULL;
+				insertstate.itemsz = 0;
+				insertstate.itup_key = itup_key;
+				insertstate.bounds_valid = false;
+				insertstate.buf = buf;
+
+				/* Get matching tuple on leaf page */
+				offnum = _bt_binsrch_insert(rel, &insertstate);
+				fillfactormult = (double) offnum / ((double) maxoff + 1);
+			}
+		}
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
 	{
@@ -370,13 +416,6 @@ _bt_findsplitloc(Relation rel,
 	state.interval = Min(Max(1, state.nsplits * 0.05),
 						 state.is_leaf ? MAX_LEAF_INTERVAL :
 						 MAX_INTERNAL_INTERVAL);
-
-	/*
-	 * Save leftmost and rightmost splits for page before original ordinal
-	 * sort order is lost by delta/fillfactormult sort
-	 */
-	leftpage = state.splits[0];
-	rightpage = state.splits[state.nsplits - 1];
 
 	/* Give split points a fillfactormult-wise delta, and sort on deltas */
 	_bt_deltasortsplits(&state, fillfactormult, usemult);
@@ -450,6 +489,26 @@ _bt_findsplitloc(Relation rel,
 	foundfirstright = _bt_bestsplitloc(&state, perfectpenalty, newitemonleft);
 	pfree(state.splits);
 
+	if (state.is_rightmost && itup_key && itup_key->scankeys[0].sk_func.fn_oid == 842)
+	{
+		IndexTuple fin;
+		ScanKey skey = &itup_key->scankeys[0];
+		int64 final;
+		TupleDesc	itupdesc = RelationGetDescr(rel);
+		Datum	datum;
+		bool	isNull;
+
+		itemid = PageGetItemId(page, Min(maxoff, foundfirstright));
+		fin =	(IndexTuple) PageGetItem(page, itemid);
+
+		datum = index_getattr(fin, skey->sk_attno, itupdesc, &isNull);
+		if (!isNull)
+			final = DatumGetInt64(datum);
+		else
+			final = -1;
+
+		elog(WARNING, "final %ld", final);
+	}
 	//elog(DEBUG1, "splitting block at %u", foundfirstright);
 	return foundfirstright;
 }
