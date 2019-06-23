@@ -1274,8 +1274,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	 * the split every tuple goes on from context.  newitemonleft is usually
 	 * (but not always) redundant information.
 	 */
-	firstright = _bt_findsplitloc(rel, origpage, origpagenumber, newitemoff,
-								  newitemsz, newitem, &newitemonleft);
+	firstright = _bt_findsplitloc(rel, origpage, newitemoff, newitemsz,
+								  newitem, &newitemonleft);
 
 	/* Allocate temp buffer for leftpage */
 	leftpage = PageGetTempPage(origpage);
