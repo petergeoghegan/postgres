@@ -148,7 +148,6 @@ _bt_findsplitloc(Relation rel,
 				maxoff,
 				foundfirstright;
 	double		fillfactormult;
-	double		coeff = 0;
 	bool		usemult;
 	SplitPoint	leftpage,
 				rightpage;
@@ -261,12 +260,6 @@ _bt_findsplitloc(Relation rel,
 	if (newitemoff > maxoff)
 		_bt_recsplitloc(&state, newitemoff, false, olddataitemstotal, 0);
 
-	if (state.is_rightmost)
-	{
-		coeff = _bt_correlation(lpoff, ii);
-		//elog(WARNING, "coefficient %lf", coeff);
-	}
-
 	/*
 	 * I believe it is not possible to fail to find a feasible split, but just
 	 * in case ...
@@ -300,7 +293,10 @@ _bt_findsplitloc(Relation rel,
 	}
 	else if (state.is_rightmost)
 	{
+		double		coeff;
+
 		/* Rightmost leaf page --  fillfactormult always used */
+		coeff = _bt_correlation(lpoff, ii);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
 		//printf("%s %fl high %u low %u\n", RelationGetRelationName(rel), coeff, high, low);
