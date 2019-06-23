@@ -303,59 +303,11 @@ _bt_findsplitloc(Relation rel,
 	else if (state.is_rightmost)
 	{
 		double		coeff;
-		IndexTuple	leftmost,
-					rightmost;
 
 		/* Rightmost leaf page --  fillfactormult always used */
 		coeff = _bt_correlation(lpoff, ii);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
-
-		/* 842 == btint8cmp */
-		if (itup_key->scankeys[0].sk_func.fn_oid == 842)
-		{
-			ScanKey skey = &itup_key->scankeys[0];
-			int64 lint, rint, diff, interp;
-			TupleDesc	itupdesc = RelationGetDescr(rel);
-			Datum	datum;
-			bool	isNull;
-
-			leftmost = _bt_split_lastleft(&state, &leftpage);
-			rightmost = _bt_split_firstright(&state, &rightpage);
-
-			datum = index_getattr(leftmost, skey->sk_attno, itupdesc, &isNull);
-			if (!isNull)
-				lint = DatumGetInt64(datum);
-			else
-				lint = -1;
-
-			datum = index_getattr(rightmost, skey->sk_attno, itupdesc, &isNull);
-			if (!isNull)
-				rint = DatumGetInt64(datum);
-			else
-				rint = -1;
-
-			if (rint != -1 && lint != -1)
-				diff = rint - lint;
-			else
-				diff = -1;
-			interp = lint + (diff * 0.9);
-			elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
-			{
-				OffsetNumber offnum;
-				BTInsertStateData insertstate;
-
-				insertstate.itup = NULL;
-				insertstate.itemsz = 0;
-				insertstate.itup_key = itup_key;
-				insertstate.bounds_valid = false;
-				insertstate.buf = buf;
-
-				/* Get matching tuple on leaf page */
-				offnum = _bt_binsrch_insert(rel, &insertstate);
-				fillfactormult = (double) offnum / ((double) maxoff + 1);
-			}
-		}
 	}
 	else if (_bt_afternewitemoff(&state, maxoff, leaffillfactor, &usemult))
 	{
@@ -402,6 +354,53 @@ _bt_findsplitloc(Relation rel,
 		usemult = false;
 		/* fillfactormult not used, but be tidy */
 		fillfactormult = 0.50;
+	}
+
+	/* 842 == btint8cmp */
+	if (itup_key && itup_key->scankeys[0].sk_func.fn_oid == 842)
+	{
+		IndexTuple	leftmost, rightmost;
+		ScanKey skey = &itup_key->scankeys[0];
+		int64 lint, rint, diff, interp;
+		TupleDesc	itupdesc = RelationGetDescr(rel);
+		Datum	datum;
+		bool	isNull;
+
+		leftmost = _bt_split_lastleft(&state, &leftpage);
+		rightmost = _bt_split_firstright(&state, &rightpage);
+
+		datum = index_getattr(leftmost, skey->sk_attno, itupdesc, &isNull);
+		if (!isNull)
+			lint = DatumGetInt64(datum);
+		else
+			lint = -1;
+
+		datum = index_getattr(rightmost, skey->sk_attno, itupdesc, &isNull);
+		if (!isNull)
+			rint = DatumGetInt64(datum);
+		else
+			rint = -1;
+
+		if (rint != -1 && lint != -1)
+			diff = rint - lint;
+		else
+			diff = -1;
+		interp = lint + (diff * leaffillfactor);
+		elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
+		{
+			OffsetNumber offnum;
+			BTInsertStateData insertstate;
+
+			insertstate.itup = NULL;
+			insertstate.itemsz = 0;
+			insertstate.itup_key = itup_key;
+			insertstate.bounds_valid = false;
+			insertstate.buf = buf;
+
+			/* Get matching tuple on leaf page */
+			offnum = _bt_binsrch_insert(rel, &insertstate);
+			fillfactormult = (double) offnum / ((double) maxoff + 1);
+		}
 	}
 
 	/*
