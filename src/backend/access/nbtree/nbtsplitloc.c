@@ -357,7 +357,9 @@ _bt_findsplitloc(Relation rel,
 	}
 
 	/* 842 == btint8cmp */
-	if (itup_key && itup_key->scankeys[0].sk_func.fn_oid == 842)
+	/* 351 == btint4cmp */
+	if (itup_key && (itup_key->scankeys[0].sk_func.fn_oid == 842 ||
+					 itup_key->scankeys[0].sk_func.fn_oid == 351))
 	{
 		IndexTuple	leftmost, rightmost;
 		ScanKey skey = &itup_key->scankeys[0];
