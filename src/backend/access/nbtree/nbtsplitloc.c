@@ -157,7 +157,7 @@ _bt_findsplitloc(Relation rel,
 	SplitPoint	leftpage,
 				rightpage;
 	BlockNumber origpagenumber = BufferGetBlockNumber(buf);
-	int64 diff;
+	int64		diff = 0;
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -364,8 +364,8 @@ _bt_findsplitloc(Relation rel,
 		leftmost = _bt_split_lastleft(&state, &leftpage);
 		rightmost = _bt_split_firstright(&state, &rightpage);
 		diff = _bt_int8_distance(rel, itup_key, leftmost, rightmost, &lint);
-		interp = lint + (diff * leaffillfactor);
-		interp = lint + (diff * 0.5);
+		interp = lint + (diff * fillfactormult);
+		//interp = lint + (diff * 0.5);
 
 		if (diff > 50 || diff < -50)
 		{
@@ -374,11 +374,13 @@ _bt_findsplitloc(Relation rel,
 
 			// XXX destructive temporary hack
 			itup_key->scankeys[0].sk_argument = Int64GetDatum(interp);
+#if 0
 			elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
 			if (state.is_rightmost)
 				elog(WARNING, "rightmost block %u diff %ld", origpagenumber, diff);
 			else
 				elog(WARNING, "block %u diff %ld", origpagenumber, diff);
+#endif
 
 			insertstate.itup = NULL;
 			insertstate.itemsz = 0;
@@ -389,11 +391,12 @@ _bt_findsplitloc(Relation rel,
 			/* Get matching tuple on leaf page */
 			offnum = _bt_binsrch_insert(rel, &insertstate);
 			if (state.is_rightmost)
-				fillfactormult = (double) offnum + 1 / (double) maxoff + 1;
+				fillfactormult = (((double) offnum + 1) / ((double) maxoff + 1));
 			else
-				fillfactormult = (double) offnum + 0 / (double) maxoff + 1;
+				fillfactormult = (((double) offnum + 0) / ((double) maxoff + 1));
 
-			elog(WARNING, "target offnum %u", offnum);
+			usemult = true;
+			//elog(WARNING, "target offnum %u maxoff %u mult %f", offnum, maxoff, fillfactormult);
 			/* Look for clean break split point later*/
 			state.is_optimized = true;
 		}
@@ -412,6 +415,10 @@ _bt_findsplitloc(Relation rel,
 						 state.is_leaf ? MAX_LEAF_INTERVAL :
 						 MAX_INTERNAL_INTERVAL);
 
+	{
+		if (state.is_optimized && diff > 500)
+			state.interval = state.nsplits;
+	}
 	/* Give split points a fillfactormult-wise delta, and sort on deltas */
 	_bt_deltasortsplits(&state, fillfactormult, usemult);
 
@@ -436,8 +443,6 @@ _bt_findsplitloc(Relation rel,
 		 * Default strategy worked out (always works out with internal page).
 		 * Original split interval still stands.
 		 */
-		if (state.is_optimized && diff > 500)
-			state.interval = state.nsplits;
 	}
 
 	/*
@@ -1113,7 +1118,7 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 	if (!state->is_optimized)
 		return basepenalty;
 
-	elog(WARNING, "split %u", split->firstoldonright);
+	//elog(WARNING, "split %u", split->firstoldonright);
 	return -_bt_int8_distance(state->rel, state->itup_key, lastleftuple,
 							  firstrighttuple, NULL);
 }
@@ -1179,6 +1184,6 @@ _bt_int8_distance(Relation rel, BTScanInsert itup_key, IndexTuple lastleft,
 	if (lint)
 		*lint = llint;
 
-	elog(WARNING, "diff %ld", diff);
+	//elog(WARNING, "diff %ld", diff);
 	return diff;
 }
