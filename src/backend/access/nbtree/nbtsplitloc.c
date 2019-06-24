@@ -65,7 +65,6 @@ typedef struct
 	int			interval;		/* current range of acceptable split points */
 } FindSplitData;
 
-static double _bt_correlation(int *lpoff, int n);
 static void _bt_recsplitloc(FindSplitData *state,
 							OffsetNumber firstoldonright, bool newitemonleft,
 							int olddataitemstoleft, Size firstoldonrightsz);
@@ -152,9 +151,6 @@ _bt_findsplitloc(Relation rel,
 	bool		usemult;
 	SplitPoint	leftpage,
 				rightpage;
-	int lpoff[MaxIndexTuplesPerPage];
-	int ii = 0;
-	BlockNumber low = MaxBlockNumber, high = 0;
 	BlockNumber origpagenumber = BufferGetBlockNumber(buf);
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -213,16 +209,9 @@ _bt_findsplitloc(Relation rel,
 		 offnum = OffsetNumberNext(offnum))
 	{
 		Size		itemsz;
-		IndexTuple	tup;
 
 		itemid = PageGetItemId(page, offnum);
 		itemsz = MAXALIGN(ItemIdGetLength(itemid)) + sizeof(ItemIdData);
-		tup = (IndexTuple) PageGetItem(page, itemid);
-
-		lpoff[ii++] = ItemIdGetOffset(itemid);
-
-		low = Min(low, ItemPointerGetBlockNumberNoCheck(&tup->t_tid));
-		high = Max(high, ItemPointerGetBlockNumberNoCheck(&tup->t_tid));
 
 		/*
 		 * When item offset number is not newitemoff, neither side of the
@@ -302,10 +291,7 @@ _bt_findsplitloc(Relation rel,
 	}
 	else if (state.is_rightmost)
 	{
-		double		coeff;
-
 		/* Rightmost leaf page --  fillfactormult always used */
-		coeff = _bt_correlation(lpoff, ii);
 		usemult = true;
 		fillfactormult = leaffillfactor / 100.0;
 	}
@@ -349,7 +335,6 @@ _bt_findsplitloc(Relation rel,
 	}
 	else
 	{
-		//printf("50:50\n");
 		/* Other leaf page.  50:50 page split. */
 		usemult = false;
 		/* fillfactormult not used, but be tidy */
@@ -388,15 +373,21 @@ _bt_findsplitloc(Relation rel,
 		else
 			diff = -1;
 		interp = lint + (diff * leaffillfactor);
-		//interp = lint + (diff * 0.5);
+		interp = lint + (diff * 0.5);
 
-		//elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
 		if (diff > 50 || diff < -50)
 		{
 			OffsetNumber offnum;
 			BTInsertStateData insertstate;
 			// XXX destructive temporary hack
 			itup_key->scankeys[0].sk_argument = Int64GetDatum(interp);
+#if 0
+			elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
+			if (state.is_rightmost)
+				elog(WARNING, "rightmost block %u diff %ld", origpagenumber, diff);
+			else
+				elog(WARNING, "block %u diff %ld", origpagenumber, diff);
+#endif
 
 			insertstate.itup = NULL;
 			insertstate.itemsz = 0;
@@ -406,7 +397,10 @@ _bt_findsplitloc(Relation rel,
 
 			/* Get matching tuple on leaf page */
 			offnum = _bt_binsrch_insert(rel, &insertstate);
-			fillfactormult = (double) offnum / (double) maxoff;
+			if (state.is_rightmost)
+				fillfactormult = (double) offnum + 1 / (double) maxoff + 1;
+			else
+				fillfactormult = (double) offnum + 0 / (double) maxoff + 1;
 		}
 	}
 
@@ -517,43 +511,6 @@ _bt_findsplitloc(Relation rel,
 	}
 	//elog(DEBUG1, "splitting block at %u", foundfirstright);
 	return foundfirstright;
-}
-
-// X = offset numbers, y = lp_off
-static double
-_bt_correlation(int *lpoff, int n)
-{
-	double	sum_X = 0, sum_lpoff = 0, sum_XY = 0;
-	double	squareSum_X = 0, squareSum_lpoff = 0;
-	double	corr;
-
-	for (int i = 0; i < n; i++)
-	{
-		// sum of offsetnumber elements.
-		sum_X = sum_X + (i + 1);
-
-		// sum of lp_off elements.
-		sum_lpoff = sum_lpoff + lpoff[i];
-		//elog(WARNING, "lp off %d", lpoff[i]);
-
-		// sum of X[i] * Y[i].
-		sum_XY = sum_XY + (i + 1) * lpoff[i];
-
-		// sum of square of array elements.
-		squareSum_X = squareSum_X + (i + 1) * (i + 1);
-		squareSum_lpoff = squareSum_lpoff + lpoff[i] * lpoff[i];
-	}
-
-#if 0
-	elog(WARNING, "sum_X %lf for %d items", sum_X, n);
-	elog(WARNING, "sum_lpoff %lf", sum_lpoff);
-#endif
-	// use formula for calculating correlation coefficient.
-	corr = (double) (n * sum_XY - sum_X * sum_lpoff) /
-		   sqrt((n * squareSum_X - sum_X * sum_X) *
-				(n * squareSum_lpoff - sum_lpoff * sum_lpoff));
-
-	return corr;
 }
 
 /*
