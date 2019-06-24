@@ -919,14 +919,16 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 	leftmost = _bt_split_lastleft(state, leftinterval);
 	rightmost = _bt_split_firstright(state, rightinterval);
 
+	if (state->is_optimized)
+		return INT_MIN;
+
 	/*
 	 * If initial split interval can produce a split point that will at least
 	 * avoid appending a heap TID in new high key, we're done.  Finish split
 	 * with default strategy and initial split interval.
 	 */
-	//perfectpenalty = _bt_keep_natts_fast(state->rel, leftmost, rightmost);
-	perfectpenalty = INT_MIN;
-	//if (perfectpenalty <= indnkeyatts)
+	perfectpenalty = _bt_keep_natts_fast(state->rel, leftmost, rightmost);
+	if (perfectpenalty <= indnkeyatts)
 		return perfectpenalty;
 
 	/*
