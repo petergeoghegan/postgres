@@ -416,7 +416,7 @@ _bt_findsplitloc(Relation rel,
 						 MAX_INTERNAL_INTERVAL);
 
 	{
-		if (state.is_optimized && diff > 500)
+		if (state.is_optimized && diff > 100000)
 			state.interval = state.nsplits;
 	}
 	/* Give split points a fillfactormult-wise delta, and sort on deltas */
@@ -1159,7 +1159,7 @@ _bt_int8_distance(Relation rel, BTScanInsert itup_key, IndexTuple lastleft,
 				  IndexTuple firstright, int64 *lint)
 {
 	ScanKey skey = &itup_key->scankeys[0];
-	int64 llint, rint, diff, interp;
+	int64 llint, rint, diff;
 	TupleDesc	itupdesc = RelationGetDescr(rel);
 	Datum	datum;
 	bool	isNull;
