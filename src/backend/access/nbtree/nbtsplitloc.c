@@ -391,8 +391,7 @@ _bt_findsplitloc(Relation rel,
 		//interp = lint + (diff * 0.5);
 
 		//elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
-
-		if (diff > 30 || diff < -30)
+		if (diff > 120 || diff < -120)
 		{
 			OffsetNumber offnum;
 			BTInsertStateData insertstate;
@@ -407,7 +406,7 @@ _bt_findsplitloc(Relation rel,
 
 			/* Get matching tuple on leaf page */
 			offnum = _bt_binsrch_insert(rel, &insertstate);
-			fillfactormult = (double) offnum / ((double) maxoff - 0);
+			fillfactormult = (double) offnum / (double) maxoff;
 		}
 	}
 
