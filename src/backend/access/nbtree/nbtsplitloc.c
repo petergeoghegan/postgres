@@ -16,7 +16,6 @@
 
 #include "access/nbtree.h"
 #include "storage/lmgr.h"
-#include "math.h"
 
 /* limits on split interval (default strategy only) */
 #define MAX_LEAF_INTERVAL			9
