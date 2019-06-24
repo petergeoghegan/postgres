@@ -391,7 +391,7 @@ _bt_findsplitloc(Relation rel,
 		//interp = lint + (diff * 0.5);
 
 		//elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
-		if (diff > 120 || diff < -120)
+		if (diff > 50 || diff < -50)
 		{
 			OffsetNumber offnum;
 			BTInsertStateData insertstate;
