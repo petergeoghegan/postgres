@@ -376,7 +376,7 @@ _bt_findsplitloc(Relation rel,
 
 		if (diff > 50 || diff < -50)
 		{
-			OffsetNumber offnum;
+			OffsetNumber	  offnum;
 			BTInsertStateData insertstate;
 			// XXX destructive temporary hack
 			itup_key->scankeys[0].sk_argument = Int64GetDatum(interp);
