@@ -49,8 +49,11 @@ typedef struct
 	Page		page;			/* page undergoing split */
 	IndexTuple	newitem;		/* new item (cause of page split) */
 	Size		newitemsz;		/* size of newitem (includes line pointer) */
+
+	BTScanInsert itup_key;
 	bool		is_leaf;		/* T if splitting a leaf page */
 	bool		is_rightmost;	/* T if splitting rightmost page on level */
+	bool		is_optimized;	/* T if splitting int8 attribute */
 	OffsetNumber newitemoff;	/* where the new item is to be inserted */
 	int			leftspace;		/* space available for items on left page */
 	int			rightspace;		/* space available for items on right page */
@@ -84,6 +87,9 @@ static inline IndexTuple _bt_split_lastleft(FindSplitData *state,
 											SplitPoint *split);
 static inline IndexTuple _bt_split_firstright(FindSplitData *state,
 											  SplitPoint *split);
+static int64 _bt_int8_distance(Relation rel, BTScanInsert itup_key,
+							   IndexTuple lastleft, IndexTuple firstright,
+							   int64 *lint);
 
 
 /*
@@ -151,6 +157,7 @@ _bt_findsplitloc(Relation rel,
 	SplitPoint	leftpage,
 				rightpage;
 	BlockNumber origpagenumber = BufferGetBlockNumber(buf);
+	int64 diff;
 
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -178,8 +185,10 @@ _bt_findsplitloc(Relation rel,
 	state.page = page;
 	state.newitem = newitem;
 	state.newitemsz = newitemsz;
+	state.itup_key = itup_key;
 	state.is_leaf = P_ISLEAF(opaque);
 	state.is_rightmost = P_RIGHTMOST(opaque);
+	state.is_optimized = false;
 	state.leftspace = leftspace;
 	state.rightspace = rightspace;
 	state.olddataitemstotal = olddataitemstotal;
@@ -347,30 +356,14 @@ _bt_findsplitloc(Relation rel,
 	{
 		IndexTuple	leftmost, rightmost;
 		ScanKey skey = &itup_key->scankeys[0];
-		int64 lint, rint, diff, interp;
+		int64 lint, rint, interp;
 		TupleDesc	itupdesc = RelationGetDescr(rel);
 		Datum	datum;
 		bool	isNull;
 
 		leftmost = _bt_split_lastleft(&state, &leftpage);
 		rightmost = _bt_split_firstright(&state, &rightpage);
-
-		datum = index_getattr(leftmost, skey->sk_attno, itupdesc, &isNull);
-		if (!isNull)
-			lint = DatumGetInt64(datum);
-		else
-			lint = -1;
-
-		datum = index_getattr(rightmost, skey->sk_attno, itupdesc, &isNull);
-		if (!isNull)
-			rint = DatumGetInt64(datum);
-		else
-			rint = -1;
-
-		if (rint != -1 && lint != -1)
-			diff = rint - lint;
-		else
-			diff = -1;
+		diff = _bt_int8_distance(rel, itup_key, leftmost, rightmost, &lint);
 		interp = lint + (diff * leaffillfactor);
 		interp = lint + (diff * 0.5);
 
@@ -378,15 +371,14 @@ _bt_findsplitloc(Relation rel,
 		{
 			OffsetNumber	  offnum;
 			BTInsertStateData insertstate;
+
 			// XXX destructive temporary hack
 			itup_key->scankeys[0].sk_argument = Int64GetDatum(interp);
-#if 0
 			elog(WARNING, "left %ld right %ld interp %ld", lint, rint, interp);
 			if (state.is_rightmost)
 				elog(WARNING, "rightmost block %u diff %ld", origpagenumber, diff);
 			else
 				elog(WARNING, "block %u diff %ld", origpagenumber, diff);
-#endif
 
 			insertstate.itup = NULL;
 			insertstate.itemsz = 0;
@@ -400,6 +392,10 @@ _bt_findsplitloc(Relation rel,
 				fillfactormult = (double) offnum + 1 / (double) maxoff + 1;
 			else
 				fillfactormult = (double) offnum + 0 / (double) maxoff + 1;
+
+			elog(WARNING, "target offnum %u", offnum);
+			/* Look for clean break split point later*/
+			state.is_optimized = true;
 		}
 	}
 
@@ -440,6 +436,8 @@ _bt_findsplitloc(Relation rel,
 		 * Default strategy worked out (always works out with internal page).
 		 * Original split interval still stands.
 		 */
+		if (state.is_optimized && diff > 500)
+			state.interval = state.nsplits;
 	}
 
 	/*
@@ -854,12 +852,14 @@ _bt_bestsplitloc(FindSplitData *state, int perfectpenalty, bool *newitemonleft)
 
 		penalty = _bt_split_penalty(state, state->splits + i);
 
+#if 0
 		if (penalty <= perfectpenalty)
 		{
 			bestpenalty = penalty;
 			lowsplit = i;
 			break;
 		}
+#endif
 
 		if (penalty < bestpenalty)
 		{
@@ -919,8 +919,9 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 	 * avoid appending a heap TID in new high key, we're done.  Finish split
 	 * with default strategy and initial split interval.
 	 */
-	perfectpenalty = _bt_keep_natts_fast(state->rel, leftmost, rightmost);
-	if (perfectpenalty <= indnkeyatts)
+	//perfectpenalty = _bt_keep_natts_fast(state->rel, leftmost, rightmost);
+	perfectpenalty = INT_MIN;
+	//if (perfectpenalty <= indnkeyatts)
 		return perfectpenalty;
 
 	/*
@@ -1087,6 +1088,8 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 {
 	IndexTuple	lastleftuple;
 	IndexTuple	firstrighttuple;
+	int			basepenalty;
+	int64		diff;
 
 	if (!state->is_leaf)
 	{
@@ -1105,7 +1108,14 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 	firstrighttuple = _bt_split_firstright(state, split);
 
 	Assert(lastleftuple != firstrighttuple);
-	return _bt_keep_natts_fast(state->rel, lastleftuple, firstrighttuple);
+	basepenalty = _bt_keep_natts_fast(state->rel, lastleftuple, firstrighttuple);
+
+	if (!state->is_optimized)
+		return basepenalty;
+
+	elog(WARNING, "split %u", split->firstoldonright);
+	return -_bt_int8_distance(state->rel, state->itup_key, lastleftuple,
+							  firstrighttuple, NULL);
 }
 
 /*
@@ -1137,4 +1147,38 @@ _bt_split_firstright(FindSplitData *state, SplitPoint *split)
 
 	itemid = PageGetItemId(state->page, split->firstoldonright);
 	return (IndexTuple) PageGetItem(state->page, itemid);
+}
+
+static int64
+_bt_int8_distance(Relation rel, BTScanInsert itup_key, IndexTuple lastleft,
+				  IndexTuple firstright, int64 *lint)
+{
+	ScanKey skey = &itup_key->scankeys[0];
+	int64 llint, rint, diff, interp;
+	TupleDesc	itupdesc = RelationGetDescr(rel);
+	Datum	datum;
+	bool	isNull;
+
+	datum = index_getattr(lastleft, skey->sk_attno, itupdesc, &isNull);
+	if (!isNull)
+		llint = DatumGetInt64(datum);
+	else
+		llint = -1;
+
+	datum = index_getattr(firstright, skey->sk_attno, itupdesc, &isNull);
+	if (!isNull)
+		rint = DatumGetInt64(datum);
+	else
+		rint = -1;
+
+	if (rint != -1 && llint != -1)
+		diff = rint - llint;
+	else
+		diff = -1;
+
+	if (lint)
+		*lint = llint;
+
+	elog(WARNING, "diff %ld", diff);
+	return diff;
 }
