@@ -354,12 +354,12 @@ _bt_findsplitloc(Relation rel,
 	if (itup_key && (itup_key->scankeys[0].sk_func.fn_oid == 842 ||
 					 itup_key->scankeys[0].sk_func.fn_oid == 351))
 	{
-		IndexTuple	leftmost, rightmost;
-		ScanKey skey = &itup_key->scankeys[0];
-		int64 lint, rint, interp;
-		TupleDesc	itupdesc = RelationGetDescr(rel);
-		Datum	datum;
-		bool	isNull;
+		IndexTuple leftmost, rightmost;
+		ScanKey	skey = &itup_key->scankeys[0];
+		int64	  lint, rint, interp;
+		TupleDesc  itupdesc = RelationGetDescr(rel);
+		Datum	  datum;
+		bool	   isNull;
 
 		leftmost = _bt_split_lastleft(&state, &leftpage);
 		rightmost = _bt_split_firstright(&state, &rightpage);
