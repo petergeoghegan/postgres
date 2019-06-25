@@ -368,7 +368,7 @@ _bt_findsplitloc(Relation rel,
 		interp = lint + (diff * leaffillfactor);
 		//interp = lint + (diff * 0.5);
 
-		if (diff > 30 || diff < -30)
+		if (diff > 50 || diff < -50)
 		{
 			OffsetNumber	  offnum;
 			BTInsertStateData insertstate;
@@ -401,7 +401,6 @@ _bt_findsplitloc(Relation rel,
 			//elog(WARNING, "target offnum %u maxoff %u mult %f", offnum, maxoff, fillfactormult);
 			/* Look for clean break split point later*/
 			state.is_optimized = true;
-			fillfactormult = (double) offnum / ((double) maxoff - 0);
 		}
 	}
 
@@ -1126,7 +1125,7 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 		return basepenalty;
 
 	//elog(WARNING, "split %u", split->firstoldonright);
-	return _bt_int8_distance(state->rel, state->itup_key, lastleftuple,
+	return -_bt_int8_distance(state->rel, state->itup_key, lastleftuple,
 							  firstrighttuple, NULL);
 }
 
