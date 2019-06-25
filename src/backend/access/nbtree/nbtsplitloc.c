@@ -364,10 +364,11 @@ _bt_findsplitloc(Relation rel,
 		leftmost = _bt_split_lastleft(&state, &leftpage);
 		rightmost = _bt_split_firstright(&state, &rightpage);
 		diff = _bt_int8_distance(rel, itup_key, leftmost, rightmost, &lint);
-		interp = lint + (diff * fillfactormult);
+		// This is totally wrong, but seems to help!
+		interp = lint + (diff * leaffillfactor);
 		//interp = lint + (diff * 0.5);
 
-		if (diff > 50 || diff < -50)
+		if (diff > 30 || diff < -30)
 		{
 			OffsetNumber	  offnum;
 			BTInsertStateData insertstate;
@@ -395,10 +396,12 @@ _bt_findsplitloc(Relation rel,
 			else
 				fillfactormult = (((double) offnum + 0) / ((double) maxoff + 1));
 
-			usemult = true;
+			//usemult = true;
+
 			//elog(WARNING, "target offnum %u maxoff %u mult %f", offnum, maxoff, fillfactormult);
 			/* Look for clean break split point later*/
 			state.is_optimized = true;
+			fillfactormult = (double) offnum / ((double) maxoff - 0);
 		}
 	}
 
@@ -416,8 +419,10 @@ _bt_findsplitloc(Relation rel,
 						 MAX_INTERNAL_INTERVAL);
 
 	{
+#if 0
 		if (state.is_optimized && diff > 100000)
 			state.interval = state.nsplits;
+#endif
 	}
 	/* Give split points a fillfactormult-wise delta, and sort on deltas */
 	_bt_deltasortsplits(&state, fillfactormult, usemult);
@@ -857,14 +862,12 @@ _bt_bestsplitloc(FindSplitData *state, int perfectpenalty, bool *newitemonleft)
 
 		penalty = _bt_split_penalty(state, state->splits + i);
 
-#if 0
 		if (penalty <= perfectpenalty)
 		{
 			bestpenalty = penalty;
 			lowsplit = i;
 			break;
 		}
-#endif
 
 		if (penalty < bestpenalty)
 		{
@@ -919,8 +922,10 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 	leftmost = _bt_split_lastleft(state, leftinterval);
 	rightmost = _bt_split_firstright(state, rightinterval);
 
+#if 0
 	if (state->is_optimized)
 		return INT_MIN;
+#endif
 
 	/*
 	 * If initial split interval can produce a split point that will at least
@@ -1117,11 +1122,11 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 	Assert(lastleftuple != firstrighttuple);
 	basepenalty = _bt_keep_natts_fast(state->rel, lastleftuple, firstrighttuple);
 
-	if (!state->is_optimized)
+	//if (!state->is_optimized)
 		return basepenalty;
 
 	//elog(WARNING, "split %u", split->firstoldonright);
-	return -_bt_int8_distance(state->rel, state->itup_key, lastleftuple,
+	return _bt_int8_distance(state->rel, state->itup_key, lastleftuple,
 							  firstrighttuple, NULL);
 }
 
