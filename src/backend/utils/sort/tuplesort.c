@@ -757,7 +757,7 @@ tuplesort_begin_common(int workMem, SortCoordinate coordinate,
 	state->growmemtuples = true;
 	state->slabAllocatorUsed = false;
 	state->memtuples = (SortTuple *) palloc(state->memtupsize * sizeof(SortTuple));
-	state->single = NULL;
+	state->single = (Datum *) palloc(state->memtupsize * sizeof(Datum));
 
 	USEMEM(state, GetMemoryChunkSpace(state->memtuples));
 
@@ -818,6 +818,7 @@ tuplesort_begin_heap(TupleDesc tupDesc,
 	MemoryContext oldcontext;
 	int			i;
 
+	state->single = NULL;
 	oldcontext = MemoryContextSwitchTo(state->sortcontext);
 
 	AssertArg(nkeys > 0);
@@ -892,6 +893,7 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 	MemoryContext oldcontext;
 	int			i;
 
+	state->single = NULL;
 	Assert(indexRel->rd_rel->relam == BTREE_AM_OID);
 
 	oldcontext = MemoryContextSwitchTo(state->sortcontext);
@@ -989,6 +991,7 @@ tuplesort_begin_index_btree(Relation heapRel,
 	MemoryContext oldcontext;
 	int			i;
 
+	state->single = NULL;
 	oldcontext = MemoryContextSwitchTo(state->sortcontext);
 
 #ifdef TRACE_SORT
@@ -1067,6 +1070,7 @@ tuplesort_begin_index_hash(Relation heapRel,
 												   randomAccess);
 	MemoryContext oldcontext;
 
+	state->single = NULL;
 	oldcontext = MemoryContextSwitchTo(state->sortcontext);
 
 #ifdef TRACE_SORT
@@ -1169,9 +1173,11 @@ tuplesort_begin_datum(Oid datumType, Oid sortOperator, Oid sortCollation,
 	if (!state->sortKeys->abbrev_converter)
 	{
 		state->onlyKey = state->sortKeys;
-		if (!state->tuples)
-			state->single = (Datum *) palloc(state->memtupsize * sizeof(Datum));
+		if (state->tuples)
+			state->single = NULL;
 	}
+	else
+		state->single = NULL;
 
 	MemoryContextSwitchTo(oldcontext);
 
