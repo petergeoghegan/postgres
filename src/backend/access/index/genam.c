@@ -358,6 +358,9 @@ systable_beginscan(Relation heapRelation,
 	SysScanDesc sysscan;
 	Relation	irel;
 
+#ifdef HYU_LLT
+    heapRelation->is_systable = true;
+#endif
 	if (indexOK &&
 		!IgnoreSystemIndexes &&
 		!ReindexIsProcessingIndex(indexId))
@@ -570,6 +573,9 @@ systable_beginscan_ordered(Relation heapRelation,
 	SysScanDesc sysscan;
 	int			i;
 
+#ifdef HYU_LLT
+    heapRelation->is_systable = true;
+#endif
 	/* REINDEX can probably be a hard error here ... */
 	if (ReindexIsProcessingIndex(RelationGetRelid(indexRelation)))
 		elog(ERROR, "cannot do ordered scan on index \"%s\", because it is being reindexed",

@@ -131,6 +131,13 @@
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 #include "utils/varlena.h"
+#ifdef HYU_LLT
+#include "storage/vcluster.h"
+#include "storage/dead_zone.h"
+#ifdef HYU_LLT_STAT
+#include "storage/vstatistic.h"
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 
 #ifdef EXEC_BACKEND
 #include "storage/spin.h"
@@ -253,6 +260,14 @@ static pid_t StartupPID = 0,
 			WalWriterPID = 0,
 			WalReceiverPID = 0,
 			AutoVacPID = 0,
+#ifdef HYU_LLT
+			VCutterPID = 0,
+			DeadZoneUpdaterPID = 0,
+			GCPID = 0,
+#ifdef HYU_LLT_STAT
+			MonitorPID = 0,
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 			PgArchPID = 0,
 			PgStatPID = 0,
 			SysLoggerPID = 0;
@@ -572,6 +587,10 @@ PostmasterMain(int argc, char *argv[])
 	bool		listen_addr_saved = false;
 	int			i;
 	char	   *output_config_variable = NULL;
+
+#ifdef HYU_LLT /* USEFUL BREAKPOINT */
+	//sleep(10);
+#endif
 
 	InitProcessGlobals();
 
@@ -1084,6 +1103,14 @@ PostmasterMain(int argc, char *argv[])
 	 * If enabled, start up syslogger collection subprocess
 	 */
 	SysLoggerPID = SysLogger_Start();
+#ifdef HYU_LLT
+	VCutterPID = StartVCutter();
+	DeadZoneUpdaterPID = StartDeadZoneUpdater();
+	GCPID = StartGC();
+#ifdef HYU_LLT_STAT
+	MonitorPID = StartMonitor();
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 
 	/*
 	 * Reset whereToSendOutput from DestDebug (its starting state) to
@@ -1773,9 +1800,12 @@ ServerLoop(void)
 			(AutoVacuumingActive() || start_autovac_launcher) &&
 			pmState == PM_RUN)
 		{
+#ifdef HYU_LLT
+#else
 			AutoVacPID = StartAutoVacLauncher();
 			if (AutoVacPID != 0)
 				start_autovac_launcher = false; /* signal processed */
+#endif
 		}
 
 		/* If we have lost the stats collector, try to start a new one */
@@ -2780,6 +2810,18 @@ pmdie(SIGNAL_ARGS)
 				/* and the walwriter too */
 				if (WalWriterPID != 0)
 					signal_child(WalWriterPID, SIGTERM);
+#ifdef HYU_LLT
+				if (VCutterPID != 0)
+					signal_child(VCutterPID, SIGTERM);
+				if (DeadZoneUpdaterPID != 0)
+					signal_child(DeadZoneUpdaterPID, SIGTERM);
+				if (GCPID != 0)
+					signal_child(GCPID, SIGTERM);
+#ifdef HYU_LLT_STAT
+				if (MonitorPID != 0)
+					signal_child(MonitorPID, SIGTERM);
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 
 				/*
 				 * If we're in recovery, we can't kill the startup process
@@ -2828,6 +2870,18 @@ pmdie(SIGNAL_ARGS)
 				signal_child(BgWriterPID, SIGTERM);
 			if (WalReceiverPID != 0)
 				signal_child(WalReceiverPID, SIGTERM);
+#ifdef HYU_LLT
+			if (VCutterPID != 0)
+				signal_child(VCutterPID, SIGTERM);
+			if (DeadZoneUpdaterPID != 0)
+				signal_child(DeadZoneUpdaterPID, SIGTERM);
+			if (GCPID != 0)
+				signal_child(GCPID, SIGTERM);
+#ifdef HYU_LLT_STAT
+			if (MonitorPID != 0)
+				signal_child(MonitorPID, SIGTERM);
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 			if (pmState == PM_STARTUP || pmState == PM_RECOVERY)
 			{
 				SignalSomeChildren(SIGTERM, BACKEND_TYPE_BGWORKER);
@@ -3039,8 +3093,11 @@ reaper(SIGNAL_ARGS)
 			 * Likewise, start other special children as needed.  In a restart
 			 * situation, some of them may be alive already.
 			 */
+#ifdef HYU_LLT
+#else
 			if (!IsBinaryUpgrade && AutoVacuumingActive() && AutoVacPID == 0)
 				AutoVacPID = StartAutoVacLauncher();
+#endif
 			if (PgArchStartupAllowed() && PgArchPID == 0)
 				PgArchPID = pgarch_start();
 			if (PgStatPID == 0)
@@ -4108,6 +4165,18 @@ TerminateChildren(int signal)
 		signal_child(PgArchPID, signal);
 	if (PgStatPID != 0)
 		signal_child(PgStatPID, signal);
+#ifdef HYU_LLT
+	if (VCutterPID != 0)
+		signal_child(VCutterPID, signal);
+	if (DeadZoneUpdaterPID != 0)
+		signal_child(DeadZoneUpdaterPID, signal);
+	if (GCPID != 0)
+		signal_child(GCPID, signal);
+#ifdef HYU_LLT_STAT
+	if (MonitorPID != 0)
+		signal_child(MonitorPID, signal);
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 }
 
 /*

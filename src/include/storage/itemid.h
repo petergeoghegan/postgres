@@ -22,12 +22,34 @@
  * storage on the page.  By convention, lp_len == 0 in every line pointer
  * that does not have storage, independently of its lp_flags state.
  */
+#ifdef HYU_LLT
+typedef struct ItemIdData
+{
+	unsigned	lp_off:14,		/* offset to tuple (from start of page) */
+				lp_flags:2,		/* state of line pointer, see below */
+				lp_oviraptor:2,	/* representing OVIRAPTOR, see below */
+				lp_len:14;		/* byte length of tuple */
+} ItemIdData;
+
+/* 00: LEFT-USING, 01: RIGHT-USING, 10: LEFT-UNUSED, 11: RIGHT-UNUSED */
+#define LP_OVR_IS_LEFT(itemId)		(!((itemId)->lp_oviraptor & 0x1))
+#define LP_OVR_IS_RIGHT(itemId)		((itemId)->lp_oviraptor & 0x1)
+#define LP_OVR_IS_USING(itemId)		(!((itemId)->lp_oviraptor & 0x2))
+#define LP_OVR_IS_UNUSED(itemId)	((itemId)->lp_oviraptor & 0x2)
+
+#define LP_OVR_SET_LEFT(itemId)		((itemId)->lp_oviraptor &= 0x2)
+#define LP_OVR_SET_RIGHT(itemId)	((itemId)->lp_oviraptor |= 0x1)
+#define LP_OVR_SET_USING(itemId)	((itemId)->lp_oviraptor &= 0x1)
+#define LP_OVR_SET_UNUSED(itemId)	((itemId)->lp_oviraptor |= 0x2)
+
+#else
 typedef struct ItemIdData
 {
 	unsigned	lp_off:15,		/* offset to tuple (from start of page) */
 				lp_flags:2,		/* state of line pointer, see below */
 				lp_len:15;		/* byte length of tuple */
 } ItemIdData;
+#endif
 
 typedef ItemIdData *ItemId;
 
@@ -137,12 +159,22 @@ typedef uint16 ItemLength;
  *		Set the item identifier to be NORMAL, with the specified storage.
  *		Beware of multiple evaluations of itemId!
  */
+#ifdef HYU_LLT
+#define ItemIdSetNormal(itemId, off, len) \
+( \
+	(itemId)->lp_flags = LP_NORMAL, \
+	(itemId)->lp_off = (off), \
+	(itemId)->lp_len = (len), \
+	(itemId)->lp_oviraptor = (0) \
+)
+#else
 #define ItemIdSetNormal(itemId, off, len) \
 ( \
 	(itemId)->lp_flags = LP_NORMAL, \
 	(itemId)->lp_off = (off), \
 	(itemId)->lp_len = (len) \
 )
+#endif
 
 /*
  * ItemIdSetRedirect

@@ -68,6 +68,26 @@ typedef struct HeapScanDescData
 	int			rs_cindex;		/* current tuple's index in vistuples */
 	int			rs_ntuples;		/* number of visible tuples on page */
 	OffsetNumber rs_vistuples[MaxHeapTuplesPerPage];	/* their offsets */
+#ifdef HYU_LLT
+	/*
+	 * Original postgres does not in-place update for making a new version
+	 * tuple when executing update query. Because of this, a transaction
+	 * finding a visible version in a heap page releases the page latch
+	 * right after it finds the tuple.
+	 * For the implementation of the oviraptor, we do in-place update on
+	 * a heap tuple, and it incurs another race problem. A reader transaction
+	 * only stores the pointer of the visible heap tuple and then releases
+	 * the page latch. Before retrieving the actual contents of the tuple,
+	 * another transaction can overwrite the tuple with a new one, so the
+	 * reader could see a different tuple from it actually found.
+	 * So we need to memcpy (heap_copytup) the visible heap tuple into the
+	 * copied_tuple here before releasing the page latch.
+	 *
+	 * This is for range query, and same approach is applied to point lookup.
+	 * This array is initialized at heap_beginscan.
+	 */
+	HeapTuple	rs_vistuples_copied[MaxHeapTuplesPerPage];
+#endif
 }			HeapScanDescData;
 typedef struct HeapScanDescData *HeapScanDesc;
 
@@ -91,6 +111,11 @@ typedef enum
 	HEAPTUPLE_INSERT_IN_PROGRESS,	/* inserting xact is still in progress */
 	HEAPTUPLE_DELETE_IN_PROGRESS	/* deleting xact is still in progress */
 } HTSV_Result;
+
+#ifdef HYU_LLT
+/* Tricky variable for passing the cmd type from ExecutePlan to heap code */
+extern CmdType curr_cmdtype;
+#endif
 
 /* ----------------
  *		function prototypes for heap access method
@@ -123,6 +148,14 @@ extern bool heap_getnextslot(TableScanDesc sscan,
 
 extern bool heap_fetch(Relation relation, Snapshot snapshot,
 					   HeapTuple tuple, Buffer *userbuf);
+#ifdef HYU_LLT
+extern bool heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
+										   Buffer buffer, Snapshot snapshot,
+										   HeapTuple heapTuple,
+										   HeapTuple *copied_tuple,
+										   bool *all_dead,
+										   bool first_call);
+#endif
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 								   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
 								   bool *all_dead, bool first_call);
@@ -139,11 +172,23 @@ extern void heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 extern void heap_multi_insert(Relation relation, struct TupleTableSlot **slots,
 							  int ntuples, CommandId cid, int options,
 							  BulkInsertState bistate);
+#ifdef HYU_LLT
+extern TM_Result heap_delete_with_vc(Relation relation, ItemPointer tid,
+							 CommandId cid, Snapshot snapshot, Snapshot crosscheck, bool wait,
+							 struct TM_FailureData *tmfd, bool changingPart);
+#endif
 extern TM_Result heap_delete(Relation relation, ItemPointer tid,
 							 CommandId cid, Snapshot crosscheck, bool wait,
 							 struct TM_FailureData *tmfd, bool changingPart);
 extern void heap_finish_speculative(Relation relation, ItemPointer tid);
 extern void heap_abort_speculative(Relation relation, ItemPointer tid);
+#ifdef HYU_LLT
+extern TM_Result heap_update_with_vc(Relation relation, ItemPointer otid,
+									 HeapTuple newtup, CommandId cid,
+									 Snapshot snapshot, Snapshot crosscheck,
+									 bool wait, TM_FailureData *tmfd,
+									 LockTupleMode *lockmode);
+#endif
 extern TM_Result heap_update(Relation relation, ItemPointer otid,
 							 HeapTuple newtup,
 							 CommandId cid, Snapshot crosscheck, bool wait,

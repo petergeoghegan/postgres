@@ -161,7 +161,327 @@ PageIsVerified(Page page, BlockNumber blkno)
 	return false;
 }
 
+#ifdef HYU_LLT
+/*
+ *	PageAddItemExtendedWithDummy
+ *
+ *	Add an item with a dummy to a page.
+ *  Return value is the offset at which it was inserted,
+ *  or InvalidOffsetNumber if the item is not inserted for any
+ *	reason.  A WARNING is issued indicating the reason for the refusal.
+ *
+ *	offsetNumber must be either InvalidOffsetNumber to specify finding a
+ *	free line pointer, or a value between FirstOffsetNumber and one past
+ *	the last existing item, to specify using that particular line pointer.
+ *
+ *	If offsetNumber is valid and flag PAI_OVERWRITE is set, we just store
+ *	the item at the specified offsetNumber, which must be either a
+ *	currently-unused line pointer, or one past the last existing item.
+ *
+ *	If offsetNumber is valid and flag PAI_OVERWRITE is not set, insert
+ *	the item at the specified offsetNumber, moving existing items later
+ *	in the array to make room.
+ *
+ *	If offsetNumber is not valid, then assign a slot by finding the first
+ *	one that is both unused and deallocated.
+ *
+ *	If flag PAI_IS_HEAP is set, we enforce that there can't be more than
+ *	MaxHeapTuplesPerPage line pointers on the page.
+ *
+ *	!!! EREPORT(ERROR) IS DISALLOWED HERE !!!
+ */
+OffsetNumber
+PageAddItemExtendedWithDummy(Page page,
+							 Item item,
+							 Size size,
+							 OffsetNumber offsetNumber,
+							 int flags)
+{
+	PageHeader	phdr = (PageHeader) page;
+	Size		alignedSize;
+	int			lower;
+	int			upper;
+	ItemId		itemId;
+	OffsetNumber limit;
+	bool		needshuffle = false;
+	bool		check_empty;
 
+	/*
+	 * Be wary about corrupted page pointers
+	 */
+	if (phdr->pd_lower < SizeOfPageHeaderData ||
+		phdr->pd_lower > phdr->pd_upper ||
+		phdr->pd_upper > phdr->pd_special ||
+		phdr->pd_special > BLCKSZ)
+		ereport(PANIC,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("corrupted page pointers: lower = %u, upper = %u, special = %u",
+						phdr->pd_lower, phdr->pd_upper, phdr->pd_special)));
+
+	/*
+	 * Select offsetNumber to place the new item at
+	 */
+	limit = OffsetNumberNext(PageGetMaxOffsetNumber(page));
+
+	/* was offsetNumber passed in? */
+	if (OffsetNumberIsValid(offsetNumber))
+	{
+		/* yes, check it */
+		if ((flags & PAI_OVERWRITE) != 0)
+		{
+			if (offsetNumber < limit)
+			{
+				itemId = PageGetItemId(phdr, offsetNumber);
+				if (ItemIdIsUsed(itemId) || ItemIdHasStorage(itemId))
+				{
+					elog(WARNING, "will not overwrite a used ItemId");
+					return InvalidOffsetNumber;
+				}
+			}
+		}
+		else
+		{
+			if (offsetNumber < limit)
+				needshuffle = true; /* need to move existing linp's */
+		}
+	}
+	else
+	{
+		/* offsetNumber was not passed in, so find a free slot */
+		/* if no free slot, we'll put it at limit (1st open slot) */
+		if (PageHasFreeLinePointers(phdr))
+		{
+			/*
+			 * Look for "recyclable" (unused) ItemId.  We check for no storage
+			 * as well, just to be paranoid --- unused items should never have
+			 * storage.
+			 * LLT: find two contiguous unused slots
+			 */
+			check_empty = false;
+			for (offsetNumber = 1; offsetNumber < limit; offsetNumber++)
+			{
+				itemId = PageGetItemId(phdr, offsetNumber);
+				if (!ItemIdIsUsed(itemId) && !ItemIdHasStorage(itemId)) {
+					if (check_empty)
+						break;
+					check_empty = true;
+				}
+				else
+					check_empty = false;
+			}
+			if (offsetNumber >= limit)
+			{
+				/* the hint is wrong, so reset it */
+				PageClearHasFreeLinePointers(phdr);
+			}
+			else
+			{
+				/* Set offsetNumber as the first slot of two empty slots */
+				offsetNumber -= 1;
+			}
+		}
+		else
+		{
+			/* don't bother searching if hint says there's no free slot */
+			offsetNumber = limit;
+		}
+	}
+
+	/* Reject placing items beyond the first unused line pointer */
+	if (offsetNumber > limit)
+	{
+		elog(WARNING, "specified item offset is too large");
+		return InvalidOffsetNumber;
+	}
+
+	/* Reject placing items beyond heap boundary, if heap */
+	if ((flags & PAI_IS_HEAP) != 0 && offsetNumber + 1 > MaxHeapTuplesPerPage)
+	{
+		elog(WARNING, "can't put more than MaxHeapTuplesPerPage items in a heap page");
+		ereport(LOG, (errmsg("@@ corrupted page pointers: lower = %u, upper = %u, special = %u, limit = %u, offsetNumber = %u, MaxHeapTuplesPerPage = %u, size = %lu", phdr->pd_lower, phdr->pd_upper, phdr->pd_special, limit, offsetNumber, MaxHeapTuplesPerPage, size)));
+
+		return InvalidOffsetNumber;
+	}
+
+	/*
+	 * Compute new lower and upper pointers for page, see if it'll fit.
+	 *
+	 * Note: do arithmetic as signed ints, to avoid mistakes if, say,
+	 * alignedSize > pd_upper.
+	 */
+	if (offsetNumber == limit || needshuffle)
+		lower = phdr->pd_lower + sizeof(ItemIdData) * 2;
+	else
+		lower = phdr->pd_lower;
+
+	alignedSize = MAXALIGN(size);
+
+	upper = (int) phdr->pd_upper - (int) alignedSize * 2;
+
+	if (lower > upper)
+	{
+		elog(WARNING, "lower > upper");
+		return InvalidOffsetNumber;
+	}
+
+	/*
+	 * OK to insert the item.  First, shuffle the existing pointers if needed.
+	 */
+	itemId = PageGetItemId(phdr, offsetNumber);
+
+	if (needshuffle)
+		memmove(itemId + 2, itemId,
+				(limit - offsetNumber) * sizeof(ItemIdData));
+
+	/* set the line pointer */
+	ItemIdSetNormal(itemId, upper + (int) alignedSize, size);
+	LP_OVR_SET_LEFT(itemId);
+	LP_OVR_SET_USING(itemId);
+
+	/* Set the line pointer for dummy slot */
+	itemId = PageGetItemId(phdr, offsetNumber + 1);
+	ItemIdSetNormal(itemId, upper, size);
+	LP_OVR_SET_RIGHT(itemId);
+	LP_OVR_SET_UNUSED(itemId);
+
+	/*
+	 * Items normally contain no uninitialized bytes.  Core bufpage consumers
+	 * conform, but this is not a necessary coding rule; a new index AM could
+	 * opt to depart from it.  However, data type input functions and other
+	 * C-language functions that synthesize datums should initialize all
+	 * bytes; datumIsEqual() relies on this.  Testing here, along with the
+	 * similar check in printtup(), helps to catch such mistakes.
+	 *
+	 * Values of the "name" type retrieved via index-only scans may contain
+	 * uninitialized bytes; see comment in btrescan().  Valgrind will report
+	 * this as an error, but it is safe to ignore.
+	 */
+	VALGRIND_CHECK_MEM_IS_DEFINED(item, size);
+
+	/* copy the item's data onto the page (not onto dummy) */
+	memcpy((char *) page + upper + (int) alignedSize, item, size);
+
+	/* zero the dummy item */
+	memset((char *) page + upper, 0, size);
+
+	/* adjust page header */
+	phdr->pd_lower = (LocationIndex) lower;
+	phdr->pd_upper = (LocationIndex) upper;
+
+	return offsetNumber;
+}
+
+/*
+ *	PageAddItemExtendedInPlace
+ *
+ *	Overwrite an item to a page.  Return value is the offset at which it was
+ *	inserted, or InvalidOffsetNumber if the item is not inserted for any
+ *	reason.  A WARNING is issued indicating the reason for the refusal.
+ *
+ *	offsetNumber must be value between FirstOffsetNumber and one past
+ *	the last existing item, to specify using that particular line pointer.
+ *
+ *	If offsetNumber is valid, we just store the  item at the specified
+ *  offsetNumber, which must be either a currently-unused line pointer,
+ *  or one past the last existing item.
+ *
+ *	If offsetNumber is not valid, then returns InvalidOffsetNumber.
+ *
+ *	!!! EREPORT(ERROR) IS DISALLOWED HERE !!!
+ */
+OffsetNumber
+PageAddItemExtendedInPlace(Page page,
+						   Item item,
+						   Size size,
+						   OffsetNumber offsetNumber)
+{
+	PageHeader	phdr = (PageHeader) page;
+	//Size		alignedSize;
+	ItemId		itemId;
+	OffsetNumber limit;
+
+	/*
+	 * Be wary about corrupted page pointers
+	 */
+	if (phdr->pd_lower < SizeOfPageHeaderData ||
+		phdr->pd_lower > phdr->pd_upper ||
+		phdr->pd_upper > phdr->pd_special ||
+		phdr->pd_special > BLCKSZ)
+		ereport(PANIC,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("corrupted page pointers: lower = %u, upper = %u, special = %u",
+						phdr->pd_lower, phdr->pd_upper, phdr->pd_special)));
+
+	/*
+	 * Select offsetNumber to place the new item at
+	 */
+	limit = OffsetNumberNext(PageGetMaxOffsetNumber(page));
+
+	/* was offsetNumber passed in? */
+	if (OffsetNumberIsValid(offsetNumber))
+	{
+		if (offsetNumber < limit)
+		{
+			itemId = PageGetItemId(phdr, offsetNumber);
+			if (!ItemIdHasStorage(itemId))
+			{
+				elog(WARNING, "no storage for overwrite");
+				return InvalidOffsetNumber;
+			}
+		}
+		else
+		{
+			return InvalidOffsetNumber;
+		}
+	}
+	else
+	{
+		return InvalidOffsetNumber;
+	}
+
+	/* Reject placing items beyond heap boundary, if heap */
+	if (offsetNumber > MaxHeapTuplesPerPage)
+	{
+		elog(WARNING, "can't put more than MaxHeapTuplesPerPage items in a heap page");
+		return InvalidOffsetNumber;
+	}
+
+	if (itemId->lp_off < phdr->pd_lower)
+	{
+		elog(WARNING, "line pointer has invalid offset");
+		return InvalidOffsetNumber;
+	}
+
+	//alignedSize = MAXALIGN(size);
+	if (size != itemId->lp_len)
+	{
+		elog(WARNING, "size is different, org: %d, new: %ld",
+				itemId->lp_len, size);
+		return InvalidOffsetNumber;
+	}
+
+	/*
+	 * Items normally contain no uninitialized bytes.  Core bufpage consumers
+	 * conform, but this is not a necessary coding rule; a new index AM could
+	 * opt to depart from it.  However, data type input functions and other
+	 * C-language functions that synthesize datums should initialize all
+	 * bytes; datumIsEqual() relies on this.  Testing here, along with the
+	 * similar check in printtup(), helps to catch such mistakes.
+	 *
+	 * Values of the "name" type retrieved via index-only scans may contain
+	 * uninitialized bytes; see comment in btrescan().  Valgrind will report
+	 * this as an error, but it is safe to ignore.
+	 */
+	VALGRIND_CHECK_MEM_IS_DEFINED(item, size);
+
+	/* copy the item's data onto the page */
+	memcpy((char *)page + ItemIdGetOffset(itemId), item, size);
+
+	return offsetNumber;
+}
+
+
+#endif
 /*
  *	PageAddItemExtended
  *
@@ -303,7 +623,10 @@ PageAddItemExtended(Page page,
 	upper = (int) phdr->pd_upper - (int) alignedSize;
 
 	if (lower > upper)
+	{
+		elog(WARNING, "lower > upper");
 		return InvalidOffsetNumber;
+	}
 
 	/*
 	 * OK to insert the item.  First, shuffle the existing pointers if needed.
@@ -646,7 +969,96 @@ PageGetExactFreeSpace(Page page)
 	return (Size) space;
 }
 
+#ifdef HYU_LLT
+/*
+ * PageGetHeapFreeSpace
+ *
+ * Wrapper function of PageGetHeapFreeSpace.
+ */
+Size
+PageGetHeapFreeSpace(Page page)
+{
+	return PageGetHeapFreeSpaceWithLP(page, 1);
+}
 
+/*
+ * PageGetHeapFreeSpace
+ *		Returns the size of the free (allocatable) space on a page,
+ *		reduced by the space needed for a new line pointer.
+ *
+ * The difference between this and PageGetFreeSpace is that this will return
+ * zero if there are already MaxHeapTuplesPerPage line pointers in the page
+ * and none are free.  We use this to enforce that no more than
+ * MaxHeapTuplesPerPage line pointers are created on a heap page.  (Although
+ * no more tuples than that could fit anyway, in the presence of redirected
+ * or dead line pointers it'd be possible to have too many line pointers.
+ * To avoid breaking code that assumes MaxHeapTuplesPerPage is a hard limit
+ * on the number of line pointers, we make this extra check.)
+ */
+Size
+PageGetHeapFreeSpaceWithLP(Page page, int num_lp)
+{
+	Size		space;
+	int			cnt_streak;
+
+	space = PageGetFreeSpaceForMultipleTuples(page, num_lp);
+	if (space > 0)
+	{
+		OffsetNumber offnum,
+					nline;
+
+		/*
+		 * Are there already MaxHeapTuplesPerPage line pointers in the page?
+		 */
+		nline = PageGetMaxOffsetNumber(page);
+		if (nline >= MaxHeapTuplesPerPage)
+		{
+			if (PageHasFreeLinePointers((PageHeader) page))
+			{
+				/*
+				 * Since this is just a hint, we must confirm that there is
+				 * indeed a free line pointer
+				 */
+				cnt_streak = 0;
+				for (offnum = FirstOffsetNumber; offnum <= nline; offnum = OffsetNumberNext(offnum))
+				{
+					ItemId		lp = PageGetItemId(page, offnum);
+
+					/* Need to find contiguous lp slots */
+					if (!ItemIdIsUsed(lp))
+						cnt_streak++;
+					else
+						cnt_streak = 0;
+
+					if (cnt_streak == num_lp)
+						break;
+				}
+
+				if (offnum > nline)
+				{
+					/*
+					 * The hint is wrong, but we can't clear it here since we
+					 * don't have the ability to mark the page dirty.
+					 */
+					space = 0;
+				}
+			}
+			else
+			{
+				/*
+				 * Although the hint might be wrong, PageAddItem will believe
+				 * it anyway, so we must believe it too.
+				 */
+				space = 0;
+			}
+		}
+	}
+	return space;
+}
+
+
+
+#else
 /*
  * PageGetHeapFreeSpace
  *		Returns the size of the free (allocatable) space on a page,
@@ -713,6 +1125,7 @@ PageGetHeapFreeSpace(Page page)
 	}
 	return space;
 }
+#endif
 
 
 /*

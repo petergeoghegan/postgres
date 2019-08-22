@@ -251,6 +251,26 @@ typedef struct HeapTupleTableSlot
 #define FIELDNO_HEAPTUPLETABLESLOT_OFF 2
 	uint32		off;			/* saved state for slot_deform_heap_tuple */
 	HeapTupleData tupdata;		/* optional workspace for storing tuple */
+#ifdef HYU_LLT
+	/*
+	 * Original postgres does not in-place update for making a new version
+	 * tuple when executing update query. Because of this, a transaction
+	 * finding a visible version in a heap page releases the page latch
+	 * right after it finds the tuple.
+	 * For the implementation of the oviraptor, we do in-place update on
+	 * a heap tuple, and it incurs another race problem. A reader transaction
+	 * only stores the pointer of the visible heap tuple and then releases
+	 * the page latch. Before retrieving the actual contents of the tuple,
+	 * another transaction can overwrite the tuple with a new one, so the
+	 * reader could see a different tuple from it actually found.
+	 * So we need to memcpy (heap_copytup) the visible heap tuple into the
+	 * copied_tuple here before releasing the page latch.
+	 *
+	 * This is for point lookup, and same approach is applied to range query.
+	 * copied_tuple is initialized as NULL in the MakeTupleTableSlot.
+	 */
+	HeapTuple	copied_tuple;
+#endif
 } HeapTupleTableSlot;
 
 /* heap tuple residing in a buffer */

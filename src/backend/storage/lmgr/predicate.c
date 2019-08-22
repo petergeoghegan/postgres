@@ -1748,7 +1748,11 @@ GetSerializableTransactionSnapshotInt(Snapshot snapshot,
 
 	/* Get the snapshot, or check that it's safe to use */
 	if (!sourcevxid)
+#ifdef HYU_LLT
+		snapshot = GetSnapshotData(snapshot, true);
+#else
 		snapshot = GetSnapshotData(snapshot);
+#endif
 	else if (!ProcArrayInstallImportedXmin(snapshot->xmin, sourcevxid))
 	{
 		ReleasePredXact(sxact);

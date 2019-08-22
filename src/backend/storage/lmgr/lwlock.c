@@ -440,6 +440,32 @@ InitializeLWLocks(void)
 	for (id = 0; id < NUM_BUFFER_PARTITIONS; id++, lock++)
 		LWLockInitialize(&lock->lock, LWTRANCHE_BUFFER_MAPPING);
 
+#ifdef HYU_LLT
+	/* Initialize vcache's LWLocks in main array */
+	lock = MainLWLockArray + NUM_INDIVIDUAL_LWLOCKS + NUM_BUFFER_PARTITIONS;
+	for (id = 0; id < NUM_VCACHE_PARTITIONS; id++, lock++)
+		LWLockInitialize(&lock->lock, LWTRANCHE_VCACHE_MAPPING);
+
+	/* Initialize vchain's LWLocks in main array */
+	lock = MainLWLockArray + NUM_INDIVIDUAL_LWLOCKS +
+		NUM_BUFFER_PARTITIONS + NUM_VCACHE_PARTITIONS;
+	for (id = 0; id < NUM_VCHAIN_PARTITIONS; id++, lock++)
+		LWLockInitialize(&lock->lock, LWTRANCHE_VCHAIN_MAPPING);
+
+	/* Initialize lmgrs' LWLocks in main array */
+	lock = MainLWLockArray + NUM_INDIVIDUAL_LWLOCKS +
+		NUM_BUFFER_PARTITIONS + NUM_VCACHE_PARTITIONS + NUM_VCHAIN_PARTITIONS;
+	for (id = 0; id < NUM_LOCK_PARTITIONS; id++, lock++)
+		LWLockInitialize(&lock->lock, LWTRANCHE_LOCK_MANAGER);
+
+	/* Initialize predicate lmgrs' LWLocks in main array */
+	lock = MainLWLockArray + NUM_INDIVIDUAL_LWLOCKS +
+		NUM_BUFFER_PARTITIONS + NUM_VCACHE_PARTITIONS +
+		NUM_VCHAIN_PARTITIONS + NUM_LOCK_PARTITIONS;
+	for (id = 0; id < NUM_PREDICATELOCK_PARTITIONS; id++, lock++)
+		LWLockInitialize(&lock->lock, LWTRANCHE_PREDICATE_LOCK_MANAGER);
+
+#else
 	/* Initialize lmgrs' LWLocks in main array */
 	lock = MainLWLockArray + NUM_INDIVIDUAL_LWLOCKS + NUM_BUFFER_PARTITIONS;
 	for (id = 0; id < NUM_LOCK_PARTITIONS; id++, lock++)
@@ -450,6 +476,7 @@ InitializeLWLocks(void)
 		NUM_BUFFER_PARTITIONS + NUM_LOCK_PARTITIONS;
 	for (id = 0; id < NUM_PREDICATELOCK_PARTITIONS; id++, lock++)
 		LWLockInitialize(&lock->lock, LWTRANCHE_PREDICATE_LOCK_MANAGER);
+#endif
 
 	/* Initialize named tranches. */
 	if (NamedLWLockTrancheRequests > 0)
@@ -505,6 +532,10 @@ RegisterLWLockTranches(void)
 		LWLockRegisterTranche(i, MainLWLockNames[i]);
 
 	LWLockRegisterTranche(LWTRANCHE_BUFFER_MAPPING, "buffer_mapping");
+#ifdef HYU_LLT
+	LWLockRegisterTranche(LWTRANCHE_VCACHE_MAPPING, "vcache_mapping");
+	LWLockRegisterTranche(LWTRANCHE_VCHAIN_MAPPING, "vchain_mapping");
+#endif
 	LWLockRegisterTranche(LWTRANCHE_LOCK_MANAGER, "lock_manager");
 	LWLockRegisterTranche(LWTRANCHE_PREDICATE_LOCK_MANAGER,
 						  "predicate_lock_manager");

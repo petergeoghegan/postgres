@@ -46,6 +46,9 @@
 #include <signal.h>
 
 #include "access/clog.h"
+#ifdef HYU_LLT
+#include "access/parallel.h"
+#endif
 #include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
@@ -62,6 +65,9 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#ifdef HYU_LLT
+#include "storage/thread_table.h"
+#endif
 
 #define UINT32_ACCESS_ONCE(var)		 ((uint32)(*((volatile uint32 *)&(var))))
 
@@ -416,11 +422,21 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid)
 		 */
 		if (LWLockConditionalAcquire(ProcArrayLock, LW_EXCLUSIVE))
 		{
+#ifdef HYU_LLT
+			ClearSnapshot();
+#endif
 			ProcArrayEndTransactionInternal(proc, pgxact, latestXid);
 			LWLockRelease(ProcArrayLock);
 		}
 		else
+		{
+#ifdef HYU_LLT
+			LWLockAcquire(ProcArrayLock, LW_SHARED);
+			ClearSnapshot();
+			LWLockRelease(ProcArrayLock);
+#endif
 			ProcArrayGroupClearXid(proc, latestXid);
+		}
 	}
 	else
 	{
@@ -430,6 +446,11 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid)
 		 * estimate of global xmin, but that's OK.
 		 */
 		Assert(!TransactionIdIsValid(allPgXact[proc->pgprocno].xid));
+#ifdef HYU_LLT
+			LWLockAcquire(ProcArrayLock, LW_SHARED);
+			ClearSnapshot();
+			LWLockRelease(ProcArrayLock);
+#endif
 
 		proc->lxid = InvalidLocalTransactionId;
 		pgxact->xmin = InvalidTransactionId;
@@ -1501,8 +1522,13 @@ GetMaxSnapshotSubxidCount(void)
  * Note: this function should probably not be called with an argument that's
  * not statically allocated (see xip allocation below).
  */
+#ifdef HYU_LLT
+Snapshot
+GetSnapshotData(Snapshot snapshot, bool is_txn_snapshot)
+#else
 Snapshot
 GetSnapshotData(Snapshot snapshot)
+#endif
 {
 	ProcArrayStruct *arrayP = procArray;
 	TransactionId xmin;
@@ -1514,6 +1540,9 @@ GetSnapshotData(Snapshot snapshot)
 	bool		suboverflowed = false;
 	TransactionId replication_slot_xmin = InvalidTransactionId;
 	TransactionId replication_slot_catalog_xmin = InvalidTransactionId;
+#ifdef HYU_LLT
+	TransactionId curr_xid;
+#endif
 
 	Assert(snapshot != NULL);
 
@@ -1709,7 +1738,35 @@ GetSnapshotData(Snapshot snapshot)
 	if (!TransactionIdIsValid(MyPgXact->xmin))
 		MyPgXact->xmin = TransactionXmin = xmin;
 
+#ifdef HYU_LLT
+	if (is_txn_snapshot)
+		SetSnapshot(snapshot->xip, count, xmax);
+#endif
+
 	LWLockRelease(ProcArrayLock);
+
+#ifdef HYU_LLT
+	/*
+	 * For LLT classification, long transaction need to allocate its id and
+	 * publish it so that we can see it in the snapshot of the transaction
+	 * classifying a version.
+	 * A read-only long transaction doesn't allocate its id in original postgres,
+	 * so we naively allocate transaction id for any transaction capturing
+	 * its own snapshot.
+	 */
+	if ((!(IsInParallelMode() || IsParallelWorker())) && is_txn_snapshot)
+	{
+		/*
+		 * Owner transaction id must be higher than the xmax in its snapshot,
+		 * so we allocate a transaction id after creating the snapshot.
+		 * Otherwise, LLT classifier could classify a version as HOT
+		 * although the version need to be pushed into LLT cluster
+		 * leading to corrupt the HOT segment.
+		 */
+		curr_xid = GetCurrentTransactionId();
+		SetSnapshotOwner(curr_xid);
+	}
+#endif
 
 	/*
 	 * Update globalxmin to include actual process xids.  This is a slightly

@@ -35,6 +35,20 @@ typedef struct BulkInsertStateData
 
 extern void RelationPutHeapTuple(Relation relation, Buffer buffer,
 								 HeapTuple tuple, bool token);
+#ifdef HYU_LLT
+extern void RelationPutHeapTupleWithDummy(Relation relation, Buffer buffer,
+										  HeapTuple tuple, bool token);
+extern void RelationPutHeapTupleInPlace(Relation relation, Buffer buffer,
+										OffsetNumber offnum, HeapTuple tuple,
+										bool token);
+extern Buffer RelationGetBufferForTuples(Relation relation, Size len,
+										 Buffer otherBuffer, int options,
+										 BulkInsertState bistate,
+										 Buffer *vmbuffer,
+										 Buffer *vmbuffer_other,
+										 int num_tuples);
+#endif
+
 extern Buffer RelationGetBufferForTuple(Relation relation, Size len,
 										Buffer otherBuffer, int options,
 										BulkInsertStateData *bistate,

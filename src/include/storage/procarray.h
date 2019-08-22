@@ -78,7 +78,11 @@ extern void ExpireOldKnownAssignedTransactionIds(TransactionId xid);
 extern int	GetMaxSnapshotXidCount(void);
 extern int	GetMaxSnapshotSubxidCount(void);
 
+#ifdef HYU_LLT
+extern Snapshot GetSnapshotData(Snapshot snapshot, bool is_txn_snapshot);
+#else
 extern Snapshot GetSnapshotData(Snapshot snapshot);
+#endif
 
 extern bool ProcArrayInstallImportedXmin(TransactionId xmin,
 										 VirtualTransactionId *sourcevxid);

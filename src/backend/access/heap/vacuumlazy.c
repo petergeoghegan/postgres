@@ -500,8 +500,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				blkno;
 	HeapTupleData tuple;
 	char	   *relname;
+#ifdef HYU_LLT
+#else
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
+#endif
 	BlockNumber empty_pages,
 				vacuumed_pages,
 				next_fsm_block_to_vacuum;
@@ -641,8 +644,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		Page		page;
 		OffsetNumber offnum,
 					maxoff;
+#ifdef HYU_LLT
+		bool		hastup;
+#else
 		bool		tupgone,
 					hastup;
+#endif
 		int			prev_dead_count;
 		int			nfrozen;
 		Size		freespace;
@@ -1035,6 +1042,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			tuple.t_len = ItemIdGetLength(itemid);
 			tuple.t_tableOid = RelationGetRelid(onerel);
 
+#ifdef HYU_LLT
+            /*
+             * Checking vacuumable about this tuple is already done 
+             * in heap_page_prune(). We don't need to do redundant work.
+             */
+#else
 			tupgone = false;
 
 			/*
@@ -1197,6 +1210,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				if (!tuple_totally_frozen)
 					all_frozen = false;
 			}
+#endif
 		}						/* scan along page */
 
 		/*

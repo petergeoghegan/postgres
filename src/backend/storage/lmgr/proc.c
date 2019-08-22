@@ -53,6 +53,9 @@
 #include "storage/procsignal.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
+#ifdef HYU_LLT
+#include "storage/vcluster.h"
+#endif
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 
@@ -189,6 +192,9 @@ InitProcGlobal(void)
 	ProcGlobal->checkpointerLatch = NULL;
 	pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PGPROCNO);
 	pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PGPROCNO);
+#ifdef HYU_LLT
+	ProcGlobal->vcluster_dsa_handle = 0;
+#endif
 
 	/*
 	 * Create and initialize all the PGPROC structures we'll need.  There are
@@ -467,6 +473,11 @@ InitProcess(void)
 	 */
 	InitLWLockAccess();
 	InitDeadLockChecking();
+
+#ifdef HYU_LLT
+	VClusterDsaInit();
+#endif
+
 }
 
 /*

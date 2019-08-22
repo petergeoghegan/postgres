@@ -52,6 +52,9 @@
 #include "storage/sinvaladt.h"
 #include "storage/smgr.h"
 #include "storage/sync.h"
+#ifdef HYU_LLT
+#include "storage/vcluster.h"
+#endif
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
 #include "utils/fmgroids.h"

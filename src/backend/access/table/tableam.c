@@ -101,6 +101,9 @@ table_beginscan_catalog(Relation relation, int nkeys, struct ScanKeyData *key)
 	SO_ALLOW_STRAT | SO_ALLOW_SYNC | SO_ALLOW_PAGEMODE | SO_TEMP_SNAPSHOT;
 	Oid			relid = RelationGetRelid(relation);
 	Snapshot	snapshot = RegisterSnapshot(GetCatalogSnapshot(relid));
+#ifdef HYU_LLT
+    relation->is_systable = true;
+#endif
 
 	return relation->rd_tableam->scan_begin(relation, snapshot, nkeys, key,
 											NULL, flags);

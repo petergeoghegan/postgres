@@ -62,6 +62,9 @@ fork_process(void)
 	result = fork();
 	if (result == 0)
 	{
+#ifdef HYU_LLT /* USEFUL BREAKPOINT */
+		//sleep(10);
+#endif
 		/* fork succeeded, in child */
 #ifdef LINUX_PROFILE
 		setitimer(ITIMER_PROF, &prof_itimer, NULL);

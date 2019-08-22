@@ -39,6 +39,17 @@
 #include "utils/lsyscache.h"
 #include "utils/ruleutils.h"
 #include "utils/timestamp.h"
+#ifdef HYU_LLT
+#include "storage/vcluster.h"
+#include "storage/vstatistic.h"
+#include "storage/vcache.h"
+#endif
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#include <time.h>
+#include <stdint.h>
+#include <inttypes.h>
+#endif
 
 /*
  * Common subroutine for num_nulls() and num_nonnulls().
@@ -191,6 +202,154 @@ current_query(PG_FUNCTION_ARGS)
 	else
 		PG_RETURN_NULL();
 }
+/* HYU_LLT print-stat-helper */
+/*
+ * llt_get_stat()
+ * this function is defined in ./include/catalog/pg_proc.dat
+ * print statistic about vDriver
+ */
+Datum
+llt_get_stat(PG_FUNCTION_ARGS)
+{
+#ifdef HYU_LLT
+#ifdef HYU_LLT_STAT
+    char string[4000];
+    uint64_t record_per_page = SEG_PAGESZ / VCLUSTER_TUPLE_SIZE;
+    sprintf(string,
+            "_inserted record_               : %8lu\n"
+            "_inserted record HOT_           : %8lu\n"
+            "_inserted record COLD_          : %8lu\n"
+            "_inserted record LLT_           : %8lu\n"
+            "\n"
+            "_first pruned record_           : %8lu\n"
+            "_first pruned record HOT_       : %8lu\n"
+            "_first pruned record COLD_      : %8lu\n"
+            "_first pruned record LLT_       : %8lu\n"
+            "\n"
+            "_not first pruned record_       : %8lu\n"
+            "_not first pruned record HOT_   : %8lu\n"
+            "_not first pruned record COLD_  : %8lu\n"
+            "_not first pruned record LLT_   : %8lu\n"
+            "\n"
+            "_evicted record_                : %8lu\n"
+            "_evicted record HOT_            : %8lu\n"
+            "_evicted record COLD_           : %8lu\n"
+            "_evicted record LLT_            : %8lu\n"
+            "\n"
+            "_second pruned record_          : %8lu\n"
+            "_second pruned record HOT_      : %8lu\n"
+            "_second pruned record COLD_     : %8lu\n"
+            "_second pruned record LLT_      : %8lu\n"
+            "\n"
+            "_logical deleted record_        : %8lu\n"
+            "_logical deleted segment_       : %8lu\n"
+            "_physical deleted segment_      : %8lu\n",
+            vstatistic_desc->cnt_inserted,
+            vstatistic_desc->cnt_inserted_cluster[VCLUSTER_HOT],
+            vstatistic_desc->cnt_inserted_cluster[VCLUSTER_COLD],
+            vstatistic_desc->cnt_inserted_cluster[VCLUSTER_LLT],
+
+            vstatistic_desc->cnt_first_prune,
+            vstatistic_desc->cnt_first_prune_cluster[VCLUSTER_HOT],
+            vstatistic_desc->cnt_first_prune_cluster[VCLUSTER_COLD],
+            vstatistic_desc->cnt_first_prune_cluster[VCLUSTER_LLT],
+
+            vstatistic_desc->cnt_after_first_prune,
+            vstatistic_desc->cnt_after_first_prune_cluster[VCLUSTER_HOT],
+            vstatistic_desc->cnt_after_first_prune_cluster[VCLUSTER_COLD],
+            vstatistic_desc->cnt_after_first_prune_cluster[VCLUSTER_LLT],
+
+            vstatistic_desc->cnt_page_evicted * record_per_page,
+            vstatistic_desc->cnt_page_evicted_cluster[VCLUSTER_HOT] * record_per_page,
+            vstatistic_desc->cnt_page_evicted_cluster[VCLUSTER_COLD] * record_per_page,
+            vstatistic_desc->cnt_page_evicted_cluster[VCLUSTER_LLT] * record_per_page,
+
+            vstatistic_desc->cnt_page_second_prune * record_per_page,
+            vstatistic_desc->cnt_page_second_prune_cluster[VCLUSTER_HOT] * record_per_page,
+            vstatistic_desc->cnt_page_second_prune_cluster[VCLUSTER_COLD] * record_per_page,
+            vstatistic_desc->cnt_page_second_prune_cluster[VCLUSTER_LLT] * record_per_page,
+
+            vstatistic_desc->cnt_logical_deleted,
+            vstatistic_desc->cnt_seg_logical_deleted,
+            vstatistic_desc->cnt_seg_physical_deleted
+           );
+    PG_RETURN_TEXT_P(cstring_to_text(string));
+#endif
+#endif
+
+    PG_RETURN_NULL();
+}
+
+Datum
+llt_get_cuttime(PG_FUNCTION_ARGS)
+{
+#ifdef HYU_LLT
+#ifdef HYU_LLT_STAT
+    char string[16384];
+	char tmp[1024];
+
+	string[0] = '\0';
+	tmp[0] = '\0';
+	for (int i = 0; i < NUM_CUTTIME_BUCKET; i++)
+	{
+		sprintf(tmp, "%8u %8u %8u %8u\n",
+				CUTTIME_BUCKET_UNIT * (i + 1),
+				vstatistic_desc->bucket_cuttime[VCLUSTER_HOT][i],
+				vstatistic_desc->bucket_cuttime[VCLUSTER_COLD][i],
+				vstatistic_desc->bucket_cuttime[VCLUSTER_LLT][i]);
+
+		strcat(string, tmp);
+	}
+
+    PG_RETURN_TEXT_P(cstring_to_text(string));
+#endif
+#endif
+
+    PG_RETURN_NULL();
+}
+
+Datum
+get_stat(PG_FUNCTION_ARGS)
+{
+#ifdef HYU_COMMON_STAT
+    char string[4000];
+	FullTransactionId full_xid;
+	TransactionId xid;
+    struct timespec tms;
+    int64_t micros;
+
+    /* The C11 way */
+    timespec_get(&tms, TIME_UTC);
+
+    /* POSIX.1-2008 way */
+    //if (clock_gettime(CLOCK_REALTIME,&tms)) {
+    /* seconds, multiplied with 1 million */
+    micros = tms.tv_sec * 1000000;
+    /* Add full microseconds */
+    micros += tms.tv_nsec/1000;
+
+	full_xid = ShmemVariableCache->nextFullXid;
+	xid = XidFromFullTransactionId(full_xid);
+
+    sprintf(string,
+            "_time_                       : %lu.%lu\n"
+            "_recent xid_                 : %8u\n"
+            "_vanilla version chain counter_      : %8lu\n"
+            "_vdriver version chain counter_      : %8lu\n",
+            micros/1000000, micros%1000000,
+            xid,
+            cnt_version_chain_vanilla,
+            cnt_version_chain_vdriver
+           );
+    cnt_version_chain_vanilla = 0;
+    cnt_version_chain_vdriver = 0;
+    PG_RETURN_TEXT_P(cstring_to_text(string));
+#endif
+
+    PG_RETURN_NULL();
+}
+
+/* HYU_LLT end */
 
 /* Function to find out which databases make use of a tablespace */
 

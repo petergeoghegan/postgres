@@ -157,6 +157,10 @@ extern PGDLLIMPORT char *DataDir;
 extern PGDLLIMPORT int data_directory_mode;
 
 extern PGDLLIMPORT int NBuffers;
+#ifdef HYU_LLT
+extern PGDLLIMPORT int NVCache;
+extern PGDLLIMPORT int NVChianExpected;
+#endif
 extern PGDLLIMPORT int MaxBackends;
 extern PGDLLIMPORT int MaxConnections;
 extern PGDLLIMPORT int max_worker_processes;

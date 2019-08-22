@@ -353,7 +353,7 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 	BTPageOpaque opaque;
 	Buffer		nbuf = InvalidBuffer;
 	bool		found = false;
-
+	
 	/* Assume unique until we find a duplicate */
 	*is_unique = true;
 

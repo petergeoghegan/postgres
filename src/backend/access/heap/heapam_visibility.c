@@ -76,6 +76,9 @@
 #include "utils/builtins.h"
 #include "utils/combocid.h"
 #include "utils/snapmgr.h"
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#endif
 
 
 /*
