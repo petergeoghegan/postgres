@@ -8528,11 +8528,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
 
        <para>
         If no tuples were deleted from the heap, B-tree indexes are still
-        scanned at the <command>VACUUM</command> cleanup stage when at least one
-        of the following conditions is met: the index statistics are stale, or
-        the index contains deleted pages that can be recycled during cleanup.
-        Index statistics are considered to be stale if the number of newly
-        inserted tuples exceeds the <varname>vacuum_cleanup_index_scale_factor</varname>
+        scanned at the <command>VACUUM</command> cleanup stage when the
+        index's statistics are stale.  Index statistics are considered
+        stale if the number of newly inserted tuples exceeds the
+        <varname>vacuum_cleanup_index_scale_factor</varname>
         fraction of the total number of heap tuples detected by the previous
         statistics collection. The total number of heap tuples is stored in
         the index meta-page. Note that the meta-page does not include this data
@@ -8540,6 +8539,20 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         scan at the cleanup stage can only be skipped if the second and
         subsequent <command>VACUUM</command> cycles detect no dead tuples.
        </para>
+
+       <note>
+        <para>
+         It's also possible for a B-tree index to have cleanup by
+         <command>VACUUM</command> triggered for an index solely because
+         the index is known to have many deleted pages that have yet to be
+         placed in the free space map.  This is only triggered when the
+         total number of such pages exceeds a threshold of 5% of all pages
+         in the index.  This prevents the accumulation of an excessive
+         number of non-recyclable deleted pages in rare cases where no
+         other factor will trigger a scan of the index during the next
+         <command>VACUUM</command>.
+        </para>
+       </note>
 
        <para>
         The value can range from <literal>0</literal> to
