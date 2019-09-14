@@ -25,7 +25,8 @@
 
 
 static void _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp);
-static OffsetNumber _bt_binsrch(Relation rel, BTScanInsert key, Buffer buf);
+static OffsetNumber _bt_binsrch(Relation rel, BTScanInsert key, Buffer buf,
+								bool *checkhigh);
 static bool _bt_readpage(IndexScanDesc scan, ScanDirection dir,
 						 OffsetNumber offnum);
 static void _bt_saveitem(BTScanOpaque so, int itemIndex,
@@ -113,6 +114,7 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 		BlockNumber blkno;
 		BlockNumber par_blkno;
 		BTStack		new_stack;
+		bool		checkhigh;
 
 		/*
 		 * Race -- the page we just grabbed may have split since we read its
@@ -126,20 +128,42 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 		 * if the leaf page is split and we insert to the parent page).  But
 		 * this is a good opportunity to finish splits of internal pages too.
 		 */
-		*bufP = _bt_moveright(rel, key, *bufP, (access == BT_WRITE), stack_in,
-							  page_access, snapshot);
 
 		/* if this is a leaf page, we're done */
 		page = BufferGetPage(*bufP);
 		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 		if (P_ISLEAF(opaque))
+		{
+			*bufP = _bt_moveright(rel, key, *bufP, (access == BT_WRITE),
+								  stack_in, page_access, snapshot);
 			break;
+		}
 
 		/*
 		 * Find the appropriate item on the internal page, and get the child
 		 * page that it points to.
 		 */
-		offnum = _bt_binsrch(rel, key, *bufP);
+		offnum = _bt_binsrch(rel, key, *bufP, &checkhigh);
+
+		/*
+		 * Only check internal page high key when binary search indicated that
+		 * scan key was greater than last data item separator key, and
+		 * internal page is definitely not rightmost.
+		 */
+		if (unlikely(checkhigh))
+		{
+			Buffer orig = *bufP;
+
+			*bufP = _bt_moveright(rel, key, *bufP, (access == BT_WRITE),
+								  stack_in, page_access, snapshot);
+
+			if (unlikely(orig != *bufP))
+			{
+				page = BufferGetPage(*bufP);
+				opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+				offnum = _bt_binsrch(rel, key, *bufP, &checkhigh);
+			}
+		}
 		itemid = PageGetItemId(page, offnum);
 		itup = (IndexTuple) PageGetItem(page, itemid);
 		blkno = BTreeInnerTupleGetDownLink(itup);
@@ -338,12 +362,14 @@ _bt_moveright(Relation rel,
 static OffsetNumber
 _bt_binsrch(Relation rel,
 			BTScanInsert key,
-			Buffer buf)
+			Buffer buf,
+			bool *checkhigh)
 {
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber low,
-				high;
+				high,
+				max;
 	int32		result,
 				cmpval;
 
@@ -356,7 +382,11 @@ _bt_binsrch(Relation rel,
 	Assert(!P_ISLEAF(opaque) || key->scantid == NULL);
 
 	low = P_FIRSTDATAKEY(opaque);
-	high = PageGetMaxOffsetNumber(page);
+	max = PageGetMaxOffsetNumber(page);
+	high = max;
+
+	if (checkhigh)
+		*checkhigh = true;
 
 	/*
 	 * If there are no keys on the page, return the first available slot. Note
@@ -414,6 +444,8 @@ _bt_binsrch(Relation rel,
 	 */
 	Assert(low > P_FIRSTDATAKEY(opaque));
 
+	if (checkhigh)
+		*checkhigh = (high == max && P_RIGHTMOST(opaque));
 	return OffsetNumberPrev(low);
 }
 
@@ -1269,7 +1301,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	_bt_initialize_more_data(so, dir);
 
 	/* position to the precise item on the page */
-	offnum = _bt_binsrch(rel, &inskey, buf);
+	offnum = _bt_binsrch(rel, &inskey, buf, NULL);
 
 	/*
 	 * If nextkey = false, we are positioned at the first item >= scan key, or
