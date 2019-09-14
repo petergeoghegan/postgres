@@ -114,7 +114,7 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 		BlockNumber blkno;
 		BlockNumber par_blkno;
 		BTStack		new_stack;
-		bool		checkhigh;
+		bool		checkhigh = true;
 
 		/*
 		 * Race -- the page we just grabbed may have split since we read its
@@ -355,6 +355,8 @@ _bt_moveright(Relation rel,
  * right place to descend to be sure we find all leaf keys >= given scankey
  * (or leaf keys > given scankey when nextkey is true).
  *
+ * Internal page callers had better not pass a NULL checkhigh pointer.
+ *
  * This procedure is not responsible for walking right, it just examines
  * the given page.  _bt_binsrch() has no lock or refcount side effects
  * on the buffer.
@@ -384,9 +386,6 @@ _bt_binsrch(Relation rel,
 	low = P_FIRSTDATAKEY(opaque);
 	max = PageGetMaxOffsetNumber(page);
 	high = max;
-
-	if (checkhigh)
-		*checkhigh = true;
 
 	/*
 	 * If there are no keys on the page, return the first available slot. Note
@@ -444,8 +443,7 @@ _bt_binsrch(Relation rel,
 	 */
 	Assert(low > P_FIRSTDATAKEY(opaque));
 
-	if (checkhigh)
-		*checkhigh = (high == max && P_RIGHTMOST(opaque));
+	*checkhigh = (high == max && !P_RIGHTMOST(opaque));
 	return OffsetNumberPrev(low);
 }
 
