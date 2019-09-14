@@ -154,6 +154,10 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 		{
 			Buffer orig = *bufP;
 
+#if 0
+			elog(WARNING, "have to check high key level %u in %s",
+				 opaque->btpo.level, RelationGetRelationName(rel));
+#endif
 			*bufP = _bt_moveright(rel, key, *bufP, (access == BT_WRITE),
 								  stack_in, page_access, snapshot);
 
@@ -164,6 +168,11 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 				offnum = _bt_binsrch(rel, key, *bufP, &checkhigh);
 			}
 		}
+#if 0
+		else
+			elog(WARNING, "good no check needed level %u in %s",
+				 opaque->btpo.level, RelationGetRelationName(rel));
+#endif
 		itemid = PageGetItemId(page, offnum);
 		itup = (IndexTuple) PageGetItem(page, itemid);
 		blkno = BTreeInnerTupleGetDownLink(itup);
@@ -443,7 +452,7 @@ _bt_binsrch(Relation rel,
 	 */
 	Assert(low > P_FIRSTDATAKEY(opaque));
 
-	*checkhigh = (high == max && !P_RIGHTMOST(opaque));
+	*checkhigh = (OffsetNumberPrev(low) == max && !P_RIGHTMOST(opaque));
 	return OffsetNumberPrev(low);
 }
 
