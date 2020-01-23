@@ -655,6 +655,7 @@ _bt_compare(Relation rel,
 	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	IndexTuple	itup;
 	ItemPointer heapTid;
+	int			ski;
 	ScanKey		scankey;
 	int			ncmpkey;
 	int			ntupatts;
@@ -687,10 +688,12 @@ _bt_compare(Relation rel,
 	 */
 
 	ncmpkey = Min(ntupatts, key->keysz);
+	Assert(ntupatts >= 1);
 	Assert(key->heapkeyspace || ncmpkey == key->keysz);
 	Assert(!BTreeTupleIsPosting(itup) || key->allequalimage);
+	ski = 1;
 	scankey = key->scankeys;
-	for (int i = 1; i <= ncmpkey; i++)
+	for (;;)
 	{
 		Datum		datum;
 		bool		isNull;
@@ -736,7 +739,18 @@ _bt_compare(Relation rel,
 		if (result != 0)
 			return result;
 
+		/*
+		 * The loop is deliberately structured in a way that enables the
+		 * compiler to assume that the first iteration always runs.  Testing
+		 * has shown that this avoids a pipeline stall with certain
+		 * memory-bound workloads.  We delay this test, since it depends on
+		 * whether or not caller's tuple is a pivot tuple.  Typically, most
+		 * calls here never reach this far.
+		 */
+		ski++;
 		scankey++;
+		if (ski > ncmpkey)
+			break;
 	}
 
 	/*
