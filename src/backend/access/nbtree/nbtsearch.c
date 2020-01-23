@@ -28,6 +28,8 @@ static void _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp);
 static OffsetNumber _bt_binsrch(Relation rel, BTScanInsert key, Buffer buf);
 static int	_bt_binsrch_posting(BTScanInsert key, Page page,
 								OffsetNumber offnum);
+static inline int32 _bt_compare_inl(Relation rel, BTScanInsert key, Page page,
+									OffsetNumber offnum, bool isleaf);
 static bool _bt_readpage(IndexScanDesc scan, ScanDirection dir,
 						 OffsetNumber offnum);
 static void _bt_saveitem(BTScanOpaque so, int itemIndex,
@@ -304,7 +306,8 @@ _bt_moveright(Relation rel,
 			continue;
 		}
 
-		if (P_IGNORE(opaque) || _bt_compare(rel, key, page, P_HIKEY) >= cmpval)
+		if (P_IGNORE(opaque) || _bt_compare_inl(rel, key, page, P_HIKEY,
+												P_ISLEAF(opaque)) >= cmpval)
 		{
 			/* step right one page */
 			buf = _bt_relandgetbuf(rel, buf, opaque->btpo_next, access);
@@ -352,6 +355,7 @@ _bt_binsrch(Relation rel,
 				high;
 	int32		result,
 				cmpval;
+	bool		isleaf;
 
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -363,6 +367,7 @@ _bt_binsrch(Relation rel,
 
 	low = P_FIRSTDATAKEY(opaque);
 	high = PageGetMaxOffsetNumber(page);
+	isleaf = P_ISLEAF(opaque);
 
 	/*
 	 * If there are no keys on the page, return the first available slot. Note
@@ -396,7 +401,7 @@ _bt_binsrch(Relation rel,
 
 		/* We have low <= mid < high, so mid points at a real slot */
 
-		result = _bt_compare(rel, key, page, mid);
+		result = _bt_compare_inl(rel, key, page, mid, isleaf);
 
 		if (result >= cmpval)
 			low = mid + 1;
@@ -411,7 +416,7 @@ _bt_binsrch(Relation rel,
 	 * On a leaf page, we always return the first key >= scan key (resp. >
 	 * scan key), which could be the last slot + 1.
 	 */
-	if (P_ISLEAF(opaque))
+	if (isleaf)
 		return low;
 
 	/*
@@ -509,7 +514,7 @@ _bt_binsrch_insert(Relation rel, BTInsertState insertstate)
 
 		/* We have low <= mid < high, so mid points at a real slot */
 
-		result = _bt_compare(rel, key, page, mid);
+		result = _bt_compare_inl(rel, key, page, mid, true);
 
 		if (result >= cmpval)
 			low = mid + 1;
@@ -672,13 +677,25 @@ _bt_compare(Relation rel,
 			Page page,
 			OffsetNumber offnum)
 {
+	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+
+	return _bt_compare_inl(rel, key, page, offnum, P_ISLEAF(opaque));
+}
+
+static inline int32
+_bt_compare_inl(Relation rel,
+				BTScanInsert key,
+				Page page,
+				OffsetNumber offnum,
+				bool isleaf)
+{
 	TupleDesc	itupdesc = RelationGetDescr(rel);
 	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	IndexTuple	itup;
 	ItemPointer heapTid;
+	int			ski;
 	ScanKey		scankey;
-	int			ncmpkey;
-	int			ntupatts;
+	int			ntupatts = 0;
 	int32		result;
 
 	Assert(_bt_check_natts(rel, key->heapkeyspace, page, offnum));
@@ -687,13 +704,12 @@ _bt_compare(Relation rel,
 
 	/*
 	 * Force result ">" if target item is first data item on an internal page
-	 * --- see NOTE above.
+	 * --- see NOTE above _bt_compare().
 	 */
-	if (!P_ISLEAF(opaque) && offnum == P_FIRSTDATAKEY(opaque))
+	if (!isleaf && offnum == P_FIRSTDATAKEY(opaque))
 		return 1;
 
 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
-	ntupatts = BTreeTupleGetNAtts(itup, rel);
 
 	/*
 	 * The scan key is set up with the attribute number associated with each
@@ -707,11 +723,11 @@ _bt_compare(Relation rel,
 	 * _bt_first).
 	 */
 
-	ncmpkey = Min(ntupatts, key->keysz);
-	Assert(key->heapkeyspace || ncmpkey == key->keysz);
+	Assert(BTreeTupleGetNAtts(itup, rel) >= 1);
 	Assert(!BTreeTupleIsPosting(itup) || key->allequalimage);
+	ski = 1;
 	scankey = key->scankeys;
-	for (int i = 1; i <= ncmpkey; i++)
+	for (;;)
 	{
 		Datum		datum;
 		bool		isNull;
@@ -757,7 +773,20 @@ _bt_compare(Relation rel,
 		if (result != 0)
 			return result;
 
+		/*
+		 * The loop is deliberately structured in a way that enables the
+		 * compiler to assume that the first iteration always runs.  Testing
+		 * has shown that this avoids a pipeline stall with certain
+		 * memory-bound workloads.  We delay this test, since it depends on
+		 * whether or not caller's tuple is a pivot tuple.  Typically, most
+		 * calls here never reach this far.
+		 */
+		if (ski == 1)
+			ntupatts = BTreeTupleGetNAtts(itup, rel);
+		ski++;
 		scankey++;
+		if (ski > key->keysz || ski > ntupatts)
+			break;
 	}
 
 	/*
