@@ -249,6 +249,8 @@ extern void index_get_prefetch_stats(IndexScanDesc scan, int64 *accum,
 extern IndexScanDesc RelationGetIndexScan(Relation indexRelation,
 										  int nkeys, int norderbys);
 extern void IndexScanEnd(IndexScanDesc scan);
+extern char *BuildIndexValueDescriptionNatts(Relation indexRelation, int indnkeyatts,
+											 const Datum *values, const bool *isnull);
 extern char *BuildIndexValueDescription(Relation indexRelation,
 										const Datum *values, const bool *isnull);
 extern TransactionId index_compute_xid_horizon_for_tuples(Relation irel,
