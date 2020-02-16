@@ -267,6 +267,7 @@ bt_page_stats(PG_FUNCTION_ARGS)
  */
 struct user_args
 {
+	Relation	rel;
 	Page		page;
 	OffsetNumber offset;
 	bool		leafpage;
@@ -283,6 +284,7 @@ struct user_args
 static Datum
 bt_page_print_tuples(struct user_args *uargs)
 {
+	Relation	rel = uargs->rel;
 	Page		page = uargs->page;
 	OffsetNumber offset = uargs->offset;
 	bool		leafpage = uargs->leafpage;
@@ -317,48 +319,48 @@ bt_page_print_tuples(struct user_args *uargs)
 	values[j++] = BoolGetDatum(IndexTupleHasVarwidths(itup));
 
 	ptr = (char *) itup + IndexInfoFindDataOffset(itup->t_info);
-	dlen = IndexTupleSize(itup) - IndexInfoFindDataOffset(itup->t_info);
 
-	/*
-	 * Make sure that "data" column does not include posting list or pivot
-	 * tuple representation of heap TID(s).
-	 *
-	 * Note: BTreeTupleIsPivot() won't work reliably on !heapkeyspace indexes
-	 * (those built before BTREE_VERSION 4), but we have no way of determining
-	 * if this page came from a !heapkeyspace index.  We may only have a bytea
-	 * nbtree page image to go on, so in general there is no metapage that we
-	 * can check.
-	 *
-	 * That's okay here because BTreeTupleIsPivot() can only return false for
-	 * a !heapkeyspace pivot, never true for a !heapkeyspace non-pivot.  Since
-	 * heap TID isn't part of the keyspace in a !heapkeyspace index anyway,
-	 * there cannot possibly be a pivot tuple heap TID representation that we
-	 * fail to make an adjustment for.  A !heapkeyspace index can have
-	 * BTreeTupleIsPivot() return true (due to things like suffix truncation
-	 * for INCLUDE indexes in Postgres v11), but when that happens
-	 * BTreeTupleGetHeapTID() can be trusted to work reliably (i.e. return
-	 * NULL).
-	 *
-	 * Note: BTreeTupleIsPosting() always works reliably, even with
-	 * !heapkeyspace indexes.
-	 */
-	if (BTreeTupleIsPosting(itup))
-		dlen -= IndexTupleSize(itup) - BTreeTupleGetPostingOffset(itup);
-	else if (BTreeTupleIsPivot(itup) && BTreeTupleGetHeapTID(itup) != NULL)
-		dlen -= MAXALIGN(sizeof(ItemPointerData));
-
-	if (dlen < 0 || dlen > INDEX_SIZE_MASK)
-		elog(ERROR, "invalid tuple length %d for tuple at offset number %u",
-			 dlen, offset);
-	dump = palloc0(dlen * 3 + 1);
-	datacstring = dump;
-	for (off = 0; off < dlen; off++)
+	if (rel)
 	{
-		if (off > 0)
-			*dump++ = ' ';
-		sprintf(dump, "%02x", *(ptr + off) & 0xff);
-		dump += 2;
+		TupleDesc	itupdesc = RelationGetDescr(rel);
+		Datum		datvalues[INDEX_MAX_KEYS];
+		bool		isnull[INDEX_MAX_KEYS];
+		int			natts;
+		int			indnkeyatts = rel->rd_index->indnkeyatts;
+
+		natts = BTreeTupleGetNAtts(itup, rel);
+
+		itupdesc->natts = Min(indnkeyatts, natts);
+		memset(&isnull, 0xFF, sizeof(isnull));
+		index_deform_tuple(itup, itupdesc, datvalues, isnull);
+		rel->rd_index->indnkeyatts = natts;
+		datacstring = BuildIndexValueDescription(rel, datvalues, isnull);
+		itupdesc->natts = IndexRelationGetNumberOfAttributes(rel);
+		rel->rd_index->indnkeyatts = indnkeyatts;
 	}
+	else
+	{
+		dlen = IndexTupleSize(itup) - IndexInfoFindDataOffset(itup->t_info);
+
+		if (BTreeTupleIsPosting(itup))
+			dlen -= IndexTupleSize(itup) - BTreeTupleGetPostingOffset(itup);
+		else if (BTreeTupleIsPivot(itup) && BTreeTupleGetHeapTID(itup) != NULL)
+			dlen -= MAXALIGN(sizeof(ItemPointerData));
+
+		if (dlen < 0 || dlen > INDEX_SIZE_MASK)
+			elog(ERROR, "invalid tuple length %d for tuple at offset number %u",
+				 dlen, offset);
+		dump = palloc0(dlen * 3 + 1);
+		datacstring = dump;
+		for (off = 0; off < dlen; off++)
+		{
+			if (off > 0)
+				*dump++ = ' ';
+			sprintf(dump, "%02x", *(ptr + off) & 0xff);
+			dump += 2;
+		}
+	}
+
 	values[j++] = CStringGetTextDatum(datacstring);
 	pfree(datacstring);
 
@@ -493,11 +495,11 @@ bt_page_items_internal(PG_FUNCTION_ARGS, enum pageinspect_version ext_version)
 
 		uargs = palloc(sizeof(struct user_args));
 
+		uargs->rel = rel;
 		uargs->page = palloc(BLCKSZ);
 		memcpy(uargs->page, BufferGetPage(buffer), BLCKSZ);
 
 		UnlockReleaseBuffer(buffer);
-		relation_close(rel, AccessShareLock);
 
 		uargs->offset = FirstOffsetNumber;
 
@@ -530,6 +532,12 @@ bt_page_items_internal(PG_FUNCTION_ARGS, enum pageinspect_version ext_version)
 		result = bt_page_print_tuples(uargs);
 		uargs->offset++;
 		SRF_RETURN_NEXT(fctx, result);
+	}
+	else
+	{
+		relation_close(uargs->rel, AccessShareLock);
+		pfree(uargs->page);
+		pfree(uargs);
 	}
 
 	SRF_RETURN_DONE(fctx);
@@ -589,6 +597,7 @@ bt_page_items_bytea(PG_FUNCTION_ARGS)
 
 		uargs = palloc(sizeof(struct user_args));
 
+		uargs->rel = NULL;
 		uargs->page = VARDATA(raw_page);
 
 		uargs->offset = FirstOffsetNumber;
