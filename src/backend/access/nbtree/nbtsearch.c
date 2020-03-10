@@ -674,8 +674,7 @@ _bt_compare_inl(Relation rel,
 	ItemPointer heapTid;
 	int			ski;
 	ScanKey		scankey;
-	int			ncmpkey;
-	int			ntupatts;
+	int			ntupatts = 0;
 	int32		result;
 
 	Assert(_bt_check_natts(rel, key->heapkeyspace, page, offnum));
@@ -690,7 +689,6 @@ _bt_compare_inl(Relation rel,
 		return 1;
 
 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
-	ntupatts = BTreeTupleGetNAtts(itup, rel);
 
 	/*
 	 * The scan key is set up with the attribute number associated with each
@@ -704,9 +702,7 @@ _bt_compare_inl(Relation rel,
 	 * _bt_first).
 	 */
 
-	ncmpkey = Min(ntupatts, key->keysz);
-	Assert(ntupatts >= 1);
-	Assert(key->heapkeyspace || ncmpkey == key->keysz);
+	Assert(BTreeTupleGetNAtts(itup, rel) >= 1);
 	Assert(!BTreeTupleIsPosting(itup) || key->allequalimage);
 	ski = 1;
 	scankey = key->scankeys;
@@ -764,9 +760,11 @@ _bt_compare_inl(Relation rel,
 		 * whether or not caller's tuple is a pivot tuple.  Typically, most
 		 * calls here never reach this far.
 		 */
+		if (ski == 1)
+			ntupatts = BTreeTupleGetNAtts(itup, rel);
 		ski++;
 		scankey++;
-		if (ski > ncmpkey)
+		if (ski > key->keysz || ski > ntupatts)
 			break;
 	}
 
