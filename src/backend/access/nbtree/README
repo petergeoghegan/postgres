@@ -858,6 +858,59 @@ that need a page split anyway.  Besides, supporting variable "split points"
 while splitting posting lists won't actually improve overall space
 utilization.
 
+Notes about dynamic prefix truncation
+-------------------------------------
+
+We don't implement canonical prefix B-Trees from the Bayer & Unterauer
+paper (only "simple prefix B-Trees"/suffix truncation), as truncating a
+prefix from keys on the leaf level is not compatible with index-only
+scans, and would probably negatively impact the performance of selective
+index scans.  We can nevertheless exploit the fact that there is often
+redundancy in prefixes that are common to all possible tuples on a page,
+especially at the leaf level.
+
+Binary searches on internal pages can eliminate earlier attributes from
+consideration from their remaining search interval, and from the entire
+subtree that the search is about to descend to the root of.  Insertion
+scan keys store mutable state that remembers which attribute future
+comparisons can skip straight to.  This remains valid throughout the
+entire lifetime of the insertion scan key, without any need to treat
+concurrent page splits and page deletions as special cases.  This is
+called dynamic prefix truncation.
+
+Recall that an insertion scan key is only used to find the initial leaf
+page of an index scan.  In general, it can be thought of as a structure
+that searches for one exact location equal to or just after some existing
+leaf level non-pivot tuple.  The only exception is insertions into unique
+indexes, where the exact position searched for varies over time to suit
+the purposes of unique checking (a scantid is filled-in after uniqueness
+is established).  That special case is the main reason why we don't
+continue to eliminate attributes at leaf level binary searches (we could
+be more selective, but that doesn't seem worthwhile -- note that we can
+still skip attributes at the leaf level in all cases).   The limited and
+well-defined purpose of insertion scan keys makes it safe to eliminate
+whole attributes from consideration.
+
+Concurrent page splits cannot invalidate the skip hint, because pivot
+tuples in the parent are to the left of values in child pages; the new
+high key in the left half of the split must still have equal attributes
+before the attribute that we skip straight to, so the decision about
+whether or not we move right is still correct.
+
+Concurrent deletion of a child page cannot invalidate the skip hint,
+either.  Upon finding an ignorable page we'll move right, and find a page
+whose keyspace is _smaller_ than expected.  If the page to the right of a
+child page is concurrently deleted, we'll keep its original downlink as
+the child's high key, so nothing changes.
+
+XXX: What about the case where the page to the left of a child page we
+land on is concurrently deleted?  Doesn't that have basically the same
+race condition as the one described at length in contrib/amcheck's
+bt_downlink_check() function? It seems like there might have been some
+wisdom in Lanin & Shasha's idea of making the key space move left rather
+than move right during page deletion; that makes page deletion the exact
+opposite of a page split, which we don't quite manage.
+
 Notes About Data Representation
 -------------------------------
 

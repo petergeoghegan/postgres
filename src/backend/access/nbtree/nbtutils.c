@@ -120,6 +120,8 @@ _bt_mkscankey(Relation rel, IndexTuple itup)
 		key->allequalimage = false;
 	}
 	key->anynullkeys = false;	/* initial assumption */
+	key->lastcomparedatt = 1;
+	key->skiptoatt = 1;
 	key->nextkey = false;
 	key->pivotsearch = false;
 	key->keysz = Min(indnkeyatts, tupnatts);

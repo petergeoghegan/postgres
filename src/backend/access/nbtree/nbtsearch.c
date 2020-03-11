@@ -355,6 +355,10 @@ _bt_binsrch(Relation rel,
 				high;
 	int32		result,
 				cmpval;
+	bool		isleaf,
+				saveskipatt;
+	int			lastcomparedattlow;
+	int			lastcomparedatthigh;
 
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -364,6 +368,7 @@ _bt_binsrch(Relation rel,
 	/* scantid-set callers must use _bt_binsrch_insert() on leaf pages */
 	Assert(!P_ISLEAF(opaque) || key->scantid == NULL);
 
+	isleaf = P_ISLEAF(opaque);
 	low = P_FIRSTDATAKEY(opaque);
 	high = PageGetMaxOffsetNumber(page);
 
@@ -392,6 +397,12 @@ _bt_binsrch(Relation rel,
 	high++;						/* establish the loop invariant for high */
 
 	cmpval = key->nextkey ? 0 : 1;	/* select comparison value */
+	/* Set up state for skipping comparisons of entire attributes */
+	key->lastcomparedatt =
+		lastcomparedattlow =
+		lastcomparedatthigh =
+		key->skiptoatt;
+	saveskipatt = !isleaf && key->heapkeyspace;
 
 	while (high > low)
 	{
@@ -401,10 +412,41 @@ _bt_binsrch(Relation rel,
 
 		result = _bt_compare(rel, key, page, mid);
 
-		if (result >= cmpval)
+ 		if (result >= cmpval)
+		{
 			low = mid + 1;
+			lastcomparedattlow = key->lastcomparedatt;
+		}
 		else
+		{
 			high = mid;
+			lastcomparedatthigh = key->lastcomparedatt;
+		}
+	}
+
+	if (saveskipatt)
+	{
+		int			skiptoatt;
+
+		/*
+		 * On an internal page, caller is about to descend a downlink
+		 * between two "separator keys" -- one in the pivot tuple that
+		 * contains the downlink, and the other to its right (may be the
+		 * separator in the high key).  Since these separators provide
+		 * bounds on the keyspace of the subtree whose root is the child
+		 * page we're about to descend to, we may be able to safely skip
+		 * comparisons of earlier attributes in that subtree.  We can even
+		 * safely eliminate earlier attributes from the remaining search
+		 * interval of the current page.  Remember the attribute after the
+		 * last attribute that is definitely equal to the insertion scan
+		 * key in the case of both separators.  This should never decrease
+		 * throughout the entire lifetime of any insertion scan key.
+		 *
+		 * This is explained at length in the nbtree README.
+		 */
+		skiptoatt = Min(lastcomparedattlow, lastcomparedatthigh);
+		Assert(key->skiptoatt <= skiptoatt);
+		key->skiptoatt = skiptoatt;
 	}
 
 	/*
@@ -669,7 +711,10 @@ _bt_compare(Relation rel,
 	 * --- see NOTE above.
 	 */
 	if (!P_ISLEAF(opaque) && offnum == P_FIRSTDATAKEY(opaque))
+	{
+		key->lastcomparedatt = key->skiptoatt;
 		return 1;
+	}
 
 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
 	ntupatts = BTreeTupleGetNAtts(itup, rel);
@@ -690,7 +735,14 @@ _bt_compare(Relation rel,
 	Assert(key->heapkeyspace || ncmpkey == key->keysz);
 	Assert(!BTreeTupleIsPosting(itup) || key->allequalimage);
 	scankey = key->scankeys;
+	/* Don't skip attributes on assert-enabled builds */
+#ifndef USE_ASSERT_CHECKING
+	scankey = key->scankeys + (key->skiptoatt - 1);
+	for (int i = key->skiptoatt; i <= ncmpkey; i++)
+#else
+	scankey = key->scankeys;
 	for (int i = 1; i <= ncmpkey; i++)
+#endif
 	{
 		Datum		datum;
 		bool		isNull;
@@ -732,12 +784,23 @@ _bt_compare(Relation rel,
 				INVERT_COMPARE_RESULT(result);
 		}
 
+		/* Assert that key->skiptoatt is correct */
+		Assert(i >= key->skiptoatt || result == 0);
+		/* Record for caller that this attribute was compared */
+		key->lastcomparedatt = i;
+
 		/* if the keys are unequal, return the difference */
 		if (result != 0)
 			return result;
 
 		scankey++;
 	}
+
+	/*
+	 * Record for caller that comparison is resolved at a truncated/negative
+	 * infinity attribute, or heap TID attribute
+	 */
+	key->lastcomparedatt = ncmpkey + 1;
 
 	/*
 	 * All non-truncated attributes (other than heap TID) were found to be
@@ -1343,6 +1406,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	/* Initialize remaining insertion scan key fields */
 	_bt_metaversion(rel, &inskey.heapkeyspace, &inskey.allequalimage);
 	inskey.anynullkeys = false; /* unused */
+	inskey.lastcomparedatt = 1;
+	inskey.skiptoatt = 1;
 	inskey.nextkey = nextkey;
 	inskey.pivotsearch = false;
 	inskey.scantid = NULL;

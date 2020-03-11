@@ -671,6 +671,18 @@ typedef struct BTScanInsertData
 	bool		anynullkeys;
 	bool		nextkey;
 	bool		pivotsearch;
+
+	/*
+	 * Mutable state used used by _bt_binsrch() for "dynamic prefix
+	 * truncation", an optimization that allows later _bt_search() comparisons
+	 * to skip earlier attributes that can no longer be unequal to scankey
+	 * values.  Used by both _bt_first() and _bt_doinsert().  "skiptoatt" may
+	 * increase when a descent of a tree eliminates additional whole
+	 * attributes from consideration.  It can never decrease.
+	 */
+	int			 lastcomparedatt;
+	int			 skiptoatt;
+
 	ItemPointer scantid;		/* tiebreaker for scankeys */
 	int			keysz;			/* Size of scankeys array */
 	ScanKeyData scankeys[INDEX_MAX_KEYS];	/* Must appear last */
