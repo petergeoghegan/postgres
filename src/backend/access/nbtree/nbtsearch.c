@@ -734,7 +734,15 @@ _bt_compare(Relation rel,
 	ncmpkey = Min(ntupatts, key->keysz);
 	Assert(key->heapkeyspace || ncmpkey == key->keysz);
 	Assert(!BTreeTupleIsPosting(itup) || key->allequalimage);
-	scankey = key->scankeys;
+#if 0
+	if (P_ISLEAF(opaque))
+	{
+		if (key->skiptoatt > 1)
+			elog (WARNING, "skip to att %u", key->skiptoatt);
+		else
+			elog (WARNING, "no skip to ");
+	}
+#endif
 	/* Don't skip attributes on assert-enabled builds */
 #ifndef USE_ASSERT_CHECKING
 	scankey = key->scankeys + (key->skiptoatt - 1);
