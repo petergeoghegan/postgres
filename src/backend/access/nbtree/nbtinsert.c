@@ -893,13 +893,12 @@ _bt_findinsertloc(Relation rel,
 				uniquedup = true;
 			}
 
-			if (itup_key->allequalimage && BTGetDeduplicateItems(rel) &&
-				(!checkingunique || uniquedup) &&
+			if (BTGetDeduplicateItems(rel) && (!checkingunique || uniquedup) &&
 				PageGetFreeSpace(page) < insertstate->itemsz)
 			{
 				_bt_dedup_one_page(rel, insertstate->buf, heapRel,
 								   insertstate->itup, insertstate->itemsz,
-								   checkingunique);
+								   checkingunique, itup_key->allequalimage);
 				insertstate->bounds_valid = false;
 			}
 		}
