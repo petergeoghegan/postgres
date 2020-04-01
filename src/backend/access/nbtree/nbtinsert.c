@@ -2014,15 +2014,12 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		 * Log the contents of the right page in the format understood by
 		 * _bt_restore_page().  The whole right page will be recreated.
 		 *
-		 * Direct access to page is not good but faster - we should implement
-		 * some new func in page API.  Note we only store the tuples
-		 * themselves, knowing that they were inserted in item-number order
-		 * and so the line pointers can be reconstructed.  See comments for
-		 * _bt_restore_page().
+		 * Note we only store the tuples themselves, knowing that they were
+		 * inserted in item-number order and so the line pointers can be
+		 * reconstructed.  See comments for _bt_restore_page().
 		 */
-		XLogRegisterBufData(1,
-							(char *) rightpage + ((PageHeader) rightpage)->pd_upper,
-							((PageHeader) rightpage)->pd_special - ((PageHeader) rightpage)->pd_upper);
+		XLogRegisterBufData(1, PageGetUpperArea(rightpage),
+							PageGetUpperAreaSize(rightpage));
 
 		xlinfo = newitemonleft ? XLOG_BTREE_SPLIT_L : XLOG_BTREE_SPLIT_R;
 		recptr = XLogInsert(RM_BTREE_ID, xlinfo);
@@ -2547,15 +2544,8 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 		md.allequalimage = metad->btm_allequalimage;
 
 		XLogRegisterBufData(2, (char *) &md, sizeof(xl_btree_metadata));
-
-		/*
-		 * Direct access to page is not good but faster - we should implement
-		 * some new func in page API.
-		 */
-		XLogRegisterBufData(0,
-							(char *) rootpage + ((PageHeader) rootpage)->pd_upper,
-							((PageHeader) rootpage)->pd_special -
-							((PageHeader) rootpage)->pd_upper);
+		XLogRegisterBufData(0, PageGetUpperArea(rootpage),
+							PageGetUpperAreaSize(rootpage));
 
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_NEWROOT);
 

@@ -246,6 +246,24 @@ typedef PageHeaderData *PageHeader;
 #define PageGetContents(page) \
 	((char *) (page) + MAXALIGN(SizeOfPageHeaderData))
 
+/*
+ * PageGetUpperArea
+ *		returns upper area of a formatted/slotted page.
+ *
+ * The upper area is the area used to store items/tuples (after pd_upper, but
+ * before the page special area, if any).  Use PageGetUpperAreaSize() to get
+ * the size of the upper area.
+ *
+ * This can be used by performance-critical code that WAL-logs all of the
+ * tuples on the page in one go.  It is the caller's responsibility to make
+ * sense of the upper area (e.g. by ensuring items were added in final
+ * item-number order and accessing the buffer backwards in REDO routine).
+ * This interface is a blatant modularity violation, so think twice before
+ * writing code that relies on it.
+ */
+#define PageGetUpperArea(page) \
+	((char *) (page) + (((PageHeader) (page))->pd_upper))
+
 /* ----------------
  *		macros to access page size info
  * ----------------
@@ -288,6 +306,16 @@ typedef PageHeaderData *PageHeader;
 	AssertMacro(((version) & 0x00FF) == (version)), \
 	((PageHeader) (page))->pd_pagesize_version = (size) | (version) \
 )
+
+/*
+ * PageGetUpperAreaSize
+ *		Returns the size of a upper area on page.
+ *
+ * Used by callers that use PageGetUpperArea().
+ */
+#define PageGetUpperAreaSize(page) \
+	((Size) (((PageHeader) (page))->pd_special - \
+			 ((PageHeader) (page))->pd_upper))
 
 /* ----------------
  *		page special data macros

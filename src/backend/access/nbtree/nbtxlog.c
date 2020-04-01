@@ -30,7 +30,7 @@ static MemoryContext opCtx;		/* working memory for operations */
  * _bt_restore_page -- re-enter all the index tuples on a page
  *
  * The page is freshly init'd, and *from (length len) is a copy of what
- * had been its upper part (pd_upper to pd_special).  We assume that the
+ * had been its upper area (see PageGetUpperArea()).  We assume that the
  * tuples had been added to the page in item-number order, and therefore
  * the one with highest item number appears first (lowest on the page).
  */
