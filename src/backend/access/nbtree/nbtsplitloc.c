@@ -878,10 +878,6 @@ _bt_bestsplitloc(FindSplitData *state, int perfectpenalty,
  * theoretical justification for the size of the split interval, though it's
  * clear that a small split interval can make tuples on level L+1 much smaller
  * on average, without noticeably affecting space utilization on level L.
- * (Note that the way that we calculate split interval might need to change if
- * suffix truncation is taught to truncate tuples "within" the last
- * attribute/datum for data types like text, which is more or less how it is
- * assumed to work in the paper.)
  */
 static int
 _bt_defaultinterval(FindSplitData *state)
