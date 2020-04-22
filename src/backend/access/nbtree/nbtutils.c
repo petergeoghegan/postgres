@@ -2194,10 +2194,8 @@ btbuildphasename(int64 phasenum)
  * from firstright), the size of the returned tuple is the size of firstright
  * plus the size of an additional MAXALIGN()'d item pointer.  This guarantee
  * is important, since callers need to stay under the 1/3 of a page
- * restriction on tuple size.  If this routine is ever taught to truncate
- * within an attribute/datum, it will need to avoid returning an enlarged
- * tuple to caller when truncation + TOAST compression ends up enlarging the
- * final datum.
+ * restriction on tuple size.  Cases that truncate "within" a text attribute
+ * must not break this guarantee, either.
  */
 IndexTuple
 _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
