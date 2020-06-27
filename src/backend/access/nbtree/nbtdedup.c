@@ -1160,7 +1160,7 @@ _bt_dedup_delete_item(Relation heapRel, Snapshot SnapshotNonVacuumable,
 }
 
 /*
- * qsort-style comparator used by _bt_deltasortsplits()
+ * qsort-style comparator used by _bt_dedup_vacuum_one_page()
  */
 static int
 _bt_intervalcmp(const void *arg1, const void *arg2)
@@ -1183,6 +1183,9 @@ _bt_intervalcmp(const void *arg1, const void *arg2)
 	return 0;
 }
 
+/*
+ * qsort-style comparator used by _bt_dedup_vacuum_one_page()
+ */
 static int
 _bt_offsetnumbercmp(const void *arg1, const void *arg2)
 {
