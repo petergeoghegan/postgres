@@ -17,6 +17,7 @@
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
 #include "access/tableam.h"
+#include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "utils/rel.h"
 
@@ -843,6 +844,10 @@ _bt_swap_posting(IndexTuple newitem, IndexTuple oposting, int postingoff)
 	return nposting;
 }
 
+/* #define DEBUG */
+/* #define DLEVEL LOG */
+#define DLEVEL WARNING
+
 /*
  * See if duplicate unique index tuples in a unique index are eligible to be
  * deleted, even though they don't have their LP_DEAD bit set already.
@@ -946,6 +951,10 @@ _bt_dedup_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel,
 		BTDedupInterval interval = state->intervals[i];
 		bool		killed_in_interval = false;
 
+#ifdef DEBUG
+		elog(DLEVEL, "item %d base off %u nitems %d",
+			 i, interval.baseoff, interval.nitems);
+#endif
 		Assert(interval.nitems > 0);
 		/* Iterate through tuples of given value */
 		for (int j = 0; j < interval.nitems; j++)
@@ -964,6 +973,21 @@ _bt_dedup_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel,
 				break;
 			}
 
+#ifdef DEBUG
+			if (!IsSystemRelation(rel))
+			{
+				Datum		values[INDEX_MAX_KEYS];
+				bool		isnull[INDEX_MAX_KEYS];
+				char	   *key_desc;
+
+				index_deform_tuple(itup, RelationGetDescr(rel), values, isnull);
+				key_desc = BuildIndexValueDescription(rel, values, isnull);
+				elog(DLEVEL, "pid %u %s about to check offset %u: %s (%u,%u)",
+					 MyProcPid, RelationGetRelationName(rel), ioff, key_desc,
+					 ItemPointerGetBlockNumber(BTreeTupleGetHeapTID(itup)),
+					 ItemPointerGetOffsetNumber(BTreeTupleGetHeapTID(itup)));
+			}
+#endif
 			if (_bt_dedup_delete_item(heapRel, &SnapshotNonVacuumable, itup,
 									  &heapaccesses))
 			{
@@ -1009,8 +1033,41 @@ _bt_dedup_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel,
 		/* Have to give array to _bt_delitems_delete in asc order */
 		qsort(deletable, ndeletable, sizeof(OffsetNumber),
 			  _bt_offsetnumbercmp);
+#ifdef DEBUG
+		if (!IsSystemRelation(rel))
+		{
+			Datum		values[INDEX_MAX_KEYS];
+			bool		isnull[INDEX_MAX_KEYS];
+			ItemId		itemid;
+			IndexTuple	itup;
+			char	   *key_desc;
+
+			for (int k = 0; k < ndeletable; k++)
+			{
+				itemid = PageGetItemId(page, deletable[k]);
+				itup = (IndexTuple) PageGetItem(page, itemid);
+				index_deform_tuple(itup, RelationGetDescr(rel), values, isnull);
+				key_desc = BuildIndexValueDescription(rel, values, isnull);
+				elog(DLEVEL, "%s freed some items (%d: %s) and %s with block %u, heapaccesses %d, ndeletable %u, offset %u",
+					 RelationGetRelationName(rel), k, key_desc, success ? "succeeded" : "failed", BufferGetBlockNumber(buffer),
+					 heapaccesses, ndeletable, deletable[k]);
+			}
+		}
+		else
+			elog(DLEVEL, "%s freed some items %s with block %u, heapaccesses %d, ndeletable %u, offset %u",
+				 RelationGetRelationName(rel), success ? "succeeded" : "failed", BufferGetBlockNumber(buffer),
+				 heapaccesses, ndeletable, deletable[0]);
+#endif
 		_bt_delitems_delete(rel, buffer, deletable, ndeletable, heapRel);
 	}
+#ifdef DEBUG
+	else
+	{
+		elog(DLEVEL, "%s freed no items with block %u, heapaccesses %d, ndeletable %u",
+			 RelationGetRelationName(rel), BufferGetBlockNumber(buffer),
+			 heapaccesses, ndeletable);
+	}
+#endif
 
 	pfree(state->htids);
 	pfree(state);
