@@ -1029,7 +1029,7 @@ extern void _bt_parallel_advance_array_keys(IndexScanDesc scan);
  */
 extern void _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
 							   IndexTuple newitem, Size newitemsz,
-							   bool checkingunique);
+							   bool checkingunique, bool allequalimage);
 extern void _bt_dedup_start_pending(BTDedupState state, IndexTuple base,
 									OffsetNumber baseoff);
 extern bool _bt_dedup_save_htid(BTDedupState state, IndexTuple itup);

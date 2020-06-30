@@ -16,6 +16,7 @@
 
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
+#include "access/tableam.h"
 #include "miscadmin.h"
 #include "utils/rel.h"
 
@@ -23,6 +24,14 @@ static bool _bt_do_singleval(Relation rel, Page page, BTDedupState state,
 							 OffsetNumber minoff, IndexTuple newitem);
 static void _bt_singleval_fillfactor(Page page, BTDedupState state,
 									 Size newitemsz);
+static bool _bt_dedup_vacuum_one_page(Relation rel, Buffer buffer,
+									  Relation heapRel, Size itemsz);
+static void _bt_dedup_vacuum_finish_pending(BTDedupState state);
+static bool _bt_dedup_delete_item(Relation heapRel,
+								  Snapshot SnapshotNonVacuumable,
+								  IndexTuple itup, int *heapaccesses);
+static int	_bt_intervalcmp(const void *arg1, const void *arg2);
+static int	_bt_offsetnumbercmp(const void *arg1, const void *arg2);
 #ifdef USE_ASSERT_CHECKING
 static bool _bt_posting_valid(IndexTuple posting);
 #endif
@@ -54,7 +63,8 @@ static bool _bt_posting_valid(IndexTuple posting);
  */
 void
 _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
-				   IndexTuple newitem, Size newitemsz, bool checkingunique)
+				   IndexTuple newitem, Size newitemsz, bool checkingunique,
+				   bool allequalimage)
 {
 	OffsetNumber offnum,
 				minoff,
@@ -107,6 +117,30 @@ _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
 		minoff = P_FIRSTDATAKEY(opaque);
 		maxoff = PageGetMaxOffsetNumber(page);
 	}
+
+	/*
+	 * Before we actually deduplicate, see if we can non-opportunistically
+	 * free some duplicate if this is special checkingunique case
+	 */
+	if (checkingunique)
+	{
+		if (_bt_dedup_vacuum_one_page(rel, buf, heapRel, newitemsz))
+			return;
+
+		/*
+		 * Reconsider number of items on page, in case
+		 * _bt_dedup_vacuum_one_page() managed to delete an item or two
+		 */
+		minoff = P_FIRSTDATAKEY(opaque);
+		maxoff = PageGetMaxOffsetNumber(page);
+	}
+
+	/*
+	 * Can't actually deduplicate, so give up and split page (only here to see
+	 * if we can delete non-opportunistically)
+	 */
+	if (!allequalimage)
+		return;
 
 	/* Passed-in newitemsz is MAXALIGNED but does not include line pointer */
 	newitemsz += sizeof(ItemIdData);
@@ -807,6 +841,294 @@ _bt_swap_posting(IndexTuple newitem, IndexTuple oposting, int postingoff)
 	Assert(_bt_posting_valid(nposting));
 
 	return nposting;
+}
+
+/*
+ * See if duplicate unique index tuples in a unique index are eligible to be
+ * deleted, even though they don't have their LP_DEAD bit set already.
+ * Concentrate on groups of duplicates, since we're most likely to be
+ * successful there.  Give up if we have to access more than a few heap pages
+ * before we can free enough space to avoid a page split.
+ *
+ * Note: Caller should have already deleted all existing items with their
+ * LP_DEAD bits set.
+ *
+ * FIXME: Be less eager with tuples that contain NULLs, since they can be
+ * duplicates without that signaling anything about version churn.  Just
+ * because we're checkingunique (which implies that incoming newitem isn't
+ * a NULL) doesn't mean there aren't lots of other NULLs on the page.
+ *
+ * FIXME: Skip over duplicates of the incoming item, which will surely have
+ * been considered within _bt_check_unique().
+ */
+static bool
+_bt_dedup_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel,
+						  Size itemsz)
+{
+	OffsetNumber deletable[MaxIndexTuplesPerPage];
+	int			heapaccesses = 0;
+	int			ndeletable = 0;
+	OffsetNumber offnum,
+				minoff,
+				maxoff;
+	Size		freespace;
+	Page		page = BufferGetPage(buffer);
+	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	bool		finished = false;
+	bool		success = false;
+	BTDedupState state;
+	SnapshotData SnapshotNonVacuumable;
+	int			nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
+
+	state = (BTDedupState) palloc(sizeof(BTDedupStateData));
+	state->deduplicate = true;
+	state->nmaxitems = 0;
+	/* Final "posting list" size should not restrict anything */
+	state->maxpostingsize = BLCKSZ;
+	state->base = NULL;
+	state->baseoff = InvalidOffsetNumber;
+	state->basetupsize = 0;
+	state->htids = palloc(state->maxpostingsize);
+	state->nhtids = 0;
+	state->nitems = 0;
+	state->phystupsize = 0;
+	state->nintervals = 0;
+
+	minoff = P_FIRSTDATAKEY(opaque);
+	maxoff = PageGetMaxOffsetNumber(page);
+	for (offnum = minoff;
+		 offnum <= maxoff;
+		 offnum = OffsetNumberNext(offnum))
+	{
+		ItemId		itemid = PageGetItemId(page, offnum);
+		IndexTuple	itup = (IndexTuple) PageGetItem(page, itemid);
+
+		Assert(!ItemIdIsDead(itemid));
+
+		if (offnum == minoff)
+		{
+			_bt_dedup_start_pending(state, itup, offnum);
+		}
+		else if (state->deduplicate &&
+				 _bt_keep_natts_fast(rel, state->base, itup) > nkeyatts &&
+				 _bt_dedup_save_htid(state, itup))
+		{
+
+		}
+		else
+		{
+			_bt_dedup_vacuum_finish_pending(state);
+
+			/* itup starts new pending posting list */
+			_bt_dedup_start_pending(state, itup, offnum);
+		}
+	}
+	/* Handle the last item */
+	_bt_dedup_vacuum_finish_pending(state);
+
+	if (state->nintervals == 0)
+	{
+		pfree(state->htids);
+		pfree(state);
+		return false;
+	}
+
+	/* Access items in order of nitems, then asc page offset number order */
+	qsort(state->intervals, state->nintervals, sizeof(BTDedupInterval),
+		  _bt_intervalcmp);
+
+	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
+							  GlobalVisTestFor(heapRel));
+
+	freespace = PageGetFreeSpace(page);
+	for (int i = 0; i < state->nintervals; i++)
+	{
+		BTDedupInterval interval = state->intervals[i];
+		bool		killed_in_interval = false;
+
+		Assert(interval.nitems > 0);
+		/* Iterate through tuples of given value */
+		for (int j = 0; j < interval.nitems; j++)
+		{
+			OffsetNumber ioff = interval.baseoff + j;
+			ItemId		itemid = PageGetItemId(page, ioff);
+			IndexTuple	itup = (IndexTuple) PageGetItem(page, itemid);
+
+			if (killed_in_interval && j == 1 && interval.nitems == 2)
+			{
+				/*
+				 * If we already killed first item in interval, and there are
+				 * only two items, then assume that this isn't going to be
+				 * another kill -- move on to next interval
+				 */
+				break;
+			}
+
+			if (_bt_dedup_delete_item(heapRel, &SnapshotNonVacuumable, itup,
+									  &heapaccesses))
+			{
+				/* Delete item */
+				ItemIdMarkDead(itemid);
+				MarkBufferDirtyHint(buffer, true);
+				deletable[ndeletable++] = ioff;
+				freespace += ItemIdGetLength(itemid);
+				killed_in_interval = true;
+
+				if (freespace >= itemsz)
+				{
+					/*
+					 * We successfully avoided a page split, so we're done.
+					 *
+					 * XXX: We should probably find a way of doing a bit more
+					 * work in passing.  That should probably be accomplished
+					 * by pushing much of this logic down into heapam, which
+					 * can judge when it's worth going a bit further than
+					 * strictly needed.
+					 */
+					success = true;
+					finished = true;
+					break;
+				}
+			}
+
+			if (heapaccesses >= 10)
+			{
+				finished = true;
+				break;
+			}
+		}
+
+		if (finished)
+			break;
+		if (i >= 50)
+			break;
+	}
+
+	if (ndeletable > 0)
+	{
+		/* Have to give array to _bt_delitems_delete in asc order */
+		qsort(deletable, ndeletable, sizeof(OffsetNumber),
+			  _bt_offsetnumbercmp);
+		_bt_delitems_delete(rel, buffer, deletable, ndeletable, heapRel);
+	}
+
+	pfree(state->htids);
+	pfree(state);
+
+	return success;
+}
+
+static void
+_bt_dedup_vacuum_finish_pending(BTDedupState state)
+{
+	Assert(state->nitems > 0);
+	Assert(state->nitems <= state->nhtids);
+	Assert(state->intervals[state->nintervals].baseoff == state->baseoff);
+
+	if (state->nitems == 1)
+	{
+		/* Don't merge */
+	}
+	else
+	{
+		/* Save final number of items for posting list */
+		state->intervals[state->nintervals].nitems = state->nitems;
+		/* Increment nintervals, since we wrote a new posting list tuple */
+		state->nintervals++;
+	}
+
+	/* Reset state for next pending posting list */
+	state->nhtids = 0;
+	state->nitems = 0;
+	state->phystupsize = 0;
+}
+
+static bool
+_bt_dedup_delete_item(Relation heapRel, Snapshot SnapshotNonVacuumable,
+					  IndexTuple itup, int *heapaccesses)
+{
+	bool		all_dead;
+	ItemPointerData htid;
+
+	all_dead = false;
+
+	if (!BTreeTupleIsPosting(itup))
+	{
+		Assert(ItemPointerIsValid(&itup->t_tid));
+
+		(*heapaccesses)++;
+		htid = itup->t_tid;
+		if (table_index_fetch_tuple_check(heapRel, &htid,
+										  SnapshotNonVacuumable, &all_dead))
+			return false;
+
+		if (!all_dead)
+			return false;
+	}
+	else
+	{
+		Assert(_bt_posting_valid(itup));
+
+		for (int i = 0; i < BTreeTupleGetNPosting(itup); i++)
+		{
+			(*heapaccesses)++;
+			htid = *BTreeTupleGetPostingN(itup, i);
+			if (table_index_fetch_tuple_check(heapRel,
+											  &htid,
+											  SnapshotNonVacuumable,
+											  &all_dead))
+				return false;
+
+			if (!all_dead)
+				return false;
+		}
+	}
+
+	/* All tuples in HOT chain are vacuumable */
+	return true;
+}
+
+/*
+ * qsort-style comparator used by _bt_dedup_vacuum_one_page()
+ */
+static int
+_bt_intervalcmp(const void *arg1, const void *arg2)
+{
+	BTDedupInterval *inter1 = (BTDedupInterval *) arg1;
+	BTDedupInterval *inter2 = (BTDedupInterval *) arg2;
+
+	/* Note: This sorts intervals in descending order */
+	if (inter1->nitems > inter2->nitems)
+		return -1;
+	if (inter1->nitems < inter2->nitems)
+		return 1;
+
+	/* Now tiebreak on itemoffsetnumber order, asc */
+	if (inter1->baseoff > inter2->baseoff)
+		return 1;
+	if (inter1->baseoff < inter2->baseoff)
+		return -1;
+
+	return 0;
+}
+
+/*
+ * qsort-style comparator used by _bt_dedup_vacuum_one_page()
+ */
+static int
+_bt_offsetnumbercmp(const void *arg1, const void *arg2)
+{
+	OffsetNumber *inter1 = (OffsetNumber *) arg1;
+	OffsetNumber *inter2 = (OffsetNumber *) arg2;
+
+	if (*inter1 > *inter2)
+		return 1;
+	if (*inter1 < *inter2)
+		return -1;
+
+	Assert(false);
+
+	return 0;
 }
 
 /*

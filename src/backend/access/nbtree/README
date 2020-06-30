@@ -807,7 +807,18 @@ Deduplication in unique indexes helps to prevent these pathological page
 splits.  Storing duplicates in a space efficient manner is not the goal,
 since in the long run there won't be any duplicates anyway.  Rather, we're
 buying time for standard garbage collection mechanisms to run before a
-page split is needed.
+page split is needed.  Also, the deduplication pass performs a targeted
+form of opportunistic deletion in the case of unique indexes.
+
+The deduplication code first opportunistically deletes whatever duplicates
+happen to be present on the page with a unique indexes, since in general
+some of them are likely to already be dead to everybody.  This mechanism
+is quite similar to on-the-fly deletion of index tuples that will already
+have failed to prevent a page split by the time deduplication is
+considered.  The main difference is that the tuples that get deleted are
+not opportunistically marked LP_DEAD by transactions that had to read the
+tuples in any case.  The implementation must weigh the need to avoid a
+page split against the extra work performed with a buffer lock held.
 
 Unique index leaf pages only get a deduplication pass when an insertion
 (that might have to split the page) observed an existing duplicate on the
