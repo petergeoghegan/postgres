@@ -19,6 +19,9 @@
  */
 #define DEFAULT_XLOG_SEG_SIZE	(16*1024*1024)
 
+/* Enable feature */
+#define HYU_LLT
+
 /*
  * Maximum length for identifiers (e.g. table names, column names,
  * function names).  Names actually are limited to one less byte than this,
