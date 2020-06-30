@@ -3474,7 +3474,7 @@ l1:
 		Assert(!HeapTupleHasExternal(&tp));
 	}
 	else if (HeapTupleHasExternal(&tp))
-		toast_delete(relation, &tp, false);
+		heap_toast_delete(relation, &tp, false);
 
 	/*
 	 * Mark tuple for invalidation from system caches at next command
