@@ -22,6 +22,6 @@ typedef struct VPool {
 } VPool;
 
 extern Size VPoolShmemSize(int size_pool, int bytes_entry);
-extern void VPoolShmemInit(char *pool_name, int size_pool, int bytes_entry);
+extern VPool* VPoolShmemInit(char *pool_name, int size_pool, int bytes_entry);
 
 #endif							/* VPOOL_H */

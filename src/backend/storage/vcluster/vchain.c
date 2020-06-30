@@ -13,8 +13,9 @@
  *
  *-------------------------------------------------------------------------
  */
-#ifdef HYU_LLT
 #include "postgres.h"
+
+#ifdef HYU_LLT
 
 #include "storage/lwlock.h"
 #include "storage/shmem.h"

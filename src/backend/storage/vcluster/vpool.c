@@ -14,9 +14,12 @@
  *
  *-------------------------------------------------------------------------
  */
-#ifdef HYU_LLT
 #include "postgres.h"
 
+#include "storage/shmem.h"
+#include "storage/vpool.h"
+
+#ifdef HYU_LLT
 /*
  * VPoolShmemSize
  *
@@ -31,7 +34,7 @@ VPoolShmemSize(int size_pool, int bytes_entry)
 	size = add_size(size, sizeof(VPool));
 
 	/* add the size of the memory pool with the given size */
-	size = add_size(size, (mul_size(size_pool, bytes_entry));
+	size = add_size(size, (mul_size(size_pool, bytes_entry)));
 
 	return size;
 }
@@ -57,7 +60,7 @@ VPoolShmemInit(char *pool_name, int size_pool, int bytes_entry)
 	/* Initialize memory pool for VPool */
 	sprintf(internal_pool_name, "%s_internal", pool_name);
 	vpool->pool_ptr = ShmemInitStruct(internal_pool_name,
-									  pool_size * bytes_entry,
+									  size_pool * bytes_entry,
 									  &foundPoolIntr);
 
 	/* Setup freelist of the pool */

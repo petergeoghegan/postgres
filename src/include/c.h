@@ -46,6 +46,11 @@
 #ifndef C_H
 #define C_H
 
+/* Enable feature */
+#define HYU_LLT
+#define HYU_LLT_STAT
+#define HYU_COMMON_STAT
+
 #include "postgres_ext.h"
 
 /* Must undef pg_config_ext.h symbols before including pg_config.h */

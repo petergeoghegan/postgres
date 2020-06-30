@@ -14,9 +14,9 @@
  *
  *-------------------------------------------------------------------------
  */
-#ifdef HYU_LLT
 #include "postgres.h"
 
+#ifdef HYU_LLT
 #include <fcntl.h>
 #include <unistd.h>
 #include <assert.h>
