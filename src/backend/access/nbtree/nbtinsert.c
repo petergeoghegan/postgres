@@ -874,7 +874,9 @@ _bt_findinsertloc(Relation rel,
 		 * If the target page is full, see if we can obtain enough space by
 		 * erasing LP_DEAD items.  If that fails to free enough space, see if
 		 * we can avoid a page split by performing a deduplication pass over
-		 * the page.
+		 * the page.  If it's a unique index we will try to delete whatever
+		 * duplicates happen to be on the page, which might be enough to avoid
+		 * a page split.
 		 *
 		 * We only perform a deduplication pass for a checkingunique caller
 		 * when the incoming item is a duplicate of an existing item on the
@@ -893,13 +895,12 @@ _bt_findinsertloc(Relation rel,
 				uniquedup = true;
 			}
 
-			if (itup_key->allequalimage && BTGetDeduplicateItems(rel) &&
-				(!checkingunique || uniquedup) &&
+			if (BTGetDeduplicateItems(rel) && (!checkingunique || uniquedup) &&
 				PageGetFreeSpace(page) < insertstate->itemsz)
 			{
 				_bt_dedup_one_page(rel, insertstate->buf, heapRel,
 								   insertstate->itup, insertstate->itemsz,
-								   checkingunique);
+								   checkingunique, itup_key->allequalimage);
 				insertstate->bounds_valid = false;
 			}
 		}
