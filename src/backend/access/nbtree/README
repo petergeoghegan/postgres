@@ -803,7 +803,7 @@ buying time for standard garbage collection mechanisms to run before a
 page split is needed.  Also, the deduplication pass performs a targeted
 form of opportunistic deletion in the case of unique indexes.
 
-The deduplication code first opportunistically delete whatever duplicates
+The deduplication code first opportunistically deletes whatever duplicates
 happen to be present on the page with a unique indexes, since in general
 some of them are likely to already be dead to everybody.  This mechanism
 is quite similar to on-the-fly deletion of index tuples that will already
