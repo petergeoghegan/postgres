@@ -661,6 +661,7 @@ typedef struct BTScanInsertData
 	bool		anynullkeys;
 	bool		nextkey;
 	bool		pivotsearch;
+	uint16		prefix;
 	ItemPointer scantid;		/* tiebreaker for scankeys */
 	int			keysz;			/* Size of scankeys array */
 	ScanKeyData scankeys[INDEX_MAX_KEYS];	/* Must appear last */

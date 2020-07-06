@@ -28,6 +28,8 @@ static void _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp);
 static OffsetNumber _bt_binsrch(Relation rel, BTScanInsert key, Buffer buf);
 static int	_bt_binsrch_posting(BTScanInsert key, Page page,
 								OffsetNumber offnum);
+static inline int32 _bt_compare_abbr(Relation rel, BTScanInsert key,
+									 Page page, OffsetNumber offnum);
 static bool _bt_readpage(IndexScanDesc scan, ScanDirection dir,
 						 OffsetNumber offnum);
 static void _bt_saveitem(BTScanOpaque so, int itemIndex,
@@ -348,20 +350,22 @@ _bt_binsrch(Relation rel,
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber low,
-				high;
+				high,
+				stricthigh;
 	int32		result,
 				cmpval;
+	bool		isleaf;
 
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	isleaf = P_ISLEAF(opaque);
+	low = P_FIRSTDATAKEY(opaque);
+	high = PageGetMaxOffsetNumber(page);
 
 	/* Requesting nextkey semantics while using scantid seems nonsensical */
 	Assert(!key->nextkey || key->scantid == NULL);
 	/* scantid-set callers must use _bt_binsrch_insert() on leaf pages */
-	Assert(!P_ISLEAF(opaque) || key->scantid == NULL);
-
-	low = P_FIRSTDATAKEY(opaque);
-	high = PageGetMaxOffsetNumber(page);
+	Assert(!isleaf || key->scantid == NULL);
 
 	/*
 	 * If there are no keys on the page, return the first available slot. Note
@@ -386,8 +390,35 @@ _bt_binsrch(Relation rel,
 	 * We can fall out when high == low.
 	 */
 	high++;						/* establish the loop invariant for high */
+	stricthigh = high;			/* high initially strictly higher */
 
 	cmpval = key->nextkey ? 0 : 1;	/* select comparison value */
+
+	if (!isleaf)
+	{
+		while (high > low)
+		{
+			OffsetNumber mid = low + ((high - low) / 2);
+
+			/* We have low <= mid < high, so mid points at a real slot */
+
+			result = _bt_compare_abbr(rel, key, page, mid);
+
+			if (result == 0)
+				break;
+
+			if (result >= cmpval)
+				low = mid + 1;
+			else
+			{
+				high = mid;
+				if (result != 0)
+					stricthigh = high;
+			}
+		}
+
+		high = stricthigh;
+	}
 
 	while (high > low)
 	{
@@ -410,7 +441,7 @@ _bt_binsrch(Relation rel,
 	 * On a leaf page, we always return the first key >= scan key (resp. >
 	 * scan key), which could be the last slot + 1.
 	 */
-	if (P_ISLEAF(opaque))
+	if (isleaf)
 		return low;
 
 	/*
@@ -821,6 +852,22 @@ _bt_compare(Relation rel,
 		if (result > 0)
 			return 1;
 	}
+
+	return 0;
+}
+
+static inline int32
+_bt_compare_abbr(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum)
+{
+	ItemId		itemid = PageGetItemId(page, offnum);
+	uint16		itemprefix = ItemIdGetLength(itemid);
+
+	itemprefix = 0; // temp
+
+	if (key->prefix < itemprefix)
+		return -1;
+	else if (key->prefix > itemprefix)
+		return 1;
 
 	return 0;
 }
@@ -1341,6 +1388,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	inskey.anynullkeys = false; /* unused */
 	inskey.nextkey = nextkey;
 	inskey.pivotsearch = false;
+	inskey.prefix = 0;
 	inskey.scantid = NULL;
 	inskey.keysz = keysCount;
 
