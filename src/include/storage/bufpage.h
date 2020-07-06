@@ -432,6 +432,8 @@ extern void PageInit(Page page, Size pageSize, Size specialSize);
 extern bool PageIsVerified(Page page, BlockNumber blkno);
 extern OffsetNumber PageAddItemExtended(Page page, Item item, Size size,
 										OffsetNumber offsetNumber, int flags);
+extern OffsetNumber PageAddItemAbbr(Page page, Item item, Size size,
+									uint16 abbr, OffsetNumber offsetNumber);
 extern Page PageGetTempPage(Page page);
 extern Page PageGetTempPageCopy(Page page);
 extern Page PageGetTempPageCopySpecial(Page page);

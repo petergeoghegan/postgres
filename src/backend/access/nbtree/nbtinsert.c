@@ -51,13 +51,14 @@ static void _bt_insertonpg(Relation rel, BTScanInsert itup_key,
 						   bool split_only_page);
 static Buffer _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf,
 						Buffer cbuf, OffsetNumber newitemoff, Size newitemsz,
-						IndexTuple newitem, IndexTuple orignewitem,
+						IndexTuple newitem, uint16 newabbr, IndexTuple orignewitem,
 						IndexTuple nposting, uint16 postingoff);
 static void _bt_insert_parent(Relation rel, Buffer buf, Buffer rbuf,
 							  BTStack stack, bool is_root, bool is_only);
 static Buffer _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf);
 static inline bool _bt_pgaddtup(Page page, Size itemsize, IndexTuple itup,
-								OffsetNumber itup_off, bool newfirstdataitem);
+								uint16 abbr, OffsetNumber itup_off,
+								bool newfirstdataitem);
 static void _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel);
 
 /*
@@ -1114,6 +1115,7 @@ _bt_insertonpg(Relation rel,
 	IndexTuple	oposting = NULL;
 	IndexTuple	origitup = NULL;
 	IndexTuple	nposting = NULL;
+	uint16		abbr = 0;
 
 	page = BufferGetPage(buf);
 	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -1188,7 +1190,7 @@ _bt_insertonpg(Relation rel,
 
 		/* split the buffer into left and right halves */
 		rbuf = _bt_split(rel, itup_key, buf, cbuf, newitemoff, itemsz, itup,
-						 origitup, nposting, postingoff);
+						 abbr, origitup, nposting, postingoff);
 		PredicateLockPageSplit(rel,
 							   BufferGetBlockNumber(buf),
 							   BufferGetBlockNumber(rbuf));
@@ -1252,8 +1254,8 @@ _bt_insertonpg(Relation rel,
 		if (postingoff != 0)
 			memcpy(oposting, nposting, MAXALIGN(IndexTupleSize(nposting)));
 
-		if (PageAddItem(page, (Item) itup, itemsz, newitemoff, false,
-						false) == InvalidOffsetNumber)
+		if (PageAddItemAbbr(page, (Item) itup, itemsz, abbr, newitemoff) ==
+			InvalidOffsetNumber)
 			elog(PANIC, "failed to add new item to block %u in index \"%s\"",
 				 BufferGetBlockNumber(buf), RelationGetRelationName(rel));
 
@@ -1443,7 +1445,8 @@ _bt_insertonpg(Relation rel,
 static Buffer
 _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		  OffsetNumber newitemoff, Size newitemsz, IndexTuple newitem,
-		  IndexTuple orignewitem, IndexTuple nposting, uint16 postingoff)
+		  uint16 newabbr, IndexTuple orignewitem, IndexTuple nposting,
+		  uint16 postingoff)
 {
 	Buffer		rbuf;
 	Page		origpage;
@@ -1471,6 +1474,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	bool		newitemonleft,
 				isleaf,
 				isrightmost;
+	uint16		abbr = 0;
 
 	/*
 	 * origpage is the original page to be split.  leftpage is a temporary
@@ -1674,8 +1678,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	Assert(BTreeTupleGetNAtts(lefthighkey, rel) <=
 		   IndexRelationGetNumberOfKeyAttributes(rel));
 	Assert(itemsz == MAXALIGN(IndexTupleSize(lefthighkey)));
-	if (PageAddItem(leftpage, (Item) lefthighkey, itemsz, afterleftoff, false,
-					false) == InvalidOffsetNumber)
+	if (PageAddItemAbbr(leftpage, (Item) lefthighkey, itemsz, abbr,
+						afterleftoff) == InvalidOffsetNumber)
 		elog(ERROR, "failed to add high key to the left sibling"
 			 " while splitting block %u of index \"%s\"",
 			 origpagenumber, RelationGetRelationName(rel));
@@ -1741,8 +1745,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		Assert(BTreeTupleGetNAtts(righthighkey, rel) > 0);
 		Assert(BTreeTupleGetNAtts(righthighkey, rel) <=
 			   IndexRelationGetNumberOfKeyAttributes(rel));
-		if (PageAddItem(rightpage, (Item) righthighkey, itemsz, afterrightoff,
-						false, false) == InvalidOffsetNumber)
+		if (PageAddItemAbbr(rightpage, (Item) righthighkey, itemsz, abbr,
+							afterrightoff) == InvalidOffsetNumber)
 		{
 			memset(rightpage, 0, BufferGetPageSize(rbuf));
 			elog(ERROR, "failed to add high key to the right sibling"
@@ -1789,8 +1793,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 			if (newitemonleft)
 			{
 				Assert(newitemoff <= firstrightoff);
-				if (!_bt_pgaddtup(leftpage, newitemsz, newitem, afterleftoff,
-								  false))
+				if (!_bt_pgaddtup(leftpage, newitemsz, newitem, newabbr,
+								  afterleftoff, false))
 				{
 					memset(rightpage, 0, BufferGetPageSize(rbuf));
 					elog(ERROR, "failed to add new item to the left sibling"
@@ -1802,8 +1806,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 			else
 			{
 				Assert(newitemoff >= firstrightoff);
-				if (!_bt_pgaddtup(rightpage, newitemsz, newitem, afterrightoff,
-								  afterrightoff == minusinfoff))
+				if (!_bt_pgaddtup(rightpage, newitemsz, newitem, newabbr,
+								  afterrightoff, afterrightoff == minusinfoff))
 				{
 					memset(rightpage, 0, BufferGetPageSize(rbuf));
 					elog(ERROR, "failed to add new item to the right sibling"
@@ -1814,10 +1818,12 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 			}
 		}
 
+		abbr = ItemIdGetLength(itemid);
 		/* decide which page to put it on */
 		if (i < firstrightoff)
 		{
-			if (!_bt_pgaddtup(leftpage, itemsz, dataitem, afterleftoff, false))
+			if (!_bt_pgaddtup(leftpage, itemsz, dataitem, abbr, afterleftoff,
+							  false))
 			{
 				memset(rightpage, 0, BufferGetPageSize(rbuf));
 				elog(ERROR, "failed to add old item to the left sibling"
@@ -1828,8 +1834,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		}
 		else
 		{
-			if (!_bt_pgaddtup(rightpage, itemsz, dataitem, afterrightoff,
-							  afterrightoff == minusinfoff))
+			if (!_bt_pgaddtup(rightpage, itemsz, dataitem, abbr,
+							  afterrightoff, afterrightoff == minusinfoff))
 			{
 				memset(rightpage, 0, BufferGetPageSize(rbuf));
 				elog(ERROR, "failed to add old item to the right sibling"
@@ -1849,8 +1855,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		 * not be splitting the page).
 		 */
 		Assert(!newitemonleft && newitemoff == maxoff + 1);
-		if (!_bt_pgaddtup(rightpage, newitemsz, newitem, afterrightoff,
-						  afterrightoff == minusinfoff))
+		if (!_bt_pgaddtup(rightpage, newitemsz, newitem, newabbr,
+						  afterrightoff, afterrightoff == minusinfoff))
 		{
 			memset(rightpage, 0, BufferGetPageSize(rbuf));
 			elog(ERROR, "failed to add new item to the right sibling"
@@ -2432,6 +2438,7 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	Buffer		metabuf;
 	Page		metapg;
 	BTMetaPageData *metad;
+	uint16		abbr = 0;
 
 	lbkno = BufferGetBlockNumber(lbuf);
 	rbkno = BufferGetBlockNumber(rbuf);
@@ -2499,8 +2506,8 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	 * benefit of _bt_restore_page().
 	 */
 	Assert(BTreeTupleGetNAtts(left_item, rel) == 0);
-	if (PageAddItem(rootpage, (Item) left_item, left_item_sz, P_HIKEY,
-					false, false) == InvalidOffsetNumber)
+	if (PageAddItemAbbr(rootpage, (Item) left_item, left_item_sz, abbr,
+						P_HIKEY) == InvalidOffsetNumber)
 		elog(PANIC, "failed to add leftkey to new root page"
 			 " while splitting block %u of index \"%s\"",
 			 BufferGetBlockNumber(lbuf), RelationGetRelationName(rel));
@@ -2511,8 +2518,8 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	Assert(BTreeTupleGetNAtts(right_item, rel) > 0);
 	Assert(BTreeTupleGetNAtts(right_item, rel) <=
 		   IndexRelationGetNumberOfKeyAttributes(rel));
-	if (PageAddItem(rootpage, (Item) right_item, right_item_sz, P_FIRSTKEY,
-					false, false) == InvalidOffsetNumber)
+	if (PageAddItemAbbr(rootpage, (Item) right_item, right_item_sz, abbr,
+						P_FIRSTKEY) == InvalidOffsetNumber)
 		elog(PANIC, "failed to add rightkey to new root page"
 			 " while splitting block %u of index \"%s\"",
 			 BufferGetBlockNumber(lbuf), RelationGetRelationName(rel));
@@ -2603,6 +2610,7 @@ static inline bool
 _bt_pgaddtup(Page page,
 			 Size itemsize,
 			 IndexTuple itup,
+			 uint16 abbr,
 			 OffsetNumber itup_off,
 			 bool newfirstdataitem)
 {
@@ -2615,10 +2623,11 @@ _bt_pgaddtup(Page page,
 		BTreeTupleSetNAtts(&trunctuple, 0, false);
 		itup = &trunctuple;
 		itemsize = sizeof(IndexTupleData);
+		abbr = 0;
 	}
 
-	if (unlikely(PageAddItem(page, (Item) itup, itemsize, itup_off, false,
-							 false) == InvalidOffsetNumber))
+	if (unlikely(PageAddItemAbbr(page, (Item) itup, itemsize, abbr,
+						itup_off) == InvalidOffsetNumber))
 		return false;
 
 	return true;

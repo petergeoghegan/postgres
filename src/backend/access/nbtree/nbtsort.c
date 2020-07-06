@@ -268,8 +268,8 @@ static void _bt_build_callback(Relation index, ItemPointer tid, Datum *values,
 static Page _bt_blnewpage(uint32 level);
 static BTPageState *_bt_pagestate(BTWriteState *wstate, uint32 level);
 static void _bt_slideleft(Page rightmostpage);
-static void _bt_sortaddtup(Page page, Size itemsize,
-						   IndexTuple itup, OffsetNumber itup_off,
+static void _bt_sortaddtup(Page page, Size itemsize, IndexTuple itup,
+						   uint16 abbr, OffsetNumber itup_off,
 						   bool newfirstdataitem);
 static void _bt_buildadd(BTWriteState *wstate, BTPageState *state,
 						 IndexTuple itup, Size truncextra);
@@ -764,6 +764,7 @@ static void
 _bt_sortaddtup(Page page,
 			   Size itemsize,
 			   IndexTuple itup,
+			   uint16 abbr,
 			   OffsetNumber itup_off,
 			   bool newfirstdataitem)
 {
@@ -776,16 +777,16 @@ _bt_sortaddtup(Page page,
 		BTreeTupleSetNAtts(&trunctuple, 0, false);
 		itup = &trunctuple;
 		itemsize = sizeof(IndexTupleData);
+		abbr = 0;
 	}
 
-	if (PageAddItem(page, (Item) itup, itemsize, itup_off,
-					false, false) == InvalidOffsetNumber)
+	if (PageAddItemAbbr(page, (Item) itup, itemsize, abbr,
+						itup_off) == InvalidOffsetNumber)
 		elog(ERROR, "failed to add item to the index page");
 }
 
-/*----------
- * Add an item to a disk page from the sort output (or add a posting list
- * item formed from the sort output).
+/*---------- Add an item to a disk page from the sort output (or add a posting
+ * list item formed from the sort output).
  *
  * We must be careful to observe the page layout conventions of nbtsearch.c:
  * - rightmost pages start data items at P_HIKEY instead of at P_FIRSTKEY.
@@ -841,6 +842,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 	Size		pgspc;
 	Size		itupsz;
 	bool		isleaf;
+	uint16		abbr;
 
 	/*
 	 * This is a handy place to check for cancel interrupts during the btree
@@ -909,6 +911,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		ItemId		ii;
 		ItemId		hii;
 		IndexTuple	oitup;
+		uint16		abbroi;
 
 		/* Create new page of same level */
 		npage = _bt_blnewpage(state->btps_level);
@@ -926,8 +929,9 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		Assert(last_off > P_FIRSTKEY);
 		ii = PageGetItemId(opage, last_off);
 		oitup = (IndexTuple) PageGetItem(opage, ii);
-		_bt_sortaddtup(npage, IndexTupleSize(oitup), oitup, P_FIRSTKEY,
-					   !isleaf);
+		abbroi = ItemIdGetLength(ii);
+		_bt_sortaddtup(npage, IndexTupleSize(oitup), oitup, abbroi,
+					   P_FIRSTKEY, !isleaf);
 
 		/*
 		 * Move 'last' into the high key position on opage.  _bt_blnewpage()
@@ -1056,7 +1060,11 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 	 * Add the new item into the current page.
 	 */
 	last_off = OffsetNumberNext(last_off);
-	_bt_sortaddtup(npage, itupsz, itup, last_off,
+	if (isleaf)
+		abbr = 0;
+	else
+		abbr = 0;
+	_bt_sortaddtup(npage, itupsz, itup, abbr, last_off,
 				   !isleaf && last_off == P_FIRSTKEY);
 
 	state->btps_page = npage;
