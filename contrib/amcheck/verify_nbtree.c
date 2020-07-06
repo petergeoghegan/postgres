@@ -966,24 +966,6 @@ bt_target_page_check(BtreeCheckState *state)
 		itup = (IndexTuple) PageGetItem(state->target, itemid);
 		tupsize = IndexTupleSize(itup);
 
-		/*
-		 * lp_len should match the IndexTuple reported length exactly, since
-		 * lp_len is completely redundant in indexes, and both sources of
-		 * tuple length are MAXALIGN()'d.  nbtree does not use lp_len all that
-		 * frequently, and is surprisingly tolerant of corrupt lp_len fields.
-		 */
-		if (tupsize != ItemIdGetLength(itemid))
-			ereport(ERROR,
-					(errcode(ERRCODE_INDEX_CORRUPTED),
-					 errmsg("index tuple size does not equal lp_len in index \"%s\"",
-							RelationGetRelationName(state->rel)),
-					 errdetail_internal("Index tid=(%u,%u) tuple size=%zu lp_len=%u page lsn=%X/%X.",
-										state->targetblock, offset,
-										tupsize, ItemIdGetLength(itemid),
-										(uint32) (state->targetlsn >> 32),
-										(uint32) state->targetlsn),
-					 errhint("This could be a torn page problem.")));
-
 		/* Check the number of index tuple attributes */
 		if (!_bt_check_natts(state->rel, state->heapkeyspace, state->target,
 							 offset))
@@ -2969,8 +2951,7 @@ PageGetItemIdCareful(BtreeCheckState *state, BlockNumber block, Page page,
 {
 	ItemId		itemid = PageGetItemId(page, offset);
 
-	if (ItemIdGetOffset(itemid) + ItemIdGetLength(itemid) >
-		BLCKSZ - sizeof(BTPageOpaqueData))
+	if (ItemIdGetOffset(itemid) > BLCKSZ - sizeof(BTPageOpaqueData))
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg("line pointer points past end of tuple space in index \"%s\"",
@@ -2985,8 +2966,7 @@ PageGetItemIdCareful(BtreeCheckState *state, BlockNumber block, Page page,
 	 * never uses either.  Verify that line pointer has storage, too, since
 	 * even LP_DEAD items should within nbtree.
 	 */
-	if (ItemIdIsRedirected(itemid) || !ItemIdIsUsed(itemid) ||
-		ItemIdGetLength(itemid) == 0)
+	if (ItemIdIsRedirected(itemid) || !ItemIdIsUsed(itemid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg("invalid line pointer storage in index \"%s\"",

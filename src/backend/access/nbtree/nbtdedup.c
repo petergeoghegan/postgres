@@ -156,8 +156,8 @@ _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
 	if (!P_RIGHTMOST(opaque))
 	{
 		ItemId		hitemid = PageGetItemId(page, P_HIKEY);
-		Size		hitemsz = ItemIdGetLength(hitemid);
 		IndexTuple	hitem = (IndexTuple) PageGetItem(page, hitemid);
+		Size		hitemsz = IndexTupleSize(hitem);
 
 		if (PageAddItem(newpage, (Item) hitem, hitemsz, P_HIKEY,
 						false, false) == InvalidOffsetNumber)

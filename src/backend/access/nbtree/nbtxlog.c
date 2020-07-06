@@ -397,8 +397,8 @@ btree_xlog_split(bool newitemonleft, XLogReaderState *record)
 			}
 
 			itemid = PageGetItemId(lpage, off);
-			itemsz = ItemIdGetLength(itemid);
 			item = (IndexTuple) PageGetItem(lpage, itemid);
+			itemsz = IndexTupleSize(item);
 			if (PageAddItem(newlpage, (Item) item, itemsz, leftoff,
 							false, false) == InvalidOffsetNumber)
 				elog(ERROR, "failed to add old item to left page after split");
@@ -502,8 +502,8 @@ btree_xlog_dedup(XLogReaderState *record)
 		if (!P_RIGHTMOST(opaque))
 		{
 			ItemId		itemid = PageGetItemId(page, P_HIKEY);
-			Size		itemsz = ItemIdGetLength(itemid);
 			IndexTuple	item = (IndexTuple) PageGetItem(page, itemid);
+			Size		itemsz = IndexTupleSize(item);
 
 			if (PageAddItem(newpage, (Item) item, itemsz, P_HIKEY,
 							false, false) == InvalidOffsetNumber)

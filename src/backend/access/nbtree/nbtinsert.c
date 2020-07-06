@@ -1602,8 +1602,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	{
 		/* existing item at firstrightoff becomes firstright */
 		itemid = PageGetItemId(origpage, firstrightoff);
-		itemsz = ItemIdGetLength(itemid);
 		firstright = (IndexTuple) PageGetItem(origpage, itemid);
+		itemsz = IndexTupleSize(firstright);
 		if (firstrightoff == origpagepostingoff)
 			firstright = nposting;
 	}
@@ -1736,8 +1736,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		IndexTuple	righthighkey;
 
 		itemid = PageGetItemId(origpage, P_HIKEY);
-		itemsz = ItemIdGetLength(itemid);
 		righthighkey = (IndexTuple) PageGetItem(origpage, itemid);
+		itemsz = IndexTupleSize(righthighkey);
 		Assert(BTreeTupleGetNAtts(righthighkey, rel) > 0);
 		Assert(BTreeTupleGetNAtts(righthighkey, rel) <=
 			   IndexRelationGetNumberOfKeyAttributes(rel));
@@ -1772,8 +1772,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		IndexTuple	dataitem;
 
 		itemid = PageGetItemId(origpage, i);
-		itemsz = ItemIdGetLength(itemid);
 		dataitem = (IndexTuple) PageGetItem(origpage, itemid);
+		itemsz = IndexTupleSize(dataitem);
 
 		/* replace original item with nposting due to posting split? */
 		if (i == origpagepostingoff)
@@ -2464,8 +2464,8 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	 * the "high key" position in the left page.
 	 */
 	itemid = PageGetItemId(lpage, P_HIKEY);
-	right_item_sz = ItemIdGetLength(itemid);
 	item = (IndexTuple) PageGetItem(lpage, itemid);
+	right_item_sz  = IndexTupleSize(item);
 	right_item = CopyIndexTuple(item);
 	BTreeTupleSetDownLink(right_item, rbkno);
 

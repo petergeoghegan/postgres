@@ -144,6 +144,7 @@ _bt_findsplitloc(Relation rel,
 	FindSplitData state;
 	FindSplitStrat strategy;
 	ItemId		itemid;
+	IndexTuple	tuple;
 	OffsetNumber offnum,
 				maxoff,
 				firstrightoff;
@@ -164,7 +165,8 @@ _bt_findsplitloc(Relation rel,
 	if (!P_RIGHTMOST(opaque))
 	{
 		itemid = PageGetItemId(origpage, P_HIKEY);
-		rightspace -= (int) (MAXALIGN(ItemIdGetLength(itemid)) +
+		tuple = (IndexTuple) PageGetItem(origpage, itemid);
+		rightspace -= (int) (MAXALIGN(IndexTupleSize(tuple)) +
 							 sizeof(ItemIdData));
 	}
 
@@ -213,7 +215,8 @@ _bt_findsplitloc(Relation rel,
 		Size		itemsz;
 
 		itemid = PageGetItemId(origpage, offnum);
-		itemsz = MAXALIGN(ItemIdGetLength(itemid)) + sizeof(ItemIdData);
+		tuple = (IndexTuple) PageGetItem(origpage, itemid);
+		itemsz = MAXALIGN(IndexTupleSize(tuple)) + sizeof(ItemIdData);
 
 		/*
 		 * When item offset number is not newitemoff, neither side of the
@@ -1141,15 +1144,13 @@ _bt_split_penalty(FindSplitData *state, SplitPoint *split)
 
 	if (!state->is_leaf)
 	{
-		ItemId		itemid;
-
 		if (!split->newitemonleft &&
 			split->firstrightoff == state->newitemoff)
 			return state->newitemsz;
 
-		itemid = PageGetItemId(state->origpage, split->firstrightoff);
+		firstright = _bt_split_firstright(state, split);
 
-		return MAXALIGN(ItemIdGetLength(itemid)) + sizeof(ItemIdData);
+		return MAXALIGN(IndexTupleSize(firstright)) + sizeof(ItemIdData);
 	}
 
 	lastleft = _bt_split_lastleft(state, split);

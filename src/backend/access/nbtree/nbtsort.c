@@ -926,7 +926,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		Assert(last_off > P_FIRSTKEY);
 		ii = PageGetItemId(opage, last_off);
 		oitup = (IndexTuple) PageGetItem(opage, ii);
-		_bt_sortaddtup(npage, ItemIdGetLength(ii), oitup, P_FIRSTKEY,
+		_bt_sortaddtup(npage, IndexTupleSize(oitup), oitup, P_FIRSTKEY,
 					   !isleaf);
 
 		/*
