@@ -1247,6 +1247,9 @@ _bt_insertonpg(Relation rel,
 				metabuf = InvalidBuffer;
 			}
 		}
+		// XXX: No abbr keys on leaf pages for now
+		if (isleaf)
+			abbr = itemsz;
 
 		/* Do the update.  No ereport(ERROR) until changes are logged */
 		START_CRIT_SECTION();
@@ -1495,6 +1498,9 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	isrightmost = P_RIGHTMOST(oopaque);
 	maxoff = PageGetMaxOffsetNumber(origpage);
 	origpagenumber = BufferGetBlockNumber(buf);
+
+	if (isleaf)
+		newabbr = newitemsz;
 
 	/*
 	 * Choose a point to split origpage at.

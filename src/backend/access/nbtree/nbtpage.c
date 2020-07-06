@@ -1466,6 +1466,8 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 	 */
 	BTStack		stack = NULL;
 
+	return 0;
+
 	for (;;)
 	{
 		page = BufferGetPage(leafbuf);
