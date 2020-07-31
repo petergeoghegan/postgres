@@ -774,7 +774,7 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 	xl_btree_unlink_page *xlrec = (xl_btree_unlink_page *) XLogRecGetData(record);
 	BlockNumber leftsib;
 	BlockNumber rightsib;
-	Buffer		buffer;
+	Buffer		leafbuf, lbuff = InvalidBuffer, rbuff, buff;
 	Page		page;
 	BTPageOpaque pageop;
 
@@ -782,47 +782,29 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 	rightsib = xlrec->rightsib;
 
 	/*
-	 * In normal operation, we would lock all the pages this WAL record
-	 * touches before changing any of them.  In WAL replay, it should be okay
-	 * to lock just one page at a time, since no concurrent index updates can
-	 * be happening, and readers should not care whether they arrive at the
-	 * target page or not (since it's surely empty).
+	 * We have to lock the pages we need to modify in the moving right order.
+	 * Else we will go into the race against _bt_walk_left.
 	 */
-
-	/* Fix left-link of right sibling */
-	if (XLogReadBufferForRedo(record, 2, &buffer) == BLK_NEEDS_REDO)
-	{
-		page = (Page) BufferGetPage(buffer);
-		pageop = (BTPageOpaque) PageGetSpecialPointer(page);
-		pageop->btpo_prev = leftsib;
-
-		PageSetLSN(page, lsn);
-		MarkBufferDirty(buffer);
-	}
-	if (BufferIsValid(buffer))
-		UnlockReleaseBuffer(buffer);
 
 	/* Fix right-link of left sibling, if any */
 	if (leftsib != P_NONE)
 	{
-		if (XLogReadBufferForRedo(record, 1, &buffer) == BLK_NEEDS_REDO)
+		if (XLogReadBufferForRedo(record, 1, &lbuff) == BLK_NEEDS_REDO)
 		{
-			page = (Page) BufferGetPage(buffer);
+			page = (Page) BufferGetPage(lbuff);
 			pageop = (BTPageOpaque) PageGetSpecialPointer(page);
 			pageop->btpo_next = rightsib;
 
 			PageSetLSN(page, lsn);
-			MarkBufferDirty(buffer);
+			MarkBufferDirty(lbuff);
 		}
-		if (BufferIsValid(buffer))
-			UnlockReleaseBuffer(buffer);
 	}
 
 	/* Rewrite target page as empty deleted page */
-	buffer = XLogInitBufferForRedo(record, 0);
-	page = (Page) BufferGetPage(buffer);
+	buff = XLogInitBufferForRedo(record, 0);
+	page = (Page) BufferGetPage(buff);
 
-	_bt_pageinit(page, BufferGetPageSize(buffer));
+	_bt_pageinit(page, BufferGetPageSize(buff));
 	pageop = (BTPageOpaque) PageGetSpecialPointer(page);
 
 	pageop->btpo_prev = leftsib;
@@ -832,8 +814,25 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 	pageop->btpo_cycleid = 0;
 
 	PageSetLSN(page, lsn);
-	MarkBufferDirty(buffer);
-	UnlockReleaseBuffer(buffer);
+	MarkBufferDirty(buff);
+
+	/* Fix left-link of right sibling */
+	if (XLogReadBufferForRedo(record, 2, &rbuff) == BLK_NEEDS_REDO)
+	{
+		page = (Page) BufferGetPage(rbuff);
+		pageop = (BTPageOpaque) PageGetSpecialPointer(page);
+		pageop->btpo_prev = leftsib;
+
+		PageSetLSN(page, lsn);
+		MarkBufferDirty(rbuff);
+	}
+
+	/* Release all buffers */
+	if (BufferIsValid(lbuff))
+		UnlockReleaseBuffer(lbuff);
+	UnlockReleaseBuffer(buff);
+	if (BufferIsValid(rbuff))
+		UnlockReleaseBuffer(rbuff);
 
 	/*
 	 * If we deleted a parent of the targeted leaf page, instead of the leaf
@@ -848,10 +847,10 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 		 */
 		IndexTupleData trunctuple;
 
-		buffer = XLogInitBufferForRedo(record, 3);
-		page = (Page) BufferGetPage(buffer);
+		leafbuf = XLogInitBufferForRedo(record, 3);
+		page = (Page) BufferGetPage(leafbuf);
 
-		_bt_pageinit(page, BufferGetPageSize(buffer));
+		_bt_pageinit(page, BufferGetPageSize(leafbuf));
 		pageop = (BTPageOpaque) PageGetSpecialPointer(page);
 
 		pageop->btpo_flags = BTP_HALF_DEAD | BTP_LEAF;
@@ -870,8 +869,8 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 			elog(ERROR, "could not add dummy high key to half-dead page");
 
 		PageSetLSN(page, lsn);
-		MarkBufferDirty(buffer);
-		UnlockReleaseBuffer(buffer);
+		MarkBufferDirty(leafbuf);
+		UnlockReleaseBuffer(leafbuf);
 	}
 
 	/* Update metapage if needed */

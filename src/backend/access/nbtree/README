@@ -556,21 +556,21 @@ right to recover from a "concurrent" page split or page deletion, just
 like on the primary.)
 
 However, there are a couple of differences in how pages are locked by
-replay/the startup process as compared to the original write operation
-on the primary. The exceptions involve page splits and page deletions.
-The first phase and second phase of a page split are processed
-independently during replay, since they are independent atomic actions.
-We do not attempt to recreate the coupling of parent and child page
-write locks that took place on the primary. This is safe because readers
-never care about the incomplete split flag anyway. Holding on to an
-extra write lock on the primary is only necessary so that a second
-writer cannot observe the incomplete split flag before the first writer
-finishes the split. If we let concurrent writers on the primary observe
-an incomplete split flag on the same page, each writer would attempt to
-complete the unfinished split, corrupting the parent page.  (Similarly,
-replay of page deletion records does not hold a write lock on the target
-leaf page throughout; only the primary needs to block out concurrent
-writers that insert on to the page being deleted.)
+replay/the startup process as compared to the original write operation on
+the primary. This is mainly about the page splits. The first phase and
+second phase of a page split are processed independently during replay,
+since they are independent atomic actions. We do not attempt to recreate
+the coupling of parent and child page write locks that took place on the
+primary. This is safe because readers never care about the incomplete
+split flag anyway. Holding on to an extra write lock on the primary is
+only necessary so that a second writer cannot observe the incomplete split
+flag before the first writer finishes the split. If we let concurrent
+writers on the primary observe an incomplete split flag on the same page,
+each writer would attempt to complete the unfinished split, corrupting the
+parent page. (However, although only the primary needs to block out
+concurrent writers that insert on to the page being deleted – page
+deletion lock coupling on standby is the same as on primary. It is
+required to avoid race condition during the scan in a backward direction.)
 
 During recovery all index scans start with ignore_killed_tuples = false
 and we never set kill_prior_tuple. We do this because the oldest xmin
