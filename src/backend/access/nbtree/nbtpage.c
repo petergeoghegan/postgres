@@ -68,7 +68,7 @@ _bt_initmetapage(Page page, BlockNumber rootbknum, uint32 level,
 
 	metad = BTPageGetMeta(page);
 	metad->btm_magic = BTREE_MAGIC;
-	metad->btm_version = BTREE_NOVAC_VERSION;
+	metad->btm_version = BTREE_VERSION;
 	metad->btm_root = rootbknum;
 	metad->btm_level = level;
 	metad->btm_fastroot = rootbknum;
@@ -669,10 +669,6 @@ _bt_metaversion(Relation rel, bool *heapkeyspace, bool *allequalimage)
 {
 	BTMetaPageData *metad;
 
-	/*
-	 * XXX: Deliberately don't change this, so we continue to work with v4
-	 * indexes left around from non-test Postgres build
-	 */
 	if (rel->rd_amcache == NULL)
 	{
 		Buffer		metabuf;
