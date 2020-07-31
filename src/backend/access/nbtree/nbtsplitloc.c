@@ -266,36 +266,6 @@ _bt_findsplitloc(Relation rel,
 		elog(ERROR, "could not find a feasible split point for index \"%s\"",
 			 RelationGetRelationName(rel));
 
-	{
-		OffsetNumber ret;
-		int ii = random() % (state.nsplits - 1);
-
-		*newitemonleft = state.splits[ii].newitemonleft;
-		ret = state.splits[ii].firstrightoff;
-		pfree(state.splits);
-		return ret;
-	}
-#if 0
-	if (random() <= (MAX_RANDOM_VALUE / 100))
-	{
-		OffsetNumber ret;
-
-		*newitemonleft = state.splits[0].newitemonleft;
-		ret = state.splits[0].firstrightoff;
-		pfree(state.splits);
-		return ret;
-	}
-	if (random() <= (MAX_RANDOM_VALUE / 100))
-	{
-		OffsetNumber ret;
-
-		*newitemonleft = state.splits[state.nsplits - 1].newitemonleft;
-		ret = state.splits[state.nsplits - 1].firstrightoff;
-		pfree(state.splits);
-		return ret;
-	}
-#endif
-
 	/*
 	 * Start search for a split point among list of legal split points.  Give
 	 * primary consideration to equalizing available free space in each half
