@@ -5,14 +5,14 @@ CREATE INDEX test1_a_idx ON test1 USING btree (a);
 SELECT * FROM bt_metap('test1_a_idx');
 -[ RECORD 1 ]-----------+-------
 magic                   | 340322
-version                 | 3
+version                 | 4
 root                    | 1
 level                   | 0
 fastroot                | 1
 fastlevel               | 0
 oldest_xact             | 0
 last_cleanup_num_tuples | -1
-allequalimage           | f
+allequalimage           | t
 
 SELECT * FROM bt_page_stats('test1_a_idx', 0);
 ERROR:  block 0 is a meta page
