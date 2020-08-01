@@ -818,6 +818,8 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 			UnlockReleaseBuffer(buffer);
 	}
 
+	pg_usleep(10 * 1000L);
+
 	/* Rewrite target page as empty deleted page */
 	buffer = XLogInitBufferForRedo(record, 0);
 	page = (Page) BufferGetPage(buffer);
