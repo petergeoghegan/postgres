@@ -1139,9 +1139,11 @@ _bt_insertonpg(Relation rel,
 	Assert(P_ISLEAF(lpageop) || newitemoff > P_FIRSTDATAKEY(lpageop));
 
 	/* The caller should've finished any incomplete splits already. */
+#if 0
 	if (P_INCOMPLETE_SPLIT(lpageop))
 		elog(ERROR, "cannot insert to incompletely split page %u",
 			 BufferGetBlockNumber(buf));
+#endif
 
 	/*
 	 * Do we need to split an existing posting list item?
