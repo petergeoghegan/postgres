@@ -594,14 +594,14 @@ _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
 static void
 _bt_deltashellsort(SplitPoint *a, int l, int r)
 {
-	int				i, j;
+	int		 i, j, k, h;
 	SplitPoint		v;
 
 	int				incs[8] = {861, 336, 112, 48, 21, 7, 3, 1};
 
-	for (int k = 0; k < 8; k++)
+	for (k = 0; k < 8; k++)
 	{
-		for (int h = incs[k], i = l + h; i <= r; i++)
+		for (h = incs[k], i = l + h; i <= r; i++)
 		{
 			v = a[i];
 			j = i;
