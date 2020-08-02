@@ -601,7 +601,7 @@ _bt_deltashellsort(SplitPoint *splits, int nsplits)
 	int				gaps[8] = {861, 336, 112, 48, 21, 7, 3, 1};
 	int				low = 0;
 
-	for (int g = 0; g < 8; g++)
+	for (int g = 0; g < lengthof(gaps); g++)
 	{
 		for (int hi = gaps[g], i = low + hi; i < nsplits; i++)
 		{
