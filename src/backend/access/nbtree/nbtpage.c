@@ -725,11 +725,7 @@ _bt_metaversion(Relation rel, bool *heapkeyspace, bool *allequalimage)
 void
 _bt_checkpage(Relation rel, Buffer buf)
 {
-	Page		page;
-
-	return;
-
-	page = BufferGetPage(buf);
+	Page		page = BufferGetPage(buf);
 
 	/*
 	 * ReadBuffer verifies that every newly-read page passes
