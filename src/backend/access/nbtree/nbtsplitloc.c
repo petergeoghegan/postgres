@@ -66,7 +66,7 @@ static void _bt_recsplitloc(FindSplitData *state,
 							Size firstrightofforigpagetuplesz);
 static void _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
 								bool usemult);
-static void _bt_deltashellsort(SplitPoint *a, int nsplits);
+static void _bt_deltashellsort(SplitPoint *splits, int nsplits);
 static bool _bt_afternewitemoff(FindSplitData *state, OffsetNumber maxoff,
 								int leaffillfactor, bool *usemult);
 static bool _bt_adjacenthtid(ItemPointer lowhtid, ItemPointer highhtid);
@@ -592,7 +592,7 @@ _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
  * Hand written shellshort implementation for _bt_deltasortsplits()
  */
 static void
-_bt_deltashellsort(SplitPoint *a, int nsplits)
+_bt_deltashellsort(SplitPoint *splits, int nsplits)
 {
 	int				i, j, k, h;
 	int				l, r;
@@ -606,14 +606,14 @@ _bt_deltashellsort(SplitPoint *a, int nsplits)
 	{
 		for (h = incs[k], i = l + h; i <= r; i++)
 		{
-			v = a[i];
+			v = splits[i];
 			j = i;
-			while (j >= h && a[j - h].curdelta > v.curdelta)
+			while (j >= h && splits[j - h].curdelta > v.curdelta)
 			{
-				a[j] = a[j - h];
+				splits[j] = splits[j - h];
 				j -= h;
 			}
-			a[j] = v;
+			splits[j] = v;
 		}
 	}
 }
