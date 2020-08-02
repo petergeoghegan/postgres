@@ -250,6 +250,8 @@ _bt_moveright(Relation rel,
 	BTPageOpaque opaque;
 	int32		cmpval;
 
+	return buf;
+
 	/*
 	 * When nextkey = false (normal case): if the scan key that brought us to
 	 * this page is > the high key stored on the page, then the page has split
