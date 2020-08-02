@@ -154,14 +154,14 @@ typedef struct BTMetaPageData
  * a heap index tuple to make space for a tiebreaker heap TID
  * attribute, which we account for here.
  */
-#define BTMaxItemSize(page) \
-	MAXALIGN_DOWN((PageGetPageSize(page) - \
+#define BTMaxItemSize \
+	MAXALIGN_DOWN((BLCKSZ - \
 				   MAXALIGN(SizeOfPageHeaderData + \
 							3*sizeof(ItemIdData)  + \
 							3*sizeof(ItemPointerData)) - \
 				   MAXALIGN(sizeof(BTPageOpaqueData))) / 3)
-#define BTMaxItemSizeNoHeapTid(page) \
-	MAXALIGN_DOWN((PageGetPageSize(page) - \
+#define BTMaxItemSizeNoHeapTid \
+	MAXALIGN_DOWN((BLCKSZ - \
 				   MAXALIGN(SizeOfPageHeaderData + 3*sizeof(ItemIdData)) - \
 				   MAXALIGN(sizeof(BTPageOpaqueData))) / 3)
 

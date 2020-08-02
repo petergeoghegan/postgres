@@ -124,7 +124,7 @@ _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
 	state = (BTDedupState) palloc(sizeof(BTDedupStateData));
 	state->deduplicate = true;
 	state->nmaxitems = 0;
-	state->maxpostingsize = Min(BTMaxItemSize(page) / 2, INDEX_SIZE_MASK);
+	state->maxpostingsize = Min(BTMaxItemSize / 2, INDEX_SIZE_MASK);
 	/* Metadata about base tuple of current pending posting list */
 	state->base = NULL;
 	state->baseoff = InvalidOffsetNumber;

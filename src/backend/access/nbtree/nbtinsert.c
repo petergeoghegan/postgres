@@ -801,7 +801,7 @@ _bt_findinsertloc(Relation rel,
 	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
 
 	/* Check 1/3 of a page restriction */
-	if (unlikely(insertstate->itemsz > BTMaxItemSize(page)))
+	if (unlikely(insertstate->itemsz > BTMaxItemSize))
 		_bt_check_third_page(rel, heapRel, itup_key->heapkeyspace, page,
 							 insertstate->itup);
 
