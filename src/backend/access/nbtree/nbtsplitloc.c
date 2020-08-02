@@ -594,12 +594,13 @@ _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
 static void
 _bt_deltashellsort(SplitPoint *splits, int nsplits)
 {
+	/* gap sequence is from Sedgewick-Incerpi paper */
 	int				gaps[8] = {861, 336, 112, 48, 21, 7, 3, 1};
 	int				low = 0;
 
-	for (int k = 0; k < 8; k++)
+	for (int g = 0; g < 8; g++)
 	{
-		for (int hi = gaps[k], i = low + hi; i < nsplits; i++)
+		for (int hi = gaps[g], i = low + hi; i < nsplits; i++)
 		{
 			SplitPoint		s = splits[i];
 			int				j = i;
