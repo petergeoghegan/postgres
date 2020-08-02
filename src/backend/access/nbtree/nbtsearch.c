@@ -615,6 +615,30 @@ _bt_binsrch_posting(BTScanInsert key, Page page, OffsetNumber offnum)
 	return low;
 }
 
+static inline int32
+_bt_itempointer_compare(ItemPointer arg1, ItemPointer arg2)
+{
+	/*
+	 * Use ItemPointerGet{Offset,Block}NumberNoCheck to avoid asserting
+	 * ip_posid != 0, which may not be true for a user-supplied TID.
+	 */
+	BlockNumber b1 = ItemPointerGetBlockNumberNoCheck(arg1);
+	BlockNumber b2 = ItemPointerGetBlockNumberNoCheck(arg2);
+
+	if (b1 < b2)
+		return -1;
+	else if (b1 > b2)
+		return 1;
+	else if (ItemPointerGetOffsetNumberNoCheck(arg1) <
+			 ItemPointerGetOffsetNumberNoCheck(arg2))
+		return -1;
+	else if (ItemPointerGetOffsetNumberNoCheck(arg1) >
+			 ItemPointerGetOffsetNumberNoCheck(arg2))
+		return 1;
+	else
+		return 0;
+}
+
 /*----------
  *	_bt_compare() -- Compare insertion-type scankey to tuple on a page.
  *
@@ -812,13 +836,13 @@ _bt_compare(Relation rel,
 	 * with scantid.
 	 */
 	Assert(ntupatts >= IndexRelationGetNumberOfKeyAttributes(rel));
-	result = ItemPointerCompare(key->scantid, heapTid);
+	result = _bt_itempointer_compare(key->scantid, heapTid);
 	if (result <= 0 || !BTreeTupleIsPosting(itup))
 		return result;
 	else
 	{
-		result = ItemPointerCompare(key->scantid,
-									BTreeTupleGetMaxHeapTID(itup));
+		result = _bt_itempointer_compare(key->scantid,
+										 BTreeTupleGetMaxHeapTID(itup));
 		if (result > 0)
 			return 1;
 	}
