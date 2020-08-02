@@ -66,7 +66,7 @@ static void _bt_recsplitloc(FindSplitData *state,
 							Size firstrightofforigpagetuplesz);
 static void _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
 								bool usemult);
-static int	_bt_splitcmp(const void *arg1, const void *arg2);
+static void _bt_deltashellsort(SplitPoint *splits, int nsplits);
 static bool _bt_afternewitemoff(FindSplitData *state, OffsetNumber maxoff,
 								int leaffillfactor, bool *usemult);
 static bool _bt_adjacenthtid(ItemPointer lowhtid, ItemPointer highhtid);
@@ -585,24 +585,37 @@ _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
 		split->curdelta = delta;
 	}
 
-	qsort(state->splits, state->nsplits, sizeof(SplitPoint), _bt_splitcmp);
+	_bt_deltashellsort(state->splits, state->nsplits);
 }
 
 /*
- * qsort-style comparator used by _bt_deltasortsplits()
+ * Hand written shellshort implementation for _bt_deltasortsplits()
+ *
+ * Gap sequence taken from Sedgewick-Incerpi paper.  This implementation is
+ * fast with array sizes up to about 1900.  This covers all supported BLCKSZ
+ * values.
  */
-static int
-_bt_splitcmp(const void *arg1, const void *arg2)
+static void
+_bt_deltashellsort(SplitPoint *splits, int nsplits)
 {
-	SplitPoint *split1 = (SplitPoint *) arg1;
-	SplitPoint *split2 = (SplitPoint *) arg2;
+	int				gaps[8] = {861, 336, 112, 48, 21, 7, 3, 1};
+	int				low = 0;
 
-	if (split1->curdelta > split2->curdelta)
-		return 1;
-	if (split1->curdelta < split2->curdelta)
-		return -1;
+	for (int g = 0; g < 8; g++)
+	{
+		for (int hi = gaps[g], i = low + hi; i < nsplits; i++)
+		{
+			SplitPoint		s = splits[i];
+			int				j = i;
 
-	return 0;
+			while (j >= hi && splits[j - hi].curdelta > s.curdelta)
+			{
+				splits[j] = splits[j - hi];
+				j -= hi;
+			}
+			splits[j] = s;
+		}
+	}
 }
 
 /*
