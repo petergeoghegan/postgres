@@ -595,16 +595,15 @@ static void
 _bt_deltashellsort(SplitPoint *splits, int nsplits)
 {
 	int				i, j, k, h;
-	int				l, r;
+	int				l;
 	SplitPoint		v;
 	int				incs[8] = {861, 336, 112, 48, 21, 7, 3, 1};
 
 	l = 0;
-	r = nsplits - 1;
 
 	for (k = 0; k < 8; k++)
 	{
-		for (h = incs[k], i = l + h; i <= r; i++)
+		for (h = incs[k], i = l + h; i < nsplits; i++)
 		{
 			v = splits[i];
 			j = i;
