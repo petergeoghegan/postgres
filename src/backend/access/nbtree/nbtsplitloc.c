@@ -66,7 +66,7 @@ static void _bt_recsplitloc(FindSplitData *state,
 							Size firstrightofforigpagetuplesz);
 static void _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
 								bool usemult);
-static int	_bt_splitcmp(const void *arg1, const void *arg2);
+static void _bt_deltashellsort(SplitPoint *a, int l, int r);
 static bool _bt_afternewitemoff(FindSplitData *state, OffsetNumber maxoff,
 								int leaffillfactor, bool *usemult);
 static bool _bt_adjacenthtid(ItemPointer lowhtid, ItemPointer highhtid);
@@ -585,24 +585,35 @@ _bt_deltasortsplits(FindSplitData *state, double fillfactormult,
 		split->curdelta = delta;
 	}
 
-	qsort(state->splits, state->nsplits, sizeof(SplitPoint), _bt_splitcmp);
+	_bt_deltashellsort(state->splits, 0, state->nsplits - 1);
 }
 
 /*
- * qsort-style comparator used by _bt_deltasortsplits()
+ * Hand written shellshort implementation for _bt_deltasortsplits()
  */
-static int
-_bt_splitcmp(const void *arg1, const void *arg2)
+static void
+_bt_deltashellsort(SplitPoint *a, int l, int r)
 {
-	SplitPoint *split1 = (SplitPoint *) arg1;
-	SplitPoint *split2 = (SplitPoint *) arg2;
+	int		 i, j, k, h;
+	SplitPoint v;
 
-	if (split1->curdelta > split2->curdelta)
-		return 1;
-	if (split1->curdelta < split2->curdelta)
-		return -1;
+	int incs[16] = {1391376, 463792, 198768, 86961, 33936, 13776, 4592, 1968,
+					861,	 336,	 112,	 48,	21,	   7,	  3,	1};
 
-	return 0;
+	for (k = 0; k < 16; k++)
+	{
+		for (h = incs[k], i = l + h; i <= r; i++)
+		{
+			v = a[i];
+			j = i;
+			while (j >= h && a[j - h].curdelta > v.curdelta)
+			{
+				a[j] = a[j - h];
+				j -= h;
+			}
+			a[j] = v;
+		}
+	}
 }
 
 /*
