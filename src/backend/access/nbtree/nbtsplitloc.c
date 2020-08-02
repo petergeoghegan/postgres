@@ -601,8 +601,8 @@ _bt_deltashellsort(SplitPoint *splits, int nsplits)
 	{
 		for (int hi = gaps[k], i = low + hi; i < nsplits; i++)
 		{
-			int				j = i;
 			SplitPoint		s = splits[i];
+			int				j = i;
 
 			while (j >= hi && splits[j - hi].curdelta > s.curdelta)
 			{
