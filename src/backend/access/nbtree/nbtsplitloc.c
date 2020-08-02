@@ -597,9 +597,9 @@ _bt_deltashellsort(SplitPoint *a, int l, int r)
 	int		 i, j, k, h;
 	SplitPoint v;
 
-	int incs[16] = {1750, 701, 301, 132, 57, 23, 10, 4, 1};
+	int incs[9] = {1750, 701, 301, 132, 57, 23, 10, 4, 1};
 
-	for (k = 0; k < 16; k++)
+	for (k = 0; k < 9; k++)
 	{
 		for (h = incs[k], i = l + h; i <= r; i++)
 		{
