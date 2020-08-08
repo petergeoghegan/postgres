@@ -728,11 +728,11 @@ bt_check_level_from_leftmost(BtreeCheckState *state, BtreeLevel level)
 		else if (nextleveldown.leftmost == InvalidBlockNumber)
 		{
 			/*
-			 * A concurrent page split could make the caller supplied leftmost
-			 * block no longer contain the leftmost page, or no longer be the
-			 * true root, but where that isn't possible due to heavyweight
-			 * locking, check that the first valid page meets caller's
-			 * expectations.
+			 * A concurrent page split/deletion could make the caller supplied
+			 * leftmost block no longer contain the leftmost page, or no
+			 * longer be the true root, but where that isn't possible due to
+			 * heavyweight locking, check that the first valid page meets
+			 * caller's expectations.
 			 */
 			if (state->readonly)
 			{
@@ -752,11 +752,8 @@ bt_check_level_from_leftmost(BtreeCheckState *state, BtreeLevel level)
 			/*
 			 * Before beginning any non-trivial examination of level, prepare
 			 * state for next bt_check_level_from_leftmost() invocation for
-			 * the next level for the next level down (if any).
-			 *
-			 * There should be at least one non-ignorable page per level,
-			 * unless this is the leaf level, which is assumed by caller to be
-			 * final level.
+			 * the next level for the next level down (if any).  There should
+			 * be at least one non-ignorable page per level.
 			 */
 			if (!P_ISLEAF(opaque))
 			{
@@ -2008,7 +2005,6 @@ bt_child_highkey_check(BtreeCheckState *state,
 			}
 
 			if (!bt_pivot_tuple_identical(highkey, itup))
-			{
 				ereport(ERROR,
 						(errcode(ERRCODE_INDEX_CORRUPTED),
 						 errmsg("mismatch between parent key and child high key in index \"%s\"",
@@ -2017,7 +2013,6 @@ bt_child_highkey_check(BtreeCheckState *state,
 											state->targetblock, blkno,
 											(uint32) (state->targetlsn >> 32),
 											(uint32) state->targetlsn)));
-			}
 		}
 
 		/* Exit if we already found next downlink */
