@@ -76,7 +76,7 @@ _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
 	 * bits when deduplicating items.  Allowing it would be correct, though
 	 * wasteful.
 	 */
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
 	for (offnum = minoff;
@@ -266,7 +266,7 @@ _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
 	 */
 	if (P_HAS_GARBAGE(opaque))
 	{
-		BTPageOpaque nopaque = (BTPageOpaque) PageGetSpecialPointer(newpage);
+		BTPageOpaque nopaque = BTreePageGetSpecialPointer(newpage);
 
 		nopaque->btpo_flags &= ~BTP_HAS_GARBAGE;
 	}

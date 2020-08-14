@@ -141,7 +141,7 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 
 		/* if this is a leaf page, we're done */
 		page = BufferGetPage(*bufP);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTreePageGetSpecialPointer(page);
 		if (P_ISLEAF(opaque))
 			break;
 
@@ -275,7 +275,7 @@ _bt_moveright(Relation rel,
 	{
 		page = BufferGetPage(buf);
 		TestForOldSnapshot(snapshot, rel, page);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTreePageGetSpecialPointer(page);
 
 		if (P_RIGHTMOST(opaque))
 			break;
@@ -356,7 +356,7 @@ _bt_binsrch(Relation rel,
 	bool		isleaf;
 
 	page = BufferGetPage(buf);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 
 	/* Requesting nextkey semantics while using scantid seems nonsensical */
 	Assert(!key->nextkey || key->scantid == NULL);
@@ -461,7 +461,7 @@ _bt_binsrch_insert(Relation rel, BTInsertState insertstate)
 				cmpval;
 
 	page = BufferGetPage(insertstate->buf);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 
 	Assert(P_ISLEAF(opaque));
 	Assert(!key->nextkey);
@@ -675,7 +675,7 @@ _bt_compare(Relation rel,
 			Page page,
 			OffsetNumber offnum)
 {
-	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	BTPageOpaque opaque = BTreePageGetSpecialPointer(page);
 
 	return _bt_compare_inl(rel, key, page, offnum, P_ISLEAF(opaque));
 }
@@ -688,7 +688,7 @@ _bt_compare_inl(Relation rel,
 				bool isleaf)
 {
 	TupleDesc	itupdesc = RelationGetDescr(rel);
-	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	BTPageOpaque opaque = BTreePageGetSpecialPointer(page);
 	IndexTuple	itup;
 	ItemPointer heapTid;
 	int			ski;
@@ -1573,7 +1573,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 	Assert(BufferIsValid(so->currPos.buf));
 
 	page = BufferGetPage(so->currPos.buf);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 
 	/* allow next page be processed by parallel worker */
 	if (scan->parallel_scan)
@@ -2044,7 +2044,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir)
 			so->currPos.buf = _bt_getbuf(rel, blkno, BT_READ);
 			page = BufferGetPage(so->currPos.buf);
 			TestForOldSnapshot(scan->xs_snapshot, rel, page);
-			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+			opaque = BTreePageGetSpecialPointer(page);
 			/* check for deleted page */
 			if (!P_IGNORE(opaque))
 			{
@@ -2147,7 +2147,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir)
 			 */
 			page = BufferGetPage(so->currPos.buf);
 			TestForOldSnapshot(scan->xs_snapshot, rel, page);
-			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+			opaque = BTreePageGetSpecialPointer(page);
 			if (!P_IGNORE(opaque))
 			{
 				PredicateLockPage(rel, BufferGetBlockNumber(so->currPos.buf), scan->xs_snapshot);
@@ -2228,7 +2228,7 @@ _bt_walk_left(Relation rel, Buffer buf, Snapshot snapshot)
 	BTPageOpaque opaque;
 
 	page = BufferGetPage(buf);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 
 	for (;;)
 	{
@@ -2253,7 +2253,7 @@ _bt_walk_left(Relation rel, Buffer buf, Snapshot snapshot)
 		buf = _bt_getbuf(rel, blkno, BT_READ);
 		page = BufferGetPage(buf);
 		TestForOldSnapshot(snapshot, rel, page);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTreePageGetSpecialPointer(page);
 
 		/*
 		 * If this isn't the page we want, walk right till we find what we
@@ -2280,14 +2280,14 @@ _bt_walk_left(Relation rel, Buffer buf, Snapshot snapshot)
 			buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
 			page = BufferGetPage(buf);
 			TestForOldSnapshot(snapshot, rel, page);
-			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+			opaque = BTreePageGetSpecialPointer(page);
 		}
 
 		/* Return to the original page to see what's up */
 		buf = _bt_relandgetbuf(rel, buf, obknum, BT_READ);
 		page = BufferGetPage(buf);
 		TestForOldSnapshot(snapshot, rel, page);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTreePageGetSpecialPointer(page);
 		if (P_ISDELETED(opaque))
 		{
 			/*
@@ -2305,7 +2305,7 @@ _bt_walk_left(Relation rel, Buffer buf, Snapshot snapshot)
 				buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
 				page = BufferGetPage(buf);
 				TestForOldSnapshot(snapshot, rel, page);
-				opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+				opaque = BTreePageGetSpecialPointer(page);
 				if (!P_ISDELETED(opaque))
 					break;
 			}
@@ -2366,7 +2366,7 @@ _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
 
 	page = BufferGetPage(buf);
 	TestForOldSnapshot(snapshot, rel, page);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 
 	for (;;)
 	{
@@ -2386,7 +2386,7 @@ _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
 			buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
 			page = BufferGetPage(buf);
 			TestForOldSnapshot(snapshot, rel, page);
-			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+			opaque = BTreePageGetSpecialPointer(page);
 		}
 
 		/* Done? */
@@ -2409,7 +2409,7 @@ _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
 
 		buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
 		page = BufferGetPage(buf);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTreePageGetSpecialPointer(page);
 	}
 
 	return buf;
@@ -2455,7 +2455,7 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir)
 
 	PredicateLockPage(rel, BufferGetBlockNumber(buf), scan->xs_snapshot);
 	page = BufferGetPage(buf);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 	Assert(P_ISLEAF(opaque));
 
 	if (ScanDirectionIsForward(dir))

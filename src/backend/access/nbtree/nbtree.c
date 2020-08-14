@@ -1127,7 +1127,7 @@ backtrack:
 	if (!PageIsNew(page))
 	{
 		_bt_checkpage(rel, buf);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTreePageGetSpecialPointer(page);
 	}
 
 	Assert(blkno <= scanblkno);

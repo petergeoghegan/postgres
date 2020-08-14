@@ -68,6 +68,14 @@ typedef struct BTPageOpaqueData
 
 typedef BTPageOpaqueData *BTPageOpaque;
 
+static inline BTPageOpaque
+BTreePageGetSpecialPointer(Page page)
+{
+	Assert(PageValidateSpecialPointer(page));
+
+	return (BTPageOpaque) ((char *) (page) + (BLCKSZ - sizeof(BTPageOpaqueData)));
+}
+
 /* Bits defined in btpo_flags */
 #define BTP_LEAF		(1 << 0)	/* leaf page, i.e. not internal page */
 #define BTP_ROOT		(1 << 1)	/* root page (has no parent) */

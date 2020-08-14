@@ -310,7 +310,7 @@ _bt_search_insert(Relation rel, BTInsertState insertstate)
 
 			_bt_checkpage(rel, insertstate->buf);
 			page = BufferGetPage(insertstate->buf);
-			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+			lpageop = BTreePageGetSpecialPointer(page);
 
 			/*
 			 * Check if the page is still the rightmost leaf page and has
@@ -409,7 +409,7 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 	InitDirtySnapshot(SnapshotDirty);
 
 	page = BufferGetPage(insertstate->buf);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = BTreePageGetSpecialPointer(page);
 	maxoff = PageGetMaxOffsetNumber(page);
 
 	/*
@@ -718,7 +718,7 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 
 				nbuf = _bt_relandgetbuf(rel, nbuf, nblkno, BT_READ);
 				page = BufferGetPage(nbuf);
-				opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+				opaque = BTreePageGetSpecialPointer(page);
 				if (!P_IGNORE(opaque))
 					break;
 				if (P_RIGHTMOST(opaque))
@@ -798,7 +798,7 @@ _bt_findinsertloc(Relation rel,
 	BTPageOpaque lpageop;
 	OffsetNumber newitemoff;
 
-	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+	lpageop = BTreePageGetSpecialPointer(page);
 
 	/* Check 1/3 of a page restriction */
 	if (unlikely(insertstate->itemsz > BTMaxItemSize))
@@ -864,7 +864,7 @@ _bt_findinsertloc(Relation rel,
 				_bt_stepright(rel, insertstate, stack);
 				/* Update local state after stepping right */
 				page = BufferGetPage(insertstate->buf);
-				lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+				lpageop = BTreePageGetSpecialPointer(page);
 				/* Assume duplicates (if checkingunique) */
 				uniquedup = true;
 			}
@@ -972,7 +972,7 @@ _bt_findinsertloc(Relation rel,
 			_bt_stepright(rel, insertstate, stack);
 			/* Update local state after stepping right */
 			page = BufferGetPage(insertstate->buf);
-			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+			lpageop = BTreePageGetSpecialPointer(page);
 		}
 	}
 
@@ -1030,7 +1030,7 @@ _bt_stepright(Relation rel, BTInsertState insertstate, BTStack stack)
 	BlockNumber rblkno;
 
 	page = BufferGetPage(insertstate->buf);
-	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+	lpageop = BTreePageGetSpecialPointer(page);
 
 	rbuf = InvalidBuffer;
 	rblkno = lpageop->btpo_next;
@@ -1038,7 +1038,7 @@ _bt_stepright(Relation rel, BTInsertState insertstate, BTStack stack)
 	{
 		rbuf = _bt_relandgetbuf(rel, rbuf, rblkno, BT_WRITE);
 		page = BufferGetPage(rbuf);
-		lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+		lpageop = BTreePageGetSpecialPointer(page);
 
 		/*
 		 * If this page was incompletely split, finish the split now.  We do
@@ -1116,7 +1116,7 @@ _bt_insertonpg(Relation rel,
 	IndexTuple	nposting = NULL;
 
 	page = BufferGetPage(buf);
-	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+	lpageop = BTreePageGetSpecialPointer(page);
 
 	/* child buffer must be given iff inserting on an internal page */
 	Assert(P_ISLEAF(lpageop) == !BufferIsValid(cbuf));
@@ -1278,7 +1278,7 @@ _bt_insertonpg(Relation rel,
 		if (!isleaf)
 		{
 			Page		cpage = BufferGetPage(cbuf);
-			BTPageOpaque cpageop = (BTPageOpaque) PageGetSpecialPointer(cpage);
+			BTPageOpaque cpageop = BTreePageGetSpecialPointer(cpage);
 
 			Assert(P_INCOMPLETE_SPLIT(cpageop));
 			cpageop->btpo_flags &= ~BTP_INCOMPLETE_SPLIT;
@@ -1488,7 +1488,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	 * only workspace.
 	 */
 	origpage = BufferGetPage(buf);
-	oopaque = (BTPageOpaque) PageGetSpecialPointer(origpage);
+	oopaque = BTreePageGetSpecialPointer(origpage);
 	isleaf = P_ISLEAF(oopaque);
 	isrightmost = P_RIGHTMOST(oopaque);
 	maxoff = PageGetMaxOffsetNumber(origpage);
@@ -1524,7 +1524,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	/* Allocate temp buffer for leftpage */
 	leftpage = PageGetTempPage(origpage);
 	_bt_pageinit(leftpage, BufferGetPageSize(buf));
-	lopaque = (BTPageOpaque) PageGetSpecialPointer(leftpage);
+	lopaque  = BTreePageGetSpecialPointer(leftpage);
 
 	/*
 	 * leftpage won't be the root when we're done.  Also, clear the SPLIT_END
@@ -1700,7 +1700,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	rightpage = BufferGetPage(rbuf);
 	rightpagenumber = BufferGetBlockNumber(rbuf);
 	/* rightpage was initialized by _bt_getbuf */
-	ropaque = (BTPageOpaque) PageGetSpecialPointer(rightpage);
+	ropaque  = BTreePageGetSpecialPointer(rightpage);
 
 	/*
 	 * Finish off remaining leftpage special area fields.  They cannot be set
@@ -1871,7 +1871,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	{
 		sbuf = _bt_getbuf(rel, oopaque->btpo_next, BT_WRITE);
 		spage = BufferGetPage(sbuf);
-		sopaque = (BTPageOpaque) PageGetSpecialPointer(spage);
+		sopaque  = BTreePageGetSpecialPointer(spage);
 		if (sopaque->btpo_prev != origpagenumber)
 		{
 			memset(rightpage, 0, BufferGetPageSize(rbuf));
@@ -1936,7 +1936,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	if (!isleaf)
 	{
 		Page		cpage = BufferGetPage(cbuf);
-		BTPageOpaque cpageop = (BTPageOpaque) PageGetSpecialPointer(cpage);
+		BTPageOpaque cpageop = BTreePageGetSpecialPointer(cpage);
 
 		cpageop->btpo_flags &= ~BTP_INCOMPLETE_SPLIT;
 		MarkBufferDirty(cbuf);
@@ -2123,7 +2123,7 @@ _bt_insert_parent(Relation rel,
 			BTPageOpaque lpageop;
 
 			elog(DEBUG2, "concurrent ROOT page split");
-			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+			lpageop = BTreePageGetSpecialPointer(page);
 
 			/*
 			 * We should never reach here when a leaf page split takes place
@@ -2215,7 +2215,7 @@ void
 _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 {
 	Page		lpage = BufferGetPage(lbuf);
-	BTPageOpaque lpageop = (BTPageOpaque) PageGetSpecialPointer(lpage);
+	BTPageOpaque lpageop = BTreePageGetSpecialPointer(lpage);
 	Buffer		rbuf;
 	Page		rpage;
 	BTPageOpaque rpageop;
@@ -2227,7 +2227,7 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 	/* Lock right sibling, the one missing the downlink */
 	rbuf = _bt_getbuf(rel, lpageop->btpo_next, BT_WRITE);
 	rpage = BufferGetPage(rbuf);
-	rpageop = (BTPageOpaque) PageGetSpecialPointer(rpage);
+	rpageop = BTreePageGetSpecialPointer(rpage);
 
 	/* Could this be a root split? */
 	if (!stack)
@@ -2305,7 +2305,7 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 
 		buf = _bt_getbuf(rel, blkno, BT_WRITE);
 		page = BufferGetPage(buf);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTreePageGetSpecialPointer(page);
 
 		if (P_INCOMPLETE_SPLIT(opaque))
 		{
@@ -2436,7 +2436,7 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	lbkno = BufferGetBlockNumber(lbuf);
 	rbkno = BufferGetBlockNumber(rbuf);
 	lpage = BufferGetPage(lbuf);
-	lopaque = (BTPageOpaque) PageGetSpecialPointer(lpage);
+	lopaque = BTreePageGetSpecialPointer(lpage);
 
 	/* get a new root page */
 	rootbuf = _bt_getbuf(rel, P_NEW, BT_WRITE);
@@ -2477,11 +2477,10 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 		_bt_upgrademetapage(metapg);
 
 	/* set btree special data */
-	rootopaque = (BTPageOpaque) PageGetSpecialPointer(rootpage);
+	rootopaque = BTreePageGetSpecialPointer(rootpage);
 	rootopaque->btpo_prev = rootopaque->btpo_next = P_NONE;
 	rootopaque->btpo_flags = BTP_ROOT;
-	rootopaque->btpo.level =
-		((BTPageOpaque) PageGetSpecialPointer(lpage))->btpo.level + 1;
+	rootopaque->btpo.level = BTreePageGetSpecialPointer(lpage)->btpo.level + 1;
 	rootopaque->btpo_cycleid = 0;
 
 	/* update metapage data */
@@ -2640,7 +2639,7 @@ _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel)
 				minoff,
 				maxoff;
 	Page		page = BufferGetPage(buffer);
-	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	BTPageOpaque opaque = BTreePageGetSpecialPointer(page);
 
 	Assert(P_ISLEAF(opaque));
 
