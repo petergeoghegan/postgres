@@ -28,8 +28,6 @@ static void _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp);
 static OffsetNumber _bt_binsrch(Relation rel, BTScanInsert key, Buffer buf);
 static int	_bt_binsrch_posting(BTScanInsert key, Page page,
 								OffsetNumber offnum);
-static inline int32 _bt_compare_inl(Relation rel, BTScanInsert key, Page page,
-									OffsetNumber offnum, bool isleaf);
 static bool _bt_readpage(IndexScanDesc scan, ScanDirection dir,
 						 OffsetNumber offnum);
 static void _bt_saveitem(BTScanOpaque so, int itemIndex,
@@ -304,8 +302,7 @@ _bt_moveright(Relation rel,
 			continue;
 		}
 
-		if (P_IGNORE(opaque) || _bt_compare_inl(rel, key, page, P_HIKEY,
-												P_ISLEAF(opaque)) >= cmpval)
+		if (P_IGNORE(opaque) || _bt_compare(rel, key, page, P_HIKEY) >= cmpval)
 		{
 			/* step right one page */
 			buf = _bt_relandgetbuf(rel, buf, opaque->btpo_next, access);
@@ -399,7 +396,7 @@ _bt_binsrch(Relation rel,
 
 		/* We have low <= mid < high, so mid points at a real slot */
 
-		result = _bt_compare_inl(rel, key, page, mid, isleaf);
+		result = _bt_compare(rel, key, page, mid);
 
 		if (result >= cmpval)
 			low = mid + 1;
@@ -512,7 +509,7 @@ _bt_binsrch_insert(Relation rel, BTInsertState insertstate)
 
 		/* We have low <= mid < high, so mid points at a real slot */
 
-		result = _bt_compare_inl(rel, key, page, mid, true);
+		result = _bt_compare(rel, key, page, mid);
 
 		if (result >= cmpval)
 			low = mid + 1;
@@ -618,30 +615,6 @@ _bt_binsrch_posting(BTScanInsert key, Page page, OffsetNumber offnum)
 	return low;
 }
 
-static inline int32
-_bt_itempointer_compare(ItemPointer arg1, ItemPointer arg2)
-{
-	/*
-	 * Use ItemPointerGet{Offset,Block}NumberNoCheck to avoid asserting
-	 * ip_posid != 0, which may not be true for a user-supplied TID.
-	 */
-	BlockNumber b1 = ItemPointerGetBlockNumberNoCheck(arg1);
-	BlockNumber b2 = ItemPointerGetBlockNumberNoCheck(arg2);
-
-	if (b1 < b2)
-		return -1;
-	else if (b1 > b2)
-		return 1;
-	else if (ItemPointerGetOffsetNumberNoCheck(arg1) <
-			 ItemPointerGetOffsetNumberNoCheck(arg2))
-		return -1;
-	else if (ItemPointerGetOffsetNumberNoCheck(arg1) >
-			 ItemPointerGetOffsetNumberNoCheck(arg2))
-		return 1;
-	else
-		return 0;
-}
-
 /*----------
  *	_bt_compare() -- Compare insertion-type scankey to tuple on a page.
  *
@@ -675,18 +648,6 @@ _bt_compare(Relation rel,
 			Page page,
 			OffsetNumber offnum)
 {
-	BTPageOpaque opaque = BTreePageGetSpecialPointer(page);
-
-	return _bt_compare_inl(rel, key, page, offnum, P_ISLEAF(opaque));
-}
-
-static inline int32
-_bt_compare_inl(Relation rel,
-				BTScanInsert key,
-				Page page,
-				OffsetNumber offnum,
-				bool isleaf)
-{
 	TupleDesc	itupdesc = RelationGetDescr(rel);
 	BTPageOpaque opaque = BTreePageGetSpecialPointer(page);
 	IndexTuple	itup;
@@ -704,7 +665,7 @@ _bt_compare_inl(Relation rel,
 	 * Force result ">" if target item is first data item on an internal page
 	 * --- see NOTE above _bt_compare().
 	 */
-	if (!isleaf && offnum == P_FIRSTDATAKEY(opaque))
+	if (!P_ISLEAF(opaque) && offnum == P_FIRSTDATAKEY(opaque))
 		return 1;
 
 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
@@ -863,13 +824,13 @@ _bt_compare_inl(Relation rel,
 	 * with scantid.
 	 */
 	Assert(ntupatts >= IndexRelationGetNumberOfKeyAttributes(rel));
-	result = _bt_itempointer_compare(key->scantid, heapTid);
+	result = ItemPointerCompare(key->scantid, heapTid);
 	if (result <= 0 || !BTreeTupleIsPosting(itup))
 		return result;
 	else
 	{
-		result = _bt_itempointer_compare(key->scantid,
-										 BTreeTupleGetMaxHeapTID(itup));
+		result = ItemPointerCompare(key->scantid,
+									BTreeTupleGetMaxHeapTID(itup));
 		if (result > 0)
 			return 1;
 	}
