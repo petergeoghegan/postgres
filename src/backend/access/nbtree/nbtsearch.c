@@ -691,8 +691,9 @@ _bt_compare(Relation rel,
 		Datum		datum;
 		bool		isNull;
 
-		datum = index_getattr(itup, scankey->sk_attno, itupdesc, &isNull);
+		datum = index_getattr_nonull(itup, scankey->sk_attno, itupdesc, &isNull);
 
+#if 0
 		if (scankey->sk_flags & SK_ISNULL)	/* key is NULL */
 		{
 			if (isNull)
@@ -710,6 +711,7 @@ _bt_compare(Relation rel,
 				result = -1;	/* NOT_NULL "<" NULL */
 		}
 		else
+#endif
 		{
 			/*
 			 * The sk_func needs to be passed the index value as left arg and

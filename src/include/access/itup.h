@@ -126,6 +126,22 @@ typedef IndexAttributeBitMapData * IndexAttributeBitMap;
 	) \
 )
 
+#define index_getattr_nonull(tup, attnum, tupleDesc, isnull) \
+( \
+	AssertMacro(PointerIsValid(isnull) && (attnum) > 0), \
+	*(isnull) = false, \
+	( \
+		TupleDescAttr((tupleDesc), (attnum)-1)->attcacheoff >= 0 ? \
+		( \
+			fetchatt(TupleDescAttr((tupleDesc), (attnum)-1), \
+			(char *) (tup) + (Size)MAXALIGN(sizeof(IndexTupleData)) \
+			+ TupleDescAttr((tupleDesc), (attnum)-1)->attcacheoff) \
+		) \
+		: \
+			nocache_index_getattr((tup), (attnum), (tupleDesc)) \
+	) \
+)
+
 /*
  * MaxIndexTuplesPerPage is an upper bound on the number of tuples that can
  * fit on one index page.  An index tuple must have either data or a null
