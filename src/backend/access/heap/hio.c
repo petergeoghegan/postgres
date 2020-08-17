@@ -348,9 +348,11 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	/* Compute desired extra freespace due to fillfactor option */
 	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
 												   HEAP_DEFAULT_FILLFACTOR);
+#if 0
 	saveFreeSpace += 1000;
 
 	saveFreeSpace = Min(saveFreeSpace, BLCKSZ);
+#endif
 
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
@@ -389,7 +391,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
-		targetBlock = GetPageWithFreeSpace(relation, len + saveFreeSpace);
+		targetBlock = GetPageWithFreeSpace(relation, len + saveFreeSpace + 1500);
 
 		/*
 		 * If the FSM knows nothing of the rel, try the last page before we
