@@ -372,26 +372,26 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	 * When use_fsm is false, we either put the tuple onto the existing target
 	 * page or extend the relation.
 	 */
-#if 0
 	if (len + saveFreeSpace > MaxHeapTupleSize)
 	{
 		/* can't fit, don't bother asking FSM */
 		targetBlock = InvalidBlockNumber;
 		use_fsm = false;
 	}
-#endif
-	if (bistate && bistate->current_buf != InvalidBuffer)
+	else if (bistate && bistate->current_buf != InvalidBuffer)
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
 	else
 		targetBlock = RelationGetTargetBlock(relation);
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
+		Size	target = Min(len + saveFreeSpace + 1500, MaxHeapTupleSize);
+
 		/*
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
-		targetBlock = GetPageWithFreeSpace(relation, len + saveFreeSpace + 1500);
+		targetBlock = GetPageWithFreeSpace(relation, target);
 
 		/*
 		 * If the FSM knows nothing of the rel, try the last page before we
@@ -507,7 +507,7 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (len + 16 <= pageFreeSpace)
+		if (len + saveFreeSpace <= pageFreeSpace)
 		{
 			/* use this page as future insert target, too */
 			RelationSetTargetBlock(relation, targetBlock);
