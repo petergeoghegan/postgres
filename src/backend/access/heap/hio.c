@@ -346,11 +346,9 @@ RelationGetBufferForTuple(Relation relation, Size len,
 						len, MaxHeapTupleSize)));
 
 	/* Compute desired extra freespace due to fillfactor option */
-#if 0
 	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
 												   HEAP_DEFAULT_FILLFACTOR);
-#endif
-	saveFreeSpace = 5500;
+	saveFreeSpace += 1000;
 
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
@@ -370,13 +368,15 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	 * When use_fsm is false, we either put the tuple onto the existing target
 	 * page or extend the relation.
 	 */
+#if 0
 	if (len + saveFreeSpace > MaxHeapTupleSize)
 	{
 		/* can't fit, don't bother asking FSM */
 		targetBlock = InvalidBlockNumber;
 		use_fsm = false;
 	}
-	else if (bistate && bistate->current_buf != InvalidBuffer)
+#endif
+	if (bistate && bistate->current_buf != InvalidBuffer)
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
 	else
 		targetBlock = RelationGetTargetBlock(relation);
