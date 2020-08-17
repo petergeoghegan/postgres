@@ -350,6 +350,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 												   HEAP_DEFAULT_FILLFACTOR);
 	saveFreeSpace += 1000;
 
+	saveFreeSpace = Min(saveFreeSpace, BLCKSZ);
+
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
 	else
