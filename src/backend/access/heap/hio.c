@@ -505,7 +505,7 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		//if (len + saveFreeSpace <= pageFreeSpace)
+		if (len + 16 <= pageFreeSpace)
 		{
 			/* use this page as future insert target, too */
 			RelationSetTargetBlock(relation, targetBlock);
