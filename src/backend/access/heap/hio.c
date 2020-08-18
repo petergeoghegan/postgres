@@ -385,7 +385,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
-		Size	target = Min(len + saveFreeSpace + 1500, MaxHeapTupleSize);
+		Size	target = Min(len + saveFreeSpace + 3500, MaxHeapTupleSize);
 
 		/*
 		 * We have no cached target page, so ask the FSM for an initial
