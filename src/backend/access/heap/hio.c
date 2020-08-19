@@ -330,6 +330,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	BlockNumber targetBlock,
 				otherBlock;
 	bool		needLock;
+	bool		fromFSM = false;
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -507,6 +508,13 @@ loop:
 			return buffer;
 		}
 
+		if (fromFSM && len + 5 <= pageFreeSpace)
+		{
+			/* use this page as future insert target, too */
+			RelationSetTargetBlock(relation, targetBlock);
+			return buffer;
+		}
+
 		/*
 		 * Not enough space, so we must give up our page locks and pin (if
 		 * any) and prepare to look elsewhere.  We don't care which order we
@@ -534,6 +542,7 @@ loop:
 													targetBlock,
 													pageFreeSpace,
 													len + saveFreeSpace);
+		fromFSM = true;
 	}
 
 	/*
