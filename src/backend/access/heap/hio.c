@@ -381,11 +381,13 @@ RelationGetBufferForTuple(Relation relation, Size len,
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
+		Size	targetSpace = Min(len + saveFreeSpace + 3500, MaxHeapTupleSize);
+
 		/*
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
-		targetBlock = GetPageWithFreeSpace(relation, len + saveFreeSpace);
+		targetBlock = GetPageWithFreeSpace(relation, targetSpace);
 		if (targetBlock != InvalidBlockNumber)
 			fromFSM = true;
 
