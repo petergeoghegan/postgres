@@ -345,6 +345,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	BlockNumber targetBlock,
 				otherBlock;
 	bool		needLock;
+	bool		fromFSM = false;
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -402,11 +403,15 @@ RelationGetBufferForTuple(Relation relation, Size len,
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
+		Size	targetSpace = Min(len + saveFreeSpace + 3500, MaxHeapTupleSize);
+
 		/*
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
 		targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+		if (targetBlock != InvalidBlockNumber)
+			fromFSM = true;
 	}
 
 	/*
@@ -534,6 +539,15 @@ loop:
 		{
 			/* use this page as future insert target, too */
 			RelationSetTargetBlock(relation, targetBlock);
+			RecordPageWithFreeSpace(relation, targetBlock, 0);
+			return buffer;
+		}
+
+		if (fromFSM && len + 5 <= pageFreeSpace)
+		{
+			/* use this page as future insert target, too */
+			RelationSetTargetBlock(relation, targetBlock);
+			RecordPageWithFreeSpace(relation, targetBlock, 0);
 			return buffer;
 		}
 
@@ -564,6 +578,8 @@ loop:
 													targetBlock,
 													pageFreeSpace,
 													targetFreeSpace);
+		if (targetBlock != InvalidBlockNumber)
+			fromFSM = true;
 	}
 
 	/*
