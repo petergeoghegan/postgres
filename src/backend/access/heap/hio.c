@@ -330,6 +330,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	BlockNumber targetBlock,
 				otherBlock;
 	bool		needLock;
+	bool		fromFSM = false;
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -385,6 +386,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		 * target.
 		 */
 		targetBlock = GetPageWithFreeSpace(relation, len + saveFreeSpace);
+		if (targetBlock != InvalidBlockNumber)
+			fromFSM = true;
 
 		/*
 		 * If the FSM knows nothing of the rel, try the last page before we
@@ -504,6 +507,15 @@ loop:
 		{
 			/* use this page as future insert target, too */
 			RelationSetTargetBlock(relation, targetBlock);
+			RecordPageWithFreeSpace(relation, targetBlock, 0);
+			return buffer;
+		}
+
+		if (fromFSM && len + 5 <= pageFreeSpace)
+		{
+			/* use this page as future insert target, too */
+			RelationSetTargetBlock(relation, targetBlock);
+			RecordPageWithFreeSpace(relation, targetBlock, 0);
 			return buffer;
 		}
 
@@ -534,6 +546,8 @@ loop:
 													targetBlock,
 													pageFreeSpace,
 													len + saveFreeSpace);
+		if (targetBlock != InvalidBlockNumber)
+			fromFSM = true;
 	}
 
 	/*
