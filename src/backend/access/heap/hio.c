@@ -386,6 +386,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		 * target.
 		 */
 		targetBlock = GetPageWithFreeSpace(relation, len + saveFreeSpace);
+		fromFSM = true;
 
 		/*
 		 * If the FSM knows nothing of the rel, try the last page before we
