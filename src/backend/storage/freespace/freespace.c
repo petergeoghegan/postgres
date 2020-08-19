@@ -196,6 +196,8 @@ RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk, Size spaceAvail)
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(heapBlk, &slot);
 
+	elog(LOG, "RecordPageWithFreeSpace() adds Blocknum %u in rel %s with spaceAvail %zu",
+		 heapBlk, RelationGetRelationName(rel), spaceAvail);
 	fsm_set_and_search(rel, addr, slot, new_cat, 0);
 }
 
