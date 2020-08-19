@@ -132,8 +132,11 @@ BlockNumber
 GetPageWithFreeSpace(Relation rel, Size spaceNeeded)
 {
 	uint8		min_cat = fsm_space_needed_to_cat(spaceNeeded);
+	BlockNumber res = fsm_search(rel, min_cat);
 
-	return fsm_search(rel, min_cat);
+	elog(LOG, "GetPageWithFreeSpace() fsm return Blocknum %u in rel %s when searching for space %zu",
+		 res, RelationGetRelationName(rel), spaceNeeded);
+	return res;
 }
 
 /*
@@ -154,6 +157,7 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	FSMAddress	addr;
 	uint16		slot;
 	int			search_slot;
+	BlockNumber res;
 
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(oldPage, &slot);
@@ -165,9 +169,14 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	 * Otherwise, search as usual.
 	 */
 	if (search_slot != -1)
-		return fsm_get_heap_blk(addr, search_slot);
+		res = fsm_get_heap_blk(addr, search_slot);
 	else
-		return fsm_search(rel, search_cat);
+		res = fsm_search(rel, search_cat);
+
+	elog(LOG, "RecordAndGetPageWithFreeSpace() fsm return Blocknum %u in rel %s when searching for space %zu",
+		 res, RelationGetRelationName(rel), spaceNeeded);
+
+	return res;
 }
 
 /*
@@ -761,8 +770,12 @@ fsm_search(Relation rel, uint8 min_cat)
 			 * indefinitely is nevertheless scary, so provide an emergency
 			 * valve.
 			 */
-			if (restarts++ > 10000)
+			if (restarts++ > 0)
+			{
+				elog(LOG, "fsm quitting in rel %s when searching for min_cat %u (space %zu)",
+					 RelationGetRelationName(rel), min_cat, fsm_space_cat_to_avail(min_cat));
 				return InvalidBlockNumber;
+			}
 
 			/* Start search all over from the root */
 			addr = FSM_ROOT_ADDRESS;
