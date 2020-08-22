@@ -322,7 +322,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 						  BulkInsertState bistate,
 						  Buffer *vmbuffer, Buffer *vmbuffer_other)
 {
-	bool		use_fsm = false;
+	bool		use_fsm = !(options & HEAP_INSERT_SKIP_FSM);
 	Buffer		buffer = InvalidBuffer;
 	Page		page;
 	Size		pageFreeSpace = 0,
@@ -532,7 +532,7 @@ loop:
 		 */
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
-													pageFreeSpace,
+													0,
 													len + saveFreeSpace);
 	}
 

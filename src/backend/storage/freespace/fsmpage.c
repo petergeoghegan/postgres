@@ -178,7 +178,7 @@ restart:
 	 * sane.  (This also handles wrapping around when the prior call returned
 	 * the last slot on the page.)
 	 */
-	target = fsmpage->fp_next_slot;
+	target = pg_atomic_read_u32(&fsmpage->fp_next_slot);
 	if (target < 0 || target >= LeafNodesPerPage)
 		target = 0;
 	target += NonLeafNodesPerPage;
@@ -300,7 +300,7 @@ restart:
 	 *
 	 * Wrap-around is handled at the beginning of this function.
 	 */
-	fsmpage->fp_next_slot = slot + (advancenext ? 1 : 0);
+	pg_atomic_write_u32(&fsmpage->fp_next_slot, slot + (advancenext ? 1 : 0));
 
 	return slot;
 }
