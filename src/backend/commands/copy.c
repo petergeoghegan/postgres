@@ -3288,7 +3288,7 @@ CopyFrom(CopyState cstate)
 					{
 						/* OK, store the tuple and create index entries for it */
 						table_tuple_insert(resultRelInfo->ri_RelationDesc,
-										   myslot, mycid, ti_options, bistate);
+										   myslot, NULL, mycid, ti_options, bistate);
 
 						if (resultRelInfo->ri_NumIndices > 0)
 							recheckIndexes = ExecInsertIndexTuples(myslot,

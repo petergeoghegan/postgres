@@ -320,7 +320,7 @@ Buffer
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
-						  Buffer *vmbuffer, Buffer *vmbuffer_other)
+						  Buffer *vmbuffer, Buffer *vmbuffer_other, int hint)
 {
 	bool		use_fsm = false;
 	Buffer		buffer = InvalidBuffer;
@@ -403,6 +403,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 loop:
 	while (targetBlock != InvalidBlockNumber)
 	{
+		Size		splitFreeSpace = 0;
+
 		/*
 		 * Read and exclusive-lock the target block, as well as the other
 		 * block if one was given, taking suitable care with lock ordering and
@@ -500,7 +502,10 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (len + saveFreeSpace <= pageFreeSpace)
+		if (hint == 0)
+			splitFreeSpace = 700;
+
+		if (len + saveFreeSpace + splitFreeSpace <= pageFreeSpace)
 		{
 			/* use this page as future insert target, too */
 			RelationSetTargetBlock(relation, targetBlock);

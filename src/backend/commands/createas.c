@@ -580,6 +580,7 @@ intorel_receive(TupleTableSlot *slot, DestReceiver *self)
 
 	table_tuple_insert(myState->rel,
 					   slot,
+					   NULL,
 					   myState->output_cid,
 					   myState->ti_options,
 					   myState->bistate);
