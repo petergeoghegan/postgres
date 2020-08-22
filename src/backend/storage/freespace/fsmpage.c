@@ -163,7 +163,6 @@ fsm_search_avail(Buffer buf, uint8 minvalue, bool advancenext,
 	int			nodeno;
 	int			target;
 	uint16		slot;
-	uint32		fp_next_slot;
 
 restart:
 
@@ -179,14 +178,9 @@ restart:
 	 * sane.  (This also handles wrapping around when the prior call returned
 	 * the last slot on the page.)
 	 */
-	fp_next_slot = pg_atomic_fetch_add_u32(&fsmpage->fp_next_slot, (advancenext ? 1 : 0));
-	target = fp_next_slot;
+	target = pg_atomic_read_u32(&fsmpage->fp_next_slot);
 	if (target < 0 || target >= LeafNodesPerPage)
-	{
-		uint32 tmpfp_next_slot = fp_next_slot + (advancenext ? 1 : 0);
-		pg_atomic_compare_exchange_u32(&fsmpage->fp_next_slot, &tmpfp_next_slot, 0);
 		target = 0;
-	}
 	target += NonLeafNodesPerPage;
 
 	/*----------
@@ -306,10 +300,7 @@ restart:
 	 *
 	 * Wrap-around is handled at the beginning of this function.
 	 */
-	{
-		//pg_atomic_fetch_add_u32
-		//pg_atomic_compare_exchange_u32(&fsmpage->fp_next_slot, &fp_next_slot, slot + (advancenext ? 1 : 0));
-	}
+	pg_atomic_write_u32(&fsmpage->fp_next_slot, slot + (advancenext ? 1 : 0));
 
 	return slot;
 }
