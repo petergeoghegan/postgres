@@ -16,6 +16,7 @@
 
 #include "storage/buf.h"
 #include "storage/bufpage.h"
+#include "port/atomics.h"
 
 /*
  * Structure of a FSM page. See src/backend/storage/freespace/README for
@@ -32,7 +33,7 @@ typedef struct
 	 * appropriate, but int is more likely to be atomically
 	 * fetchable/storable.
 	 */
-	int			fp_next_slot;
+	pg_atomic_uint32 		fp_next_slot;
 
 	/*
 	 * fp_nodes contains the binary tree, stored in array. The first
