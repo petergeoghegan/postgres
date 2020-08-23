@@ -322,7 +322,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 						  BulkInsertState bistate,
 						  Buffer *vmbuffer, Buffer *vmbuffer_other, int hint)
 {
-	bool		use_fsm = (!BufferIsInvalid(otherBuffer));
+	bool		use_fsm = !(options & HEAP_INSERT_SKIP_FSM);
+	bool		isinsert = (BufferIsInvalid(otherBuffer));
 	Buffer		buffer = InvalidBuffer;
 	Page		page;
 	Size		pageFreeSpace = 0,
@@ -535,10 +536,18 @@ loop:
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
 		 */
-		targetBlock = RecordAndGetPageWithFreeSpace(relation,
-													targetBlock,
-													pageFreeSpace,
-													len + saveFreeSpace);
+		if (!isinsert)
+		{
+			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
+														pageFreeSpace, len +
+														saveFreeSpace);
+		}
+		else
+		{
+			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
+														pageFreeSpace, BLCKSZ / 2);
+
+		}
 	}
 
 	/*
