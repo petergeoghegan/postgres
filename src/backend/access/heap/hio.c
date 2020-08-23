@@ -322,7 +322,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 						  BulkInsertState bistate,
 						  Buffer *vmbuffer, Buffer *vmbuffer_other, int hint)
 {
-	bool		use_fsm = false;
+	bool		use_fsm = (!BufferIsInvalid(otherBuffer));
 	Buffer		buffer = InvalidBuffer;
 	Page		page;
 	Size		pageFreeSpace = 0,
