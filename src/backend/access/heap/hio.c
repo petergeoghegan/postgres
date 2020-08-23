@@ -539,14 +539,18 @@ loop:
 		if (!isinsert)
 		{
 			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
-														pageFreeSpace, len +
-														saveFreeSpace);
+														pageFreeSpace,
+														len + saveFreeSpace);
+			isinsert = false;
+			use_fsm = false;
 		}
 		else
 		{
 			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
-														pageFreeSpace, BLCKSZ / 2);
-
+														pageFreeSpace,
+														len + saveFreeSpace + splitFreeSpace);
+			isinsert = false;
+			use_fsm = false;
 		}
 	}
 
