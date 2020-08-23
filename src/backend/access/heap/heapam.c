@@ -1868,10 +1868,22 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	if (!TransactionIdIsValid(xid))
 	{
 		xid = GetCurrentTransactionId();
+		RelationOpenSmgr(relation);
+		relation->rd_smgr->targblockxid = xid;
 		hint = 0;
 	}
 	else
 	{
+		hint = -1;
+		RelationOpenSmgr(relation);
+		if (relation->rd_smgr->smgr_targblock != 0)
+		{
+			if (relation->rd_smgr->targblockxid != xid)
+			{
+				relation->rd_smgr->targblockxid = xid;
+				hint = 0;
+			}
+		}
 	}
 
 	/*

@@ -51,6 +51,7 @@ typedef struct SMgrRelationData
 	 * invalidation for fork extension.
 	 */
 	BlockNumber smgr_targblock; /* current insertion target block */
+	uint32			targblockxid;
 	BlockNumber smgr_cached_nblocks[MAX_FORKNUM + 1];	/* last known size */
 
 	/* additional public fields may someday exist here */
