@@ -2915,10 +2915,10 @@ simple_heap_delete(Relation relation, ItemPointer tid)
 TM_Result
 heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 			CommandId cid, Snapshot crosscheck, bool wait,
-			TM_FailureData *tmfd, LockTupleMode *lockmode, int hint)
+			TM_FailureData *tmfd, LockTupleMode *lockmode)
 {
 	TM_Result	result;
-	TransactionId xid = GetCurrentTransactionIdIfAny();
+	TransactionId xid = GetCurrentTransactionId();
 	Bitmapset  *hot_attrs;
 	Bitmapset  *key_attrs;
 	Bitmapset  *id_attrs;
@@ -2938,8 +2938,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				vmbuffer_new = InvalidBuffer;
 	bool		need_toast;
 	Size		newtupsize,
-				pagefree,
-				splitSize;
+				pagefree;
 	bool		have_tuple_lock = false;
 	bool		iscombo;
 	bool		use_hot_update = false;
@@ -2957,28 +2956,6 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_new_tuple;
 
 	Assert(ItemPointerIsValid(otid));
-
-	if (!TransactionIdIsValid(xid))
-	{
-		xid = GetCurrentTransactionId();
-		RelationOpenSmgr(relation);
-		relation->rd_smgr->targblockxid = xid;
-		hint = 0;
-	}
-	else
-	{
-		hint = -1;
-		RelationOpenSmgr(relation);
-		if (relation->rd_smgr->smgr_targblock != 0)
-		{
-			if (relation->rd_smgr->targblockxid != xid)
-			{
-				relation->rd_smgr->targblockxid = xid;
-				hint = 0;
-			}
-		}
-	}
-	hint = 0;
 
 	/*
 	 * Forbid this during a parallel operation, lest it allocate a combocid.
@@ -3454,15 +3431,7 @@ l2:
 
 	newtupsize = MAXALIGN(newtup->t_len);
 
-	splitSize = 0;
-	if (hint == 0)
-	{
-		splitSize = newtupsize * 3;
-		/* don't do this second time for another block */
-		hint = -1;
-	}
-
-	if (need_toast || newtupsize + splitSize > pagefree)
+	if (need_toast || newtupsize > pagefree)
 	{
 		TransactionId xmax_lock_old_tuple;
 		uint16		infomask_lock_old_tuple,
@@ -3945,7 +3914,7 @@ simple_heap_update(Relation relation, ItemPointer otid, HeapTuple tup)
 	result = heap_update(relation, otid, tup,
 						 GetCurrentCommandId(true), InvalidSnapshot,
 						 true /* wait for commit */ ,
-						 &tmfd, &lockmode, -1);
+						 &tmfd, &lockmode);
 	switch (result)
 	{
 		case TM_SelfModified:
