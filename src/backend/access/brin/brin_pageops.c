@@ -808,7 +808,7 @@ brin_getinsertbuffer(Relation irel, Buffer oldbuf, Size itemsz,
 			BrinMaxItemSize : br_page_get_freespace(page);
 		if (freespace >= itemsz)
 		{
-			RelationSetTargetBlock(irel, newblk);
+			RelationSetTargetBlock(irel, newblk, 0);
 
 			/*
 			 * Lock the old buffer if not locked already.  Note that in this

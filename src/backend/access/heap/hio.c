@@ -503,12 +503,12 @@ loop:
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
 		if (hint == 0)
-			splitFreeSpace = 700;
+			splitFreeSpace = Min(len * 6, 400);
 
 		if (len + saveFreeSpace + splitFreeSpace <= pageFreeSpace)
 		{
 			/* use this page as future insert target, too */
-			RelationSetTargetBlock(relation, targetBlock);
+			RelationSetTargetBlock(relation, targetBlock, GetCurrentTransactionIdIfAny());
 			return buffer;
 		}
 
@@ -673,7 +673,8 @@ loop:
 	 * current backend to make more insertions or not, which is probably a
 	 * good bet most of the time.  So for now, don't add it to FSM yet.
 	 */
-	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer),
+						   GetCurrentTransactionIdIfAny());
 
 	return buffer;
 }

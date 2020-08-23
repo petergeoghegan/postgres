@@ -545,11 +545,11 @@ typedef struct ViewOptions
  * RelationSetTargetBlock
  *		Set relation's current insertion target block.
  */
-#define RelationSetTargetBlock(relation, targblock) \
+#define RelationSetTargetBlock(relation, targblock, xid) \
 	do { \
 		RelationOpenSmgr(relation); \
 		(relation)->rd_smgr->smgr_targblock = (targblock); \
-		(relation)->rd_smgr->targblockxid = 0; \
+		(relation)->rd_smgr->targblockxid = (xid); \
 	} while (0)
 
 /*
