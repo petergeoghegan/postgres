@@ -549,6 +549,7 @@ typedef struct ViewOptions
 	do { \
 		RelationOpenSmgr(relation); \
 		(relation)->rd_smgr->smgr_targblock = (targblock); \
+		(relation)->rd_smgr->targblockxid = 0; \
 	} while (0)
 
 /*
