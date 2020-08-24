@@ -541,16 +541,12 @@ loop:
 			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
 														pageFreeSpace,
 														len + saveFreeSpace);
-			isinsert = false;
-			use_fsm = false;
 		}
 		else
 		{
 			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
 														pageFreeSpace,
 														MaxHeapTupleSize * 0.7);
-			isinsert = false;
-			use_fsm = false;
 		}
 	}
 
@@ -591,6 +587,8 @@ loop:
 			 */
 			if (targetBlock != InvalidBlockNumber)
 			{
+				isinsert = false;
+				hint = -1;
 				UnlockRelationForExtension(relation, ExclusiveLock);
 				goto loop;
 			}
