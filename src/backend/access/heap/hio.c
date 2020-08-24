@@ -548,7 +548,7 @@ loop:
 		{
 			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
 														pageFreeSpace,
-														MaxHeapTupleSize);
+														MaxHeapTupleSize * 0.7);
 			isinsert = false;
 			use_fsm = false;
 		}
