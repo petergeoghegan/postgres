@@ -535,19 +535,24 @@ loop:
 		/*
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
+		 *
+		 * Note: We better apply splitFreeSpace here too, else we'll get stuck
+		 * in an infinite loop.
 		 */
 		if (!isinsert)
 		{
 			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
 														pageFreeSpace,
-														len + saveFreeSpace);
+														len + saveFreeSpace + splitFreeSpace);
 		}
 		else
 		{
 			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
 														pageFreeSpace,
-														MaxHeapTupleSize * 0.7);
+														Max(len + saveFreeSpace + splitFreeSpace,
+															MaxHeapTupleSize * 0.7));
 		}
+		isinsert = false;
 	}
 
 	/*
