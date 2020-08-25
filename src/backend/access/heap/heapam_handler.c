@@ -329,7 +329,7 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	tuple->t_tableOid = slot->tts_tableOid;
 
 	result = heap_update(relation, otid, tuple, cid, crosscheck, wait,
-						 tmfd, lockmode, -1);
+						 tmfd, lockmode);
 	ItemPointerCopy(&tuple->t_self, &slot->tts_tid);
 
 	/*
