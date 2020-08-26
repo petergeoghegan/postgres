@@ -512,17 +512,6 @@ loop:
 			RelationSetTargetBlock(relation, targetBlock, GetCurrentTransactionIdIfAny());
 			return buffer;
 		}
-		else if (isinsert)
-		{
-			heap_page_prune_opt(relation, buffer, false);
-			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (len + saveFreeSpace + splitFreeSpace <= pageFreeSpace)
-			{
-				/* use this page as future insert target, too */
-				RelationSetTargetBlock(relation, targetBlock, GetCurrentTransactionIdIfAny());
-				return buffer;
-			}
-		}
 
 		/*
 		 * Not enough space, so we must give up our page locks and pin (if
