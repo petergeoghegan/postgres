@@ -3007,7 +3007,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 	 */
 	if (PageIsFull(page) ||
 		PageGetHeapFreeSpace(page) <= MAXALIGN(newtup->t_len))
-		heap_page_prune_opt(relation, buffer, false);
+		heap_page_prune_opt(relation, buffer, true);
 
 	if (!PageIsFull(page))
 	{
