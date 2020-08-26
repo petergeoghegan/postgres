@@ -3810,7 +3810,7 @@ ConditionalLockBuffer(Buffer buffer)
  * LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE), except that it loops until
  * it has successfully observed pin count = 1.
  */
-void
+bool
 LockBufferForCleanup(Buffer buffer)
 {
 	BufferDesc *bufHdr;
@@ -3823,16 +3823,19 @@ LockBufferForCleanup(Buffer buffer)
 	{
 		/* There should be exactly one pin */
 		if (LocalRefCount[-buffer - 1] != 1)
-			elog(ERROR, "incorrect local pin count: %d",
+			elog(LOG, "incorrect local pin count: %d",
 				 LocalRefCount[-buffer - 1]);
 		/* Nobody else to wait for */
-		return;
+		return false;
 	}
 
 	/* There should be exactly one local pin */
 	if (GetPrivateRefCount(buffer) != 1)
+	{
+		return false;
 		elog(ERROR, "incorrect local pin count: %d",
 			 GetPrivateRefCount(buffer));
+	}
 
 	bufHdr = GetBufferDescriptor(buffer - 1);
 
@@ -3856,7 +3859,7 @@ LockBufferForCleanup(Buffer buffer)
 				set_ps_display(new_status);
 				pfree(new_status);
 			}
-			return;
+			return true;
 		}
 		/* Failed, so mark myself as waiting for pincount 1 */
 		if (buf_state & BM_PIN_COUNT_WAITER)
@@ -3915,6 +3918,8 @@ LockBufferForCleanup(Buffer buffer)
 		PinCountWaitBuf = NULL;
 		/* Loop back and try again */
 	}
+
+	return true;
 }
 
 /*
