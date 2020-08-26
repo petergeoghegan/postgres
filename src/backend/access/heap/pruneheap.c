@@ -84,7 +84,7 @@ static void heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum);
  * Caller must have pin on the buffer, and must *not* have a lock on it.
  */
 void
-heap_page_prune_opt(Relation relation, Buffer buffer)
+heap_page_prune_opt(Relation relation, Buffer buffer, bool hard)
 {
 	Page		page = BufferGetPage(buffer);
 	TransactionId prune_xid;
@@ -170,9 +170,17 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 
 	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
-		/* OK, try to get exclusive buffer lock */
-		if (!ConditionalLockBufferForCleanup(buffer))
-			return;
+		if (!hard)
+		{
+			/* OK, try to get exclusive buffer lock */
+			if (!ConditionalLockBufferForCleanup(buffer))
+				return;
+		}
+		else
+		{
+			if (!LockBufferForCleanup(buffer))
+				return;
+		}
 
 		/*
 		 * Now that we have buffer lock, get accurate information about the

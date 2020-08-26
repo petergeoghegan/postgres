@@ -392,7 +392,7 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 	/*
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
-	heap_page_prune_opt(scan->rs_base.rs_rd, buffer);
+	heap_page_prune_opt(scan->rs_base.rs_rd, buffer, false);
 
 	/*
 	 * We must hold share lock on the buffer content while examining tuple
@@ -3005,6 +3005,10 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 	 * concurrently and even if that was possible, in the worst case we lose a
 	 * chance to do a HOT update.
 	 */
+	if (PageIsFull(page) ||
+		PageGetHeapFreeSpace(page) <= MAXALIGN(newtup->t_len))
+		heap_page_prune_opt(relation, buffer, true);
+
 	if (!PageIsFull(page))
 	{
 		interesting_attrs = bms_add_members(interesting_attrs, hot_attrs);
