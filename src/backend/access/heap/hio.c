@@ -544,6 +544,7 @@ loop:
 		 */
 		if (isinsert)
 			totalSpace = Max(totalSpace, MaxHeapTupleSize * 0.7);
+		isinsert = false;
 
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
@@ -588,6 +589,8 @@ loop:
 			 */
 			if (targetBlock != InvalidBlockNumber)
 			{
+				isinsert = false;
+				hint = -1;
 				UnlockRelationForExtension(relation, ExclusiveLock);
 				goto loop;
 			}
