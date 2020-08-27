@@ -509,6 +509,7 @@ loop:
 		if (boundary)
 			splitFreeSpace = Min(len * 6, 400);
 
+		/* Initialize/reinitialize total space for FSM case */
 		totalSpace = len + saveFreeSpace + splitFreeSpace;
 		if (totalSpace <= pageFreeSpace)
 		{
@@ -545,6 +546,8 @@ loop:
 		 */
 		if (isinsert)
 			totalSpace = Max(totalSpace, MaxHeapTupleSize * 0.7);
+		else
+			totalSpace = Max(totalSpace, MaxHeapTupleSize * 0.2);
 
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
