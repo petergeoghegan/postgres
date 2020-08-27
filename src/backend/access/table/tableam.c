@@ -286,7 +286,7 @@ table_tuple_get_latest_tid(TableScanDesc scan, ItemPointer tid)
 void
 simple_table_tuple_insert(Relation rel, TupleTableSlot *slot)
 {
-	table_tuple_insert(rel, slot, NULL, GetCurrentCommandId(true), 0, NULL);
+	table_tuple_insert(rel, slot, GetCurrentCommandId(true), 0, NULL);
 }
 
 /*

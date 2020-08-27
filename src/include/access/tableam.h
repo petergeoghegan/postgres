@@ -20,7 +20,6 @@
 #include "access/relscan.h"
 #include "access/sdir.h"
 #include "access/xact.h"
-#include "nodes/execnodes.h"
 #include "utils/guc.h"
 #include "utils/rel.h"
 #include "utils/snapshot.h"
@@ -356,7 +355,7 @@ typedef struct TableAmRoutine
 
 	/* see table_tuple_insert() for reference about parameters */
 	void		(*tuple_insert) (Relation rel, TupleTableSlot *slot,
-								 EState *estate, CommandId cid, int options,
+								 CommandId cid, int options,
 								 struct BulkInsertStateData *bistate);
 
 	/* see table_tuple_insert_speculative() for reference about parameters */
@@ -1176,10 +1175,10 @@ table_compute_xid_horizon_for_tuples(Relation rel,
  * reflected in the slots contents.
  */
 static inline void
-table_tuple_insert(Relation rel, TupleTableSlot *slot, EState *estate, CommandId cid,
+table_tuple_insert(Relation rel, TupleTableSlot *slot, CommandId cid,
 				   int options, struct BulkInsertStateData *bistate)
 {
-	rel->rd_tableam->tuple_insert(rel, slot, estate, cid, options,
+	rel->rd_tableam->tuple_insert(rel, slot, cid, options,
 								  bistate);
 }
 

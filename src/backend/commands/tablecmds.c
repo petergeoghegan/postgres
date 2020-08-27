@@ -5476,7 +5476,7 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 
 			/* Write the tuple out to the new relation */
 			if (newrel)
-				table_tuple_insert(newrel, insertslot, NULL, mycid,
+				table_tuple_insert(newrel, insertslot, mycid,
 								   ti_options, bistate);
 
 			ResetExprContext(econtext);
