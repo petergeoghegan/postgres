@@ -1860,7 +1860,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 			int options, BulkInsertState bistate)
 {
 	TransactionId xid = GetCurrentTransactionIdIfAny();
-	int			hint;
+	bool		boundary = false;
 	HeapTuple	heaptup;
 	Buffer		buffer;
 	Buffer		vmbuffer = InvalidBuffer;
@@ -1868,22 +1868,19 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 
 	if (!TransactionIdIsValid(xid))
 	{
+		boundary = true;
 		xid = GetCurrentTransactionId();
 		RelationOpenSmgr(relation);
 		relation->rd_smgr->targblockxid = xid;
-		hint = 0;
 	}
 	else
 	{
-		hint = -1;
 		RelationOpenSmgr(relation);
-		if (relation->rd_smgr->smgr_targblock != 0)
+		if (relation->rd_smgr->smgr_targblock != InvalidBlockNumber &&
+			relation->rd_smgr->targblockxid != xid)
 		{
-			if (relation->rd_smgr->targblockxid != xid)
-			{
-				relation->rd_smgr->targblockxid = xid;
-				hint = 0;
-			}
+			boundary = true;
+			relation->rd_smgr->targblockxid = xid;
 		}
 	}
 
@@ -1901,7 +1898,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 */
 	buffer = RelationGetBufferForTuple(relation, heaptup->t_len,
 									   InvalidBuffer, options, bistate,
-									   &vmbuffer, NULL, hint);
+									   &vmbuffer, NULL, boundary);
 
 	/*
 	 * We're about to do the actual insert -- but check for conflict first, to
@@ -2193,7 +2190,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		 */
 		buffer = RelationGetBufferForTuple(relation, heaptuples[ndone]->t_len,
 										   InvalidBuffer, options, bistate,
-										   &vmbuffer, NULL, -1);
+										   &vmbuffer, NULL, false);
 		page = BufferGetPage(buffer);
 
 		/* NO EREPORT(ERROR) from here till changes are logged */
@@ -3556,7 +3553,8 @@ l2:
 			/* Assume there's no chance to put heaptup on same page. */
 			newbuf = RelationGetBufferForTuple(relation, heaptup->t_len,
 											   buffer, 0, NULL,
-											   &vmbuffer_new, &vmbuffer, -1);
+											   &vmbuffer_new, &vmbuffer,
+											   false);
 		}
 		else
 		{
@@ -3574,7 +3572,8 @@ l2:
 				LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 				newbuf = RelationGetBufferForTuple(relation, heaptup->t_len,
 												   buffer, 0, NULL,
-												   &vmbuffer_new, &vmbuffer, -1);
+												   &vmbuffer_new, &vmbuffer,
+												   false);
 			}
 			else
 			{

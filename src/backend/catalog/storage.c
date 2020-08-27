@@ -290,7 +290,7 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 	 * Make sure smgr_targblock etc aren't pointing somewhere past new end
 	 */
 	rel->rd_smgr->smgr_targblock = InvalidBlockNumber;
-	rel->rd_smgr->targblockxid = 0;
+	rel->rd_smgr->targblockxid = InvalidTransactionId;
 	for (int i = 0; i <= MAX_FORKNUM; ++i)
 		rel->rd_smgr->smgr_cached_nblocks[i] = InvalidBlockNumber;
 

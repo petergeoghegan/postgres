@@ -321,7 +321,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
 						  Buffer *vmbuffer, Buffer *vmbuffer_other,
-						  int hint)
+						  bool boundary)
 {
 	bool		use_fsm = !(options & HEAP_INSERT_SKIP_FSM);
 	bool		isinsert = (BufferIsInvalid(otherBuffer));
@@ -506,7 +506,7 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (hint == 0)
+		if (boundary)
 			splitFreeSpace = Min(len * 6, 400);
 
 		totalSpace = len + saveFreeSpace + splitFreeSpace;
