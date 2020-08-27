@@ -1857,9 +1857,10 @@ ReleaseBulkInsertStatePin(BulkInsertState bistate)
  */
 void
 heap_insert(Relation relation, HeapTuple tup, CommandId cid,
-			int options, BulkInsertState bistate, int hint)
+			int options, BulkInsertState bistate)
 {
 	TransactionId xid = GetCurrentTransactionIdIfAny();
+	int			hint;
 	HeapTuple	heaptup;
 	Buffer		buffer;
 	Buffer		vmbuffer = InvalidBuffer;
@@ -2406,7 +2407,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 void
 simple_heap_insert(Relation relation, HeapTuple tup)
 {
-	heap_insert(relation, tup, GetCurrentCommandId(true), 0, NULL, -1);
+	heap_insert(relation, tup, GetCurrentCommandId(true), 0, NULL);
 }
 
 /*
