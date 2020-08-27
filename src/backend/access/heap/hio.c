@@ -320,7 +320,8 @@ Buffer
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
-						  Buffer *vmbuffer, Buffer *vmbuffer_other, int hint)
+						  Buffer *vmbuffer, Buffer *vmbuffer_other,
+						  int hint)
 {
 	bool		use_fsm = !(options & HEAP_INSERT_SKIP_FSM);
 	bool		isinsert = (BufferIsInvalid(otherBuffer));
@@ -405,6 +406,7 @@ loop:
 	while (targetBlock != InvalidBlockNumber)
 	{
 		Size		splitFreeSpace = 0;
+		Size		totalSpace;
 
 		/*
 		 * Read and exclusive-lock the target block, as well as the other
@@ -506,10 +508,12 @@ loop:
 		if (hint == 0)
 			splitFreeSpace = Min(len * 6, 400);
 
-		if (len + saveFreeSpace + splitFreeSpace <= pageFreeSpace)
+		totalSpace = len + saveFreeSpace + splitFreeSpace;
+		if (totalSpace <= pageFreeSpace)
 		{
 			/* use this page as future insert target, too */
-			RelationSetTargetBlock(relation, targetBlock, GetCurrentTransactionIdIfAny());
+			RelationSetTargetBlock(relation, targetBlock,
+								   GetCurrentTransactionIdIfAny());
 			return buffer;
 		}
 
@@ -536,23 +540,16 @@ loop:
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
 		 *
-		 * Note: We better apply splitFreeSpace here too, else we'll get stuck
-		 * in an infinite loop.
+		 * Try to get a larger amount of free space for inserts only.
 		 */
-		if (!isinsert)
-		{
-			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
-														pageFreeSpace,
-														len + saveFreeSpace + splitFreeSpace);
-		}
-		else
-		{
-			targetBlock = RecordAndGetPageWithFreeSpace(relation, targetBlock,
-														pageFreeSpace,
-														Max(len + saveFreeSpace + splitFreeSpace,
-															MaxHeapTupleSize * 0.7));
-		}
+		if (isinsert)
+			totalSpace = Max(totalSpace, MaxHeapTupleSize * 0.7);
 		isinsert = false;
+
+		targetBlock = RecordAndGetPageWithFreeSpace(relation,
+													targetBlock,
+													pageFreeSpace,
+													totalSpace);
 	}
 
 	/*
