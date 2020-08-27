@@ -352,7 +352,7 @@ _bt_search_insert(Relation rel, BTInsertState insertstate)
 		}
 
 		/* Forget block, since cache doesn't appear to be useful */
-		RelationSetTargetBlock(rel, InvalidBlockNumber, 0);
+		RelationSetTargetBlock(rel, InvalidBlockNumber, InvalidTransactionId);
 	}
 
 	/* Cannot use optimization -- descend tree, return proper descent stack */
@@ -1401,7 +1401,7 @@ _bt_insertonpg(Relation rel,
 		 */
 		if (BlockNumberIsValid(blockcache) &&
 			_bt_getrootheight(rel) >= BTREE_FASTPATH_MIN_LEVEL)
-			RelationSetTargetBlock(rel, blockcache, 0);
+			RelationSetTargetBlock(rel, blockcache, InvalidTransactionId);
 	}
 
 	/* be tidy */
