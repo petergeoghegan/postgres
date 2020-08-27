@@ -329,6 +329,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	Page		page;
 	Size		pageFreeSpace = 0,
 				saveFreeSpace = 0;
+	Size		totalSpace = 0;
 	BlockNumber targetBlock,
 				otherBlock;
 	bool		needLock;
@@ -402,11 +403,11 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		}
 	}
 
+	totalSpace = len + saveFreeSpace;
 loop:
 	while (targetBlock != InvalidBlockNumber)
 	{
 		Size		splitFreeSpace = 0;
-		Size		totalSpace;
 
 		/*
 		 * Read and exclusive-lock the target block, as well as the other
@@ -544,7 +545,6 @@ loop:
 		 */
 		if (isinsert)
 			totalSpace = Max(totalSpace, MaxHeapTupleSize * 0.7);
-		isinsert = false;
 
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
@@ -581,7 +581,7 @@ loop:
 			 * Check if some other backend has extended a block for us while
 			 * we were waiting on the lock.
 			 */
-			targetBlock = GetPageWithFreeSpace(relation, len + saveFreeSpace);
+			targetBlock = GetPageWithFreeSpace(relation, totalSpace);
 
 			/*
 			 * If some other waiter has already extended the relation, we
@@ -589,8 +589,6 @@ loop:
 			 */
 			if (targetBlock != InvalidBlockNumber)
 			{
-				isinsert = false;
-				hint = -1;
 				UnlockRelationForExtension(relation, ExclusiveLock);
 				goto loop;
 			}
