@@ -2916,7 +2916,8 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 			TM_FailureData *tmfd, LockTupleMode *lockmode)
 {
 	TM_Result	result;
-	TransactionId xid = GetCurrentTransactionId();
+	TransactionId xid = GetCurrentTransactionIdIfAny();
+	bool		boundary = false;
 	Bitmapset  *hot_attrs;
 	Bitmapset  *key_attrs;
 	Bitmapset  *id_attrs;
@@ -2954,6 +2955,24 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_new_tuple;
 
 	Assert(ItemPointerIsValid(otid));
+
+	if (!TransactionIdIsValid(xid))
+	{
+		boundary = true;
+		xid = GetCurrentTransactionId();
+		RelationOpenSmgr(relation);
+		relation->rd_smgr->targblockxid = xid;
+	}
+	else
+	{
+		RelationOpenSmgr(relation);
+		if (relation->rd_smgr->smgr_targblock != InvalidBlockNumber &&
+			relation->rd_smgr->targblockxid != xid)
+		{
+			boundary = true;
+			relation->rd_smgr->targblockxid = xid;
+		}
+	}
 
 	/*
 	 * Forbid this during a parallel operation, lest it allocate a combocid.
@@ -3554,7 +3573,7 @@ l2:
 			newbuf = RelationGetBufferForTuple(relation, heaptup->t_len,
 											   buffer, 0, NULL,
 											   &vmbuffer_new, &vmbuffer,
-											   false);
+											   boundary);
 		}
 		else
 		{
@@ -3573,7 +3592,7 @@ l2:
 				newbuf = RelationGetBufferForTuple(relation, heaptup->t_len,
 												   buffer, 0, NULL,
 												   &vmbuffer_new, &vmbuffer,
-												   false);
+												   boundary);
 			}
 			else
 			{
