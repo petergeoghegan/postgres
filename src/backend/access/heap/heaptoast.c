@@ -182,7 +182,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	 * external.
 	 */
 	while (heap_compute_data_size(tupleDesc,
-								  toast_values, toast_isnull) > 5)
+								  toast_values, toast_isnull) > 50)
 	{
 		int			biggest_attno;
 
@@ -212,7 +212,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		 *
 		 * XXX maybe the threshold should be less than maxDataLen?
 		 */
-		if (toast_attr[biggest_attno].tai_size > 5 &&
+		if (toast_attr[biggest_attno].tai_size > 150 &&
 			rel->rd_rel->reltoastrelid != InvalidOid)
 			toast_tuple_externalize(&ttc, biggest_attno, options);
 	}
@@ -223,7 +223,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	 * toast table to push them to.
 	 */
 	while (heap_compute_data_size(tupleDesc,
-								  toast_values, toast_isnull) > 5 &&
+								  toast_values, toast_isnull) > 100 &&
 		   rel->rd_rel->reltoastrelid != InvalidOid)
 	{
 		int			biggest_attno;
@@ -258,7 +258,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	maxDataLen = TOAST_TUPLE_TARGET_MAIN - hoff;
 
 	while (heap_compute_data_size(tupleDesc,
-								  toast_values, toast_isnull) > 5 &&
+								  toast_values, toast_isnull) > 30 &&
 		   rel->rd_rel->reltoastrelid != InvalidOid)
 	{
 		int			biggest_attno;

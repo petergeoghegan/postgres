@@ -634,7 +634,7 @@ raw_heap_insert(RewriteState state, HeapTuple tup)
 		Assert(!HeapTupleHasExternal(tup));
 		heaptup = tup;
 	}
-	else if (HeapTupleHasExternal(tup) || tup->t_len > 50)
+	else if (HeapTupleHasExternal(tup) || tup->t_len > 100)
 	{
 		int			options = HEAP_INSERT_SKIP_FSM;
 

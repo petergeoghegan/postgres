@@ -2104,7 +2104,7 @@ heap_prepare_insert(Relation relation, HeapTuple tup, TransactionId xid,
 
 		return tup;
 	}
-	else if (HeapTupleHasExternal(tup) || tup->t_len > 32)
+	else if (HeapTupleHasExternal(tup) || tup->t_len > 200)
 		return heap_toast_insert_or_update(relation, tup, NULL, options);
 	else
 		return tup;
@@ -3449,7 +3449,7 @@ l2:
 	else
 		need_toast = (HeapTupleHasExternal(&oldtup) ||
 					  HeapTupleHasExternal(newtup) ||
-					  newtup->t_len > 32);
+					  newtup->t_len > 200);
 
 	pagefree = PageGetHeapFreeSpace(page);
 
