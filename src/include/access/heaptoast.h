@@ -47,7 +47,7 @@
 
 #define TOAST_TUPLE_THRESHOLD	MaximumBytesPerTuple(TOAST_TUPLES_PER_PAGE)
 
-#define TOAST_TUPLE_TARGET		TOAST_TUPLE_THRESHOLD
+#define TOAST_TUPLE_TARGET		32
 
 /*
  * The code will also consider moving MAIN data out-of-line, but only as a
