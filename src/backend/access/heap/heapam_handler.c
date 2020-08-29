@@ -2041,7 +2041,8 @@ heapam_relation_needs_toast_table(Relation rel)
 	tuple_length = MAXALIGN(SizeofHeapTupleHeader +
 							BITMAPLEN(tupdesc->natts)) +
 		MAXALIGN(data_length);
-	return (tuple_length > TOAST_TUPLE_THRESHOLD);
+	/* XXX: Necessary to get any TOASTing in stock table at all */
+	return (true);
 }
 
 /*

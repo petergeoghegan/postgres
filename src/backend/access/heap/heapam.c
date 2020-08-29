@@ -2097,7 +2097,14 @@ heap_prepare_insert(Relation relation, HeapTuple tup, TransactionId xid,
 		Assert(!HeapTupleHasExternal(tup));
 		return tup;
 	}
-	else if (HeapTupleHasExternal(tup) || tup->t_len > 250)
+	else if (IsCatalogRelation(relation))
+	{
+		if (HeapTupleHasExternal(tup) || tup->t_len > TOAST_TUPLE_THRESHOLD)
+			return heap_toast_insert_or_update(relation, tup, NULL, options);
+
+		return tup;
+	}
+	else if (HeapTupleHasExternal(tup) || tup->t_len > 32)
 		return heap_toast_insert_or_update(relation, tup, NULL, options);
 	else
 		return tup;
