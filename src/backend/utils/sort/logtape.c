@@ -1256,5 +1256,26 @@ LogicalTapeTell(LogicalTapeSet *lts, int tapenum,
 long
 LogicalTapeSetBlocks(LogicalTapeSet *lts)
 {
+	LogicalTape *lt;
+	long		nBlocksPreallocatedUnused = 0;
+	long		nfreeblockspertape = 0;
+
+	for (int i = 0; i < lts->nTapes; i++)
+	{
+		lt = &lts->tapes[i];
+
+		if (lt->buffer)
+		{
+		nBlocksPreallocatedUnused += lt->nprealloc;
+		nfreeblockspertape += lt->prealloc_size;
+		}
+	}
+
+	elog(WARNING, "lts->nTapes %d", lts->nTapes);
+	elog(WARNING, "nBlocksPreallocatedUnused %ld", nBlocksPreallocatedUnused);
+	elog(WARNING, "nFreeBlocks %ld", lts->nFreeBlocks);
+	elog(WARNING, "freeBlocksLen %ld", lts->freeBlocksLen);
+	elog(WARNING, "nfreeblockspertape  %ld", nfreeblockspertape );
+
 	return lts->nBlocksAllocated - lts->nHoleBlocks;
 }
