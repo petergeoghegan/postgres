@@ -1494,6 +1494,34 @@ checkXLogConsistency(XLogReaderState *record)
 		/* Time to compare the primary and replay images. */
 		if (memcmp(replay_image_masked, primary_image_masked, BLCKSZ) != 0)
 		{
+			int fd;
+
+			fd = BasicOpenFile("replay_image_masked.page", O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
+			if (fd >= 0)
+			{
+				/* Success! */
+			}
+			if (errno != ENOENT) /* unexpected failure? */
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						 errmsg("could not open file \"%s\": %m", "replay_image_masked.page")));
+
+			if (write(fd, replay_image_masked, BLCKSZ) != BLCKSZ)
+				elog(WARNING, "oops replay_image_masked.page");
+
+			fd = BasicOpenFile("primary_image_masked.page", O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
+			if (fd >= 0)
+			{
+				/* Success! */
+			}
+			if (errno != ENOENT) /* unexpected failure? */
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						 errmsg("could not open file \"%s\": %m", "replay_image_masked.page")));
+
+			if (write(fd, primary_image_masked, BLCKSZ) != BLCKSZ)
+				elog(WARNING, "oops primary_image_masked.page");
+
 			elog(FATAL,
 				 "inconsistent page found, rel %u/%u/%u, forknum %u, blkno %u",
 				 rnode.spcNode, rnode.dbNode, rnode.relNode,
