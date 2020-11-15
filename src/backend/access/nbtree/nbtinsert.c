@@ -1111,8 +1111,8 @@ _bt_insertonpg(Relation rel,
 {
 	Page		page;
 	BTPageOpaque opaque;
-	bool		isroot,
-				isleaf,
+	bool		isleaf,
+				isroot,
 				isrightmost,
 				isonly;
 	IndexTuple	oposting = NULL;
@@ -1121,8 +1121,8 @@ _bt_insertonpg(Relation rel,
 
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
-	isroot = P_ISROOT(opaque);
 	isleaf = P_ISLEAF(opaque);
+	isroot = P_ISROOT(opaque);
 	isrightmost = P_RIGHTMOST(opaque);
 	isonly = P_LEFTMOST(opaque) && P_RIGHTMOST(opaque);
 
