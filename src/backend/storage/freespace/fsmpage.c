@@ -163,7 +163,8 @@ fsm_search_avail(Buffer buf, uint8 minvalue, bool advancenext,
 	int			nodeno;
 	int			target;
 	uint16		slot;
-	uint32		fp_next_slot;
+	uint32		fp_next_slot_orig,
+				fp_next_slot_final;
 
 restart:
 
@@ -179,8 +180,8 @@ restart:
 	 * sane.  (This also handles wrapping around when the prior call returned
 	 * the last slot on the page.)
 	 */
-	fp_next_slot = pg_atomic_read_u32(&fsmpage->fp_next_slot);
-	target = fp_next_slot;
+	fp_next_slot_orig = pg_atomic_read_u32(&fsmpage->fp_next_slot);
+	target = fp_next_slot_orig;
 	if (target < 0 || target >= LeafNodesPerPage)
 		target = 0;
 	target += NonLeafNodesPerPage;
@@ -295,15 +296,15 @@ restart:
 	slot = nodeno - NonLeafNodesPerPage;
 
 	/*
-	 * Update the next-target pointer. Note that we do this even if we're only
-	 * holding a shared lock, on the grounds that it's better to use a shared
-	 * lock and get a garbled next pointer every now and then, than take the
-	 * concurrency hit of an exclusive lock.
+	 * Update the next-target pointer.  Note that we do this even if we're
+	 * only holding a shared lock.  Use atomic ops + retry to avoid the
+	 * concurrency hit of using an exclusive lock throughout.
 	 *
 	 * Wrap-around is handled at the beginning of this function.
 	 */
-	if (!pg_atomic_compare_exchange_u32(&fsmpage->fp_next_slot, &fp_next_slot,
-										slot + (advancenext ? 1 : 0)))
+	fp_next_slot_final = slot + (advancenext ? 1 : 0);
+	if (!pg_atomic_compare_exchange_u32(&fsmpage->fp_next_slot,
+										&fp_next_slot_orig, fp_next_slot_final))
 		goto restart;
 
 	return slot;

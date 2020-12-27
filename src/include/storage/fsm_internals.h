@@ -28,10 +28,9 @@ typedef struct
 	 * fsm_search_avail() tries to spread the load of multiple backends by
 	 * returning different pages to different backends in a round-robin
 	 * fashion. fp_next_slot points to the next slot to be returned (assuming
-	 * there's enough space on it for the request). It's defined as an int,
-	 * because it's updated without an exclusive lock. uint16 would be more
-	 * appropriate, but int is more likely to be atomically
-	 * fetchable/storable.
+	 * there's enough space on it for the request). It's defined as an
+	 * pg_atomic_uint32, because it's sometimes updated without an exclusive
+	 * lock.
 	 */
 	pg_atomic_uint32 		fp_next_slot;
 
