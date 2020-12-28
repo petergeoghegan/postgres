@@ -543,7 +543,7 @@ loop:
 		 */
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
-													0,
+													pageFreeSpace,
 													len + saveFreeSpace);
 	}
 
