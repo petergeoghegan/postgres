@@ -81,6 +81,7 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->ambuild = hashbuild;
 	amroutine->ambuildempty = hashbuildempty;
 	amroutine->aminsert = hashinsert;
+	amroutine->amvacuumstrategy = hashvacuumstrategy;
 	amroutine->ambulkdelete = hashbulkdelete;
 	amroutine->amvacuumcleanup = hashvacuumcleanup;
 	amroutine->amcanreturn = NULL;
@@ -442,6 +443,19 @@ hashendscan(IndexScanDesc scan)
 		pfree(so->killedItems);
 	pfree(so);
 	scan->opaque = NULL;
+}
+
+/*
+ * Choose the vacuum strategy. Do bulk-deletion unless index cleanup
+ * is specified to off.
+ */
+IndexVacuumStrategy
+hashvacuumstrategy(IndexVacuumInfo *info, VacuumParams *params)
+{
+	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
+		return INDEX_VACUUM_STRATEGY_NONE;
+	else
+		return INDEX_VACUUM_STRATEGY_BULKDELETE;
 }
 
 /*

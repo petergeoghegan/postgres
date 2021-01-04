@@ -21,8 +21,9 @@
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
 
-/* We don't want this file to depend on execnodes.h. */
+/* We don't want this file to depend on execnodes.h and vacuum.h. */
 struct IndexInfo;
+struct VacuumParams;
 
 /*
  * Struct for statistics returned by ambuild
@@ -34,7 +35,8 @@ typedef struct IndexBuildResult
 } IndexBuildResult;
 
 /*
- * Struct for input arguments passed to ambulkdelete and amvacuumcleanup
+ * Struct for input arguments passed to amvacuumstrategy, ambulkdelete
+ * and amvacuumcleanup
  *
  * num_heap_tuples is accurate only when estimated_count is false;
  * otherwise it's just an estimate (currently, the estimate is the
@@ -125,6 +127,14 @@ typedef struct IndexOrderByDistance
 	bool		isnull;
 } IndexOrderByDistance;
 
+/* Result value for amvacuumstrategy */
+typedef enum IndexVacuumStrategy
+{
+	INDEX_VACUUM_STRATEGY_NONE,			/* No-op, skip bulk-deletion in this
+										 * vacuum cycle */
+	INDEX_VACUUM_STRATEGY_BULKDELETE	/* Do ambulkdelete */
+} IndexVacuumStrategy;
+
 /*
  * generalized index_ interface routines (in indexam.c)
  */
@@ -174,6 +184,8 @@ extern bool index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 							   struct TupleTableSlot *slot);
 extern int64 index_getbitmap(IndexScanDesc scan, TIDBitmap *bitmap);
 
+extern IndexVacuumStrategy index_vacuum_strategy(IndexVacuumInfo *info,
+												 struct VacuumParams *params);
 extern IndexBulkDeleteResult *index_bulk_delete(IndexVacuumInfo *info,
 												IndexBulkDeleteResult *stats,
 												IndexBulkDeleteCallback callback,

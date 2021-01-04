@@ -133,6 +133,7 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->ambuild = btbuild;
 	amroutine->ambuildempty = btbuildempty;
 	amroutine->aminsert = btinsert;
+	amroutine->amvacuumstrategy = btvacuumstrategy;
 	amroutine->ambulkdelete = btbulkdelete;
 	amroutine->amvacuumcleanup = btvacuumcleanup;
 	amroutine->amcanreturn = btcanreturn;
@@ -862,6 +863,19 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 
 	_bt_relbuf(info->index, metabuf);
 	return result;
+}
+
+/*
+ * Choose the vacuum strategy. Do bulk-deletion unless index cleanup
+ * is specified to off.
+ */
+IndexVacuumStrategy
+btvacuumstrategy(IndexVacuumInfo *info, VacuumParams *params)
+{
+	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
+		return INDEX_VACUUM_STRATEGY_NONE;
+	else
+		return INDEX_VACUUM_STRATEGY_BULKDELETE;
 }
 
 /*
