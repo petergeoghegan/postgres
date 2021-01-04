@@ -1011,6 +1011,8 @@ extern void btparallelrescan(IndexScanDesc scan);
 extern void btendscan(IndexScanDesc scan);
 extern void btmarkpos(IndexScanDesc scan);
 extern void btrestrpos(IndexScanDesc scan);
+extern IndexVacuumStrategy btvacuumstrategy(IndexVacuumInfo *info,
+											struct VacuumParams *params);
 extern IndexBulkDeleteResult *btbulkdelete(IndexVacuumInfo *info,
 										   IndexBulkDeleteResult *stats,
 										   IndexBulkDeleteCallback callback,

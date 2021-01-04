@@ -24,6 +24,19 @@
 
 
 /*
+ * Choose the vacuum strategy. Do bulk-deletion unless index cleanup
+ * is specified to off.
+ */
+IndexVacuumStrategy
+blvacuumstrategy(IndexVacuumInfo *info, VacuumParams *params)
+{
+	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
+		return INDEX_VACUUM_STRATEGY_NONE;
+	else
+		return INDEX_VACUUM_STRATEGY_BULKDELETE;
+}
+
+/*
  * Bulk deletion of all index entries pointing to a set of heap tuples.
  * The set of target tuples is specified via a callback routine that tells
  * whether any given heap tuple (identified by ItemPointer) is being deleted.

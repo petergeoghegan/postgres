@@ -53,6 +53,19 @@ static bool gistdeletepage(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 						   Buffer leafBuffer);
 
 /*
+ * Choose the vacuum strategy. Do bulk-deletion unless index cleanup
+ * is specified to off.
+ */
+IndexVacuumStrategy
+gistvacuumstrategy(IndexVacuumInfo *info, VacuumParams *params)
+{
+	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
+		return INDEX_VACUUM_STRATEGY_NONE;
+	else
+		return INDEX_VACUUM_STRATEGY_BULKDELETE;
+}
+
+/*
  * VACUUM bulkdelete stage: remove index entries.
  */
 IndexBulkDeleteResult *
