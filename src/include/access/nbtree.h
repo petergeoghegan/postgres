@@ -110,6 +110,8 @@ typedef struct BTMetaPageData
 	float8		btm_last_cleanup_num_heap_tuples;	/* number of heap tuples
 													 * during last cleanup */
 	bool		btm_allequalimage;	/* are all columns "equalimage"? */
+	BlockNumber	btm_last_deletion_nblocks;	/* number of blocks during last
+											 * bulk-deletion */
 } BTMetaPageData;
 
 #define BTPageGetMeta(p) \

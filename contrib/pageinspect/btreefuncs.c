@@ -692,6 +692,11 @@ bt_metap(PG_FUNCTION_ARGS)
 		values[j++] = "f";
 	}
 
+	if (metad->btm_version >= BTREE_VERSION)
+		values[j++] = psprintf(INT64_FORMAT, (int64) metad->btm_last_deletion_nblocks);
+	else
+		values[j++] = "-1";
+
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupleDesc),
 								   values);
 

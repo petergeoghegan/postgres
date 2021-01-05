@@ -878,16 +878,50 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 }
 
 /*
- * Choose the vacuum strategy. Do bulk-deletion unless index cleanup
- * is specified to off.
+ * Choose the vacuum strategy. Do bulk-deletion or nothing
  */
 IndexVacuumStrategy
 btvacuumstrategy(IndexVacuumInfo *info, VacuumParams *params)
 {
+	Buffer		metabuf;
+	Page		metapg;
+	BTMetaPageData *metad;
+	IndexVacuumStrategy result = INDEX_VACUUM_STRATEGY_NONE;
+
+	/*
+	 * Don't want to do bulk-deletion if index cleanup is disabled
+	 * by the user request.
+	 */
 	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
 		return INDEX_VACUUM_STRATEGY_NONE;
+
+	metabuf = _bt_getbuf(info->index, BTREE_METAPAGE, BT_READ);
+	metapg = BufferGetPage(metabuf);
+	metad = BTPageGetMeta(metapg);
+
+	if (metad->btm_version < BTREE_VERSION)
+	{
+		/*
+		 * Do bulk-deletion if metapage needs upgrade, because we don't
+		 * have meta-information yet.
+		 */
+		result = INDEX_VACUUM_STRATEGY_BULKDELETE;
+	}
 	else
-		return INDEX_VACUUM_STRATEGY_BULKDELETE;
+	{
+		BlockNumber	nblocks = RelationGetNumberOfBlocks(info->index);
+
+		/*
+		 * Do deletion if the index grows since the last deletion, by
+		 * even one block,	or for the first time.
+		 */
+		if (!BlockNumberIsValid(metad->btm_last_deletion_nblocks) ||
+			 nblocks > metad->btm_last_deletion_nblocks)
+			result = INDEX_VACUUM_STRATEGY_BULKDELETE;
+	}
+
+	_bt_relbuf(info->index, metabuf);
+	return result;
 }
 
 /*
