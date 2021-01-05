@@ -82,6 +82,7 @@ _bt_initmetapage(Page page, BlockNumber rootbknum, uint32 level,
 	metad->btm_oldest_btpo_xact = InvalidTransactionId;
 	metad->btm_last_cleanup_num_heap_tuples = -1.0;
 	metad->btm_allequalimage = allequalimage;
+	metad->btm_last_deletion_nblocks = InvalidBlockNumber;
 
 	metaopaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	metaopaque->btpo_flags = BTP_META;
@@ -121,6 +122,7 @@ _bt_upgrademetapage(Page page)
 	metad->btm_version = BTREE_NOVAC_VERSION;
 	metad->btm_oldest_btpo_xact = InvalidTransactionId;
 	metad->btm_last_cleanup_num_heap_tuples = -1.0;
+
 	/* Only a REINDEX can set this field */
 	Assert(!metad->btm_allequalimage);
 	metad->btm_allequalimage = false;
@@ -185,17 +187,20 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 	BTMetaPageData *metad;
 	bool		needsRewrite = false;
 	XLogRecPtr	recptr;
+	BlockNumber nblocks;
 
 	/* read the metapage and check if it needs rewrite */
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
 	metapg = BufferGetPage(metabuf);
 	metad = BTPageGetMeta(metapg);
+	nblocks = RelationGetNumberOfBlocks(rel);
 
 	/* outdated version of metapage always needs rewrite */
 	if (metad->btm_version < BTREE_NOVAC_VERSION)
 		needsRewrite = true;
 	else if (metad->btm_oldest_btpo_xact != oldestBtpoXact ||
-			 metad->btm_last_cleanup_num_heap_tuples != numHeapTuples)
+			 metad->btm_last_cleanup_num_heap_tuples != numHeapTuples ||
+			 metad->btm_last_deletion_nblocks != nblocks)
 		needsRewrite = true;
 
 	if (!needsRewrite)
@@ -217,6 +222,7 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 	/* update cleanup-related information */
 	metad->btm_oldest_btpo_xact = oldestBtpoXact;
 	metad->btm_last_cleanup_num_heap_tuples = numHeapTuples;
+	metad->btm_last_deletion_nblocks = nblocks;
 	MarkBufferDirty(metabuf);
 
 	/* write wal record if needed */
@@ -236,6 +242,7 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 		md.oldest_btpo_xact = oldestBtpoXact;
 		md.last_cleanup_num_heap_tuples = numHeapTuples;
 		md.allequalimage = metad->btm_allequalimage;
+		md.last_deletion_nblocks = metad->btm_last_deletion_nblocks;
 
 		XLogRegisterBufData(0, (char *) &md, sizeof(xl_btree_metadata));
 
