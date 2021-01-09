@@ -308,6 +308,7 @@ index_compute_xid_horizon_for_tuples(Relation irel,
 	delstate.ndeltids = 0;
 	delstate.deltids = palloc(nitems * sizeof(TM_IndexDelete));
 	delstate.status = palloc(nitems * sizeof(TM_IndexStatus));
+	delstate.instrument = false;
 
 	/* identify what the index tuples about to be deleted point to */
 	for (int i = 0; i < nitems; i++)
