@@ -25,7 +25,7 @@
     <xsl:when test="$website.stylesheet = 0">stylesheet.css</xsl:when>
     <xsl:otherwise>
       https://www.postgresql.org/media/css/fontawesome.css
-      https://www.postgresql.org/media/css/bootstrap.min.css
+      https://www.postgresql.org/media/css/bootstrap-4.4.1.min.css
       https://www.postgresql.org/media/css/main.css
       https://www.postgresql.org/media/css/normalize.css
     </xsl:otherwise>
