@@ -420,6 +420,17 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
 															 estate,
 															 indexInfo,
 															 indexRelation);
+#if 0
+		if (update)
+		{
+			if (indexUnchanged)
+				elog(WARNING, "%s is unchanged",
+					 RelationGetRelationName(indexRelation));
+			else
+				elog(WARNING, "%s is changed",
+					 RelationGetRelationName(indexRelation));
+		}
+#endif
 
 		satisfiesConstraint =
 			index_insert(indexRelation, /* index relation */

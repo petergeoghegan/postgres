@@ -2791,10 +2791,20 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 	int			ndeadblocks;
 	TM_IndexDeleteOp delstate;
 	OffsetNumber offnum;
+	int			finaldeletedtids;
 
 	/* Get array of table blocks pointed to by LP_DEAD-set tuples */
 	deadblocks = _bt_deadblocks(page, deletable, ndeletable, newitem,
 								&ndeadblocks);
+
+#if 0
+	elog(LOG, "simple delete %s ndeadblocks %d", RelationGetRelationName(rel),
+		 ndeadblocks);
+	for (int i = 0; i < ndeadblocks; i++)
+	{
+		elog(LOG, "===== %d. %u", i, deadblocks[i]);
+	}
+#endif
 
 	/* Initialize tableam state that describes index deletion operation */
 	delstate.bottomup = false;
@@ -2802,6 +2812,7 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 	delstate.ndeltids = 0;
 	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
 	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
+	delstate.instrument = true;
 
 	for (offnum = minoff;
 		 offnum <= maxoff;
@@ -2880,7 +2891,13 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 	Assert(delstate.ndeltids >= ndeletable);
 
 	/* Physically delete LP_DEAD tuples (plus any delete-safe extra TIDs) */
-	_bt_delitems_delete_check(rel, buffer, heapRel, &delstate);
+	finaldeletedtids = _bt_delitems_delete_check(rel, buffer, heapRel, &delstate);
+
+	if (delstate.instrument)
+		elog(LOG, "%s simple deletion idxblk %u (exact free space %zu, exact TIDs deleted %d, LP_DEAD tuples %d, LP_DEAD-related table blocks %d )",
+			 RelationGetRelationName(rel), BufferGetBlockNumber(buffer),
+			 PageGetExactFreeSpace(page), finaldeletedtids, ndeletable,
+			 ndeadblocks);
 
 	pfree(delstate.deltids);
 	pfree(delstate.status);

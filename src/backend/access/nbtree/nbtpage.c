@@ -1490,7 +1490,7 @@ _bt_delitems_cmp(const void *a, const void *b)
  * field (tableam will sort deltids for its own reasons, so we'll need to put
  * it back in leaf-page-wise order afterwards).
  */
-void
+int
 _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 						  TM_IndexDeleteOp *delstate)
 {
@@ -1501,6 +1501,8 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 				nupdatable = 0;
 	OffsetNumber deletable[MaxIndexTuplesPerPage];
 	BTVacuumPosting updatable[MaxIndexTuplesPerPage];
+	int			finaldeletedtids = 0;
+	int			testfinaldeletedtids = 0;
 
 	/* Use tableam interface to determine which tuples to delete first */
 	latestRemovedXid = table_index_delete_tuples(heapRel, delstate);
@@ -1525,7 +1527,7 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 	if (delstate->ndeltids == 0)
 	{
 		Assert(delstate->bottomup);
-		return;
+		return 0;
 	}
 
 	/* We definitely have to delete at least one index tuple (or one TID) */
@@ -1560,7 +1562,10 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 			/* Plain non-pivot tuple */
 			Assert(ItemPointerEquals(&itup->t_tid, &delstate->deltids[i].tid));
 			if (dstatus->knowndeletable)
+			{
+				finaldeletedtids++;
 				deletable[ndeletable++] = idxoffnum;
+			}
 			continue;
 		}
 
@@ -1624,6 +1629,7 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 				vacposting->ndeletedtids = 0;
 			}
 			vacposting->deletetids[vacposting->ndeletedtids++] = p;
+			finaldeletedtids++;
 		}
 
 		/* Final decision on itup, a posting list tuple */
@@ -1655,6 +1661,19 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 	/* be tidy */
 	for (int i = 0; i < nupdatable; i++)
 		pfree(updatable[i]);
+
+	Assert(finaldeletedtids > 0);
+	for (int i = 0; i < delstate->ndeltids; i++)
+	{
+		TM_IndexStatus *dstatus = delstate->status + delstate->deltids[i].id;
+
+		if (dstatus->knowndeletable)
+			testfinaldeletedtids++;
+	}
+
+	Assert(finaldeletedtids == testfinaldeletedtids);
+
+	return finaldeletedtids;
 }
 
 /*
