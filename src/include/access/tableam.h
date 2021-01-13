@@ -226,7 +226,6 @@ typedef struct TM_IndexDeleteOp
 	int			ndeltids;		/* Current # of deltids/status elements */
 	TM_IndexDelete *deltids;
 	TM_IndexStatus *status;
-	bool		instrument;
 } TM_IndexDeleteOp;
 
 /* "options" flag bits for table_tuple_insert */
