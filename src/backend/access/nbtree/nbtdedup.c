@@ -308,7 +308,6 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 	TM_IndexDeleteOp delstate;
 	bool		neverdedup;
 	int			nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
-	int			finaldeletedtids;
 
 	/* Passed-in newitemsz is MAXALIGNED but does not include line pointer */
 	newitemsz += sizeof(ItemIdData);
@@ -348,7 +347,6 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 	delstate.ndeltids = 0;
 	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
 	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
-	delstate.instrument = true;
 
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -399,29 +397,10 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 	pfree(state);
 
 	/* Ask tableam which TIDs are deletable, then physically delete them */
-	finaldeletedtids = _bt_delitems_delete_check(rel, buf, heapRel, &delstate);
+	_bt_delitems_delete_check(rel, buf, heapRel, &delstate);
 
 	pfree(delstate.deltids);
 	pfree(delstate.status);
-
-	if (delstate.instrument)
-	{
-		Size		exactfree = PageGetExactFreeSpace(page);
-		bool		rval = (exactfree >= Max(BLCKSZ / 24, newitemsz));
-
-#if 0
-		if (neverdedup)
-			elog(LOG, "%s avoided page split, but it's a 'never dedup' case (exact free space %zu)",
-				 RelationGetRelationName(rel), exactfree);
-		else
-			elog(LOG, "%s avoided page split, avoided immediate dedup?: %s (exact free space %zu)",
-				 RelationGetRelationName(rel), (rval ? "yes" : "no"), exactfree);
-#endif
-
-		elog(LOG, "%s bottom-up deletion idxblk %u (exact free space %zu, avoided split-or-dedup '%s', exact TIDs deleted %d )",
-			 RelationGetRelationName(rel), BufferGetBlockNumber(buf),
-			 exactfree, (rval ? "yes" : "no"), finaldeletedtids);
-	}
 
 	/* Report "success" to caller unconditionally to avoid deduplication */
 	if (neverdedup)

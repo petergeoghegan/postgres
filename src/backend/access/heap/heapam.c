@@ -7217,16 +7217,6 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 			}
 		}
 
-#if 0
-		if (delstate->instrument)
-		{
-			elog(LOG, "heapam will kill (%u,%u), freespace %u (nblocksaccessed %d)",
-				 ItemPointerGetBlockNumber(htid),
-				 ItemPointerGetOffsetNumber(htid),
-				 istatus->freespace, nblocksaccessed);
-		}
-#endif
-
 		/*
 		 * Maintain latestRemovedXid value for deletion operation as a whole
 		 * by advancing current value using heap tuple headers.  This is
@@ -7310,10 +7300,6 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 	 */
 	Assert(finalndeltids > 0 || delstate->bottomup);
 	delstate->ndeltids = finalndeltids;
-
-	if (delstate->instrument)
-		elog(LOG, "heapam actualfreespace %d, nblocksaccessed %d, caller target space %d",
-			 actualfreespace, nblocksaccessed, delstate->bottomupfreespace);
 
 	return latestRemovedXid;
 }
@@ -7670,14 +7656,6 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
 		memcpy(reordereddeltids + ncopied, firstdtid,
 			   sizeof(TM_IndexDelete) * group->ntids);
 		ncopied += group->ntids;
-
-#if 0
-		if (b < 10 && unlikely(delstate->instrument))
-			elog(LOG,
-				 "%d. blockgroup for heap block %u has %d promising TIDs (rounded up) and %d TIDs (not rounded up)",
-				 b, ItemPointerGetBlockNumber(&firstdtid->tid),
-				 group->npromisingtids, group->ntids);
-#endif
 	}
 
 	/* Copy final grouped and sorted TIDs back into start of caller's array */

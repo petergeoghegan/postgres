@@ -1088,9 +1088,9 @@ extern bool _bt_page_recyclable(Page page);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
 								OffsetNumber *deletable, int ndeletable,
 								BTVacuumPosting *updatable, int nupdatable);
-extern int _bt_delitems_delete_check(Relation rel, Buffer buf,
-									 Relation heapRel,
-									 TM_IndexDeleteOp *delstate);
+extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
+									  Relation heapRel,
+									  TM_IndexDeleteOp *delstate);
 extern uint32 _bt_pagedel(Relation rel, Buffer leafbuf,
 						  TransactionId *oldestBtpoXact);
 
