@@ -823,6 +823,18 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 		 */
 		result = true;
 	}
+	else if (!info->vacuumcleanup_requested)
+	{
+		/*
+		 * Skip cleanup if INDEX_CLEANUP is set to false, even if there might
+		 * be a deleted page that can be recycled. If INDEX_CLEANUP continues
+		 * to be disabled, recyclable pages could be left by XID wraparound.
+		 * But in practice it's not so harmful since such workload doesn't need
+		 * to delete and recycle pages in any case and deletion of btree index
+		 * pages is relatively rare.
+		 */
+		result = false;
+	}
 	else if (TransactionIdIsValid(metad->btm_oldest_btpo_xact) &&
 			 GlobalVisCheckRemovableXid(NULL, metad->btm_oldest_btpo_xact))
 	{
@@ -891,6 +903,14 @@ btbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 {
 	Relation	rel = info->index;
 	BTCycleId	cycleid;
+
+	/*
+	 * Skip deleting index entries if the corresponding heap tuples will
+	 * not be deleted and we want to skip it.
+	 */
+	if (!info->will_vacuum_heap &&
+		info->indvac_strategy == INDEX_VACUUM_STRATEGY_NONE)
+		return stats;
 
 	/* allocate stats if first time through, else re-use existing struct */
 	if (stats == NULL)

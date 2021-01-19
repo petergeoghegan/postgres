@@ -563,17 +563,18 @@ do { \
 /*
  * MaxHeapTuplesPerPage is an upper bound on the number of tuples that can
  * fit on one heap page.  (Note that indexes could have more, because they
- * use a smaller tuple header.)  We arrive at the divisor because each tuple
- * must be maxaligned, and it must have an associated line pointer.
+ * use a smaller tuple header.)  We arrive at the divisor because each line
+ * pointer must be maxaligned.
  *
- * Note: with HOT, there could theoretically be more line pointers (not actual
- * tuples) than this on a heap page.  However we constrain the number of line
- * pointers to this anyway, to avoid excessive line-pointer bloat and not
- * require increases in the size of work arrays.
+ * We used to constrain the number of line pointers to avoid excessive
+ * line-pointer bloat and not require increases in the size of work arrays.
+ * But since index vacuum strategy had entered the picture, accumulating
+ * LP_DEAD line pointer has value of skipping index deletion.
+ *
+ * XXX: allowing to fill the heap page with only line pointer seems a overkill.
  */
 #define MaxHeapTuplesPerPage	\
-	((int) ((BLCKSZ - SizeOfPageHeaderData) / \
-			(MAXALIGN(SizeofHeapTupleHeader) + sizeof(ItemIdData))))
+	((int) ((BLCKSZ - SizeOfPageHeaderData) / (MAXALIGN(sizeof(ItemIdData)))))
 
 /*
  * MaxAttrSize is a somewhat arbitrary upper limit on the declared size of

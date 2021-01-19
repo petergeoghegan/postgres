@@ -58,6 +58,14 @@ blbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	BloomMetaPageData *metaData;
 	GenericXLogState *gxlogState;
 
+	/*
+	 * Skip deleting index entries if the corresponding heap tuples will
+	 * not be deleted and we want to skip it.
+	 */
+	if (!info->will_vacuum_heap &&
+		info->indvac_strategy == INDEX_VACUUM_STRATEGY_NONE)
+		return stats;
+
 	if (stats == NULL)
 		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
 
@@ -185,7 +193,7 @@ blvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	BlockNumber npages,
 				blkno;
 
-	if (info->analyze_only)
+	if (info->analyze_only || !info->vacuumcleanup_requested)
 		return stats;
 
 	if (stats == NULL)

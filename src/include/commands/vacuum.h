@@ -21,6 +21,7 @@
 #include "parser/parse_node.h"
 #include "storage/buf.h"
 #include "storage/lock.h"
+#include "utils/rel.h"
 #include "utils/relcache.h"
 
 /*
@@ -187,19 +188,6 @@ typedef enum VacuumOption
 } VacuumOption;
 
 /*
- * A ternary value used by vacuum parameters.
- *
- * DEFAULT value is used to determine the value based on other
- * configurations, e.g. reloptions.
- */
-typedef enum VacOptTernaryValue
-{
-	VACOPT_TERNARY_DEFAULT = 0,
-	VACOPT_TERNARY_DISABLED,
-	VACOPT_TERNARY_ENABLED,
-} VacOptTernaryValue;
-
-/*
  * Parameters customizing behavior of VACUUM and ANALYZE.
  *
  * Note that at least one of VACOPT_VACUUM and VACOPT_ANALYZE must be set
@@ -218,8 +206,10 @@ typedef struct VacuumParams
 	int			log_min_duration;	/* minimum execution threshold in ms at
 									 * which  verbose logs are activated, -1
 									 * to use default */
-	VacOptTernaryValue index_cleanup;	/* Do index vacuum and cleanup,
-										 * default value depends on reloptions */
+	VacOptTernaryValue index_cleanup;	/* Do index vacuum and cleanup. In
+										 * default mode, it's decided based on
+										 * multiple factors. See
+										 * choose_vacuum_strategy. */
 	VacOptTernaryValue truncate;	/* Truncate empty pages at the end,
 									 * default value depends on reloptions */
 
