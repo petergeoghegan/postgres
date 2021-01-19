@@ -653,7 +653,7 @@ bt_metap(PG_FUNCTION_ARGS)
 	BTMetaPageData *metad;
 	TupleDesc	tupleDesc;
 	int			j;
-	char	   *values[9];
+	char	   *values[10];
 	Buffer		buffer;
 	Page		page;
 	HeapTuple	tuple;
