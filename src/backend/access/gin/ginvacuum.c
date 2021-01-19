@@ -584,6 +584,14 @@ ginbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	BlockNumber rootOfPostingTree[BLCKSZ / (sizeof(IndexTupleData) + sizeof(ItemId))];
 	uint32		nRoot;
 
+	/*
+	 * Skip deleting index entries if the corresponding heap tuples will
+	 * not be deleted and we want to skip it.
+	 */
+	if (!info->will_vacuum_heap &&
+		info->indvac_strategy == INDEX_VACUUM_STRATEGY_NONE)
+		return stats;
+
 	gvs.tmpCxt = AllocSetContextCreate(CurrentMemoryContext,
 									   "Gin vacuum temporary context",
 									   ALLOCSET_DEFAULT_SIZES);
@@ -720,6 +728,10 @@ ginvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		}
 		return stats;
 	}
+
+	/* Skip index cleanup if user requests to disable */
+	if (!info->vacuumcleanup_requested)
+		return stats;
 
 	/*
 	 * Set up all-zero stats and cleanup pending inserts if ginbulkdelete

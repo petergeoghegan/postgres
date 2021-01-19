@@ -34,6 +34,14 @@ typedef struct IndexBuildResult
 	double		index_tuples;	/* # of tuples inserted into index */
 } IndexBuildResult;
 
+/* Result value for amvacuumstrategy */
+typedef enum IndexVacuumStrategy
+{
+	INDEX_VACUUM_STRATEGY_NONE,			/* No-op, skip bulk-deletion in this
+										 * vacuum cycle */
+	INDEX_VACUUM_STRATEGY_BULKDELETE	/* Do ambulkdelete */
+} IndexVacuumStrategy;
+
 /*
  * Struct for input arguments passed to amvacuumstrategy, ambulkdelete
  * and amvacuumcleanup
@@ -52,6 +60,26 @@ typedef struct IndexVacuumInfo
 	int			message_level;	/* ereport level for progress messages */
 	double		num_heap_tuples;	/* tuples remaining in heap */
 	BufferAccessStrategy strategy;	/* access strategy for reads */
+
+	/*
+	 * True if lazy vacuum delete the collected garbage tuples from the
+	 * heap.  If it's false, the index AM can skip index bulk-deletion
+	 * safely.  This field is used only for ambulkdelete.
+	 */
+	bool		will_vacuum_heap;
+
+	/*
+	 * The answer to amvacuumstrategy asked before executing ambulkdelete.
+	 * This field is used only for ambulkdelete.
+	 */
+	IndexVacuumStrategy indvac_strategy;
+
+	/*
+	 * amvacuumcleanup is requested by lazy vacuum. If false, the index AM
+	 * can skip index cleanup. This can be false if INDEX_CLEANUP vacuum option
+	 * is set to false. This field is used only for amvacuumcleanup.
+	 */
+	bool		vacuumcleanup_requested;
 } IndexVacuumInfo;
 
 /*
@@ -126,14 +154,6 @@ typedef struct IndexOrderByDistance
 	double		value;
 	bool		isnull;
 } IndexOrderByDistance;
-
-/* Result value for amvacuumstrategy */
-typedef enum IndexVacuumStrategy
-{
-	INDEX_VACUUM_STRATEGY_NONE,			/* No-op, skip bulk-deletion in this
-										 * vacuum cycle */
-	INDEX_VACUUM_STRATEGY_BULKDELETE	/* Do ambulkdelete */
-} IndexVacuumStrategy;
 
 /*
  * generalized index_ interface routines (in indexam.c)

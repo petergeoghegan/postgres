@@ -27,6 +27,7 @@
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/tablespace.h"
+#include "commands/vacuum.h"
 #include "commands/view.h"
 #include "nodes/makefuncs.h"
 #include "postmaster/postmaster.h"
@@ -139,15 +140,6 @@ static relopt_bool boolRelOpts[] =
 			AccessExclusiveLock
 		},
 		false
-	},
-	{
-		{
-			"vacuum_index_cleanup",
-			"Enables index vacuuming and index cleanup",
-			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
-			ShareUpdateExclusiveLock
-		},
-		true
 	},
 	{
 		{
@@ -492,6 +484,18 @@ relopt_enum_elt_def viewCheckOptValues[] =
 	{(const char *) NULL}		/* list terminator */
 };
 
+/* values from VacOptTernaryValue */
+relopt_enum_elt_def vacOptTernaryOptValues[] =
+{
+	{"auto", VACOPT_TERNARY_DEFAULT},
+	{"true", VACOPT_TERNARY_ENABLED},
+	{"false", VACOPT_TERNARY_DISABLED},
+	{"on", VACOPT_TERNARY_ENABLED},
+	{"off", VACOPT_TERNARY_DISABLED},
+	{"1", VACOPT_TERNARY_ENABLED},
+	{"0", VACOPT_TERNARY_DISABLED}
+};
+
 static relopt_enum enumRelOpts[] =
 {
 	{
@@ -515,6 +519,17 @@ static relopt_enum enumRelOpts[] =
 		viewCheckOptValues,
 		VIEW_OPTION_CHECK_OPTION_NOT_SET,
 		gettext_noop("Valid values are \"local\" and \"cascaded\".")
+	},
+	{
+		{
+			"vacuum_index_cleanup",
+			"Enables index vacuuming and index cleanup",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		vacOptTernaryOptValues,
+		VACOPT_TERNARY_DEFAULT,
+		gettext_noop("Valid values are \"on\", \"off\", and \"auto\".")
 	},
 	/* list terminator */
 	{{NULL}}
@@ -1856,7 +1871,7 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, user_catalog_table)},
 		{"parallel_workers", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, parallel_workers)},
-		{"vacuum_index_cleanup", RELOPT_TYPE_BOOL,
+		{"vacuum_index_cleanup", RELOPT_TYPE_ENUM,
 		offsetof(StdRdOptions, vacuum_index_cleanup)},
 		{"vacuum_truncate", RELOPT_TYPE_BOOL,
 		offsetof(StdRdOptions, vacuum_truncate)}
