@@ -2302,78 +2302,103 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 		Buffer		buf;
 		Page		page;
 		BTPageOpaque opaque;
+		OffsetNumber offnum,
+					minoff,
+					maxoff;
+		ItemId		itemid;
+		IndexTuple	item;
 
 		buf = _bt_getbuf(rel, blkno, BT_WRITE);
 		page = BufferGetPage(buf);
 		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
+		/*
+		 * Before beginning scan of internal page to relocate downlink, check
+		 * for rare page-level conditions that require special processing:
+		 * incompletely-split pages, and deleted pages (these cannot ever have
+		 * been concurrently deleted by VACUUM).
+		 *
+		 * These conditions can only be encountered when caller's stack comes
+		 * from a leaf page (or perhaps even an ancestor-level page) other
+		 * than 'child' (if it was 'child' we'd have proactively finished the
+		 * split during our initial descent).
+		 */
+		Assert(!P_ISLEAF(opaque));
 		if (P_INCOMPLETE_SPLIT(opaque))
 		{
+			/* Finish split, restart processing of same page */
 			_bt_finish_split(rel, buf, stack->bts_parent);
+			/* Lock on buf released already */
+			continue;
+		}
+		if (P_IGNORE(opaque))
+		{
+			Assert(P_ISDELETED(opaque) && !P_RIGHTMOST(opaque));
+
+			blkno = opaque->btpo_next;
+			start = InvalidOffsetNumber;
+			_bt_relbuf(rel, buf);
+
+			/* Paranoia: directly check for non-rightmost page */
+			if (blkno == P_NONE)
+				return InvalidBuffer;
+			/* Now step right */
 			continue;
 		}
 
-		if (!P_IGNORE(opaque))
+		/*
+		 * Now begin linear search for downlink in internal page.
+		 *
+		 * start = InvalidOffsetNumber means "search the whole page".  We need
+		 * this test anyway due to possibility that page has a high key now
+		 * when it didn't before.
+		 */
+		minoff = P_FIRSTDATAKEY(opaque);
+		maxoff = PageGetMaxOffsetNumber(page);
+		if (start < minoff)
+			start = minoff;
+
+		/*
+		 * Need this check too, to guard against possibility that page split
+		 * since we visited it originally
+		 */
+		if (start > maxoff)
+			start = OffsetNumberNext(maxoff);
+
+		/*
+		 * These loops will check every item on the page --- but in an order
+		 * that's attuned to the probability of where it actually is.  Scan to
+		 * the right first, then to the left.
+		 */
+		for (offnum = start;
+			 offnum <= maxoff;
+			 offnum = OffsetNumberNext(offnum))
 		{
-			OffsetNumber offnum,
-						minoff,
-						maxoff;
-			ItemId		itemid;
-			IndexTuple	item;
+			itemid = PageGetItemId(page, offnum);
+			item = (IndexTuple) PageGetItem(page, itemid);
 
-			minoff = P_FIRSTDATAKEY(opaque);
-			maxoff = PageGetMaxOffsetNumber(page);
-
-			/*
-			 * start = InvalidOffsetNumber means "search the whole page". We
-			 * need this test anyway due to possibility that page has a high
-			 * key now when it didn't before.
-			 */
-			if (start < minoff)
-				start = minoff;
-
-			/*
-			 * Need this check too, to guard against possibility that page
-			 * split since we visited it originally.
-			 */
-			if (start > maxoff)
-				start = OffsetNumberNext(maxoff);
-
-			/*
-			 * These loops will check every item on the page --- but in an
-			 * order that's attuned to the probability of where it actually
-			 * is.  Scan to the right first, then to the left.
-			 */
-			for (offnum = start;
-				 offnum <= maxoff;
-				 offnum = OffsetNumberNext(offnum))
+			if (BTreeTupleGetDownLink(item) == child)
 			{
-				itemid = PageGetItemId(page, offnum);
-				item = (IndexTuple) PageGetItem(page, itemid);
-
-				if (BTreeTupleGetDownLink(item) == child)
-				{
-					/* Return accurate pointer to where link is now */
-					stack->bts_blkno = blkno;
-					stack->bts_offset = offnum;
-					return buf;
-				}
+				/* Return accurate pointer to where link is now */
+				stack->bts_blkno = blkno;
+				stack->bts_offset = offnum;
+				return buf;
 			}
+		}
 
-			for (offnum = OffsetNumberPrev(start);
-				 offnum >= minoff;
-				 offnum = OffsetNumberPrev(offnum))
+		for (offnum = OffsetNumberPrev(start);
+			 offnum >= minoff;
+			 offnum = OffsetNumberPrev(offnum))
+		{
+			itemid = PageGetItemId(page, offnum);
+			item = (IndexTuple) PageGetItem(page, itemid);
+
+			if (BTreeTupleGetDownLink(item) == child)
 			{
-				itemid = PageGetItemId(page, offnum);
-				item = (IndexTuple) PageGetItem(page, itemid);
-
-				if (BTreeTupleGetDownLink(item) == child)
-				{
-					/* Return accurate pointer to where link is now */
-					stack->bts_blkno = blkno;
-					stack->bts_offset = offnum;
-					return buf;
-				}
+				/* Return accurate pointer to where link is now */
+				stack->bts_blkno = blkno;
+				stack->bts_offset = offnum;
+				return buf;
 			}
 		}
 
@@ -2385,6 +2410,7 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 		 */
 		if (P_RIGHTMOST(opaque))
 		{
+			Assert(false);
 			_bt_relbuf(rel, buf);
 			return InvalidBuffer;
 		}
