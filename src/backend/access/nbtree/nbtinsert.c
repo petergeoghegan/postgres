@@ -2334,6 +2334,7 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 		if (P_IGNORE(opaque))
 		{
 			Assert(P_ISDELETED(opaque) && !P_RIGHTMOST(opaque));
+			Assert(!_bt_page_recyclable(page));
 
 			blkno = opaque->btpo_next;
 			start = InvalidOffsetNumber;
