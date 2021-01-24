@@ -2315,13 +2315,17 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 		/*
 		 * Before beginning scan of internal page to relocate downlink, check
 		 * for rare page-level conditions that require special processing:
-		 * incompletely-split pages, and deleted pages (these cannot ever have
-		 * been concurrently deleted by VACUUM).
+		 * incompletely-split pages, and deleted pages.
 		 *
-		 * These conditions can only be encountered when caller's stack comes
-		 * from a leaf page (or perhaps even an ancestor-level page) other
-		 * than 'child' (if it was 'child' we'd have proactively finished the
-		 * split during our initial descent).
+		 * We generally handle incompletely split pages during our initial
+		 * descent, but there are some rare cases where we can't assume that
+		 * that happened.
+		 *
+		 * We should never encounter a deleted internal page except when
+		 * caller is VACUUM process that itself just deleted the internal
+		 * page, and is now moving on to child/leaf page's right sibling while
+		 * reusing its original stack.  Assert() that page is not yet
+		 * recyclable as a proxy for this condition.
 		 */
 		Assert(!P_ISLEAF(opaque));
 		if (P_INCOMPLETE_SPLIT(opaque))
@@ -2334,7 +2338,7 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 		if (P_IGNORE(opaque))
 		{
 			Assert(P_ISDELETED(opaque) && !P_RIGHTMOST(opaque));
-			Assert(!_bt_page_recyclable(page));
+			Assert(_bt_vacuum_cycleid(rel) != 0);
 
 			blkno = opaque->btpo_next;
 			start = InvalidOffsetNumber;
