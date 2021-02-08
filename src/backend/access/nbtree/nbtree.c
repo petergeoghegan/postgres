@@ -32,22 +32,12 @@
 #include "storage/indexfsm.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
+#include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/builtins.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
 
-
-/* Working state needed by btvacuumpage */
-typedef struct
-{
-	IndexVacuumInfo *info;
-	IndexBulkDeleteResult *stats;
-	IndexBulkDeleteCallback callback;
-	void	   *callback_state;
-	BTCycleId	cycleid;
-	MemoryContext pagedelcontext;
-} BTVacState;
 
 /*
  * BTPARALLEL_NOT_INITIALIZED indicates that the scan has not started.
@@ -920,6 +910,34 @@ _bt_page_recyclable(BTPageOpaque opaque, Page page)
 }
 
 /*
+ * _bt_newly_deleted_pages_recycle() -- Are _bt_pagedel pages recyclable now?
+ *
+ * Note that we assume that the array is ordered by safexid.  No further
+ * entries can be safe to recycle once we encounter the first non-recyclable
+ * entry in the deleted array.
+ */
+static inline void
+_bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
+{
+	IndexBulkDeleteResult *stats = vstate->stats;
+
+	/* Recompute VACUUM XID boundaries */
+	(void) GetOldestNonRemovableTransactionId(NULL);
+
+	for (int i = 0; i < vstate->ndeleted; i++)
+	{
+		BlockNumber blkno = vstate->deleted[i].blkno;
+		FullTransactionId safexid = vstate->deleted[i].safexid;
+
+		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
+			break;
+
+		RecordFreeIndexPage(rel, blkno);
+		stats->pages_free++;
+	}
+}
+
+/*
  * Bulk deletion of all index entries pointing to a set of heap tuples.
  * The set of target tuples is specified via a callback routine that tells
  * whether any given heap tuple (identified by ItemPointer) is being deleted.
@@ -999,6 +1017,14 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * FSM during the next VACUUM operation.  That factor alone might cause
 	 * _bt_vacuum_needs_cleanup() to force the next VACUUM to proceed with a
 	 * btvacuumscan() call.
+	 *
+	 * Note: Prior to PostgreSQL 14, we were completely reliant on the next
+	 * VACUUM operation taking care of recycling whatever pages the current
+	 * VACUUM operation found to be empty and then deleted.  It is now usually
+	 * possible for _bt_newly_deleted_pages_recycle() to recycle all of the
+	 * pages that any given VACUUM operation deletes, as part of the same
+	 * VACUUM operation.  As a result, it is rare for num_delpages to actually
+	 * exceed 0, including with indexes where page deletions are frequent.
 	 *
 	 * Note: We must delay the _bt_set_cleanup_info() call until this late
 	 * stage of VACUUM (the btvacuumcleanup() phase), to keep num_heap_tuples
@@ -1088,6 +1114,16 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  "_bt_pagedel",
 												  ALLOCSET_DEFAULT_SIZES);
 
+	/* Allocate _bt_newly_deleted_pages_recycle related information */
+	vstate.ndeletedspace = 512;
+	vstate.grow = true;
+	vstate.full = false;
+	vstate.maxndeletedspace = ((work_mem * 1024L) / sizeof(BTPendingRecycle));
+	vstate.maxndeletedspace = Min(vstate.maxndeletedspace, MaxBlockNumber);
+	vstate.maxndeletedspace = Max(vstate.maxndeletedspace, vstate.ndeletedspace);
+	vstate.ndeleted = 0;
+	vstate.deleted = palloc(sizeof(BTPendingRecycle) * vstate.ndeletedspace);
+
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in
 	 * physical order (we hope the kernel will cooperate in providing
@@ -1156,7 +1192,18 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 *
 	 * Note that if no recyclable pages exist, we don't bother vacuuming the
 	 * FSM at all.
+	 *
+	 * Before vacuuming the FSM, try to make the most of the pages we
+	 * ourselves deleted: see if they can be recycled already (try to avoid
+	 * waiting until the next VACUUM operation to recycle).  Our approach is
+	 * to check the local array of pages that were newly deleted during this
+	 * VACUUM.
 	 */
+	if (vstate.ndeleted > 0)
+		_bt_newly_deleted_pages_recycle(rel, &vstate);
+
+	pfree(vstate.deleted);
+
 	if (stats->pages_free > 0)
 		IndexFreeSpaceMapVacuum(rel);
 }
@@ -1276,6 +1323,13 @@ backtrack:
 		/*
 		 * Already deleted page (which could be leaf or internal).  Can't
 		 * recycle yet.
+		 *
+		 * This is a deleted page that must have been deleted in a previous
+		 * VACUUM operation, that nevertheless cannot be recycled now.  There
+		 * is no good reason to expect that to change any time soon, which is
+		 * why it isn't among the pages that _bt_newly_deleted_pages_recycle
+		 * will consider as candidates to recycle at the end of btvacuumscan
+		 * call.
 		 */
 		stats->pages_deleted++;
 	}
@@ -1495,12 +1549,10 @@ backtrack:
 		oldcontext = MemoryContextSwitchTo(vstate->pagedelcontext);
 
 		/*
-		 * We trust the _bt_pagedel return value because it does not include
-		 * any page that a future call here from btvacuumscan is expected to
-		 * count.  There will be no double-counting.
+		 * _bt_pagedel maintains the bulk delete stats on our behalf
 		 */
 		Assert(blkno == scanblkno);
-		stats->pages_deleted += _bt_pagedel(rel, buf);
+		_bt_pagedel(rel, buf, vstate);
 
 		MemoryContextSwitchTo(oldcontext);
 		/* pagedel released buffer, so we shouldn't */

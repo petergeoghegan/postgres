@@ -50,7 +50,7 @@ static bool _bt_mark_page_halfdead(Relation rel, Buffer leafbuf,
 static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
 									 BlockNumber scanblkno,
 									 bool *rightsib_empty,
-									 uint32 *ndeleted);
+									 BTVacState *vstate);
 static bool _bt_lock_subtree_parent(Relation rel, BlockNumber child,
 									BTStack stack,
 									Buffer *subtreeparent,
@@ -1759,20 +1759,22 @@ _bt_rightsib_halfdeadflag(Relation rel, BlockNumber leafrightsib)
  * should never pass a buffer containing an existing deleted page here.  The
  * lock and pin on caller's buffer will be dropped before we return.
  *
- * Returns the number of pages successfully deleted (zero if page cannot
- * be deleted now; could be more than one if parent or right sibling pages
- * were deleted too).  Note that this does not include pages that we delete
- * that the btvacuumscan scan has yet to reach; they'll get counted later
- * instead.
+ * Maintains bulk delete stats for caller, which are taken from vstate.  We
+ * need to cooperate closely with caller here so that whole VACUUM operation
+ * reliably avoids any double counting of subsidiary-to-leafbuf pages that we
+ * delete in passing.  If such pages happen to be from a block number that is
+ * ahead of the current scanblkno position, then caller is expected to count
+ * them directly later on.  It's simpler for us to understand caller's
+ * requirements than it would be for caller to understand when or how a
+ * deleted page became deleted after the fact.
  *
  * NOTE: this leaks memory.  Rather than trying to clean up everything
  * carefully, it's better to run it in a temp context that can be reset
  * frequently.
  */
-uint32
-_bt_pagedel(Relation rel, Buffer leafbuf)
+void
+_bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate)
 {
-	uint32		ndeleted = 0;
 	BlockNumber rightsib;
 	bool		rightsib_empty;
 	Page		page;
@@ -1780,7 +1782,8 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 
 	/*
 	 * Save original leafbuf block number from caller.  Only deleted blocks
-	 * that are <= scanblkno get counted in ndeleted return value.
+	 * that are <= scanblkno are added to bulk delete stat's pages_deleted
+	 * count.
 	 */
 	BlockNumber scanblkno = BufferGetBlockNumber(leafbuf);
 
@@ -1842,7 +1845,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 										 RelationGetRelationName(rel))));
 
 			_bt_relbuf(rel, leafbuf);
-			return ndeleted;
+			return;
 		}
 
 		/*
@@ -1872,7 +1875,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 			Assert(!P_ISHALFDEAD(opaque));
 
 			_bt_relbuf(rel, leafbuf);
-			return ndeleted;
+			return;
 		}
 
 		/*
@@ -1921,8 +1924,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 				if (_bt_leftsib_splitflag(rel, leftsib, leafblkno))
 				{
 					ReleaseBuffer(leafbuf);
-					Assert(ndeleted == 0);
-					return ndeleted;
+					return;
 				}
 
 				/* we need an insertion scan key for the search, so build one */
@@ -1963,7 +1965,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 			if (!_bt_mark_page_halfdead(rel, leafbuf, stack))
 			{
 				_bt_relbuf(rel, leafbuf);
-				return ndeleted;
+				return;
 			}
 		}
 
@@ -1978,7 +1980,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 		{
 			/* Check for interrupts in _bt_unlink_halfdead_page */
 			if (!_bt_unlink_halfdead_page(rel, leafbuf, scanblkno,
-										  &rightsib_empty, &ndeleted))
+										  &rightsib_empty, vstate))
 			{
 				/*
 				 * _bt_unlink_halfdead_page should never fail, since we
@@ -1989,7 +1991,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 				 * lock and pin on leafbuf for us.
 				 */
 				Assert(false);
-				return ndeleted;
+				return;
 			}
 		}
 
@@ -2026,8 +2028,6 @@ _bt_pagedel(Relation rel, Buffer leafbuf)
 
 		leafbuf = _bt_getbuf(rel, rightsib, BT_WRITE);
 	}
-
-	return ndeleted;
 }
 
 /*
@@ -2262,9 +2262,10 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
  */
 static bool
 _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
-						 bool *rightsib_empty, uint32 *ndeleted)
+						 bool *rightsib_empty, BTVacState *vstate)
 {
 	BlockNumber leafblkno = BufferGetBlockNumber(leafbuf);
+	IndexBulkDeleteResult *stats = vstate->stats;
 	BlockNumber leafleftsib;
 	BlockNumber leafrightsib;
 	BlockNumber target;
@@ -2672,12 +2673,53 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		_bt_relbuf(rel, buf);
 
 	/*
-	 * If btvacuumscan won't revisit this page in a future btvacuumpage call
-	 * and count it as deleted then, we count it as deleted by current
-	 * btvacuumpage call
+	 * Maintain pages_deleted in a way that takes into account how
+	 * btvacuumpage() will count deleted pages that have yet to become
+	 * scanblkno -- only count page when it's not going to get that treatment
+	 * later on.
 	 */
 	if (target <= scanblkno)
-		(*ndeleted)++;
+		stats->pages_deleted++;
+
+	/*
+	 * Maintain array of pages that were deleted during current btvacuumscan()
+	 * call.  We may well be able to recycle them in a separate pass at the
+	 * end of the current btvacuumscan().
+	 *
+	 * Need to respect work_mem/maxndeletedspace limitation on size of deleted
+	 * array.  Our strategy when the array can no longer grow within the
+	 * bounds of work_mem is simple: keep earlier entries (which are likelier
+	 * to be recyclable in the end), but stop saving new entries.
+	 */
+	if (vstate->full)
+		return true;
+
+	if (vstate->ndeleted >= vstate->ndeletedspace)
+	{
+		uint64 newndeletedspace;
+
+		if (!vstate->grow)
+		{
+			vstate->full = true;
+			return true;
+		}
+
+		newndeletedspace = vstate->ndeletedspace * 2;
+		if (newndeletedspace > vstate->maxndeletedspace)
+		{
+			newndeletedspace = vstate->maxndeletedspace;
+			vstate->grow = false;
+		}
+		vstate->ndeletedspace = newndeletedspace;
+
+		vstate->deleted =
+			repalloc(vstate->deleted,
+					 sizeof(BTPendingRecycle) * vstate->ndeletedspace);
+	}
+
+	vstate->deleted[vstate->ndeleted].blkno = target;
+	vstate->deleted[vstate->ndeleted].safexid = safexid;
+	vstate->ndeleted++;
 
 	return true;
 }
