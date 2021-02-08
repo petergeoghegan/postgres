@@ -2463,7 +2463,8 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 
 		/* Internal page is target: we'll set topparent in leaf page... */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		topparent_in_target = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
+		topparent_in_target =
+				BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
 		/* ...except when it would be a redundant pointer-to-self */
 		if (topparent_in_target == leafblkno)
 			topparent_in_target = InvalidBlockNumber;
