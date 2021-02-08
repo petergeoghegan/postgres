@@ -2299,7 +2299,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	bool		rightsib_is_rightmost;
 	int			targetlevel;
 	IndexTuple	leafhikey;
-	BlockNumber topparent;
+	BlockNumber topparent_in_target;
 
 	page = BufferGetPage(leafbuf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -2452,7 +2452,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 				 target, RelationGetRelationName(rel));
 
 		/* Leaf page is also target page: don't set topparent */
-		topparent = InvalidBlockNumber;
+		topparent_in_target = InvalidBlockNumber;
 	}
 	else
 	{
@@ -2463,10 +2463,10 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 
 		/* Internal page is target: we'll set topparent in leaf page... */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		topparent = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
+		topparent_in_target = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
 		/* ...except when it would be a redundant pointer-to-self */
-		if (topparent == leafblkno)
-			topparent = InvalidBlockNumber;
+		if (topparent_in_target == leafblkno)
+			topparent_in_target = InvalidBlockNumber;
 	}
 
 	/*
@@ -2556,7 +2556,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * no lock was held.
 	 */
 	if (target != leafblkno)
-		BTreeTupleSetTopParent(leafhikey, topparent);
+		BTreeTupleSetTopParent(leafhikey, topparent_in_target);
 
 	/*
 	 * Mark the page itself deleted.  It can be recycled when all current
@@ -2628,7 +2628,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		/* information needed to recreate the leaf block (if not the target) */
 		xlrec.leafleftsib = leafleftsib;
 		xlrec.leafrightsib = leafrightsib;
-		xlrec.topparent = topparent;
+		xlrec.topparent = topparent_in_target;
 
 		XLogRegisterData((char *) &xlrec, SizeOfBtreeUnlinkPage);
 
