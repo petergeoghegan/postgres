@@ -811,7 +811,7 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 
 	leftsib = xlrec->leftsib;
 	rightsib = xlrec->rightsib;
-	isleaf = !BlockNumberIsValid(xlrec->topparent);
+	isleaf = (xlrec->level == 0);
 
 	/*
 	 * In normal operation, we would lock all the pages this WAL record

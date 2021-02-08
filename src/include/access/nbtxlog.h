@@ -299,6 +299,7 @@ typedef struct xl_btree_unlink_page
 {
 	BlockNumber leftsib;		/* target block's left sibling, if any */
 	BlockNumber rightsib;		/* target block's right sibling */
+	uint32		level;			/* target block's level */
 
 	/*
 	 * Information needed to recreate a half-dead leaf page with correct
@@ -309,11 +310,6 @@ typedef struct xl_btree_unlink_page
 	 */
 	BlockNumber leafleftsib;
 	BlockNumber leafrightsib;
-
-	/*
-	 * Next child down in the subtree.  Set to InvalidBlockNumber when target
-	 * page is also a leaf page.
-	 */
 	BlockNumber topparent;
 
 	TransactionId btpo_xact;	/* value of btpo.xact for use in recovery */

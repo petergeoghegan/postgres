@@ -2620,9 +2620,10 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		if (target != leafblkno)
 			XLogRegisterBuffer(3, leafbuf, REGBUF_WILL_INIT);
 
-		/* information on the unlinked block */
+		/* information stored on the target/to-be-unlinked block */
 		xlrec.leftsib = leftsib;
 		xlrec.rightsib = rightsib;
+		xlrec.level = targetlevel;
 		xlrec.btpo_xact = opaque->btpo.xact;
 
 		/* information needed to recreate the leaf block (if not the target) */
