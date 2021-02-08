@@ -80,9 +80,9 @@ btree_desc(StringInfo buf, XLogReaderState *record)
 			{
 				xl_btree_unlink_page *xlrec = (xl_btree_unlink_page *) rec;
 
-				appendStringInfo(buf, "left %u; right %u; btpo_xact %u; ",
+				appendStringInfo(buf, "left %u; right %u; level %u; btpo_xact %u; ",
 								 xlrec->leftsib, xlrec->rightsib,
-								 xlrec->btpo_xact);
+								 xlrec->level, xlrec->btpo_xact);
 				appendStringInfo(buf, "leafleft %u; leafright %u; topparent %u",
 								 xlrec->leafleftsib, xlrec->leafrightsib,
 								 xlrec->topparent);
