@@ -802,6 +802,7 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 	xl_btree_unlink_page *xlrec = (xl_btree_unlink_page *) XLogRecGetData(record);
 	BlockNumber leftsib;
 	BlockNumber rightsib;
+	bool		isleaf;
 	Buffer		leftbuf;
 	Buffer		target;
 	Buffer		rightbuf;
@@ -810,6 +811,7 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 
 	leftsib = xlrec->leftsib;
 	rightsib = xlrec->rightsib;
+	isleaf = !BlockNumberIsValid(xlrec->topparent);
 
 	/*
 	 * In normal operation, we would lock all the pages this WAL record
@@ -846,7 +848,7 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 	pageop->btpo_next = rightsib;
 	pageop->btpo.xact = xlrec->btpo_xact;
 	pageop->btpo_flags = BTP_DELETED;
-	if (!BlockNumberIsValid(xlrec->topparent))
+	if (isleaf)
 		pageop->btpo_flags |= BTP_LEAF;
 	pageop->btpo_cycleid = 0;
 
@@ -891,6 +893,8 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 		 */
 		Buffer				leafbuf;
 		IndexTupleData		trunctuple;
+
+		Assert(!isleaf);
 
 		leafbuf = XLogInitBufferForRedo(record, 3);
 		page = (Page) BufferGetPage(leafbuf);

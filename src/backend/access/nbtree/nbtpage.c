@@ -2299,7 +2299,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	bool		rightsib_is_rightmost;
 	int			targetlevel;
 	IndexTuple	leafhikey;
-	BlockNumber nextchild;
+	BlockNumber topparent;
 
 	page = BufferGetPage(leafbuf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -2450,7 +2450,9 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 			!P_ISLEAF(opaque) || !P_ISHALFDEAD(opaque))
 			elog(ERROR, "half-dead page changed status unexpectedly in block %u of index \"%s\"",
 				 target, RelationGetRelationName(rel));
-		nextchild = InvalidBlockNumber;
+
+		/* Leaf page is also target page: don't set topparent */
+		topparent = InvalidBlockNumber;
 	}
 	else
 	{
@@ -2459,11 +2461,12 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 			elog(ERROR, "half-dead page changed status unexpectedly in block %u of index \"%s\"",
 				 target, RelationGetRelationName(rel));
 
-		/* Remember the next non-leaf child down in the subtree */
+		/* Internal page is target: we'll set topparent in leaf page... */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		nextchild = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
-		if (nextchild == leafblkno)
-			nextchild = InvalidBlockNumber;
+		topparent = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
+		/* ...except when it would be a redundant pointer-to-self */
+		if (topparent == leafblkno)
+			topparent = InvalidBlockNumber;
 	}
 
 	/*
@@ -2553,7 +2556,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * no lock was held.
 	 */
 	if (target != leafblkno)
-		BTreeTupleSetTopParent(leafhikey, nextchild);
+		BTreeTupleSetTopParent(leafhikey, topparent);
 
 	/*
 	 * Mark the page itself deleted.  It can be recycled when all current
@@ -2568,9 +2571,10 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	Assert(P_ISHALFDEAD(opaque) || !P_ISLEAF(opaque));
+	opaque->btpo.xact = ReadNewTransactionId();
 	opaque->btpo_flags &= ~BTP_HALF_DEAD;
 	opaque->btpo_flags |= BTP_DELETED;
-	opaque->btpo.xact = ReadNewTransactionId();
+	opaque->btpo_cycleid = 0;
 
 	/*
 	 * Remove the remaining tuples on the page.  This keeps things simple for
@@ -2624,7 +2628,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		/* information needed to recreate the leaf block (if not the target) */
 		xlrec.leafleftsib = leafleftsib;
 		xlrec.leafrightsib = leafrightsib;
-		xlrec.topparent = nextchild;
+		xlrec.topparent = topparent;
 
 		XLogRegisterData((char *) &xlrec, SizeOfBtreeUnlinkPage);
 
