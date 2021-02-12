@@ -308,6 +308,7 @@ typedef struct LVRelStats
 	double		new_dead_tuples;	/* new estimated total # of dead tuples */
 	BlockNumber pages_removed;
 	double		tuples_deleted;
+	double		tuples_set_unused;
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
 	LVDeadTuples *dead_tuples;
 	int			num_index_scans;
@@ -340,9 +341,11 @@ static BufferAccessStrategy vac_strategy;
 
 
 /* non-export function prototypes */
-static void lazy_scan_heap(Relation onerel, VacuumParams *params,
-						   LVRelStats *vacrelstats, Relation *Irel, int nindexes,
-						   bool aggressive);
+static IndexBulkDeleteResult **lazy_scan_heap(Relation		onerel,
+											  VacuumParams *params,
+											  LVRelStats *	vacrelstats,
+											  Relation *Irel, int nindexes,
+											  bool aggressive);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
@@ -440,6 +443,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	TransactionId new_frozen_xid;
 	MultiXactId new_min_multi;
 	ErrorContextCallback errcallback;
+	IndexBulkDeleteResult **indstats = NULL;
 
 	Assert(params != NULL);
 	Assert(params->index_cleanup != VACOPT_TERNARY_DEFAULT);
@@ -521,7 +525,8 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	error_context_stack = &errcallback;
 
 	/* Do the vacuuming */
-	lazy_scan_heap(onerel, params, vacrelstats, Irel, nindexes, aggressive);
+	indstats = lazy_scan_heap(onerel, params, vacrelstats, Irel, nindexes,
+							  aggressive);
 
 	/* Done with indexes */
 	vac_close_indexes(nindexes, Irel, NoLock);
@@ -662,11 +667,33 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 vacrelstats->pinskipped_pages,
 							 vacrelstats->frozenskipped_pages);
 			appendStringInfo(&buf,
-							 _("tuples: %.0f removed, %.0f remain, %.0f are dead but not yet removable, oldest xmin: %u\n"),
+							 _("tuples: %.0f removed (%.0f set LP_UNUSED), %.0f remain, %.0f are dead but not yet removable, oldest xmin: %u\n"),
 							 vacrelstats->tuples_deleted,
+							 vacrelstats->tuples_set_unused,
 							 vacrelstats->new_rel_tuples,
 							 vacrelstats->new_dead_tuples,
 							 OldestXmin);
+			for (int i = 0; i < nindexes; i++)
+			{
+				if (indstats[i] == NULL)
+					continue;
+
+				appendStringInfo(&buf,
+								 _("%.0f index row versions were removed from \"%s index # %d\".\n"),
+								 (indstats[i])->tuples_removed,
+								 vacrelstats->relname, i);
+				appendStringInfo(&buf,
+								 _("%u index pages were newly deleted. %u index pages are currently deleted, of which %u are currently reusable from \"%s index # %d\".\n"),
+								 (indstats[i])->pages_newly_deleted,
+								 (indstats[i])->pages_deleted,
+								 (indstats[i])->pages_free,
+								 vacrelstats->relname, i);
+				appendStringInfo(&buf,
+								 _("index \"%s index # %d\" now contains %.0f row versions in %u pages\n"),
+								 vacrelstats->relname, i,
+								(indstats[i])->num_index_tuples,
+								(indstats[i])->num_pages);
+			}
 			appendStringInfo(&buf,
 							 _("buffer usage: %lld hits, %lld misses, %lld dirtied\n"),
 							 (long long) VacuumPageHit,
@@ -749,7 +776,7 @@ vacuum_log_cleanup_info(Relation rel, LVRelStats *vacrelstats)
  *		dead line pointers need only be retained until all index pointers that
  *		reference them have been killed.
  */
-static void
+static IndexBulkDeleteResult **
 lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			   Relation *Irel, int nindexes, bool aggressive)
 {
@@ -809,6 +836,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	vacrelstats->scanned_pages = 0;
 	vacrelstats->tupcount_pages = 0;
 	vacrelstats->nonempty_pages = 0;
+	vacrelstats->tuples_set_unused = 0;
 	vacrelstats->latestRemovedXid = InvalidTransactionId;
 
 	vistest = GlobalVisTestFor(onerel);
@@ -1773,6 +1801,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					vacrelstats->scanned_pages, nblocks),
 			 errdetail_internal("%s", buf.data)));
 	pfree(buf.data);
+
+	return indstats;
 }
 
 /*
@@ -2017,6 +2047,8 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 
 	/* Revert to the previous phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
+
+	vacrelstats->tuples_set_unused += uncnt;
 	return tupindex;
 }
 
@@ -3206,7 +3238,6 @@ update_index_statistics(Relation *Irel, IndexBulkDeleteResult **stats,
 							InvalidTransactionId,
 							InvalidMultiXactId,
 							false);
-		pfree(stats[i]);
 	}
 }
 

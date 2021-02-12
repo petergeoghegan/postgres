@@ -2045,7 +2045,6 @@ vac_close_indexes(int nindexes, Relation *Irel, LOCKMODE lockmode)
 
 		index_close(ind, lockmode);
 	}
-	pfree(Irel);
 }
 
 /*
