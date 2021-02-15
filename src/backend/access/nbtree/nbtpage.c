@@ -2671,11 +2671,15 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		_bt_relbuf(rel, buf);
 
 	/*
+	 * Maintain pages_newly_deleted, which is simply the number of pages
+	 * deleted by the ongoing VACUUM operation.
+	 *
 	 * Maintain pages_deleted in a way that takes into account how
 	 * btvacuumpage() will count deleted pages that have yet to become
 	 * scanblkno -- only count page when it's not going to get that treatment
 	 * later on.
 	 */
+	stats->pages_newly_deleted++;
 	if (target <= scanblkno)
 		stats->pages_deleted++;
 
