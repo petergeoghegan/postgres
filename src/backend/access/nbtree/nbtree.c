@@ -921,6 +921,9 @@ _bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
 {
 	IndexBulkDeleteResult *stats = vstate->stats;
 
+	Assert(vstate->ndeleted > 0);
+	Assert(stats->pages_newly_deleted >= vstate->ndeleted);
+
 	/* Recompute VACUUM XID boundaries */
 	(void) GetOldestNonRemovableTransactionId(NULL);
 
@@ -1086,9 +1089,9 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * avoids double-counting in the case where a single VACUUM command
 	 * requires multiple scans of the index.
 	 *
-	 * Avoid resetting the tuples_removed field here, since it tracks
-	 * information about the VACUUM command, and so must last across each call
-	 * to btvacuumscan().
+	 * Avoid resetting the tuples_removed and pages_newly_deleted fields here,
+	 * since they track information about the VACUUM command, and so must last
+	 * across each call to btvacuumscan().
 	 *
 	 * (Note that pages_free is treated as state about the whole index, not
 	 * the current VACUUM.  This is appropriate because RecordFreeIndexPage()
@@ -1336,8 +1339,8 @@ backtrack:
 	else if (P_ISHALFDEAD(opaque))
 	{
 		/*
-		 * Half-dead leaf page.  Try to delete now.  Might update
-		 * pages_deleted below.
+		 * Half-dead leaf page.  Try to delete now.  Might end up incrementing
+		 * pages_newly_deleted/pages_deleted inside _bt_pagedel.
 		 */
 		attempt_pagedel = true;
 	}
@@ -1549,7 +1552,9 @@ backtrack:
 		oldcontext = MemoryContextSwitchTo(vstate->pagedelcontext);
 
 		/*
-		 * _bt_pagedel maintains the bulk delete stats on our behalf
+		 * _bt_pagedel maintains the bulk delete stats on our behalf;
+		 * pages_newly_deleted and pages_deleted are likely to be incremented
+		 * during call
 		 */
 		Assert(blkno == scanblkno);
 		_bt_pagedel(rel, buf, vstate);
