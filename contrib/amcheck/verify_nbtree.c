@@ -3081,7 +3081,7 @@ palloc_btree_page(BtreeCheckState *state, BlockNumber blocknum)
 
 	/*
 	 * Check that internal pages have no garbage items, and that no page has
-	 * an invalid combination of page deletion related page level flags.
+	 * an invalid combination of page deletion related page level flags
 	 */
 	if (!P_ISLEAF(opaque) && P_HAS_GARBAGE(opaque))
 		ereport(ERROR,
