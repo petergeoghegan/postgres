@@ -978,12 +978,15 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		return stats;
 
 	/*
-	 * If btbulkdelete was called, we need not do anything, just return the
-	 * stats from the latest btbulkdelete call.  If it wasn't called, we might
-	 * still need to do a pass over the index, to obtain index statistics (or
-	 * occasionally to recycle pages that were deleted in a previous VACUUM
-	 * operation).  _bt_vacuum_needs_cleanup() determines if such a pass over
-	 * the index is needed.
+	 * If btbulkdelete was called, we need not do anything (we just maintain
+	 * the information used within _bt_vacuum_needs_cleanup() by calling
+	 * _bt_set_cleanup_info() below).
+	 *
+	 * If btbulkdelete was called, then we have a choice to make now: we must
+	 * decide whether or not a btvacuumscan() call is needed now (i.e. whether
+	 * the entire ongoing VACUUM operation can entirely avoid a physical scan
+	 * of the index).  A call to _bt_vacuum_needs_cleanup() decides it for us
+	 * now.
 	 *
 	 * Since we aren't going to actually delete any leaf items, there's no
 	 * need to go through all the vacuum-cycle-ID pushups.
