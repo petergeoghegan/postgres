@@ -844,27 +844,14 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 	 * Trigger cleanup in rare cases where prev_num_delpages exceeds 5% of the
 	 * total size of the index.  We can reasonably expect (though are not
 	 * guaranteed) to be able to recycle this many pages if we decide to do a
-	 * btvacuumscan call as part of this btvacuumcleanup call.
+	 * btvacuumscan call during the ongoing btvacuumcleanup.
 	 *
 	 * Our approach won't reliably avoid "wasted" cleanup-only btvacuumscan
 	 * calls.  That is, we can end up scanning the entire index without ever
 	 * placing even 1 of the prev_num_delpages pages in the free space map, at
-	 * least in certain narrow cases.
-	 *
-	 * For example, a "wasted" scan will happen when (for whatever reason) no
-	 * XIDs were assigned/allocated since the "# deleted pages" field was last
-	 * set in metapage by VACUUM.  You can observe this yourself by running
-	 * two VACUUM VERBOSE commands one after the other on an otherwise idle
-	 * system.  When the first VACUUM command manages to delete pages that
-	 * were emptied + deleted during btbulkdelete, the second VACUUM command
-	 * won't be able to place those same deleted pages (which won't be newly
-	 * deleted from the perspective of the second VACUUM command) into the FSM
-	 * during btvacuumcleanup.
-	 *
-	 * Another "wasted FSM-driven cleanup scan" scenario can occur when
-	 * VACUUM's ability to do work is hindered by a long held MVCC snapshot.
-	 * The snapshot prevents page recycling/freeing within btvacuumscan,
-	 * though that will be the least of the DBA's problems.
+	 * least in certain narrow cases (see nbtree/README section on recycling
+	 * deleted pages for details).  This rarely matters with most real world
+	 * workloads.
 	 */
 	if (prev_num_delpages > RelationGetNumberOfBlocks(info->index) / 20)
 		return true;
