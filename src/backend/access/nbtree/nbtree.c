@@ -21,7 +21,9 @@
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
 #include "access/relscan.h"
+#include "access/table.h"
 #include "access/xlog.h"
+#include "catalog/index.h"
 #include "commands/progress.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
@@ -906,29 +908,35 @@ static inline void
 _bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
 {
 	IndexBulkDeleteResult *stats = vstate->stats;
+	Relation	heapRel;
 
 	Assert(vstate->ndeleted > 0);
 	Assert(stats->pages_newly_deleted >= vstate->ndeleted);
 
 	/* Recompute VACUUM XID boundaries */
-	(void) GetOldestNonRemovableTransactionId(NULL);
+	GetOldestNonRemovableTransactionId(NULL);
 
+	/*
+	 * Use the heap relation for GlobalVisCheckRemovableFullXid() calls.
+	 *
+	 * We don't bother with this in _bt_page_recyclable(), because it's much
+	 * less likely to matter there.
+	 */
+	heapRel = table_open(IndexGetRelation(RelationGetRelid(rel), false),
+						 AccessShareLock);
 	for (int i = 0; i < vstate->ndeleted; i++)
 	{
 		BlockNumber blkno = vstate->deleted[i].blkno;
 		FullTransactionId safexid = vstate->deleted[i].safexid;
 
-		/*
-		 * XXX: If IndexVacuumInfo contained the heap relation, we could be
-		 * more aggressive about vacuuming non catalog relations by passing
-		 * the table to GlobalVisCheckRemovableXid()
-		 */
-		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
+		if (!GlobalVisCheckRemovableFullXid(heapRel, safexid))
 			break;
 
 		RecordFreeIndexPage(rel, blkno);
 		stats->pages_free++;
 	}
+
+	table_close(heapRel, AccessShareLock);
 }
 
 /*
