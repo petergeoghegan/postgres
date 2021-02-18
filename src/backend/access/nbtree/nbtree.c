@@ -1296,7 +1296,7 @@ backtrack:
 		}
 	}
 
-	if ( _bt_page_recyclable(page))
+	if (!opaque || BTPageIsRecyclable(page))
 	{
 		/* Okay to recycle this page (which could be leaf or internal) */
 		RecordFreeIndexPage(rel, blkno);

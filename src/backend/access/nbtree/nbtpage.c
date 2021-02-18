@@ -881,7 +881,22 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 			if (_bt_conditionallockbuf(rel, buf))
 			{
 				page = BufferGetPage(buf);
-				if (_bt_page_recyclable(page))
+
+				/*
+				 * It's possible to find an all-zeroes page in an index.  For
+				 * example, a backend might successfully extend the relation
+				 * one page and then crash before it is able to make a WAL
+				 * entry for adding the page.  If we find a zeroed page then
+				 * reclaim it.
+				 */
+				if (PageIsNew(page))
+				{
+					/* Okay to use page.  Initialize and return it. */
+					_bt_pageinit(page, BufferGetPageSize(buf));
+					return buf;
+				}
+
+				if (BTPageIsRecyclable(page))
 				{
 					/*
 					 * If we are generating WAL for Hot Standby then create a
@@ -889,8 +904,7 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 					 * running on standby, in case they have snapshots older
 					 * than safexid value
 					 */
-					if (XLogStandbyInfoActive() && RelationNeedsWAL(rel) &&
-						!PageIsNew(page))
+					if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
 						_bt_log_reuse_page(rel, blkno,
 										   BTPageGetDeleteXid(page));
 
@@ -1090,61 +1104,6 @@ void
 _bt_pageinit(Page page, Size size)
 {
 	PageInit(page, size, sizeof(BTPageOpaqueData));
-}
-
-/*
- *	_bt_page_recyclable() -- Is an existing page recyclable?
- *
- * This exists to make sure _bt_getbuf and btvacuumscan have the same
- * policy about whether a page is safe to re-use.  But note that _bt_getbuf
- * knows enough to distinguish the PageIsNew condition from the other one.
- * At some point it might be appropriate to redesign this to have a three-way
- * result value.
- */
-bool
-_bt_page_recyclable(Page page)
-{
-	BTPageOpaque opaque;
-
-	/*
-	 * It's possible to find an all-zeroes page in an index --- for example, a
-	 * backend might successfully extend the relation one page and then crash
-	 * before it is able to make a WAL entry for adding the page. If we find a
-	 * zeroed page then reclaim it.
-	 */
-	if (PageIsNew(page))
-		return true;
-
-	/*
-	 * Otherwise, recycle if deleted and too old to have any processes
-	 * interested in it.
-	 */
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
-	if (P_ISDELETED(opaque))
-	{
-		/*
-		 * If this is a pg_upgrade'd index, then this could be a deleted page
-		 * whose XID (which is stored in special area's level field via type
-		 * punning) is non-full 32-bit value.  It's safe to just assume that
-		 * we can recycle because the system must have been restarted since
-		 * the time of deletion.
-		 */
-		if (!P_HAS_FULLXID(opaque))
-			return true;
-
-		/*
-		 * The page was deleted, but when? If it was just deleted, a scan
-		 * might have seen the downlink to it, and will read the page later.
-		 * As long as that can happen, we must keep the deleted page around as
-		 * a tombstone.
-		 *
-		 * For that check if the deletion XID could still be visible to
-		 * anyone. If not, then no scan that's still in progress could have
-		 * seen its downlink, and we can recycle it.
-		 */
-		return GlobalVisCheckRemovableFullXid(NULL, BTPageGetDeleteXid(page));
-	}
-	return false;
 }
 
 /*

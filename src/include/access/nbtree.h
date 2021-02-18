@@ -276,6 +276,40 @@ BTPageGetDeleteXid(Page page)
 }
 
 /*
+ * Is an existing page recyclable?
+ *
+ * This exists to make sure _bt_getbuf and btvacuumscan have the same policy
+ * about whether a page is safe to re-use.
+ *
+ * Caller is responsible for handling PageIsNew() before calling here.
+ */
+static inline bool
+BTPageIsRecyclable(Page page)
+{
+	BTPageOpaque opaque;
+
+	Assert(!PageIsNew(page));
+
+	/* Recycling okay if page is both deleted and safexid is old enough */
+	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	if (P_ISDELETED(opaque))
+	{
+		/*
+		 * The page was deleted, but when? If it was just deleted, a scan
+		 * might have seen the downlink to it, and will read the page later.
+		 * As long as that can happen, we must keep the deleted page around as
+		 * a tombstone.
+		 *
+		 * For that check if the deletion XID could still be visible to
+		 * anyone. If not, then no scan that's still in progress could have
+		 * seen its downlink, and we can recycle it.
+		 */
+		return GlobalVisCheckRemovableFullXid(NULL, BTPageGetDeleteXid(page));
+	}
+	return false;
+}
+
+/*
  * BTVacState is nbtree.c state used during VACUUM.  It is exported for use by
  * page deletion related code in nbtpage.c.
  */
@@ -1171,7 +1205,6 @@ extern void _bt_unlockbuf(Relation rel, Buffer buf);
 extern bool _bt_conditionallockbuf(Relation rel, Buffer buf);
 extern void _bt_upgradelockbufcleanup(Relation rel, Buffer buf);
 extern void _bt_pageinit(Page page, Size size);
-extern bool _bt_page_recyclable(Page page);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
 								OffsetNumber *deletable, int ndeletable,
 								BTVacuumPosting *updatable, int nupdatable);
