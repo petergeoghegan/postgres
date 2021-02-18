@@ -1995,8 +1995,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate)
 			}
 		}
 
-		Assert(P_ISLEAF(opaque) && P_ISDELETED(opaque) &&
-			   P_HAS_FULLXID(opaque));
+		Assert(P_ISLEAF(opaque) && P_ISDELETED(opaque));
 
 		rightsib = opaque->btpo_next;
 
