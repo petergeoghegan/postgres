@@ -1019,7 +1019,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * stage of VACUUM (the btvacuumcleanup() phase), to keep num_heap_tuples
 	 * accurate.  The btbulkdelete()-time num_heap_tuples value is generally
 	 * just pg_class.reltuples for the heap relation _before_ VACUUM began.
-	 * In general we only store information about the state of the index/table
+	 * In general cleanup info should describe the state of the index/table
 	 * _after_ VACUUM finishes.
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
