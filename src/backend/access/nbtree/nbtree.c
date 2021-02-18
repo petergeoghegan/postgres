@@ -1003,11 +1003,11 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	}
 
 	/*
-	 * By here, we know for sure that this VACUUM operation won't skip its
-	 * btvacuumscan() call.  Maintain the count of the current number of heap
-	 * tuples in the metapage.  Also maintain the num_delpages value.  This
-	 * information will be used by _bt_vacuum_needs_cleanup() during future
-	 * VACUUM operations that don't need to call btbulkdelete().
+	 * By here, we know for sure that this VACUUM operation won't be skipping
+	 * its btvacuumscan() call.  Maintain the count of the current number of
+	 * heap tuples in the metapage.  Also maintain the num_delpages value.
+	 * This information will be used by _bt_vacuum_needs_cleanup() during
+	 * future VACUUM operations that don't need to call btbulkdelete().
 	 *
 	 * num_delpages is the number of deleted pages now in the index that were
 	 * not safe to place in the FSM to be recycled just yet.  We expect that
