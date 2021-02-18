@@ -3086,8 +3086,8 @@ palloc_btree_page(BtreeCheckState *state, BlockNumber blocknum)
 	if (!P_ISLEAF(opaque) && P_HAS_GARBAGE(opaque))
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
-				 errmsg("internal page block %u in index \"%s\" has garbage items",
-						blocknum, RelationGetRelationName(state->rel))));
+				 errmsg_internal("internal page block %u in index \"%s\" has garbage items",
+								 blocknum, RelationGetRelationName(state->rel))));
 
 	if (P_HAS_FULLXID(opaque) && !P_ISDELETED(opaque))
 		ereport(ERROR,
