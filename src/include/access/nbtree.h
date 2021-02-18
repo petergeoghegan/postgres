@@ -262,6 +262,8 @@ BTPageGetDeleteXid(Page page)
 	BTPageOpaque opaque;
 	BTDeletedPageData *contents;
 
+	Assert(!PageIsNew(page));
+
 	/* pg_upgrade'd indexes with old BTP_DELETED pages should not call here */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	Assert(P_ISDELETED(opaque) && !P_ISHALFDEAD(opaque));
@@ -281,7 +283,9 @@ BTPageGetDeleteXid(Page page)
  * This exists to make sure _bt_getbuf and btvacuumscan have the same policy
  * about whether a page is safe to re-use.
  *
- * Caller is responsible for handling PageIsNew() before calling here.
+ * Note: A PageIsNew() page should also be considered safe to recycle, but we
+ * don't handle that here (caller is responsible) -- some callers will need
+ * special handling for that case anyway.
  */
 static inline bool
 BTPageIsRecyclable(Page page)
