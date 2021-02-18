@@ -887,7 +887,7 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 				 * example, a backend might successfully extend the relation
 				 * one page and then crash before it is able to make a WAL
 				 * entry for adding the page.  If we find a zeroed page then
-				 * reclaim it.
+				 * reclaim it immediately.
 				 */
 				if (PageIsNew(page))
 				{
