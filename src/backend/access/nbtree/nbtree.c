@@ -850,8 +850,7 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 	 * calls.  That is, we can end up scanning the entire index without ever
 	 * placing even 1 of the prev_num_delpages pages in the free space map, at
 	 * least in certain narrow cases (see nbtree/README section on recycling
-	 * deleted pages for details).  This rarely matters with most real world
-	 * workloads.
+	 * deleted pages for details).  This rarely matters in practice.
 	 */
 	if (prev_num_delpages > RelationGetNumberOfBlocks(info->index) / 20)
 		return true;
