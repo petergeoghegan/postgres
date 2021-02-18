@@ -310,6 +310,7 @@ BTPageIsRecyclable(Page page)
 		 */
 		return GlobalVisCheckRemovableFullXid(NULL, BTPageGetDeleteXid(page));
 	}
+
 	return false;
 }
 
