@@ -918,6 +918,11 @@ _bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
 		BlockNumber blkno = vstate->deleted[i].blkno;
 		FullTransactionId safexid = vstate->deleted[i].safexid;
 
+		/*
+		 * XXX: If IndexVacuumInfo contained the heap relation, we could be
+		 * more aggressive about vacuuming non catalog relations by passing
+		 * the table to GlobalVisCheckRemovableXid()
+		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
 			break;
 
