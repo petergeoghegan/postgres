@@ -861,43 +861,6 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 }
 
 /*
- * _bt_page_recyclable() -- Is page recyclable?
- *
- * A page is safe to be recycled if it is marked deleted and has a safexid
- * value that is sufficiently old.
- */
-static inline bool
-_bt_page_recyclable(BTPageOpaque opaque, Page page)
-{
-	if (P_ISDELETED(opaque))
-	{
-		/*
-		 * If this is a pg_upgrade'd index, then this could be a deleted page
-		 * whose XID (which is stored in special area's level field via type
-		 * punning) is non-full 32-bit value.  It's safe to just assume that
-		 * we can recycle because the system must have been restarted since
-		 * the time of deletion.
-		 */
-		if (!P_HAS_FULLXID(opaque))
-			return true;
-
-		/*
-		 * The page was deleted, but when? If it was just deleted, a scan
-		 * might have seen the downlink to it, and will read the page later.
-		 * As long as that can happen, we must keep the deleted page around as
-		 * a tombstone.
-		 *
-		 * For that check if the deletion XID could still be visible to
-		 * anyone. If not, then no scan that's still in progress could have
-		 * seen its downlink, and we can recycle it.
-		 */
-		return GlobalVisCheckRemovableFullXid(NULL, BTPageGetDeleteXid(page));
-	}
-
-	return false;
-}
-
-/*
  * _bt_newly_deleted_pages_recycle() -- Are _bt_pagedel pages recyclable now?
  *
  * Note that we assume that the array is ordered by safexid.  No further
@@ -1333,7 +1296,7 @@ backtrack:
 		}
 	}
 
-	if (!opaque || _bt_page_recyclable(opaque, page))
+	if ( _bt_page_recyclable(page))
 	{
 		/* Okay to recycle this page (which could be leaf or internal) */
 		RecordFreeIndexPage(rel, blkno);

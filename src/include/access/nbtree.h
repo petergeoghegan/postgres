@@ -259,13 +259,16 @@ BTPageSetDeleted(Page page, FullTransactionId safexid)
 static inline FullTransactionId
 BTPageGetDeleteXid(Page page)
 {
-	BTPageOpaque opaque PG_USED_FOR_ASSERTS_ONLY;
+	BTPageOpaque opaque;
 	BTDeletedPageData *contents;
 
 	/* pg_upgrade'd indexes with old BTP_DELETED pages should not call here */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
-	Assert(P_ISDELETED(opaque) && !P_ISHALFDEAD(opaque) &&
-		   P_HAS_FULLXID(opaque));
+	Assert(P_ISDELETED(opaque) && !P_ISHALFDEAD(opaque));
+
+	/* pg_upgrade'd deleted page -- must be safe to delete */
+	if (!P_HAS_FULLXID(opaque))
+		return FirstNormalFullTransactionId;
 
 	/* Get safexid from deleted page */
 	contents = ((BTDeletedPageData *) PageGetContents(page));
@@ -1168,6 +1171,7 @@ extern void _bt_unlockbuf(Relation rel, Buffer buf);
 extern bool _bt_conditionallockbuf(Relation rel, Buffer buf);
 extern void _bt_upgradelockbufcleanup(Relation rel, Buffer buf);
 extern void _bt_pageinit(Page page, Size size);
+extern bool _bt_page_recyclable(Page page);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
 								OffsetNumber *deletable, int ndeletable,
 								BTVacuumPosting *updatable, int nupdatable);
