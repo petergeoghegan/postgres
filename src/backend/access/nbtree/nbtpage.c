@@ -208,8 +208,7 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
 	 * indicates that there are lots of pages that it needs to recycle, when
 	 * in reality there are only one or two.  The worst that can happen is
 	 * that there will be a call to btvacuumscan a little earlier, which will
-	 * end up here -- at which point btm_last_cleanup_num_delpages will
-	 * contain a sane value.
+	 * set btm_last_cleanup_num_delpages to a sane value when we're called.
 	 */
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
 	metapg = BufferGetPage(metabuf);
