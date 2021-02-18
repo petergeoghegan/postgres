@@ -280,8 +280,8 @@ BTPageGetDeleteXid(Page page)
 /*
  * Is an existing page recyclable?
  *
- * This exists to make sure _bt_getbuf and btvacuumscan have the same policy
- * about whether a page is safe to re-use.
+ * This exists to centralize the policy on which deleted pages are now safe to
+ * re-use.
  *
  * Note: PageIsNew() pages should also be considered safe to recycle, but we
  * don't handle that here (caller is responsible) -- some callers will need
