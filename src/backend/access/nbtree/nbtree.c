@@ -982,7 +982,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * the information used within _bt_vacuum_needs_cleanup() by calling
 	 * _bt_set_cleanup_info() below).
 	 *
-	 * If btbulkdelete was called, then we have a choice to make now: we must
+	 * If btbulkdelete was called, then we have a choice to make: we must
 	 * decide whether or not a btvacuumscan() call is needed now (i.e. whether
 	 * the entire ongoing VACUUM operation can entirely avoid a physical scan
 	 * of the index).  A call to _bt_vacuum_needs_cleanup() decides it for us
