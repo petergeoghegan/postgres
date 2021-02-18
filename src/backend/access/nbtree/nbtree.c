@@ -897,7 +897,7 @@ _bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
 	 * cases involving logical decoding (unless this happens to be a system
 	 * catalog).
 	 *
-	 * We don't bother with this same optimization in _bt_page_recyclable().
+	 * We don't bother with this same optimization in BTPageIsRecyclable().
 	 * It's much less likely to matter there because the deleted page will
 	 * generally come from some earlier VACUUM operation.
 	 */
