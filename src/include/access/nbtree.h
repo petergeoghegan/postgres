@@ -280,7 +280,8 @@ BTPageGetDeleteXid(Page page)
  * Is an existing page recyclable?
  *
  * This exists to centralize the policy on which deleted pages are now safe to
- * re-use.
+ * re-use.  The _bt_newly_deleted_pages_recycle() optimization behaves more
+ * aggressively, though that has certain known limitations.
  *
  * Note: PageIsNew() pages should also be considered safe to recycle, but we
  * don't handle that here (caller is responsible) -- some callers will need

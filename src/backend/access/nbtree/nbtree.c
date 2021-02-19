@@ -901,7 +901,8 @@ _bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
 	 * optimization.  Its safexid test is applied in a redundant manner within
 	 * _bt_getbuf() (via its BTPageIsRecyclable() call).  Consequently,
 	 * _bt_getbuf() may believe that it is still unsafe to recycle a page that
-	 * we know to be recycle safe (in which case it is discarded).
+	 * we know to be recycle safe -- in which case it is unnecessarily
+	 * discarded.
 	 *
 	 * We should get around to fixing this _bt_getbuf() issue some day.  For
 	 * now we can still proceed in the hopes that BTPageIsRecyclable() will
