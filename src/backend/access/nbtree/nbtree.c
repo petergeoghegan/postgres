@@ -897,20 +897,15 @@ _bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
 	 * cases involving logical decoding (unless this happens to be a system
 	 * catalog).  We don't simply use BTPageIsRecyclable().
 	 *
-	 * The BTPageIsRecyclable() criteria creates problems for this
-	 * optimization.  The criteria applied by BTPageIsRecyclable() means that
-	 * nobody ever completely trusts the FSM to return a recycle-safe page.
-	 * In particular, _bt_getbuf() applies the BTPageIsRecyclable() safexid
-	 * test against deleted pages returned from the FSM -- despite the fact
-	 * that we (VACUUM) test pages at the point they're placed in the FSM.
+	 * XXX: The BTPageIsRecyclable() criteria creates problems for this
+	 * optimization.  Its safexid test is applied in a redundant manner within
+	 * _bt_getbuf() (via its BTPageIsRecyclable() call).  Consequently,
+	 * _bt_getbuf() may believe that it is still unsafe to recycle a page that
+	 * we know to be recycle safe (in which case it is discarded).
 	 *
-	 * There is a risk that _bt_getbuf() will become confused about a page
-	 * that we correctly determined was safe for recycling here.  It may
-	 * believe that it is still unsafe to recycle the page, in which case it
-	 * is discarded (this has always been a possibility).  We should get
-	 * around to fixing this some day.  We might as well still proceed in the
-	 * hopes that BTPageIsRecyclable() will start to agree with us before
-	 * anybody gets to the page anyway.
+	 * We should get around to fixing this _bt_getbuf() issue some day.  For
+	 * now we can still proceed in the hopes that BTPageIsRecyclable() will
+	 * catch up with us before _bt_getbuf() ever reaches the page.
 	 */
 	heapRel = table_open(IndexGetRelation(RelationGetRelid(rel), false),
 						 AccessShareLock);
