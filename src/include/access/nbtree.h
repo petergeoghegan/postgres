@@ -283,9 +283,9 @@ BTPageGetDeleteXid(Page page)
  * re-use.  The _bt_newly_deleted_pages_recycle() optimization behaves more
  * aggressively, though that has certain known limitations.
  *
- * Note: PageIsNew() pages should also be considered safe to recycle, but we
- * don't handle that here (caller is responsible) -- some callers will need
- * special handling for that case anyway.
+ * Note: PageIsNew() pages should are always safe to recycle, but we don't
+ * handle that here (caller is responsible) -- some callers will need special
+ * handling for that case anyway.
  */
 static inline bool
 BTPageIsRecyclable(Page page)
