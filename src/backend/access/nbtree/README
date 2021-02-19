@@ -335,11 +335,12 @@ siblings.
 A deleted page cannot be reclaimed immediately, since there may be other
 processes waiting to reference it (ie, search processes that just left the
 parent, or scans moving right or left from one of the siblings).  These
-processes must observe that the page is marked dead and recover
-accordingly (see "Recycling deleted pages through the FSM" section below).
-Searches and forward scans simply follow the right-link until they find a
-non-dead page --- this must be where the deleted page's key-space moved
-to.
+processes must be able to observe an ignorable page (ie, a half-dead or
+deleted page) for some time after the deletion, so that they'll be able to
+recover (they recover by moving right, just like they recover from a
+concurrent page split).  See "Recycling deleted pages through the FSM"
+section below for a description of when and how deleted pages become safe
+for VACUUM to reclaim.
 
 Moving left in a backward scan is complicated because we must consider
 the possibility that the left sibling was just split (meaning we must find
@@ -360,9 +361,9 @@ sibling chain at all anymore.  So the move-left algorithm becomes:
    few tries, then most likely the original page is deleted.)
 4. Return to the "original page".  If it is still live, return to step 1
    (we guessed wrong about it being deleted, and should restart with its
-   current left-link).  If it is dead, move right until a non-dead page
-   is found (there must be one, since rightmost pages are never deleted),
-   mark that as the new "original page", and return to step 1.
+   current left-link).  If it is dead, move right until a non-ignorable
+   page is found (there must be one, since rightmost pages are never
+   deleted), mark that as the new "original page", and return to step 1.
 
 This algorithm is correct because the live page found by step 4 will have
 the same left keyspace boundary as the page we started from.  Therefore,
@@ -416,10 +417,10 @@ index scans with Lehman and Yao's design.  In general an index scan
 doesn't have to hold a lock or even a pin on any page when it descends the
 tree (nothing that you'd usually think of as an interlock is held "between
 levels").  At the same time, index scans cannot be allowed to land on a
-truly unrelated concurrently-recycled page, because that results in wrong
-answers to queries.  Simpler approaches to page deletion without deferred
-recycling are possible, but none seem compatible with Lehman and Yao's
-original design.
+truly unrelated page due to concurrent recycling (not to be confused with
+concurrent deletion), because that results in wrong answers to queries.
+Simpler approaches to page deletion that don't need to defer recycling are
+possible, but none seem compatible with Lehman and Yao's design.
 
 Placing an already-deleted page in the FSM to be recycled when needed
 doesn't actually change the state of the page.  The page will be changed
