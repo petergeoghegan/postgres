@@ -312,7 +312,7 @@ typedef struct xl_btree_unlink_page
 	 */
 	BlockNumber leafleftsib;
 	BlockNumber leafrightsib;
-	BlockNumber leaftopparent;
+	BlockNumber leaftopparent;		/* next child down in the subtree */
 
 	/* xl_btree_metadata FOLLOWS IF XLOG_BTREE_UNLINK_PAGE_META */
 } xl_btree_unlink_page;
