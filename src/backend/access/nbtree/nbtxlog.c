@@ -817,8 +817,8 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 	isleaf = (level == 0);
 	safexid = xlrec->safexid;
 
-	/* No topparent link for leaf page (level 0) or level 1 */
-	Assert(xlrec->topparent == InvalidBlockNumber || level > 1);
+	/* No leaftopparent for level 0 (leaf page) or level 1 target */
+	Assert(xlrec->leaftopparent == InvalidBlockNumber || level > 1);
 
 	/*
 	 * In normal operation, we would lock all the pages this WAL record
@@ -918,7 +918,7 @@ btree_xlog_unlink_page(uint8 info, XLogReaderState *record)
 		/* Add a dummy hikey item */
 		MemSet(&trunctuple, 0, sizeof(IndexTupleData));
 		trunctuple.t_info = sizeof(IndexTupleData);
-		BTreeTupleSetTopParent(&trunctuple, xlrec->topparent);
+		BTreeTupleSetTopParent(&trunctuple, xlrec->leaftopparent);
 
 		if (PageAddItem(page, (Item) &trunctuple, sizeof(IndexTupleData), P_HIKEY,
 						false, false) == InvalidOffsetNumber)

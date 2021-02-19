@@ -2285,7 +2285,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	bool		rightsib_is_rightmost;
 	uint32		targetlevel;
 	IndexTuple	leafhikey;
-	BlockNumber topparent_in_target;
+	BlockNumber leaftopparent;
 
 	page = BufferGetPage(leafbuf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -2437,23 +2437,25 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 			elog(ERROR, "half-dead page changed status unexpectedly in block %u of index \"%s\"",
 				 target, RelationGetRelationName(rel));
 
-		/* Leaf page is also target page: don't set topparent */
-		topparent_in_target = InvalidBlockNumber;
+		/* Leaf page is also target page: don't set leaftopparent */
+		leaftopparent = InvalidBlockNumber;
 	}
 	else
 	{
+		IndexTuple	finaldataitem;
+
 		if (P_FIRSTDATAKEY(opaque) != PageGetMaxOffsetNumber(page) ||
 			P_ISLEAF(opaque))
 			elog(ERROR, "half-dead page changed status unexpectedly in block %u of index \"%s\"",
 				 target, RelationGetRelationName(rel));
 
-		/* Internal page is target: we'll set topparent in leaf page... */
+		/* Target is internal: set leaftopparent for next call here...  */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		topparent_in_target =
-			BTreeTupleGetTopParent((IndexTuple) PageGetItem(page, itemid));
+		finaldataitem = (IndexTuple) PageGetItem(page, itemid);
+		leaftopparent = BTreeTupleGetDownLink(finaldataitem);
 		/* ...except when it would be a redundant pointer-to-self */
-		if (topparent_in_target == leafblkno)
-			topparent_in_target = InvalidBlockNumber;
+		if (leaftopparent == leafblkno)
+			leaftopparent = InvalidBlockNumber;
 	}
 
 	/*
@@ -2543,7 +2545,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * no lock was held.
 	 */
 	if (target != leafblkno)
-		BTreeTupleSetTopParent(leafhikey, topparent_in_target);
+		BTreeTupleSetTopParent(leafhikey, leaftopparent);
 
 	/*
 	 * Mark the page itself deleted.  It can be recycled when all current
@@ -2612,7 +2614,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		/* information needed to recreate the leaf block (if not the target) */
 		xlrec.leafleftsib = leafleftsib;
 		xlrec.leafrightsib = leafrightsib;
-		xlrec.topparent = topparent_in_target;
+		xlrec.leaftopparent = leaftopparent;
 
 		XLogRegisterData((char *) &xlrec, SizeOfBtreeUnlinkPage);
 

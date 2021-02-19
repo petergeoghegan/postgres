@@ -312,12 +312,12 @@ typedef struct xl_btree_unlink_page
 	 */
 	BlockNumber leafleftsib;
 	BlockNumber leafrightsib;
-	BlockNumber topparent;
+	BlockNumber leaftopparent;
 
 	/* xl_btree_metadata FOLLOWS IF XLOG_BTREE_UNLINK_PAGE_META */
 } xl_btree_unlink_page;
 
-#define SizeOfBtreeUnlinkPage	(offsetof(xl_btree_unlink_page, topparent) + sizeof(BlockNumber))
+#define SizeOfBtreeUnlinkPage	(offsetof(xl_btree_unlink_page, leaftopparent) + sizeof(BlockNumber))
 
 /*
  * New root log record.  There are zero tuples if this is to establish an

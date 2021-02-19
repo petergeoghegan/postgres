@@ -84,9 +84,9 @@ btree_desc(StringInfo buf, XLogReaderState *record)
 								 xlrec->leftsib, xlrec->rightsib, xlrec->level,
 								 EpochFromFullTransactionId(xlrec->safexid),
 								 XidFromFullTransactionId(xlrec->safexid));
-				appendStringInfo(buf, "leafleft %u; leafright %u; topparent %u",
+				appendStringInfo(buf, "leafleft %u; leafright %u; leaftopparent %u",
 								 xlrec->leafleftsib, xlrec->leafrightsib,
-								 xlrec->topparent);
+								 xlrec->leaftopparent);
 				break;
 			}
 		case XLOG_BTREE_NEWROOT:
