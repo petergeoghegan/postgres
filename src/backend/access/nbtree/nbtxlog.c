@@ -974,37 +974,60 @@ btree_xlog_newroot(XLogReaderState *record)
 	_bt_restore_meta(record, 2);
 }
 
+/*
+ * In general VACUUM must defer recycling as a way of avoiding certain race
+ * conditions.  Deleted pages contain a safexid value that is used by VACUUM
+ * to determine whether or not it's safe to place a page that was deleted by
+ * VACUUM earlier into the FSM now. See nbtree/README.
+ *
+ * As far as any backend operating during original execution is concerned, the
+ * FSM is a cache of recycle-safe pages; the mere presence of the page in the
+ * FSM indicates that the page must already be safe to recycle (actually,
+ * _bt_getbuf() verifies it's safe using BTPageIsRecyclable(), but that's just
+ * because it would be unwise to completely trust the FSM, given its current
+ * limitations).
+ *
+ * This isn't sufficient to prevent similar concurrent recycling race
+ * conditions during Hot Standby, though.  For that we need to log a
+ * xl_btree_reuse_page record at the point that a page is actually recycled
+ * and reused for an entirely unrelated page inside _bt_split().  These
+ * records include the same safexid value from the original deleted page,
+ * stored in the record's latestRemovedFullXid field.
+ *
+ * The GlobalVisCheckRemovableFullXid() test in BTPageIsRecyclable() is used
+ * to determine if it's safe to recycle a page.  This mirrors our own test:
+ * the PGPROC->xmin > limitXmin test inside GetConflictingVirtualXIDs().
+ * Consequently, one XID value achieves the same exclusion effect on primary
+ * and standby.  In practice it's rather unlikely that an xl_btree_reuse_page
+ * record will ever generate a recovery conflict here.  Recycling usually
+ * occurs well after initial deletion, which is usually well after some other
+ * record generates an unrelated recovery conflict (which will be sufficient
+ * to make "recycling" safe during Hot Standby).
+ *
+ * XXX It would make a great deal more sense if each nbtree index's FSM (or
+ * some equivalent structure) was completely crash safe.  Page deletion has to
+ * be crash safe already, plus we need xl_btree_reuse_page records each time
+ * we recycle.  Full crash safety is unlikely to add appreciably additional
+ * overhead, and would have benefits for performance/efficiency.  It would
+ * also simplify things by allowing the REDO side to deal with the problem in
+ * a way that's analogous to original execution.
+ *
+ * Under this scheme, the whole question of recycle safety could be moved from
+ * VACUUM to the consumer side.  That is, VACUUM would not need to defer
+ * placing a page that it deletes in the FSM until BTPageIsRecyclable() starts
+ * to return true -- _bt_getbut() would handle all details of recycling
+ * instead.  It would use the improved/crash-safe FSM to find a page whose
+ * safexid is sufficiently old to make recycling safe from the point of view
+ * of backends running during original execution (the deleted page whose
+ * safexid is oldest among all pages in the FSM, perhaps).  Instead of
+ * xl_btree_reuse_page records, we'd have crash-safe FSM records with the same
+ * safexid/latestRemovedFullXid field.
+ */
 static void
 btree_xlog_reuse_page(XLogReaderState *record)
 {
 	xl_btree_reuse_page *xlrec = (xl_btree_reuse_page *) XLogRecGetData(record);
 
-	/*
-	 * In general VACUUM must defer recycling as a way of avoiding certain
-	 * race conditions.  Deleted pages contain a safexid value that is used by
-	 * VACUUM to determine whether or not it's safe to place a page that was
-	 * deleted by VACUUM earlier into the FSM now. See nbtree/README.
-	 *
-	 * As far as any backend operating during original execution is concerned,
-	 * the FSM is a cache of recycle-safe pages; the mere presence of the page
-	 * in the FSM indicates that the page must already be safe to recycle
-	 * (actually, _bt_getbuf() verifies it's safe using BTPageIsRecyclable(),
-	 * but that's just because it would be unwise to completely trust the FSM,
-	 * given its limitations).
-	 *
-	 * This isn't sufficient to prevent similar concurrent recycling race
-	 * conditions during Hot Standby, though.  For that we need to log a
-	 * xl_btree_reuse_page record at the point that a page is actually
-	 * recycled and reused for an entirely unrelated page inside _bt_split().
-	 * These records include the same safexid value from the original deleted
-	 * page -- this is where the latestRemovedFullXid value came from.
-	 *
-	 * The GlobalVisCheckRemovableFullXid() test in BTPageIsRecyclable() is
-	 * used to determine if it's safe to recycle a page.  This mirrors our own
-	 * PGPROC->xmin > limitXmin test in GetConflictingVirtualXIDs().
-	 * Consequently, one XID value achieves the same exclusion effect on
-	 * primary and standby.
-	 */
 	if (InHotStandby)
 		ResolveRecoveryConflictWithSnapshotFullXid(xlrec->latestRemovedFullXid,
 												   xlrec->node);
