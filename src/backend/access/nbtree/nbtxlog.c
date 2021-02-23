@@ -998,12 +998,14 @@ btree_xlog_newroot(XLogReaderState *record)
  * to determine if it's safe to recycle a page.  This mirrors our own test:
  * the PGPROC->xmin > limitXmin test inside GetConflictingVirtualXIDs().
  * Consequently, one XID value achieves the same exclusion effect on primary
- * and standby.  In practice it's rather unlikely that an xl_btree_reuse_page
- * record will ever generate a recovery conflict here.  Recycling usually
- * occurs well after initial deletion, which is usually well after some other
- * record generates an unrelated recovery conflict (which will be sufficient
- * to make "concurrent recycling" not happen during Hot Standby).  But we
- * cannot rely on that happening.
+ * and standby.
+ *
+ * In practice it's rather unlikely that an xl_btree_reuse_page record will
+ * ever generate a recovery conflict here.  Recycling usually occurs well
+ * after initial deletion, which is usually well after some other record
+ * generates an unrelated recovery conflict (which will be sufficient to make
+ * "concurrent recycling" not happen during Hot Standby).  But we cannot rely
+ * on that happening.
  *
  * XXX It would make a great deal more sense if each nbtree index's FSM (or
  * some equivalent structure) was completely crash-safe.  Importantly, this
