@@ -997,7 +997,7 @@ btree_xlog_reuse_page(XLogReaderState *record)
 	 * xl_btree_reuse_page record at the point that a page is actually
 	 * recycled and reused for an entirely unrelated page inside _bt_split().
 	 * These records include the same safexid value from the original deleted
-	 * page, which appears here as latestRemovedFullXid.
+	 * page -- this is where the latestRemovedFullXid value came from.
 	 *
 	 * The GlobalVisCheckRemovableFullXid() test in BTPageIsRecyclable() is
 	 * used to determine if it's safe to recycle a page.  This mirrors our own
