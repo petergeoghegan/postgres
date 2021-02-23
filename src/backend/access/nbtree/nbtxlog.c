@@ -1014,7 +1014,7 @@ btree_xlog_newroot(XLogReaderState *record)
  * condition in a way that mirrors original execution.
  *
  * Under this scheme, the whole question of recycle safety could be moved from
- * VACUUM to the consumer side.  That is, VACUUM would not need to defer
+ * VACUUM to the consumer side.  That is, VACUUM would no longer have to defer
  * placing a page that it deletes in the FSM until BTPageIsRecyclable() starts
  * to return true -- _bt_getbut() would handle all details of recycling
  * instead.  It would use the improved/crash-safe FSM to find a page whose
