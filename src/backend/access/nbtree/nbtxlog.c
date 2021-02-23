@@ -1006,7 +1006,7 @@ btree_xlog_newroot(XLogReaderState *record)
  * cannot rely on that happening.
  *
  * XXX It would make a great deal more sense if each nbtree index's FSM (or
- * some equivalent structure) was completely crash safe.  Page deletion has to
+ * some equivalent structure) was completely crash-safe.  Page deletion has to
  * be crash safe already, plus we need xl_btree_reuse_page records each time
  * we recycle.  Full crash safety is unlikely to add appreciably additional
  * overhead, and would have benefits for performance/efficiency.  It would
