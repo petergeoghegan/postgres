@@ -1003,9 +1003,9 @@ btree_xlog_newroot(XLogReaderState *record)
  * In practice it's rather unlikely that an xl_btree_reuse_page record will
  * ever generate a recovery conflict here.  Recycling usually occurs well
  * after VACUUM puts the page in the FSM.  This is usually long after some
- * other record is logged with a latestRemovedXid style cutoff which happens
- * to also be sufficient to generate the required recovery conflict.  But we
- * cannot rely on that happening.
+ * other record is logged with a latestRemovedXid style cutoff which is also
+ * sufficient to generate recovery conflict that avoid the Hot Standby race
+ * we're concerned about here.  We cannot rely on that happening, though.
  *
  * XXX It would make a great deal more sense if each nbtree index's FSM (or
  * some equivalent structure) was completely crash-safe.  Importantly, this
