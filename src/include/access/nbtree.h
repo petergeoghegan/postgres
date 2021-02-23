@@ -231,8 +231,7 @@ typedef struct BTMetaPageData
  */
 typedef struct BTDeletedPageData
 {
-	/* last xid which might land on the page and get confused */
-	FullTransactionId safexid;
+	FullTransactionId safexid;	/* See BTPageIsRecyclable() */
 } BTDeletedPageData;
 
 static inline void
