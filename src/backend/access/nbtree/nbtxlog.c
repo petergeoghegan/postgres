@@ -1020,8 +1020,10 @@ btree_xlog_newroot(XLogReaderState *record)
  * safexid is sufficiently old to make recycling safe from the point of view
  * of backends running during original execution (the deleted page whose
  * safexid is oldest among all pages in the FSM, perhaps).  Instead of
- * xl_btree_reuse_page records, we'd have crash-safe FSM records with the same
- * safexid/latestRemovedFullXid field.
+ * xl_btree_reuse_page records, we'd have crash-safe FSM "consume/recycle page
+ * from the FSM" records.  These would have a safexid/latestRemovedFullXid
+ * field of their own, which would still be used during REDO to consider if a
+ * recovery conflict was required.
  */
 static void
 btree_xlog_reuse_page(XLogReaderState *record)
