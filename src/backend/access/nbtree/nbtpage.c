@@ -37,7 +37,7 @@
 
 static BTMetaPageData *_bt_getmeta(Relation rel, Buffer metabuf);
 static void _bt_log_reuse_page(Relation rel, BlockNumber blkno,
-							   FullTransactionId latestRemovedFullXid);
+							   FullTransactionId safexid);
 static void _bt_delitems_delete(Relation rel, Buffer buf,
 								TransactionId latestRemovedXid,
 								OffsetNumber *deletable, int ndeletable,
@@ -786,8 +786,7 @@ _bt_checkpage(Relation rel, Buffer buf)
  * Log the reuse of a page from the FSM.
  */
 static void
-_bt_log_reuse_page(Relation rel, BlockNumber blkno,
-				   FullTransactionId latestRemovedFullXid)
+_bt_log_reuse_page(Relation rel, BlockNumber blkno, FullTransactionId safexid)
 {
 	xl_btree_reuse_page xlrec_reuse;
 
@@ -800,7 +799,7 @@ _bt_log_reuse_page(Relation rel, BlockNumber blkno,
 	/* XLOG stuff */
 	xlrec_reuse.node = rel->rd_node;
 	xlrec_reuse.block = blkno;
-	xlrec_reuse.latestRemovedFullXid = latestRemovedFullXid;
+	xlrec_reuse.latestRemovedFullXid = safexid;
 
 	XLogBeginInsert();
 	XLogRegisterData((char *) &xlrec_reuse, SizeOfBtreeReusePage);
