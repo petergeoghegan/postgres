@@ -1011,8 +1011,8 @@ btree_xlog_newroot(XLogReaderState *record)
  * we recycle.  Full crash safety is unlikely to add appreciably additional
  * overhead, and would have benefits for reuse efficiency.  It would also
  * simplify things by more explicitly decoupling page deletion and page
- * recycling.  Importantly, this enables the REDO side to of recycling to work
- * in a way that aligns with original execution.
+ * recycling.  Importantly, this would enable page recycling's REDO side to
+ * work in a way that naturally matches original execution.
  *
  * Under this scheme, the whole question of recycle safety could be moved from
  * VACUUM to the consumer side.  That is, VACUUM would no longer have to defer
