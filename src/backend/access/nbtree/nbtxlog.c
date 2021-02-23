@@ -1010,8 +1010,10 @@ btree_xlog_newroot(XLogReaderState *record)
  * be crash safe already, plus we need xl_btree_reuse_page records each time
  * we recycle.  Full crash safety is unlikely to add appreciably additional
  * overhead, and would have benefits for performance/efficiency.  It would
- * also simplify things by allowing the REDO side to deal with the race
- * condition in a way that mirrors original execution.
+ * also simplify things by more explicitly decouple page deletion from page
+ * recycling.  This would also allow the REDO side to deal with recycling
+ * safety issues while directly mirroring what happens during original
+ * execution.
  *
  * Under this scheme, the whole question of recycle safety could be moved from
  * VACUUM to the consumer side.  That is, VACUUM would no longer have to defer
