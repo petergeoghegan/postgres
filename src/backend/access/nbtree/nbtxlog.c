@@ -1017,15 +1017,16 @@ btree_xlog_newroot(XLogReaderState *record)
  * Under this scheme, the whole question of recycle safety could be moved from
  * VACUUM to the consumer side.  That is, VACUUM would no longer have to defer
  * placing a page that it deletes in the FSM until BTPageIsRecyclable() starts
- * to return true -- _bt_getbut() would handle all details of recycling safety
- * instead.  _bt_getbut() would use the improved/crash-safe FSM to find a page
- * whose safexid is sufficiently old for recycling to be safe from the point
- * of view of backends that run during original execution (the deleted page
- * whose safexid is oldest among all pages in the FSM, perhaps).  Instead of
- * xl_btree_reuse_page records, we'd have FSM "consume/recycle page from the
- * FSM" records that are associated with (i.e. that modify) FSM page buffers.
- * These record would have a safexid/latestRemovedFullXid field of their own,
- * which would be used during REDO in about the same way as what we have now.
+ * to return true -- _bt_getbut() would handle all details of safely deferring
+ * recycling instead.  _bt_getbut() would use the improved/crash-safe FSM to
+ * find a page whose safexid is sufficiently old for recycling to be safe from
+ * the point of view of backends that run during original execution (the
+ * deleted page whose safexid is oldest among all pages in the FSM, perhaps).
+ * Instead of xl_btree_reuse_page records, we'd have FSM "consume/recycle page
+ * from the FSM" records that are associated with (i.e. that modify) FSM page
+ * buffers/blocks.  These WAL record would have a safexid/latestRemovedFullXid
+ * field of their own, which would be used during REDO in the same way as what
+ * you see here.
  */
 static void
 btree_xlog_reuse_page(XLogReaderState *record)
