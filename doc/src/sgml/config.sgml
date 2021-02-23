@@ -8520,10 +8520,41 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        Specifies the fraction of the total number of heap tuples counted in
-        the previous statistics collection that can be inserted without
-        incurring an index scan at the <command>VACUUM</command> cleanup stage.
-        This setting currently applies to B-tree indexes only.
+        <command>VACUUM</command> can skip full index scans for one or
+        more indexes when certain conditions are met.  Affected
+        indexes can be processed with only negligible overhead (index
+        vacuuming becomes a <quote>no-op</quote>).  This optimization
+        is currently only <emphasis>considered</emphasis> during
+        <command>VACUUM</command> operations where the underlying
+        table has <emphasis>precisely zero</emphasis> dead row
+        versions to remove.  Even then, individual indexes may benefit
+        from <quote>true</quote> <command>VACUUM</command> processing
+        for a variety of secondary reasons.
+       </para>
+
+       <para>
+        <varname>vacuum_cleanup_index_scale_factor</varname> is
+        applied within index access methods that support opting out of
+        a full index scan, though only when <command>VACUUM</command>
+        has established that it is possible in principle to skip a
+        full index scan.  It may still be useful for index vacuuming
+        to go ahead to update index statistics.
+        <varname>vacuum_cleanup_index_scale_factor</varname> expresses
+        a fraction of the total number of heap tuples that can
+        subsequently be inserted before an index scan will be forced
+        during the cleanup stage.  This setting currently applies to
+        B-tree indexes only.
+       </para>
+
+       <para>
+        In practice the optimization can often be applied during
+        anti-wraparound vacuum operations performed by an autovacuum
+        worker.  The optimization is typically also useful with
+        insert-only tables that have several indexes (autovacuum can
+        be triggered by the
+        <varname>autovacuum_vacuum_insert_threshold</varname> criteria
+        with these tables, making index vacuuming only marginal
+        useful).
        </para>
 
        <para>
