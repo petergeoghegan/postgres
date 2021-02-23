@@ -1009,8 +1009,8 @@ btree_xlog_newroot(XLogReaderState *record)
  * some equivalent structure) was completely crash-safe.  Page deletion has to
  * be crash safe already, plus we need xl_btree_reuse_page records each time
  * we recycle.  Full crash safety is unlikely to add appreciably additional
- * overhead, and would have benefits for performance/efficiency.  It would
- * also simplify things by more explicitly decoupling page deletion and page
+ * overhead, and would have benefits for reuse efficiency.  It would also
+ * simplify things by more explicitly decoupling page deletion and page
  * recycling.  Importantly, this enables the REDO side to of recycling to work
  * in a way that aligns with original execution.
  *
