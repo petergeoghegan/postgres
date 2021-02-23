@@ -1027,9 +1027,7 @@ btree_xlog_newroot(XLogReaderState *record)
  * to be safe from the point of view of backends that run during original
  * execution.  That just leaves the REDO side.  Instead of xl_btree_reuse_page
  * records, we'd have FSM "consume/recycle page from the FSM" records that are
- * associated with FSM page buffers/blocks.  These WAL record would have a
- * safexid/latestRemovedFullXid field of their own, which would need to be
- * considered during REDO in the same way.
+ * associated with FSM page buffers/blocks.
  */
 static void
 btree_xlog_reuse_page(XLogReaderState *record)
