@@ -1006,15 +1006,15 @@ btree_xlog_newroot(XLogReaderState *record)
  * cannot rely on that happening.
  *
  * XXX It would make a great deal more sense if each nbtree index's FSM (or
- * some equivalent structure) was completely crash-safe.
+ * some equivalent structure) was completely crash-safe.  Importantly, this
+ * would enable page recycling's REDO side to work in a way that naturally
+ * matches original execution.
  *
  * Page deletion has to be crash safe already, plus xl_btree_reuse_page
  * records are logged just to be able to recycle -- full crash safety is
  * unlikely to add appreciably additional overhead, and has clear efficiency
  * benefits.  It would also simplify things by more explicitly decoupling page
- * deletion and page recycling.  Importantly, this would enable page
- * recycling's REDO side to work in a way that naturally matches original
- * execution.
+ * deletion and page recycling.
  *
  * Under this scheme, the whole question of recycle safety could be moved from
  * VACUUM to the consumer side.  That is, VACUUM would no longer have to defer
