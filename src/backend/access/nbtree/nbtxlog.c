@@ -1011,7 +1011,7 @@ btree_xlog_newroot(XLogReaderState *record)
  * we recycle.  Full crash safety is unlikely to add appreciably additional
  * overhead, and would have benefits for performance/efficiency.  It would
  * also simplify things by allowing the REDO side to deal with the race
- * condition in a way that's analogous to original execution.
+ * condition in a way that mirrors original execution.
  *
  * Under this scheme, the whole question of recycle safety could be moved from
  * VACUUM to the consumer side.  That is, VACUUM would not need to defer
