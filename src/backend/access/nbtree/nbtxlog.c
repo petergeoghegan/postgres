@@ -1002,7 +1002,8 @@ btree_xlog_newroot(XLogReaderState *record)
  * record will ever generate a recovery conflict here.  Recycling usually
  * occurs well after initial deletion, which is usually well after some other
  * record generates an unrelated recovery conflict (which will be sufficient
- * to make "concurrent recycling" not happen during Hot Standby).
+ * to make "concurrent recycling" not happen during Hot Standby).  But we
+ * cannot rely on that happening.
  *
  * XXX It would make a great deal more sense if each nbtree index's FSM (or
  * some equivalent structure) was completely crash safe.  Page deletion has to
