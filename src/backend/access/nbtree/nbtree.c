@@ -978,9 +978,9 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 *
 	 * If btbulkdelete was _not_ called, then we have a choice to make: we
 	 * must decide whether or not a btvacuumscan() call is needed now (i.e.
-	 * whether the entire ongoing VACUUM operation can entirely avoid a
-	 * physical scan of the index).  A call to _bt_vacuum_needs_cleanup()
-	 * decides it for us now.
+	 * whether the ongoing VACUUM operation can entirely avoid a physical scan
+	 * of the index).  A call to _bt_vacuum_needs_cleanup() decides it for us
+	 * now.
 	 */
 	if (stats == NULL)
 	{

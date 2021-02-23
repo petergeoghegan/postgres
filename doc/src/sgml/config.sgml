@@ -8535,10 +8535,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         <varname>vacuum_cleanup_index_scale_factor</varname> is
         applied within index access methods that support opting out of
-        a full index scan, though only when and where it is at least
-        possible in principle to skip a full index scan.  The setting
-        represents .  It may still be useful for
-        index vacuuming to go ahead to update index statistics.
+        a full index scan, though only when <command>VACUUM</command>
+        has established that it is possible in principle to skip a
+        full index scan.  It may still be useful for index vacuuming
+        to go ahead to update index statistics.
         <varname>vacuum_cleanup_index_scale_factor</varname> expresses
         a fraction of the total number of heap tuples that can
         subsequently be inserted before an index scan will be forced
