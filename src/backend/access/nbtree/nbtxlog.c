@@ -980,18 +980,30 @@ btree_xlog_reuse_page(XLogReaderState *record)
 	xl_btree_reuse_page *xlrec = (xl_btree_reuse_page *) XLogRecGetData(record);
 
 	/*
-	 * latestRemovedFullXid was a deleted page's safexid value, set at the
-	 * point it was deleted.  The safexid value is once again used at the
-	 * point that the page is to be recycled for some unrelated new page in
-	 * the index.  This only happens when a xl_btree_reuse_page WAL record
-	 * must be written during original execution because it might be necessary
-	 * for us to generate a conflict here (when in Hot Standby mode).
+	 * In general VACUUM must defer recycling as a way of avoiding certain
+	 * race conditions.  Deleted pages contain a safexid value that is used by
+	 * VACUUM to determine whether or not it's safe to place a page that was
+	 * deleted by VACUUM earlier into the FSM now. See nbtree/README.
 	 *
-	 * GlobalVisCheckRemovableFullXid() tests are used to determine if it's
-	 * safe to recycle a page (that was deleted by VACUUM earlier on) during
-	 * original execution.  This mirrors the PGPROC->xmin > limitXmin test in
-	 * GetConflictingVirtualXIDs().  Consequently, one XID value achieves the
-	 * same exclusion effect on primary and standby.
+	 * As far as any backend operating during original execution is concerned,
+	 * the FSM is a cache of recycle-safe pages; the mere presence of the page
+	 * in the FSM indicates that the page must already be safe to recycle
+	 * (actually, _bt_getbuf() verifies it's safe using BTPageIsRecyclable(),
+	 * but that's just because it would be unwise to completely trust the FSM,
+	 * given its limitations).
+	 *
+	 * This isn't sufficient to prevent similar concurrent recycling race
+	 * conditions during Hot Standby, though.  For that we need to log a
+	 * xl_btree_reuse_page record at the point that a page is actually
+	 * recycled and reused for an entirely unrelated page inside _bt_split().
+	 * These records include the same safexid value from the original deleted
+	 * page, which appears here as latestRemovedFullXid.
+	 *
+	 * The GlobalVisCheckRemovableFullXid() test in BTPageIsRecyclable() is
+	 * used to determine if it's safe to recycle a page.  This mirrors our own
+	 * PGPROC->xmin > limitXmin test in GetConflictingVirtualXIDs().
+	 * Consequently, one XID value achieves the same exclusion effect on
+	 * primary and standby.
 	 */
 	if (InHotStandby)
 		ResolveRecoveryConflictWithSnapshotFullXid(xlrec->latestRemovedFullXid,
