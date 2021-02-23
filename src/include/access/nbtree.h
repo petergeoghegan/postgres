@@ -247,8 +247,8 @@ BTPageSetDeleted(Page page, FullTransactionId safexid)
 
 	opaque->btpo_flags &= ~BTP_HALF_DEAD;
 	opaque->btpo_flags |= BTP_DELETED | BTP_HAS_FULLXID;
-	header->pd_lower =
-		MAXALIGN(SizeOfPageHeaderData) + sizeof(BTDeletedPageData);
+	header->pd_lower = MAXALIGN(SizeOfPageHeaderData) +
+		sizeof(BTDeletedPageData);
 	header->pd_upper = header->pd_special;
 
 	/* Set safexid in deleted page */
