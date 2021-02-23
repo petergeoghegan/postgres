@@ -8520,10 +8520,38 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        Specifies the fraction of the total number of heap tuples counted in
-        the previous statistics collection that can be inserted without
-        incurring an index scan at the <command>VACUUM</command> cleanup stage.
-        This setting currently applies to B-tree indexes only.
+        <command>VACUUM</command> can skip full index scans of indexes
+        when certain conditions are met.  Affected indexes can be
+        processed with negligible CPU and I/O overhead (index
+        vacuuming is a <quote>no-op</quote>).  The optimization is
+        currently only considered during <command>VACUUM</command>
+        operations where the underlying table has precisely zero dead
+        row versions to clean up.  Separately, each index on the table
+        has to opt out based on its own considerations.  In practice
+        the optimization can often be applied during anti-wraparound
+        vacuum operations performed by an autovacuum worker.  The
+        optimization is typically also useful with insert-only tables
+        that have several indexes (autovacuum can be triggered by the
+        <varname>autovacuum_vacuum_insert_threshold</varname> criteria
+        with these tables, making index vacuuming only marginal
+        useful).
+       </para>
+
+       <para>
+        <varname>vacuum_cleanup_index_scale_factor</varname> controls
+        whether or not a full index scan goes ahead during
+        <command>VACUUM</command> operations where it is at least
+        possible in principle to skip.  It may still be useful for
+        index vacuuming to go ahead to update index statistics.
+       </para>
+
+       <para>
+        <varname>vacuum_cleanup_index_scale_factor</varname> specifies
+        the fraction of the total number of heap tuples counted in the
+        previous statistics collection that can be inserted without
+        incurring an index scan at the <command>VACUUM</command>
+        cleanup stage.  This setting currently applies to B-tree
+        indexes only.
        </para>
 
        <para>
