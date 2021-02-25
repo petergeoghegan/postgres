@@ -279,7 +279,8 @@ BTPageGetDeleteXid(Page page)
  * Is an existing page recyclable?
  *
  * This exists to centralize the policy on which deleted pages are now safe to
- * re-use.
+ * re-use.  However, _bt_pendingfsm_finalize() duplicates some of the same
+ * logic because it doesn't work directly with pages -- keep the two in sync.
  *
  * Note: PageIsNew() pages are always safe to recycle, but we can't deal with
  * them here (caller is responsible for that case themselves).  Caller might
@@ -313,9 +314,16 @@ BTPageIsRecyclable(Page page)
 }
 
 /*
- * BTVacState is private nbtree.c state used during VACUUM.  It is exported
- * for use by page deletion related code in nbtpage.c.
+ * BTVacState and BTPendingFSMPageInfo are private nbtree.c state used during
+ * VACUUM.  They are exported for use by page deletion related code in
+ * nbtpage.c.
  */
+typedef struct BTPendingFSMPageInfo
+{
+	BlockNumber target;			/* Page deleted by current VACUUM */
+	FullTransactionId safexid;	/* Page's BTDeletedPageData.safexid */
+} BTPendingFSMPageInfo;
+
 typedef struct BTVacState
 {
 	IndexVacuumInfo *info;
@@ -324,6 +332,14 @@ typedef struct BTVacState
 	void	   *callback_state;
 	BTCycleId	cycleid;
 	MemoryContext pagedelcontext;
+
+	/*
+	 * _bt_pendingfsm_finalize() state
+	 */
+	int			bufsize;		/* pendingpages space (in # elements) */
+	int			maxbufsize;		/* max bufsize that respects work_mem */
+	BTPendingFSMPageInfo *pendingpages; /* One entry per newly deleted page */
+	int			npendingpages;	/* current # valid pendingpages */
 } BTVacState;
 
 /*
@@ -1195,6 +1211,9 @@ extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
 									  Relation heapRel,
 									  TM_IndexDeleteOp *delstate);
 extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
+extern void _bt_pendingfsm_init(Relation rel, BTVacState *vstate,
+								bool cleanuponly);
+extern void _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate);
 
 /*
  * prototypes for functions in nbtsearch.c
