@@ -859,9 +859,13 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * Maintain num_delpages value in metapage for _bt_vacuum_needs_cleanup().
 	 *
 	 * num_delpages is the number of deleted pages now in the index that were
-	 * not safe to place in the FSM to be recycled just yet.  We expect that
-	 * it will almost certainly be possible to place all of these pages in the
-	 * FSM during the next VACUUM operation.
+	 * not safe to place in the FSM to be recycled just yet.  num_delpages is
+	 * greater than 0 only when _bt_pagedel() actually deleted pages during
+	 * our call to btvacuumscan().  Even then, _bt_recycle_pagedel() must have
+	 * failed to recycle some of the resulting newly deleted pages at the very
+	 * end of btvacuumscan().  (Actually, it also happens when nobody else
+	 * consumes an XID between _bt_pagedel() and _bt_recycle_pagedel() calls,
+	 * due to an implementation restriction.)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
@@ -937,6 +941,16 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  "_bt_pagedel",
 												  ALLOCSET_DEFAULT_SIZES);
 
+	/* Allocate _bt_recycle_pagedel related information */
+	vstate.ndeletedspace = 512;
+	vstate.grow = true;
+	vstate.full = false;
+	vstate.maxndeletedspace = ((work_mem * 1024L) / sizeof(BTPendingRecycle));
+	vstate.maxndeletedspace = Min(vstate.maxndeletedspace, MaxBlockNumber);
+	vstate.maxndeletedspace = Max(vstate.maxndeletedspace, vstate.ndeletedspace);
+	vstate.ndeleted = 0;
+	vstate.deleted = palloc(sizeof(BTPendingRecycle) * vstate.ndeletedspace);
+
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in
 	 * physical order (we hope the kernel will cooperate in providing
@@ -993,6 +1007,18 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	stats->num_pages = num_pages;
 
 	MemoryContextDelete(vstate.pagedelcontext);
+
+	/*
+	 * If there were any calls to _bt_pagedel() during any of our calls to
+	 * btvacuumpage(), see if we can recycle any of the resulting pages that
+	 * we have in-memory metadata for.  Recycle newly deleted pages where
+	 * that's safe.  (We'll have to rely on a future VACUUM operation taking
+	 * care of recycling pages that are not considered safe for us to recycle
+	 * here.)
+	 */
+	if (vstate.ndeleted > 0)
+		_bt_recycle_pagedel(rel, &vstate);
+	pfree(vstate.deleted);
 
 	/*
 	 * If we found any recyclable pages (and recorded them in the FSM), then
