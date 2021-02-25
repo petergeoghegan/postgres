@@ -620,11 +620,9 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	}
 
 	/*
-	 * Same for indexes. Vacuum always scans all indexes, so if we're part of
-	 * VACUUM ANALYZE, don't overwrite the accurate count already inserted by
-	 * VACUUM.
+	 * Same for indexes
 	 */
-	if (!inh && !(params->options & VACOPT_VACUUM))
+	if (!inh)
 	{
 		for (ind = 0; ind < nindexes; ind++)
 		{
