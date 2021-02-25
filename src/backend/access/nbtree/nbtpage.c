@@ -32,6 +32,7 @@
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/procarray.h"
 #include "utils/memdebug.h"
 #include "utils/snapmgr.h"
 
@@ -57,6 +58,8 @@ static bool _bt_lock_subtree_parent(Relation rel, BlockNumber child,
 									OffsetNumber *poffset,
 									BlockNumber *topparent,
 									BlockNumber *topparentrightsib);
+static void bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+							  FullTransactionId safexid);
 
 /*
  *	_bt_initmetapage() -- Fill a page buffer with a correct metapage image
@@ -210,12 +213,6 @@ _bt_vacuum_needs_cleanup(Relation rel)
 	 * total size of the index.  We can reasonably expect (though are not
 	 * guaranteed) to be able to recycle this many pages if we decide to do a
 	 * btvacuumscan call during the ongoing btvacuumcleanup.
-	 *
-	 * Our approach won't reliably avoid "wasted" cleanup-only btvacuumscan
-	 * calls.  That is, we can end up scanning the entire index without ever
-	 * placing even 1 of the prev_num_delpages pages in the free space map, at
-	 * least in certain narrow cases (see nbtree/README section on recycling
-	 * deleted pages for details).  This rarely comes up in practice.
 	 */
 	if (prev_num_delpages > 0 &&
 		prev_num_delpages > RelationGetNumberOfBlocks(rel) / 20)
@@ -2729,6 +2726,14 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	if (target <= scanblkno)
 		stats->pages_deleted++;
 
+	/*
+	 * Remember information about the target page (now a newly deleted page)
+	 * in dedicated vstate space for later.  The page will be considered as a
+	 * candidate to place in the FSM at the end of the current btvacuumscan()
+	 * call.
+	 */
+	bt_pendingfsm_add(vstate, target, safexid);
+
 	return true;
 }
 
@@ -2872,4 +2877,136 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 	return _bt_lock_subtree_parent(rel, parent, stack->bts_parent,
 								   subtreeparent, poffset,
 								   topparent, topparentrightsib);
+}
+
+/*
+ * Initialize local memory state used by VACUUM inside .
+ *
+ * Called at the start of a btvacuumscan().  We expect to allocate memory
+ * inside VACUUM's top-level memory context.
+ */
+void
+_bt_pendingfsm_init(Relation rel, BTVacState *vstate)
+{
+	vstate->grow = true;
+	vstate->full = false;
+	vstate->npendingpagesspace = 512;
+	vstate->npendingpages = 0;
+	vstate->maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
+	vstate->maxnpendingpages = Min(vstate->maxnpendingpages, MaxBlockNumber);
+	vstate->maxnpendingpages = Max(vstate->maxnpendingpages, vstate->npendingpagesspace);
+	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * vstate->npendingpagesspace);
+}
+
+/*
+ * Place any newly deleted pages (i.e. pages that _bt_pagedel() deleted during
+ * the ongoing VACUUM operation) into the free space map when it happens to be
+ * safe to do so by now.
+ *
+ * Called at the end of a btvacuumscan(), just before free space map vacuuming
+ * takes place.
+ *
+ * Frees memory allocated by _bt_pendingfsm_init().
+ */
+void
+_bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
+{
+	IndexBulkDeleteResult *stats = vstate->stats;
+
+	Assert(stats->pages_newly_deleted >= vstate->npendingpages);
+
+	/*
+	 * Recompute VACUUM XID boundaries.
+	 *
+	 * We don't actually care about the oldest non-removable XID.  Computing
+	 * the oldest such XID has a useful side-effect: It updates the procarray
+	 * state that tracks XID horizon.  This is not just an optimization; it's
+	 * essential.  It allows the GlobalVisCheckRemovableFullXid() calls we
+	 * make here to notice if and when safexid values from pages this same
+	 * VACUUM operation deleted are sufficiently old to allow recycling to
+	 * take place safely.
+	 */
+	GetOldestNonRemovableTransactionId(NULL);
+
+	for (int i = 0; i < vstate->npendingpages; i++)
+	{
+		BlockNumber target = vstate->pendingpages[i].target;
+		FullTransactionId safexid = vstate->pendingpages[i].safexid;
+
+		/*
+		 * Do the equivalent of checking BTPageIsRecyclable(), but without
+		 * accessing the page again a second time.
+		 *
+		 * Give up on finding the first non-recyclable page -- all other pages
+		 * must be non-recyclable too, since bt_pendingfsm_add() adds pages to
+		 * the array in safexid order.
+		 */
+		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
+			break;
+
+		RecordFreeIndexPage(rel, target);
+		stats->pages_free++;
+	}
+
+	pfree(vstate->pendingpages);
+}
+
+/*
+ * Maintain array of pages that were deleted during current btvacuumscan()
+ * call, for use in _bt_pendingfsm_finalize().
+ *
+ * Need to respect work_mem/maxndeletedspace limitation on size of deleted
+ * array.  Our strategy when the array can no longer grow within the bounds of
+ * work_mem is simple: keep earlier entries (which are likelier to be
+ * recyclable in the end), but stop saving new entries.
+ */
+static void
+bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+				  FullTransactionId safexid)
+{
+#ifdef USE_ASSERT_CHECKING
+	/*
+	 * Verify an assumption made by _bt_pendingfsm_finalize(): pages from the
+	 * array will always be in safexid order (since that is the order that we
+	 * save them in here)
+	 */
+	if (vstate->npendingpages > 0)
+	{
+		FullTransactionId lastsafexid =
+				vstate->pendingpages[vstate->npendingpages - 1].safexid;
+
+		Assert(FullTransactionIdFollowsOrEquals(safexid, lastsafexid));
+	}
+#endif
+
+	if (vstate->full)
+		return;
+
+	if (vstate->npendingpages >= vstate->npendingpagesspace)
+	{
+		uint64 newnpendingpagesspace;
+
+		if (!vstate->grow)
+		{
+			vstate->full = true;
+			return;
+		}
+
+		newnpendingpagesspace = vstate->npendingpagesspace * 2;
+		if (newnpendingpagesspace > vstate->maxnpendingpages)
+		{
+			newnpendingpagesspace = vstate->maxnpendingpages;
+			vstate->grow = false;
+		}
+
+		vstate->npendingpagesspace = newnpendingpagesspace;
+		vstate->pendingpages =
+			repalloc(vstate->pendingpages,
+					 sizeof(BTPendingFSMPageInfo) *
+					 vstate->npendingpagesspace);
+	}
+
+	vstate->pendingpages[vstate->npendingpages].target = target;
+	vstate->pendingpages[vstate->npendingpages].safexid = safexid;
+	vstate->npendingpages++;
 }

@@ -279,7 +279,8 @@ BTPageGetDeleteXid(Page page)
  * Is an existing page recyclable?
  *
  * This exists to centralize the policy on which deleted pages are now safe to
- * re-use.
+ * re-use.  However, _bt_pendingfsm_finalize() duplicates some of the same
+ * logic because it doesn't work with pages -- keep the two in sync.
  *
  * Note: PageIsNew() pages are always safe to recycle, but we can't deal with
  * them here (caller is responsible for that case themselves).  Caller might
@@ -314,16 +315,39 @@ BTPageIsRecyclable(Page page)
 
 /*
  * BTVacState is private nbtree.c state used during VACUUM.  It is exported
- * for use by page deletion related code in nbtpage.c.
+ * for use by page deletion related code in nbtpage.c.  This includes state
+ * managed by _bt_pendingfsm_init() which is used to figure out if it's safe
+ * to place newly deleted pages into the FSM without waiting for the next
+ * VACUUM to get to them.
  */
+typedef struct BTPendingFSMPageInfo
+{
+	BlockNumber target;			/* Page deleted by current VACUUM */
+	FullTransactionId safexid;	/* Page's BTDeletedPageData.safexid */
+} BTPendingFSMPageInfo;
+
 typedef struct BTVacState
 {
+	/*
+	 * State managed by btvacuumscan()
+	 */
 	IndexVacuumInfo *info;
 	IndexBulkDeleteResult *stats;
 	IndexBulkDeleteCallback callback;
 	void	   *callback_state;
 	BTCycleId	cycleid;
 	MemoryContext pagedelcontext;
+
+	/*
+	 * State manages by _bt_pendingfsm_init() and _bt_pendingfsm_finalize()
+	 */
+	bool		grow;
+	bool		full;
+	BTPendingFSMPageInfo *pendingpages;
+	uint32		npendingpages;		/* array size */
+	uint64		maxnpendingpages;	/* max # array elements */
+
+	uint32		npendingpagesspace;	/* current space in # elements */
 } BTVacState;
 
 /*
@@ -1195,6 +1219,8 @@ extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
 									  Relation heapRel,
 									  TM_IndexDeleteOp *delstate);
 extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
+extern void _bt_pendingfsm_init(Relation rel, BTVacState *vstate);
+extern void _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate);
 
 /*
  * prototypes for functions in nbtsearch.c
