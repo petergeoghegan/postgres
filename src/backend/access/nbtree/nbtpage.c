@@ -187,8 +187,7 @@ _bt_getmeta(Relation rel, Buffer metabuf)
  *		btvacuumscan() doesn't even arise).
  */
 void
-_bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
-					 float8 num_heap_tuples)
+_bt_set_cleanup_info(Relation rel, BlockNumber num_delpages)
 {
 	Buffer		metabuf;
 	Page		metapg;
@@ -219,8 +218,6 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
 		rewrite = true;
 	else if (metad->btm_last_cleanup_num_delpages != num_delpages)
 		rewrite = true;
-	else if (metad->btm_last_cleanup_num_heap_tuples != num_heap_tuples)
-		rewrite = true;
 
 	if (!rewrite)
 	{
@@ -240,7 +237,7 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
 
 	/* update cleanup-related information */
 	metad->btm_last_cleanup_num_delpages = num_delpages;
-	metad->btm_last_cleanup_num_heap_tuples = num_heap_tuples;
+	metad->btm_last_cleanup_num_heap_tuples = -1;
 	MarkBufferDirty(metabuf);
 
 	/* write wal record if needed */
@@ -258,7 +255,7 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
 		md.fastroot = metad->btm_fastroot;
 		md.fastlevel = metad->btm_fastlevel;
 		md.last_cleanup_num_delpages = num_delpages;
-		md.last_cleanup_num_heap_tuples = num_heap_tuples;
+		md.last_cleanup_num_heap_tuples = -1;
 		md.allequalimage = metad->btm_allequalimage;
 
 		XLogRegisterBufData(0, (char *) &md, sizeof(xl_btree_metadata));

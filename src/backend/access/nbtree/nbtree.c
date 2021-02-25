@@ -792,11 +792,8 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 	Buffer		metabuf;
 	Page		metapg;
 	BTMetaPageData *metad;
-	BTOptions  *relopts;
-	float8		cleanup_scale_factor;
 	uint32		btm_version;
 	BlockNumber prev_num_delpages;
-	float8		prev_num_heap_tuples;
 
 	/*
 	 * Copy details from metapage to local variables quickly.
@@ -819,31 +816,7 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 	}
 
 	prev_num_delpages = metad->btm_last_cleanup_num_delpages;
-	prev_num_heap_tuples = metad->btm_last_cleanup_num_heap_tuples;
 	_bt_relbuf(info->index, metabuf);
-
-	/*
-	 * If the underlying table has received a sufficiently high number of
-	 * insertions since the last VACUUM operation that called btvacuumscan(),
-	 * then have the current VACUUM operation call btvacuumscan() now.  This
-	 * happens when the statistics are deemed stale.
-	 *
-	 * XXX: We should have a more principled way of determining what
-	 * "staleness" means. The  vacuum_cleanup_index_scale_factor GUC (and the
-	 * index-level storage param) seem hard to tune in a principled way.
-	 */
-	relopts = (BTOptions *) info->index->rd_options;
-	cleanup_scale_factor = (relopts &&
-							relopts->vacuum_cleanup_index_scale_factor >= 0)
-		? relopts->vacuum_cleanup_index_scale_factor
-		: vacuum_cleanup_index_scale_factor;
-
-	if (cleanup_scale_factor <= 0 ||
-		info->num_heap_tuples < 0 ||
-		prev_num_heap_tuples <= 0 ||
-		(info->num_heap_tuples - prev_num_heap_tuples) /
-		prev_num_heap_tuples >= cleanup_scale_factor)
-		return true;
 
 	/*
 	 * Trigger cleanup in rare cases where prev_num_delpages exceeds 5% of the
@@ -994,8 +967,16 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		/*
 		 * Since we aren't going to actually delete any leaf items, there's no
 		 * need to go through all the vacuum-cycle-ID pushups here
+		 *
+		 * Posting list tuples are a source of inaccuracy for VACUUM when
+		 * btvacuumscan call happens here, in btvacuumcleanup.  We'll assume
+		 * that the number of index tuples can be used as num_index_tuples,
+		 * even though num_index_tuples is supposed to represent the number of
+		 * TIDs in the index.  Tell core code to treat everything as only an
+		 * estimate.
 		 */
 		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
+		stats->estimated_count = true;
 		btvacuumscan(info, stats, NULL, NULL, 0);
 	}
 
@@ -1030,7 +1011,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
-	_bt_set_cleanup_info(info->index, num_delpages, info->num_heap_tuples);
+	_bt_set_cleanup_info(info->index, num_delpages);
 
 	/*
 	 * It's quite possible for us to be fooled by concurrent page splits into
@@ -1516,8 +1497,10 @@ backtrack:
 		 * We don't count the number of live TIDs during cleanup-only calls to
 		 * btvacuumscan (i.e. when callback is not set).  We count the number
 		 * of index tuples directly instead.  This avoids the expense of
-		 * directly examining all of the tuples on each page.
+		 * directly examining all of the tuples on each page.  The stats are
+		 * only treated as an estimate by core code in this case anyway.
 		 */
+		Assert(callback || stats->estimated_count);
 		if (minoff > maxoff)
 			attempt_pagedel = (blkno == scanblkno);
 		else if (callback)

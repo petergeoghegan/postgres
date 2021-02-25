@@ -1191,8 +1191,7 @@ extern OffsetNumber _bt_findsplitloc(Relation rel, Page origpage,
  */
 extern void _bt_initmetapage(Page page, BlockNumber rootbknum, uint32 level,
 							 bool allequalimage);
-extern void _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
-								 float8 num_heap_tuples);
+extern void _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages);
 extern void _bt_upgrademetapage(Page page);
 extern Buffer _bt_getroot(Relation rel, int access);
 extern Buffer _bt_gettrueroot(Relation rel);
