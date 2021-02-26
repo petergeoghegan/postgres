@@ -25,9 +25,6 @@
 #include "storage/predicate.h"
 #include "storage/smgr.h"
 
-/* Minimum tree height for application of fastpath optimization */
-#define BTREE_FASTPATH_MIN_LEVEL	2
-
 
 static BTStack _bt_search_insert(Relation rel, BTInsertState insertstate);
 static TransactionId _bt_check_unique(Relation rel, BTInsertState insertstate,
@@ -272,20 +269,22 @@ search:
 	return is_unique;
 }
 
+#define BTREE_HEIGHT_INSERT_CACHE	2
+
 /*
  *	_bt_search_insert() -- _bt_search() wrapper for inserts
  *
  * Search the tree for a particular scankey, or more precisely for the first
- * leaf page it could be on.  Try to make use of the fastpath optimization's
- * rightmost leaf page cache before actually searching the tree from the root
- * page, though.
+ * leaf page it could be on.  Try to make use of the rightmost leaf page cache
+ * before actually searching the tree from the root page, though.
  *
  * Return value is a stack of parent-page pointers (though see notes about
- * fastpath optimization and page splits below).  insertstate->buf is set to
- * the address of the leaf-page buffer, which is write-locked and pinned in
- * all cases (if necessary by creating a new empty root page for caller).
+ * leaf page cache for inserts and page splits below).  insertstate->buf is
+ * set to the address of the leaf-page buffer, which is write-locked and
+ * pinned in all cases (if necessary by creating a new empty root page for
+ * caller).
  *
- * The fastpath optimization avoids most of the work of searching the tree
+ * The leaf page cache avoids most of the work of searching the tree
  * repeatedly when a single backend inserts successive new tuples on the
  * rightmost leaf page of an index.  A backend cache of the rightmost leaf
  * page is maintained within _bt_insertonpg(), and used here.  The cache is
@@ -304,11 +303,12 @@ search:
  * because we'll need to return a real descent stack when a page split is
  * expected (actually, caller can cope with a leaf page split that uses a NULL
  * stack, but that's very slow and so must be avoided).  Note also that the
- * fastpath optimization acquires the lock on the page conditionally as a way
- * of reducing extra contention when there are concurrent insertions into the
- * rightmost page (we give up if we'd have to wait for the lock).  We assume
- * that it isn't useful to apply the optimization when there is contention,
- * since each per-backend cache won't stay valid for long.
+ * case where a leaf page is cached acquires the lock on the page
+ * conditionally as a way of reducing extra contention when there are
+ * concurrent insertions into the rightmost page (we give up if we'd have to
+ * wait for the lock).  We assume that it isn't useful to apply the
+ * optimization when there is contention, since each per-backend cache won't
+ * stay valid for long.
  */
 static BTStack
 _bt_search_insert(Relation rel, BTInsertState insertstate)
@@ -346,16 +346,16 @@ _bt_search_insert(Relation rel, BTInsertState insertstate)
 				_bt_compare(rel, insertstate->itup_key, page, P_HIKEY) > 0)
 			{
 				/*
-				 * Caller can use the fastpath optimization because cached
-				 * block is still rightmost leaf page, which can fit caller's
-				 * new tuple without splitting.  Keep block in local cache for
-				 * next insert, and have caller use NULL stack.
+				 * Caller can use the leaf page cache because cached block is
+				 * still rightmost leaf page, which can fit caller's new tuple
+				 * without splitting.  Keep block in local cache for next
+				 * insert, and have caller use NULL stack.
 				 *
 				 * Note that _bt_insert_parent() has an assertion that catches
-				 * leaf page splits that somehow follow from a fastpath insert
-				 * (it should only be passed a NULL stack when it must deal
-				 * with a concurrent root page split, and never because a NULL
-				 * stack was returned here).
+				 * leaf page splits that this same insert somehow leads to
+				 * despite our effort to avoid them (it should only be passed
+				 * a NULL stack when it must deal with a concurrent root page
+				 * split, and never because a NULL stack was returned here).
 				 */
 				return NULL;
 			}
@@ -1403,7 +1403,7 @@ _bt_insertonpg(Relation rel,
 		 * call _bt_getrootheight while holding a buffer lock.
 		 */
 		if (BlockNumberIsValid(blockcache) &&
-			_bt_getrootheight(rel) >= BTREE_FASTPATH_MIN_LEVEL)
+			_bt_getrootheight(rel) >= BTREE_HEIGHT_INSERT_CACHE)
 			RelationSetTargetBlock(rel, blockcache);
 	}
 
@@ -2128,15 +2128,15 @@ _bt_insert_parent(Relation rel,
 
 			/*
 			 * We should never reach here when a leaf page split takes place
-			 * despite the insert of newitem being able to apply the fastpath
-			 * optimization.  Make sure of that with an assertion.
+			 * despite the insert of newitem being able to apply the leaf page
+			 * cache optimization.  Make sure of that with an assertion.
 			 *
 			 * This is more of a performance issue than a correctness issue.
-			 * The fastpath won't have a descent stack.  Using a phony stack
-			 * here works, but never rely on that.  The fastpath should be
-			 * rejected within _bt_search_insert() when the rightmost leaf
-			 * page will split, since it's faster to go through _bt_search()
-			 * and get a stack in the usual way.
+			 * The cache-used-for-insert case won't have a descent stack.
+			 * Using a phony stack here works, but never rely on that.  The
+			 * cache should be invalidated within _bt_search_insert() when the
+			 * rightmost leaf page will split, since it's faster to go through
+			 * _bt_search() and get a stack in the usual way.
 			 */
 			Assert(!(P_ISLEAF(opaque) &&
 					 BlockNumberIsValid(RelationGetTargetBlock(rel))));
