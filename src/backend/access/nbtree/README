@@ -461,27 +461,8 @@ especially in cases where it really matters: cases where we're vacuuming a
 large index, where recycling pages sooner rather than later is
 particularly likely to matter.
 
-Fastpath For Index Insertion
-----------------------------
-
-We optimize for a common case of insertion of increasing index key
-values by caching the last page to which this backend inserted the last
-value, if this page was the rightmost leaf page. For the next insert, we
-can then quickly check if the cached page is still the rightmost leaf
-page and also the correct place to hold the current value. We can avoid
-the cost of walking down the tree in such common cases.
-
-The optimization works on the assumption that there can only be one
-non-ignorable leaf rightmost page, and so not even a visible-to-everyone
-style interlock is required.  We cannot fail to detect that our hint was
-invalidated, because there can only be one such page in the B-Tree at
-any time. It's possible that the page will be deleted and recycled
-without a backend's cached page also being detected as invalidated, but
-only when we happen to recycle a block that once again gets recycled as the
-rightmost leaf page.
-
-Simple deletion
----------------
+Simple index tuple deletion during inserts
+------------------------------------------
 
 If a process visits a heap tuple and finds that it's dead and removable
 (ie, dead to all open transactions, not only that process), then we can
@@ -533,8 +514,8 @@ LSN of the page, and only act to set LP_DEAD bits when the LSN has not
 changed at all. (Avoiding dropping the pin entirely also makes it safe, of
 course.)
 
-Bottom-Up deletion
-------------------
+Bottom-up index tuple deletion during inserts
+---------------------------------------------
 
 We attempt to delete whatever duplicates happen to be present on the page
 when the duplicates are suspected to be caused by version churn from
@@ -596,6 +577,25 @@ harmless).  We don't have to understand the underlying workload; we only
 have to understand the general nature of the pathology that we target.
 Version churn is easy to spot when it is truly pathological.  Affected
 leaf pages are fairly homogeneous.
+
+Rightmost leaf page insert cache
+--------------------------------
+
+We optimize for a common case of insertion of increasing index key
+values by caching the last page to which this backend inserted the last
+value, if this page was the rightmost leaf page. For the next insert, we
+can then quickly check if the cached page is still the rightmost leaf
+page and also the correct place to hold the current value. We can avoid
+the cost of walking down the tree in such common cases.
+
+The optimization works on the assumption that there can only be one
+non-ignorable leaf rightmost page, and so not even a visible-to-everyone
+style interlock is required.  We cannot fail to detect that our hint was
+invalidated, because there can only be one such page in the B-Tree at
+any time. It's possible that the page will be deleted and recycled
+without a backend's cached page also being detected as invalidated, but
+only when we happen to recycle a block that once again gets recycled as the
+rightmost leaf page.
 
 WAL Considerations
 ------------------
