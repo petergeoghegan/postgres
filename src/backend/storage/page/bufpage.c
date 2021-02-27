@@ -56,9 +56,11 @@ PageInit(Page page, Size pageSize, Size specialSize)
 	p->pd_upper = pageSize - specialSize;
 	p->pd_special = pageSize - specialSize;
 
+#if 0
 	/* Make free space area undefined */
 	VALGRIND_MAKE_MEM_UNDEFINED((char *) p + p->pd_lower,
 								p->pd_upper - p->pd_lower);
+#endif
 
 	PageSetPageSizeAndVersion(page, pageSize, PG_PAGE_LAYOUT_VERSION);
 	/* p->pd_prune_xid = InvalidTransactionId;		done by above MemSet */

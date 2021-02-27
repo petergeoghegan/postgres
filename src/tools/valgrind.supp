@@ -75,11 +75,12 @@
 	fun:pglz_compress
 }
 
-
+# Index builds can use bufpage.c routines to build pages which are subsequently
+# written out through pwrite
 {
-	batty
+	index_build_bufpage
 	Memcheck:Param
-	pwrite64(buf)
+	pwrite*(buf)
 	...
 	fun:FileWrite
 	...
