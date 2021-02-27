@@ -80,7 +80,7 @@
 {
 	index_build_bufpage
 	Memcheck:Param
-	pwrite*(buf)
+	pwrite64(buf)
 	...
 	fun:FileWrite
 	...
