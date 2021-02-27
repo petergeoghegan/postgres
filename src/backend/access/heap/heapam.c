@@ -1466,7 +1466,13 @@ heap_fetch(Relation relation,
 
 	/*
 	 * Must check for deleted tuple.
+	 *
+	 * XXX
 	 */
+	elog(LOG, "Heap tid=(%u,%u) lp_off=%u, lp_len=%u lp_flags=%u pd_lower=%u  pd_upper=%u",
+		 BufferGetBlockNumber(buffer), offnum, ItemIdGetOffset(lp),
+		 ItemIdGetLength(lp), ItemIdGetFlags(lp), ((PageHeader) page)->pd_lower, ((PageHeader) page)->pd_upper);
+
 	if (!ItemIdIsNormal(lp))
 	{
 		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);

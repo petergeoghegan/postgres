@@ -1079,6 +1079,30 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 			}
 		}
 
+#ifdef USE_VALGRIND
+		{
+			Page page = BufHdrGetBlock(buf);
+
+			if (PageIsNew(page))
+			{
+
+			}
+			else if (PageIsEmpty(page))
+			{
+				VALGRIND_MAKE_MEM_UNDEFINED(page + SizeOfPageHeaderData,
+											BLCKSZ - SizeOfPageHeaderData);
+			}
+			else
+			{
+				PageHeader p = (PageHeader) page;
+
+				/* Make free space area undefined again */
+				VALGRIND_MAKE_MEM_UNDEFINED(page + p->pd_lower,
+											p->pd_upper - p->pd_lower);
+			}
+		}
+#endif
+
 		return buf;
 	}
 
@@ -1290,6 +1314,29 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 					*foundPtr = false;
 				}
 			}
+#ifdef USE_VALGRIND
+		{
+			Page page = BufHdrGetBlock(buf);
+
+			if (PageIsNew(page))
+			{
+
+			}
+			else if (PageIsEmpty(page))
+			{
+				VALGRIND_MAKE_MEM_UNDEFINED(page + SizeOfPageHeaderData,
+											BLCKSZ - SizeOfPageHeaderData);
+			}
+			else
+			{
+				PageHeader p = (PageHeader) page;
+
+				/* Make free space area undefined again */
+				VALGRIND_MAKE_MEM_UNDEFINED(page + p->pd_lower,
+											p->pd_upper - p->pd_lower);
+			}
+		}
+#endif
 
 			return buf;
 		}
@@ -1656,15 +1703,21 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 				 * not generally guaranteed to be marked undefined or
 				 * non-accessible in any case.
 				 */
+				VALGRIND_MAKE_MEM_DEFINED(BufHdrGetBlock(buf), BLCKSZ);
 #ifdef USE_VALGRIND
+				if (result)
 				{
 					Page page = BufHdrGetBlock(buf);
 
-					VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
 
 					if (PageIsNew(page))
 					{
 
+					}
+					else if (PageIsEmpty(page))
+					{
+						VALGRIND_MAKE_MEM_UNDEFINED(page + SizeOfPageHeaderData,
+													BLCKSZ - SizeOfPageHeaderData);
 					}
 					else
 					{
@@ -1693,6 +1746,36 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 		 * cannot meddle with that.
 		 */
 		result = true;
+#ifdef USE_VALGRIND
+		{
+			Page page = BufHdrGetBlock(buf);
+
+			if (PageIsNew(page))
+			{
+
+			}
+			else if (PageIsEmpty(page))
+			{
+				VALGRIND_MAKE_MEM_UNDEFINED(page + SizeOfPageHeaderData,
+											BLCKSZ - SizeOfPageHeaderData);
+			}
+			else
+			{
+				PageHeader p = (PageHeader) page;
+
+
+				elog(LOG, "blck %u lower %u upper %u",
+					 BufferGetBlockNumber(b), p->pd_lower, p->pd_upper);
+
+				if (p->pd_upper < p->pd_lower)
+					elog(ERROR, "WWRONG blck %u lower %u upper %u",
+						 BufferGetBlockNumber(b), p->pd_lower, p->pd_upper);
+				/* Make free space area undefined again */
+				VALGRIND_MAKE_MEM_UNDEFINED(page + p->pd_lower,
+											p->pd_upper - p->pd_lower);
+			}
+		}
+#endif
 	}
 
 	ref->refcount++;
