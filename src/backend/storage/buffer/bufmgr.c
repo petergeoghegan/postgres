@@ -1660,22 +1660,19 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 				{
 					Page page = BufHdrGetBlock(buf);
 
+					VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
+
 					if (PageIsNew(page))
-						VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
+					{
+
+					}
 					else
 					{
 						PageHeader p = (PageHeader) page;
 
-						/* Make page header defined first */
-						VALGRIND_MAKE_MEM_DEFINED((char *) p,
-												  SizeOfPageHeaderData);
-
-						/* Make space before free space/hole area defined */
-						VALGRIND_MAKE_MEM_DEFINED((char *) p, p->pd_lower);
-
-						/* Make space after free space/hole area defined */
-						VALGRIND_MAKE_MEM_DEFINED((char *) p + p->pd_upper,
-												  BLCKSZ - p->pd_upper);
+						/* Make free space area undefined again */
+						VALGRIND_MAKE_MEM_UNDEFINED(page + p->pd_lower,
+													p->pd_upper - p->pd_lower);
 					}
 				}
 #endif
@@ -1747,21 +1744,19 @@ PinBuffer_Locked(BufferDesc *buf)
 	{
 		Page page = BufHdrGetBlock(buf);
 
+		VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
+
 		if (PageIsNew(page))
-			VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
+		{
+
+		}
 		else
 		{
 			PageHeader p = (PageHeader) page;
 
-			/* Make page header defined first */
-			VALGRIND_MAKE_MEM_DEFINED((char *) p, SizeOfPageHeaderData);
-
-			/* Make space before free space/hole area defined */
-			VALGRIND_MAKE_MEM_DEFINED((char *) p, p->pd_lower);
-
-			/* Make space after free space/hole area defined */
-			VALGRIND_MAKE_MEM_DEFINED((char *) p + p->pd_upper,
-									  BLCKSZ - p->pd_upper);
+			/* Make free space area undefined again */
+			VALGRIND_MAKE_MEM_UNDEFINED(page + p->pd_lower,
+										p->pd_upper - p->pd_lower);
 		}
 	}
 #endif

@@ -110,6 +110,23 @@
 }
 
 {
+	buffer_sync_undef_write
+	Memcheck:Param
+	pwrite64(buf)
+	...
+	fun:BufferSync
+}
+
+
+{
+	buffer_flush_undef_write
+	Memcheck:Param
+	pwrite64(buf)
+	...
+	fun:FlushBuffer
+}
+
+{
 	padding_relcache
 	Memcheck:Param
 	write(buf)
