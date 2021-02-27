@@ -31,6 +31,7 @@
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "utils/rel.h"
+#include "utils/memdebug.h"
 
 
 /*
@@ -239,6 +240,8 @@ brinGetTupleForHeapBlock(BrinRevmap *revmap, BlockNumber heapBlk,
 		}
 
 		LockBuffer(revmap->rm_currBuf, BUFFER_LOCK_SHARE);
+
+		VALGRIND_MAKE_MEM_DEFINED(page, BufferGetPage(revmap->rm_currBuf));
 
 		contents = (RevmapContents *)
 			PageGetContents(BufferGetPage(revmap->rm_currBuf));
