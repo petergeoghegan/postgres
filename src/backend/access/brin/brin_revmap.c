@@ -30,8 +30,8 @@
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
-#include "utils/rel.h"
 #include "utils/memdebug.h"
+#include "utils/rel.h"
 
 
 /*
