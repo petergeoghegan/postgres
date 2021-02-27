@@ -1084,9 +1084,9 @@ _bt_upgradelockbufcleanup(Relation rel, Buffer buf)
 {
 	/*
 	 * Buffer is pinned and locked, which means that it is expected to be
-	 * defined and addressable.  Check that proactively.
+	 * addressable.  Check that proactively.
 	 */
-	VALGRIND_CHECK_MEM_IS_DEFINED(BufferGetPage(buf), BLCKSZ);
+	VALGRIND_CHECK_MEM_IS_ADDRESSABLE(BufferGetPage(buf), BLCKSZ);
 
 	/* LockBuffer() asserts that pin is held by this backend */
 	LockBuffer(buf, BUFFER_LOCK_UNLOCK);
