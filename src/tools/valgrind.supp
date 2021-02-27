@@ -96,6 +96,7 @@
 	fun:XLogCompressBackupBlock
 }
 
+# Can also pwrite out uninitialized data from xlog
 {
 	padding_XLogRecData_write
 	Memcheck:Param
