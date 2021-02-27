@@ -20,6 +20,7 @@
 #include "lib/ilist.h"
 #include "miscadmin.h"
 #include "storage/predicate.h"
+#include "utils/memdebug.h"
 #include "utils/rel.h"
 
 /*
@@ -136,6 +137,8 @@ GinDataLeafPageGetItems(Page page, int *nitems, ItemPointerData advancePast)
 {
 	ItemPointer result;
 
+	VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
+
 	if (GinPageIsCompressed(page))
 	{
 		GinPostingList *seg = GinDataLeafPageGetPostingList(page);
@@ -183,6 +186,8 @@ GinDataLeafPageGetItemsToTbm(Page page, TIDBitmap *tbm)
 {
 	ItemPointer uncompressed;
 	int			nitems;
+
+	VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
 
 	if (GinPageIsCompressed(page))
 	{
@@ -1200,6 +1205,8 @@ dataBeginPlaceToPage(GinBtree btree, Buffer buf, GinBtreeStack *stack,
 	Page		page = BufferGetPage(buf);
 
 	Assert(GinPageIsData(page));
+
+	VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
 
 	if (GinPageIsLeaf(page))
 		return dataBeginPlaceToPageLeaf(btree, buf, stack, insertdata,
