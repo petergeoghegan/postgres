@@ -359,7 +359,7 @@ brinRevmapDesummarizeRange(Relation idxrel, BlockNumber heapBlk)
 	revmapPg = BufferGetPage(revmapBuf);
 	revmapOffset = HEAPBLK_TO_REVMAP_INDEX(revmap->rm_pagesPerRange, heapBlk);
 
-	VALGRIND_MAKE_MEM_DEFINED(BufferGetPage(revmapPg), BLCKSZ);
+	VALGRIND_MAKE_MEM_DEFINED(revmapPg, BLCKSZ);
 	contents = (RevmapContents *) PageGetContents(revmapPg);
 	iptr = contents->rm_tids;
 	iptr += revmapOffset;
