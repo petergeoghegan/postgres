@@ -241,7 +241,7 @@ brinGetTupleForHeapBlock(BrinRevmap *revmap, BlockNumber heapBlk,
 
 		LockBuffer(revmap->rm_currBuf, BUFFER_LOCK_SHARE);
 
-		VALGRIND_MAKE_MEM_DEFINED(page, BufferGetPage(revmap->rm_currBuf));
+		VALGRIND_MAKE_MEM_DEFINED(BufferGetPage(revmap->rm_currBuf), BLCKSZ);
 
 		contents = (RevmapContents *)
 			PageGetContents(BufferGetPage(revmap->rm_currBuf));
