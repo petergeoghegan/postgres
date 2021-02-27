@@ -1747,7 +1747,7 @@ PinBuffer_Locked(BufferDesc *buf)
 	{
 		Page page = BufHdrGetBlock(buf);
 
-		if (PageIsNew(page)))
+		if (PageIsNew(page))
 			VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
 		else
 		{
