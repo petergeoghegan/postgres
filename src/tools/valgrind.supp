@@ -98,6 +98,17 @@
 	fun:XLogCompressBackupBlock
 }
 
+# Generic write out buffer with undefined page free space bytes (e.g. from
+# VACUUM)
+{
+	relation_extend_undef_write
+	Memcheck:Param
+	pwrite64(buf)
+	fun:pwrite
+	...
+	fun:smgrextend
+}
+
 {
 	padding_relcache
 	Memcheck:Param
