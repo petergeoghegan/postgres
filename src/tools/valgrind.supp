@@ -49,6 +49,16 @@
 	fun:XLogRecordAssemble
 }
 
+# Can also pwrite out uninitialized data from xlog
+{
+	padding_XLogRecData_write
+	Memcheck:Param
+	pwrite64(buf)
+
+	...
+	fun:XLogWrite
+}
+
 # Index builds can use bufpage.c routines to build pages which are subsequently
 # written out through pwrite
 {
@@ -59,16 +69,6 @@
 	fun:FileWrite
 	...
 	fun:index_build
-}
-
-# Can also pwrite out uninitialized data from xlog
-{
-	padding_XLogRecData_write
-	Memcheck:Param
-	pwrite64(buf)
-
-	...
-	fun:XLogWrite
 }
 
 {
