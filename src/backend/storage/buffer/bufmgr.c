@@ -1656,7 +1656,29 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 				 * not generally guaranteed to be marked undefined or
 				 * non-accessible in any case.
 				 */
-				VALGRIND_MAKE_MEM_DEFINED(BufHdrGetBlock(buf), BLCKSZ);
+#ifdef USE_VALGRIND
+				{
+					Page page = BufHdrGetBlock(buf);
+
+					if (PageIsNew(page))
+						VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
+					else
+					{
+						PageHeader p = (PageHeader) page;
+
+						/* Make page header defined first */
+						VALGRIND_MAKE_MEM_DEFINED((char *) p,
+												  SizeOfPageHeaderData);
+
+						/* Make space before free space/hole area defined */
+						VALGRIND_MAKE_MEM_DEFINED((char *) p, p->pd_lower);
+
+						/* Make space after free space/hole area defined */
+						VALGRIND_MAKE_MEM_DEFINED((char *) p + p->pd_upper,
+												  BLCKSZ - p->pd_upper);
+					}
+				}
+#endif
 				break;
 			}
 		}
@@ -1721,7 +1743,28 @@ PinBuffer_Locked(BufferDesc *buf)
 	 * Valgrind (this is similar to the PinBuffer() case where the backend
 	 * doesn't already have a buffer pin)
 	 */
-	VALGRIND_MAKE_MEM_DEFINED(BufHdrGetBlock(buf), BLCKSZ);
+#ifdef USE_VALGRIND
+	{
+		Page page = BufHdrGetBlock(buf);
+
+		if (PageIsNew(page)))
+			VALGRIND_MAKE_MEM_DEFINED(page, BLCKSZ);
+		else
+		{
+			PageHeader p = (PageHeader) page;
+
+			/* Make page header defined first */
+			VALGRIND_MAKE_MEM_DEFINED((char *) p, SizeOfPageHeaderData);
+
+			/* Make space before free space/hole area defined */
+			VALGRIND_MAKE_MEM_DEFINED((char *) p, p->pd_lower);
+
+			/* Make space after free space/hole area defined */
+			VALGRIND_MAKE_MEM_DEFINED((char *) p + p->pd_upper,
+									  BLCKSZ - p->pd_upper);
+		}
+	}
+#endif
 
 	/*
 	 * Since we hold the buffer spinlock, we can update the buffer state and
