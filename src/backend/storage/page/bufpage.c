@@ -55,6 +55,11 @@ PageInit(Page page, Size pageSize, Size specialSize)
 	p->pd_lower = SizeOfPageHeaderData;
 	p->pd_upper = pageSize - specialSize;
 	p->pd_special = pageSize - specialSize;
+
+	/* Make free space area undefined */
+	VALGRIND_MAKE_MEM_UNDEFINED((char *) p + p->pd_lower,
+								p->pd_upper - p->pd_lower);
+
 	PageSetPageSizeAndVersion(page, pageSize, PG_PAGE_LAYOUT_VERSION);
 	/* p->pd_prune_xid = InvalidTransactionId;		done by above MemSet */
 }
@@ -100,6 +105,9 @@ PageIsVerifiedExtended(Page page, BlockNumber blkno, int flags)
 	 */
 	if (!PageIsNew(page))
 	{
+		/* Make free space area undefined */
+		VALGRIND_MAKE_MEM_UNDEFINED(page + p->pd_lower,
+									p->pd_upper - p->pd_lower);
 		if (DataChecksumsEnabled())
 		{
 			checksum = pg_checksum_page((char *) page, blkno);
@@ -338,6 +346,10 @@ PageAddItemExtended(Page page,
 	/* adjust page header */
 	phdr->pd_lower = (LocationIndex) lower;
 	phdr->pd_upper = (LocationIndex) upper;
+
+	/* Make free space area undefined */
+	VALGRIND_MAKE_MEM_UNDEFINED(page + phdr->pd_lower,
+								phdr->pd_upper - phdr->pd_lower);
 
 	return offsetNumber;
 }
@@ -666,6 +678,10 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 	}
 
 	phdr->pd_upper = upper;
+
+	/* Make free space area undefined */
+	VALGRIND_MAKE_MEM_UNDEFINED(page + phdr->pd_lower,
+								phdr->pd_upper - phdr->pd_lower);
 }
 
 /*

@@ -50,6 +50,55 @@
 }
 
 {
+	freespace_page_cond
+	Memcheck:Cond
+	...
+	fun:pglz_find_match
+	fun:pglz_compress
+}
+
+
+{
+	freespace_page_value
+	Memcheck:Value8
+	fun:pglz_compress
+
+	...
+	fun:XLogCompressBackupBlock
+}
+
+{
+	foooz
+	Memcheck:Cond
+	...
+	fun:pglz_find_match
+	fun:pglz_compress
+}
+
+
+{
+	batty
+	Memcheck:Param
+	pwrite64(buf)
+	...
+	fun:FileWrite
+	...
+	fun:index_build
+}
+
+
+{
+	barz
+	Memcheck:Value8
+	...
+	fun:pglz_find_match
+	fun:pglz_compress
+	...
+	fun:XLogCompressBackupBlock
+}
+
+
+{
 	padding_XLogRecData_write
 	Memcheck:Param
 	pwrite64(buf)

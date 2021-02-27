@@ -30,6 +30,7 @@
 #include "storage/fsm_internals.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
+#include "utils/memdebug.h"
 
 
 /*
@@ -590,6 +591,18 @@ fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
 			PageInit(BufferGetPage(buf), BLCKSZ, 0);
 		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 	}
+
+#ifdef USE_VALGRIND
+	{
+		Page	   page = BufferGetPage(buf);
+		PageHeader phdr = (PageHeader) page;
+
+		/* Make free space area defined */
+		VALGRIND_MAKE_MEM_DEFINED(page + phdr->pd_lower,
+								  phdr->pd_upper - phdr->pd_lower);
+	}
+#endif
+
 	return buf;
 }
 

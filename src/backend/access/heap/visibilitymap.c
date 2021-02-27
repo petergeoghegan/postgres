@@ -95,6 +95,7 @@
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
 #include "utils/inval.h"
+#include "utils/memdebug.h"
 
 
 /*#define TRACE_VISIBILITYMAP */
@@ -156,6 +157,17 @@ visibilitymap_clear(Relation rel, BlockNumber heapBlk, Buffer buf, uint8 flags)
 
 	LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
 	map = PageGetContents(BufferGetPage(buf));
+
+#ifdef USE_VALGRIND
+	{
+		Page	   page = BufferGetPage(buf);
+		PageHeader phdr = (PageHeader) page;
+
+		/* Make vm page defined */
+		VALGRIND_MAKE_MEM_DEFINED(page + phdr->pd_lower,
+								  phdr->pd_upper - phdr->pd_lower);
+	}
+#endif
 
 	if (map[mapByte] & mask)
 	{
@@ -606,6 +618,17 @@ vm_readbuf(Relation rel, BlockNumber blkno, bool extend)
 			PageInit(BufferGetPage(buf), BLCKSZ, 0);
 		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 	}
+#ifdef USE_VALGRIND
+	{
+		Page	   page = BufferGetPage(buf);
+		PageHeader phdr = (PageHeader) page;
+
+		/* Make vm page defined */
+		VALGRIND_MAKE_MEM_DEFINED(page + phdr->pd_lower,
+								  phdr->pd_upper - phdr->pd_lower);
+	}
+#endif
+
 	return buf;
 }
 
