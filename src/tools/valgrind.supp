@@ -50,14 +50,6 @@
 }
 
 {
-	freespace_page_cond
-	Memcheck:Cond
-	...
-	fun:pglz_find_match
-	fun:pglz_compress
-}
-
-{
 	freespace_page_value
 	Memcheck:Value8
 	fun:pglz_compress
