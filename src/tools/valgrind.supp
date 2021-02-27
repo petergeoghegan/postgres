@@ -49,6 +49,28 @@
 	fun:XLogRecordAssemble
 }
 
+# Index builds can use bufpage.c routines to build pages which are subsequently
+# written out through pwrite
+{
+	index_build_bufpage
+	Memcheck:Param
+	pwrite64(buf)
+	...
+	fun:FileWrite
+	...
+	fun:index_build
+}
+
+# Can also pwrite out uninitialized data from xlog
+{
+	padding_XLogRecData_write
+	Memcheck:Param
+	pwrite64(buf)
+
+	...
+	fun:XLogWrite
+}
+
 {
 	freespace_page_value
 	Memcheck:Value8
@@ -66,18 +88,6 @@
 	fun:pglz_compress
 }
 
-# Index builds can use bufpage.c routines to build pages which are subsequently
-# written out through pwrite
-{
-	index_build_bufpage
-	Memcheck:Param
-	pwrite64(buf)
-	...
-	fun:FileWrite
-	...
-	fun:index_build
-}
-
 {
 	barz
 	Memcheck:Value8
@@ -86,16 +96,6 @@
 	fun:pglz_compress
 	...
 	fun:XLogCompressBackupBlock
-}
-
-# Can also pwrite out uninitialized data from xlog
-{
-	padding_XLogRecData_write
-	Memcheck:Param
-	pwrite64(buf)
-
-	...
-	fun:XLogWrite
 }
 
 {
