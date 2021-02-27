@@ -57,7 +57,6 @@
 	fun:pglz_compress
 }
 
-
 {
 	freespace_page_value
 	Memcheck:Value8
@@ -87,7 +86,6 @@
 	fun:index_build
 }
 
-
 {
 	barz
 	Memcheck:Value8
@@ -97,7 +95,6 @@
 	...
 	fun:XLogCompressBackupBlock
 }
-
 
 {
 	padding_XLogRecData_write
