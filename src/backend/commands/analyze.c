@@ -620,9 +620,19 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	}
 
 	/*
-	 * Same for indexes. Vacuum always scans all indexes, so if we're part of
-	 * VACUUM ANALYZE, don't overwrite the accurate count already inserted by
-	 * VACUUM.
+	 * Same for indexes, at least in most cases.
+	 *
+	 * VACUUM usually scans all indexes.  When we're part of VACUUM ANALYZE,
+	 * and when VACUUM is known to have actually deleted index tuples, index
+	 * AMs will generally give accurate reltuples -- so don't overwrite the
+	 * accurate count already inserted by VACUUM.
+	 *
+	 * Most individual index AMs only give an estimate in the event of a
+	 * cleanup-only VACUUM, though -- update stats in these cases, since our
+	 * estimate will be at least as good anyway.  (It's possible that
+	 * individual index AMs will have accurate num_index_tuples statistics
+	 * even for a cleanup-only VACUUM.  We don't bother recognizing that; it's
+	 * pretty rare.)
 	 */
 	if (!inh && !params->indexvacuuming)
 	{
