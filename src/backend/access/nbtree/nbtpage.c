@@ -184,8 +184,6 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages)
 	Buffer		metabuf;
 	Page		metapg;
 	BTMetaPageData *metad;
-	bool		rewrite = false;
-	XLogRecPtr	recptr;
 
 	/*
 	 * On-disk compatibility note: The btm_last_cleanup_num_delpages metapage
@@ -200,19 +198,20 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages)
 	 * in reality there are only one or two.  The worst that can happen is
 	 * that there will be a call to btvacuumscan a little earlier, which will
 	 * set btm_last_cleanup_num_delpages to a sane value when we're called.
+	 *
+	 * Note also that the metapage's btm_last_cleanup_num_heap_tuples field is
+	 * no longer used as of PostgreSQL 14.  We set it to -1.0 on rewrite, just
+	 * to be consistent.
 	 */
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
 	metapg = BufferGetPage(metabuf);
 	metad = BTPageGetMeta(metapg);
 
-	/* Always dynamically upgrade index/metapage when BTREE_MIN_VERSION */
-	if (metad->btm_version < BTREE_NOVAC_VERSION)
-		rewrite = true;
-	else if (metad->btm_last_cleanup_num_delpages != num_delpages)
-		rewrite = true;
-
-	if (!rewrite)
+	/* Don't miss chance to upgrade index/metapage when BTREE_MIN_VERSION */
+	if (metad->btm_version >= BTREE_NOVAC_VERSION &&
+		metad->btm_last_cleanup_num_delpages == num_delpages)
 	{
+		/* Usually means index continues to have num_delpages of 0 */
 		_bt_relbuf(rel, metabuf);
 		return;
 	}
@@ -236,6 +235,7 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages)
 	if (RelationNeedsWAL(rel))
 	{
 		xl_btree_metadata md;
+		XLogRecPtr	recptr;
 
 		XLogBeginInsert();
 		XLogRegisterBuffer(0, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
