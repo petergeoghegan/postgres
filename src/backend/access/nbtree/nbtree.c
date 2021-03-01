@@ -997,19 +997,27 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		 */
 		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
 		btvacuumscan(info, stats, NULL, NULL, 0);
+
+		/*
+		 * Posting list tuples are a source of inaccuracy for cleanup-only
+		 * scans.  btvacuumscan assumed that the number of index tuples can be
+		 * used as num_index_tuples, even though num_index_tuples is supposed
+		 * to represent the number of TIDs in the index.  This naive approach
+		 * can underestimate the number of tuples in the index significantly.
+		 */
+		stats->estimated_count = true;
 	}
 
 	/*
 	 * By here, we know for sure that this VACUUM operation won't be skipping
-	 * its btvacuumscan() call.  Maintain the count of the current number of
-	 * heap tuples in the metapage.  Also maintain the num_delpages value.
-	 * This information will be used by _bt_vacuum_needs_cleanup() during
-	 * future VACUUM operations that don't need to call btbulkdelete().
+	 * its btvacuumscan() call.  Maintain  the num_delpages value.  This
+	 * information will be used by _bt_vacuum_needs_cleanup() during future
+	 * VACUUM operations that don't need to call btbulkdelete().
 	 *
 	 * num_delpages is the number of deleted pages now in the index that were
 	 * not safe to place in the FSM to be recycled just yet.  We expect that
 	 * it will almost certainly be possible to place all of these pages in the
-	 * FSM during the next VACUUM operation.  That factor alone might cause
+	 * FSM during the next VACUUM operation.  That factor can cause
 	 * _bt_vacuum_needs_cleanup() to force the next VACUUM to proceed with a
 	 * btvacuumscan() call.
 	 *
@@ -1020,13 +1028,6 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * pages that any given VACUUM operation deletes, as part of the same
 	 * VACUUM operation.  As a result, it is rare for num_delpages to actually
 	 * exceed 0, including with indexes where page deletions are frequent.
-	 *
-	 * Note: We must delay the _bt_set_cleanup_info() call until this late
-	 * stage of VACUUM (the btvacuumcleanup() phase), to keep num_heap_tuples
-	 * accurate.  The btbulkdelete()-time num_heap_tuples value is generally
-	 * just pg_class.reltuples for the heap relation _before_ VACUUM began.
-	 * In general cleanup info should describe the state of the index/table
-	 * _after_ VACUUM finishes.
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
@@ -1037,12 +1038,6 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * double-counting some index tuples, so disbelieve any total that exceeds
 	 * the underlying heap's count ... if we know that accurately.  Otherwise
 	 * this might just make matters worse.
-	 *
-	 * Posting list tuples are another source of inaccuracy.  Cleanup-only
-	 * btvacuumscan calls assume that the number of index tuples can be used
-	 * as num_index_tuples, even though num_index_tuples is supposed to
-	 * represent the number of TIDs in the index.  This naive approach can
-	 * underestimate the number of tuples in the index.
 	 */
 	if (!info->estimated_count)
 	{
@@ -1092,7 +1087,6 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * pages in the index at the end of the VACUUM command.)
 	 */
 	stats->num_pages = 0;
-	stats->estimated_count = false;
 	stats->num_index_tuples = 0;
 	stats->pages_deleted = 0;
 	stats->pages_free = 0;
