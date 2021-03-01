@@ -624,7 +624,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	 * VACUUM ANALYZE, don't overwrite the accurate count already inserted by
 	 * VACUUM.
 	 */
-	if (!inh && !(params->options & VACOPT_VACUUM))
+	if (!inh && !params->indexvacuuming)
 	{
 		for (ind = 0; ind < nindexes; ind++)
 		{
@@ -654,7 +654,12 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
 							  (va_cols == NIL));
 
-	/* If this isn't part of VACUUM ANALYZE, let index AMs do cleanup */
+	/*
+	 * If this isn't part of VACUUM ANALYZE, let index AMs do cleanup.
+	 *
+	 * Note that most index AMs perform a no-op when cleanup is called in
+	 * ANALYZE ONLY mode, so in practice this usually does no work.
+	 */
 	if (!(params->options & VACOPT_VACUUM))
 	{
 		for (ind = 0; ind < nindexes; ind++)

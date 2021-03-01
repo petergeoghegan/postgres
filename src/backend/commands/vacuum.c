@@ -110,6 +110,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	/* Set default value */
 	params.index_cleanup = VACOPT_TERNARY_DEFAULT;
 	params.truncate = VACOPT_TERNARY_DEFAULT;
+	params.indexvacuuming = false;	/* For now */
 
 	/* By default parallel vacuum is enabled */
 	params.nworkers = 0;

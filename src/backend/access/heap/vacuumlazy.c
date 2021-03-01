@@ -1054,6 +1054,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			lazy_vacuum_all_indexes(onerel, Irel, indstats,
 									vacrelstats, lps, nindexes);
 
+			/*
+			 * Remember index VACUUMing (not just cleanup) having taken
+			 * place
+			 */
+			params->indexvacuuming = true;
+
 			/* Remove tuples from heap */
 			lazy_vacuum_heap(onerel, vacrelstats);
 
@@ -1711,6 +1717,13 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		lazy_vacuum_all_indexes(onerel, Irel, indstats, vacrelstats,
 								lps, nindexes);
 
+		/*
+		 * Remember index VACUUMing (not just cleanup) having taken
+		 * place
+		 */
+		params->indexvacuuming = true;
+
+
 		/* Remove tuples from heap */
 		lazy_vacuum_heap(onerel, vacrelstats);
 	}
@@ -1737,7 +1750,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		end_parallel_vacuum(indstats, lps, nindexes);
 
 	/* Update index statistics */
-	update_index_statistics(Irel, indstats, nindexes);
+	if (vacrelstats->useindex)
+		update_index_statistics(Irel, indstats, nindexes);
 
 	/* If no indexes, make log report that lazy_vacuum_heap would've made */
 	if (vacuumed_pages)
