@@ -966,19 +966,21 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 
 		/*
 		 * Since we aren't going to actually delete any leaf items, there's no
-		 * need to go through all the vacuum-cycle-ID pushups here
+		 * need to go through all the vacuum-cycle-ID pushups here.
+		 *
+		 * Posting list tuples are a source of inaccuracy for cleanup-only
+		 * scans.  btvacuumscan() will assume that the number of index tuples
+		 * from each page can be used as num_index_tuples, even though
+		 * num_index_tuples is supposed to represent the number of TIDs in the
+		 * index.  This naive approach can underestimate the number of tuples
+		 * in the index significantly.
+		 *
+		 * We handle the problem by making num_index_tuples an estimate in
+		 * cleanup-only case.
 		 */
 		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
-		btvacuumscan(info, stats, NULL, NULL, 0);
-
-		/*
-		 * Posting list tuples are a source of inaccuracy for cleanup-only
-		 * scans.  btvacuumscan assumed that the number of index tuples can be
-		 * used as num_index_tuples, even though num_index_tuples is supposed
-		 * to represent the number of TIDs in the index.  This naive approach
-		 * can underestimate the number of tuples in the index significantly.
-		 */
 		stats->estimated_count = true;
+		btvacuumscan(info, stats, NULL, NULL, 0);
 	}
 
 	/*
