@@ -168,6 +168,7 @@ _bt_getmeta(Relation rel, Buffer metabuf)
  *
  *		This routine checks if provided cleanup-related information is matching
  *		to those written in the metapage.  On mismatch, metapage is overwritten.
+ *		Postgres 13 version of this function ignores numHeapTuples value.
  */
 void
 _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
@@ -176,22 +177,15 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 	Buffer		metabuf;
 	Page		metapg;
 	BTMetaPageData *metad;
-	bool		needsRewrite = false;
-	XLogRecPtr	recptr;
 
 	/* read the metapage and check if it needs rewrite */
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
 	metapg = BufferGetPage(metabuf);
 	metad = BTPageGetMeta(metapg);
 
-	/* outdated version of metapage always needs rewrite */
-	if (metad->btm_version < BTREE_NOVAC_VERSION)
-		needsRewrite = true;
-	else if (metad->btm_oldest_btpo_xact != oldestBtpoXact ||
-			 metad->btm_last_cleanup_num_heap_tuples != numHeapTuples)
-		needsRewrite = true;
-
-	if (!needsRewrite)
+	/* Don't miss chance to upgrade index/metapage when BTREE_MIN_VERSION */
+	if (metad->btm_version >= BTREE_NOVAC_VERSION &&
+		metad->btm_oldest_btpo_xact == oldestBtpoXact)
 	{
 		_bt_relbuf(rel, metabuf);
 		return;
@@ -209,13 +203,14 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 
 	/* update cleanup-related information */
 	metad->btm_oldest_btpo_xact = oldestBtpoXact;
-	metad->btm_last_cleanup_num_heap_tuples = numHeapTuples;
+	metad->btm_last_cleanup_num_heap_tuples = -1;
 	MarkBufferDirty(metabuf);
 
 	/* write wal record if needed */
 	if (RelationNeedsWAL(rel))
 	{
 		xl_btree_metadata md;
+		XLogRecPtr	recptr;
 
 		XLogBeginInsert();
 		XLogRegisterBuffer(0, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
@@ -227,7 +222,7 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 		md.fastroot = metad->btm_fastroot;
 		md.fastlevel = metad->btm_fastlevel;
 		md.oldest_btpo_xact = oldestBtpoXact;
-		md.last_cleanup_num_heap_tuples = numHeapTuples;
+		md.last_cleanup_num_heap_tuples = -1;
 		md.allequalimage = metad->btm_allequalimage;
 
 		XLogRegisterBufData(0, (char *) &md, sizeof(xl_btree_metadata));
@@ -238,6 +233,7 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 	}
 
 	END_CRIT_SECTION();
+
 	_bt_relbuf(rel, metabuf);
 }
 
