@@ -620,11 +620,21 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	}
 
 	/*
-	 * Same for indexes. Vacuum always scans all indexes, so if we're part of
-	 * VACUUM ANALYZE, don't overwrite the accurate count already inserted by
-	 * VACUUM.
+	 * Same for indexes, at least in most cases.
+	 *
+	 * VACUUM usually scans all indexes.  When we're part of VACUUM ANALYZE,
+	 * and when VACUUM is known to have actually deleted index tuples, index
+	 * AMs will generally give accurate reltuples -- so don't overwrite the
+	 * accurate count already inserted by VACUUM.
+	 *
+	 * Most individual index AMs only give an estimate in the event of a
+	 * cleanup-only VACUUM, though -- update stats in these cases, since our
+	 * estimate will be at least as good anyway.  (It's possible that
+	 * individual index AMs will have accurate num_index_tuples statistics
+	 * even for a cleanup-only VACUUM.  We don't bother recognizing that; it's
+	 * pretty rare.)
 	 */
-	if (!inh && !(params->options & VACOPT_VACUUM))
+	if (!inh && !params->indexvacuuming)
 	{
 		for (ind = 0; ind < nindexes; ind++)
 		{
@@ -654,9 +664,23 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
 							  (va_cols == NIL));
 
-	/* If this isn't part of VACUUM ANALYZE, let index AMs do cleanup */
+	/*
+	 * If this isn't part of VACUUM ANALYZE, let index AMs do cleanup.
+	 *
+	 * Note that most index AMs perform a no-op as a matter of policy for
+	 * amvacuumcleanup() when called in ANALYZE-only mode, so in practice this
+	 * usually does no work (GIN indexes rely on ANALYZE cleanup calls).
+	 *
+	 * Do not confuse this no-op case with the !indexvacuuming VACUUM ANALYZE
+	 * case, which is the case where ambulkdelete() wasn't called for any
+	 * indexes during a VACUUM or a VACUUM ANALYZE.  There probably _were_
+	 * amvacuumcleanup() calls for VACUUM ANALYZE -- they probably did very
+	 * little work, but they're not no-ops to the index AM generally.
+	 */
 	if (!(params->options & VACOPT_VACUUM))
 	{
+		Assert(!params->indexvacuuming);
+
 		for (ind = 0; ind < nindexes; ind++)
 		{
 			IndexBulkDeleteResult *stats;
