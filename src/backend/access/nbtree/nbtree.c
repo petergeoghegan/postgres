@@ -990,9 +990,10 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * num_delpages is the number of deleted pages now in the index that were
 	 * not safe to place in the FSM to be recycled just yet.  We expect that
 	 * it will almost certainly be possible to place all of these pages in the
-	 * FSM during the next VACUUM operation.  That factor can cause
-	 * _bt_vacuum_needs_cleanup() to force the next VACUUM to proceed with a
-	 * btvacuumscan() call.
+	 * FSM during the next VACUUM operation.  _bt_vacuum_needs_cleanup() will
+	 * force the next VACUUM to consider this before allowing btvacuumscan()
+	 * to be skipped entirely.  This should be rare -- cleanup-only VACUUMs
+	 * almost always manage to skip btvacuumscan() in practice.
 	 *
 	 * Note: Prior to PostgreSQL 14, we were completely reliant on the next
 	 * VACUUM operation taking care of recycling whatever pages the current
@@ -1485,7 +1486,10 @@ backtrack:
 		 * We don't count the number of live TIDs during cleanup-only calls to
 		 * btvacuumscan (i.e. when callback is not set).  We count the number
 		 * of index tuples directly instead.  This avoids the expense of
-		 * directly examining all of the tuples on each page.
+		 * directly examining all of the tuples on each page.  VACUUM will
+		 * treat num_index_tuples as an estimate in cleanup-only case, so it
+		 * doesn't matter that this underestimates num_index_tuples
+		 * significantly in some cases.
 		 */
 		if (minoff > maxoff)
 			attempt_pagedel = (blkno == scanblkno);
