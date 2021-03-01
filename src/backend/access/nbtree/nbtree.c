@@ -792,11 +792,8 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 	Buffer		metabuf;
 	Page		metapg;
 	BTMetaPageData *metad;
-	BTOptions  *relopts;
-	float8		cleanup_scale_factor;
 	uint32		btm_version;
 	BlockNumber prev_num_delpages;
-	float8		prev_num_heap_tuples;
 
 	/*
 	 * Copy details from metapage to local variables quickly.
@@ -819,31 +816,7 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 	}
 
 	prev_num_delpages = metad->btm_last_cleanup_num_delpages;
-	prev_num_heap_tuples = metad->btm_last_cleanup_num_heap_tuples;
 	_bt_relbuf(info->index, metabuf);
-
-	/*
-	 * If the underlying table has received a sufficiently high number of
-	 * insertions since the last VACUUM operation that called btvacuumscan(),
-	 * then have the current VACUUM operation call btvacuumscan() now.  This
-	 * happens when the statistics are deemed stale.
-	 *
-	 * XXX: We should have a more principled way of determining what
-	 * "staleness" means. The  vacuum_cleanup_index_scale_factor GUC (and the
-	 * index-level storage param) seem hard to tune in a principled way.
-	 */
-	relopts = (BTOptions *) info->index->rd_options;
-	cleanup_scale_factor = (relopts &&
-							relopts->vacuum_cleanup_index_scale_factor >= 0)
-		? relopts->vacuum_cleanup_index_scale_factor
-		: vacuum_cleanup_index_scale_factor;
-
-	if (cleanup_scale_factor <= 0 ||
-		info->num_heap_tuples < 0 ||
-		prev_num_heap_tuples <= 0 ||
-		(info->num_heap_tuples - prev_num_heap_tuples) /
-		prev_num_heap_tuples >= cleanup_scale_factor)
-		return true;
 
 	/*
 	 * Trigger cleanup in rare cases where prev_num_delpages exceeds 5% of the
@@ -1031,7 +1004,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
-	_bt_set_cleanup_info(info->index, num_delpages, info->num_heap_tuples);
+	_bt_set_cleanup_info(info->index, num_delpages);
 
 	/*
 	 * It's quite possible for us to be fooled by concurrent page splits into

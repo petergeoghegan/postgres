@@ -175,20 +175,11 @@ _bt_getmeta(Relation rel, Buffer metabuf)
  *		_bt_vacuum_needs_cleanup() to decide whether or not a btvacuumscan()
  *		call should go ahead for an entire VACUUM operation.
  *
- *		See btvacuumcleanup() and _bt_vacuum_needs_cleanup() for details of
- *		the two fields that we maintain here.
- *
- *		The information that we maintain for btvacuumcleanup() describes the
- *		state of the index (as well as the table it indexes) just _after_ the
- *		ongoing VACUUM operation.  The next _bt_vacuum_needs_cleanup() call
- *		will consider the information we saved for it during the next VACUUM
- *		operation (assuming that there will be no btbulkdelete() call during
- *		the next VACUUM operation -- if there is then the question of skipping
- *		btvacuumscan() doesn't even arise).
+ *		See btvacuumcleanup() and _bt_vacuum_needs_cleanup() for the
+ *		definition of num_delpages.
  */
 void
-_bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
-					 float8 num_heap_tuples)
+_bt_set_cleanup_info(Relation rel, BlockNumber num_delpages)
 {
 	Buffer		metabuf;
 	Page		metapg;
@@ -219,8 +210,6 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
 		rewrite = true;
 	else if (metad->btm_last_cleanup_num_delpages != num_delpages)
 		rewrite = true;
-	else if (metad->btm_last_cleanup_num_heap_tuples != num_heap_tuples)
-		rewrite = true;
 
 	if (!rewrite)
 	{
@@ -240,7 +229,7 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
 
 	/* update cleanup-related information */
 	metad->btm_last_cleanup_num_delpages = num_delpages;
-	metad->btm_last_cleanup_num_heap_tuples = num_heap_tuples;
+	metad->btm_last_cleanup_num_heap_tuples = -1.0;
 	MarkBufferDirty(metabuf);
 
 	/* write wal record if needed */
@@ -258,7 +247,6 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages,
 		md.fastroot = metad->btm_fastroot;
 		md.fastlevel = metad->btm_fastlevel;
 		md.last_cleanup_num_delpages = num_delpages;
-		md.last_cleanup_num_heap_tuples = num_heap_tuples;
 		md.allequalimage = metad->btm_allequalimage;
 
 		XLogRegisterBufData(0, (char *) &md, sizeof(xl_btree_metadata));
@@ -443,7 +431,6 @@ _bt_getroot(Relation rel, int access)
 			md.fastroot = rootblkno;
 			md.fastlevel = 0;
 			md.last_cleanup_num_delpages = 0;
-			md.last_cleanup_num_heap_tuples = -1.0;
 			md.allequalimage = metad->btm_allequalimage;
 
 			XLogRegisterBufData(2, (char *) &md, sizeof(xl_btree_metadata));
@@ -2628,7 +2615,6 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 			xlmeta.fastroot = metad->btm_fastroot;
 			xlmeta.fastlevel = metad->btm_fastlevel;
 			xlmeta.last_cleanup_num_delpages = metad->btm_last_cleanup_num_delpages;
-			xlmeta.last_cleanup_num_heap_tuples = metad->btm_last_cleanup_num_heap_tuples;
 			xlmeta.allequalimage = metad->btm_allequalimage;
 
 			XLogRegisterBufData(4, (char *) &xlmeta, sizeof(xl_btree_metadata));
