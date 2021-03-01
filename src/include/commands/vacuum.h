@@ -221,7 +221,7 @@ typedef struct VacuumParams
 	VacOptTernaryValue truncate;	/* Truncate empty pages at the end,
 									 * default value depends on reloptions */
 
-	/* XXX: This output param approach is just grotty */
+	/* XXX: This output param approach is just grotty, breaks ABI */
 
 	bool		indexvacuuming;		/* Output param: Cleanup-only VACUUM
 									   took place? */
