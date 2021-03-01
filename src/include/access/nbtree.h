@@ -1087,8 +1087,6 @@ typedef struct BTOptions
 {
 	int32		varlena_header_;	/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
-	/* fraction of newly inserted tuples needed to trigger index cleanup */
-	float8		vacuum_cleanup_index_scale_factor;
 	bool		deduplicate_items;	/* Try to deduplicate items? */
 } BTOptions;
 
