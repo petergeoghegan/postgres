@@ -221,6 +221,11 @@ typedef struct VacuumParams
 	VacOptTernaryValue truncate;	/* Truncate empty pages at the end,
 									 * default value depends on reloptions */
 
+	/* XXX: This output param approach is just grotty, breaks ABI */
+
+	bool		indexvacuuming;		/* Output param: Cleanup-only VACUUM
+									   took place? */
+
 	/*
 	 * The number of parallel vacuum workers.  0 by default which means choose
 	 * based on the number of indexes.  -1 indicates parallel vacuum is
