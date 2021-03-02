@@ -224,7 +224,7 @@ typedef struct VacuumParams
 	/* XXX: output param approach is grotty, breaks backbranch ABI */
 
 	bool		indexvacuuming;		/* Output param: VACUUM took place and
-									 * performed btbulkdelete calls for
+									 * performed ambulkdelete calls for
 									 * indexes? */
 
 	/*
