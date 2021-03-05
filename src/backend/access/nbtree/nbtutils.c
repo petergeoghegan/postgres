@@ -2243,6 +2243,7 @@ _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 	if (keepnatts <= nkeyatts)
 	{
 		BTreeTupleSetNAtts(pivot, keepnatts, false);
+		BTreeTupleSetDownLink(pivot, P_NONE);
 		return pivot;
 	}
 
@@ -2272,6 +2273,7 @@ _bt_truncate(Relation rel, IndexTuple lastleft, IndexTuple firstright,
 	tidpivot->t_info &= ~INDEX_SIZE_MASK;
 	tidpivot->t_info |= newsize;
 	BTreeTupleSetNAtts(tidpivot, nkeyatts, true);
+	BTreeTupleSetDownLink(tidpivot, P_NONE);
 	pivotheaptid = BTreeTupleGetHeapTID(tidpivot);
 
 	/*

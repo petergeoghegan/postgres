@@ -773,6 +773,7 @@ _bt_sortaddtup(Page page,
 		trunctuple = *itup;
 		trunctuple.t_info = sizeof(IndexTupleData);
 		BTreeTupleSetNAtts(&trunctuple, 0, false);
+		Assert(BTreeTupleGetDownLink(&trunctuple) > P_NONE);
 		itup = &trunctuple;
 		itemsize = sizeof(IndexTupleData);
 	}
@@ -1005,9 +1006,12 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 
 		/*
 		 * Save a copy of the high key from the old page.  It is also the low
-		 * key for the new page.
+		 * key for the new page.  We set downlink to P_NONE to explicitly
+		 * represent the absence of a valid downlink in new highkey (not
+		 * strictly necessary, but be tidy).
 		 */
 		state->btps_lowkey = CopyIndexTuple(oitup);
+		BTreeTupleSetDownLink(state->btps_lowkey, P_NONE);
 
 		/*
 		 * Set the sibling links for both pages.

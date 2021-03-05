@@ -1640,7 +1640,10 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		/*
 		 * Don't perform suffix truncation on a copy of firstright to make
 		 * left page high key for internal page splits.  Must use firstright
-		 * as new high key directly.
+		 * as new high key directly.  We set downlink to P_NONE to explicitly
+		 * represent the absence of a valid downlink in new highkey (not
+		 * strictly necessary, but match isleaf/_bt_truncate() case to be
+		 * tidy).
 		 *
 		 * Each distinct separator key value originates as a leaf level high
 		 * key; all other separator keys/pivot tuples are copied from one
@@ -1663,7 +1666,9 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		 * time in the right page (only firstright's downlink goes in right
 		 * page).
 		 */
-		lefthighkey = firstright;
+		lefthighkey = CopyIndexTuple(firstright);
+		Assert(BTreeTupleGetDownLink(lefthighkey) > P_NONE);
+		BTreeTupleSetDownLink(lefthighkey, P_NONE);
 	}
 
 	/*
@@ -2005,12 +2010,6 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		}
 
 		/* Log the left page's new high key */
-		if (!isleaf)
-		{
-			/* lefthighkey isn't local copy, get current pointer */
-			itemid = PageGetItemId(origpage, P_HIKEY);
-			lefthighkey = (IndexTuple) PageGetItem(origpage, itemid);
-		}
 		XLogRegisterBufData(0, (char *) lefthighkey,
 							MAXALIGN(IndexTupleSize(lefthighkey)));
 
@@ -2050,8 +2049,7 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		_bt_relbuf(rel, cbuf);
 
 	/* be tidy */
-	if (isleaf)
-		pfree(lefthighkey);
+	pfree(lefthighkey);
 
 	/* split's done */
 	return rbuf;
@@ -2610,6 +2608,7 @@ _bt_pgaddtup(Page page,
 		trunctuple = *itup;
 		trunctuple.t_info = sizeof(IndexTupleData);
 		BTreeTupleSetNAtts(&trunctuple, 0, false);
+		Assert(BTreeTupleGetDownLink(&trunctuple) > P_NONE);
 		itup = &trunctuple;
 		itemsize = sizeof(IndexTupleData);
 	}
