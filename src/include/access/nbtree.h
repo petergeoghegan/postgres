@@ -529,7 +529,15 @@ BTreeTupleGetPostingN(IndexTuple posting, int n)
 static inline BlockNumber
 BTreeTupleGetDownLink(IndexTuple pivot)
 {
-	return ItemPointerGetBlockNumberNoCheck(&pivot->t_tid);
+	BlockNumber downlink = ItemPointerGetBlockNumberNoCheck(&pivot->t_tid);
+
+	/* Check this isn't high key pivot tuple */
+	Assert(downlink > P_NONE);
+
+	/* Don't use this to get "top parent" links */
+	Assert(BlockNumberIsValid(downlink));
+
+	return downlink;
 }
 
 static inline void

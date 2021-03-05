@@ -36,8 +36,11 @@ leaf pages are pivot tuples.  Since pivot tuples are only used to represent
 which part of the key space belongs on each page, they can have attribute
 values copied from non-pivot tuples that were deleted and killed by VACUUM
 some time ago.  A pivot tuple may contain a "separator" key and downlink,
-just a separator key (i.e. the downlink value is implicitly undefined), or
-just a downlink (i.e. all attributes are truncated away).
+just a separator key (in which case the downlink value is P_NONE), or just
+a downlink (in which case a valid downlink value is set but all attributes
+are truncated away).  Pivot tuples with all attributes truncated away have
+no separator key as such, but are still interpreted as having the value
+"minus infinity" when descending the tree, per Lehman and Yao.
 
 The requirement that all btree keys be unique is satisfied by treating heap
 TID as a tiebreaker attribute.  Logical duplicates are sorted in heap TID
@@ -52,7 +55,10 @@ The Postgres implementation of suffix truncation must make sure that the
 Lehman and Yao invariants hold, and represents that absent/truncated
 attributes in pivot tuples have the sentinel value "minus infinity".  The
 later section on suffix truncation will be helpful if it's unclear how the
-Lehman & Yao invariants work with a real world example.
+Lehman and Yao invariants work with a real world example.  While Lehman
+and Yao don't deal with suffix truncation, they have "minus infinity"
+separator keys.  We represent these in pivot tuples by having _all_
+attribute values truncated away, which keeps the on-disk format simple.
 
 Differences to the Lehman & Yao algorithm
 -----------------------------------------
