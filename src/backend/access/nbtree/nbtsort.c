@@ -904,56 +904,62 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		/*
 		 * Finish off the page and write it out.
 		 */
-		Page		opage = npage;
-		BlockNumber oblkno = nblkno;
+		Page		origpage = npage;
+		BlockNumber origpagenumber = nblkno;
+		BTPageOpaque oopaque,
+					ropaque;
 		ItemId		ii;
 		ItemId		hii;
-		IndexTuple	oitup;
+		IndexTuple	firstright,
+					lefthighkey;
 
-		/* Create new page of same level */
+		/*
+		 * Create new sibling (same level) page -- this can be thought of as
+		 * what _bt_split() calls 'rightpage', at least for the duration of
+		 * the ongoing "page split"
+		 */
 		npage = _bt_blnewpage(state->btps_level);
 
 		/* and assign it a page position */
 		nblkno = wstate->btws_pages_alloced++;
 
 		/*
-		 * We copy the last item on the page into the new page, and then
-		 * rearrange the old page so that the 'last item' becomes its high key
-		 * rather than a true data item.  There had better be at least two
-		 * items on the page already, else the page would be empty of useful
-		 * data.
+		 * We copy the last item on the page into the new page -- it will be
+		 * the new right page's first data item instead
 		 */
 		Assert(last_off > P_FIRSTKEY);
-		ii = PageGetItemId(opage, last_off);
-		oitup = (IndexTuple) PageGetItem(opage, ii);
-		_bt_sortaddtup(npage, ItemIdGetLength(ii), oitup, P_FIRSTKEY,
+		ii = PageGetItemId(origpage, last_off);
+		firstright = (IndexTuple) PageGetItem(origpage, ii);
+		_bt_sortaddtup(npage, ItemIdGetLength(ii), firstright, P_FIRSTKEY,
 					   !isleaf);
 
 		/*
-		 * Move 'last' into the high key position on opage.  _bt_blnewpage()
-		 * allocated empty space for a line pointer when opage was first
-		 * created, so this is a matter of rearranging already-allocated space
-		 * on page, and initializing high key line pointer. (Actually, leaf
-		 * pages must also swap oitup with a truncated version of oitup, which
-		 * is sometimes larger than oitup, though never by more than the space
-		 * needed to append a heap TID.)
+		 * Original copy of firstright is still on origpage (the left half of
+		 * the split).  Replace it with a new high key that is itself based on
+		 * firstright.  This is needed because origpage does not yet have a
+		 * high key pivot tuple, and also because firstright data item must
+		 * not appear twice.
+		 *
+		 * _bt_blnewpage() allocated empty space for a line pointer when
+		 * origpage was first created, so this is a matter of overwriting the
+		 * origpage firstright tuple space with lefthighkey, initializing high
+		 * key line pointer in the existing empty space, and removing the
+		 * superfluous line pointer that was allocated for firstright when it
+		 * was still assumed to fit on origpage as a data item.
 		 */
-		hii = PageGetItemId(opage, P_HIKEY);
+		hii = PageGetItemId(origpage, P_HIKEY);
 		*hii = *ii;
 		ItemIdSetUnused(ii);	/* redundant */
-		((PageHeader) opage)->pd_lower -= sizeof(ItemIdData);
+		((PageHeader) origpage)->pd_lower -= sizeof(ItemIdData);
 
 		if (isleaf)
 		{
 			IndexTuple	lastleft;
-			IndexTuple	truncated;
 
 			/*
 			 * Truncate away any unneeded attributes from high key on leaf
-			 * level.  This is only done at the leaf level because downlinks
-			 * in internal pages are either negative infinity items, or get
-			 * their contents from copying from one level down.  See also:
-			 * _bt_split().
+			 * level.  See corresponding point in _bt_split() for further
+			 * details.
 			 *
 			 * We don't try to bias our choice of split point to make it more
 			 * likely that _bt_truncate() can truncate away more attributes,
@@ -966,25 +972,26 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 			 * between two unequal tuples, _bt_truncate() will avoid including
 			 * a heap TID in the new high key, which is the most important
 			 * benefit of suffix truncation.
-			 *
-			 * Overwrite the old item with new truncated high key directly.
-			 * oitup is already located at the physical beginning of tuple
-			 * space, so this should directly reuse the existing tuple space.
 			 */
-			ii = PageGetItemId(opage, OffsetNumberPrev(last_off));
-			lastleft = (IndexTuple) PageGetItem(opage, ii);
+			ii = PageGetItemId(origpage, OffsetNumberPrev(last_off));
+			lastleft = (IndexTuple) PageGetItem(origpage, ii);
 
-			Assert(IndexTupleSize(oitup) > last_truncextra);
-			truncated = _bt_truncate(wstate->index, lastleft, oitup,
-									 wstate->inskey);
-			if (!PageIndexTupleOverwrite(opage, P_HIKEY, (Item) truncated,
-										 IndexTupleSize(truncated)))
+			Assert(IndexTupleSize(firstright) > last_truncextra);
+			lefthighkey = _bt_truncate(wstate->index, lastleft, firstright,
+									   wstate->inskey);
+			if (!PageIndexTupleOverwrite(origpage, P_HIKEY, (Item) lefthighkey,
+										 IndexTupleSize(lefthighkey)))
 				elog(ERROR, "failed to add high key to the index page");
-			pfree(truncated);
-
-			/* oitup should continue to point to the page's high key */
-			hii = PageGetItemId(opage, P_HIKEY);
-			oitup = (IndexTuple) PageGetItem(opage, hii);
+		}
+		else
+		{
+			/*
+			 * Don't perform suffix truncation on a copy of firstright to make
+			 * left page high key for internal page splits.  See corresponding
+			 * point in _bt_split() for further details.
+			 */
+			lefthighkey = CopyIndexTuple(firstright);
+			BTreeTupleSetDownLink(lefthighkey, P_NONE);
 		}
 
 		/*
@@ -994,45 +1001,40 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		if (state->btps_next == NULL)
 			state->btps_next = _bt_pagestate(wstate, state->btps_level + 1);
 
-		Assert((BTreeTupleGetNAtts(state->btps_lowkey, wstate->index) <=
-				IndexRelationGetNumberOfKeyAttributes(wstate->index) &&
-				BTreeTupleGetNAtts(state->btps_lowkey, wstate->index) > 0) ||
-			   P_LEFTMOST((BTPageOpaque) PageGetSpecialPointer(opage)));
-		Assert(BTreeTupleGetNAtts(state->btps_lowkey, wstate->index) == 0 ||
-			   !P_LEFTMOST((BTPageOpaque) PageGetSpecialPointer(opage)));
-		BTreeTupleSetDownLink(state->btps_lowkey, oblkno);
-		_bt_buildadd(wstate, state->btps_next, state->btps_lowkey, 0);
-		pfree(state->btps_lowkey);
-
-		/*
-		 * Save a copy of the high key from the old page.  It is also the low
-		 * key for the new page.  We set downlink to P_NONE to explicitly
-		 * represent the absence of a valid downlink in new highkey (not
-		 * strictly necessary, but be tidy).
-		 */
-		state->btps_lowkey = CopyIndexTuple(oitup);
-		BTreeTupleSetDownLink(state->btps_lowkey, P_NONE);
-
 		/*
 		 * Set the sibling links for both pages.
 		 */
-		{
-			BTPageOpaque oopaque = (BTPageOpaque) PageGetSpecialPointer(opage);
-			BTPageOpaque nopaque = (BTPageOpaque) PageGetSpecialPointer(npage);
+		oopaque = (BTPageOpaque) PageGetSpecialPointer(origpage);
+		ropaque = (BTPageOpaque) PageGetSpecialPointer(npage);
 
-			oopaque->btpo_next = nblkno;
-			nopaque->btpo_prev = oblkno;
-			nopaque->btpo_next = P_NONE;	/* redundant */
-		}
+		oopaque->btpo_next = nblkno;
+		ropaque->btpo_prev = origpagenumber;
+		ropaque->btpo_next = P_NONE;	/* redundant */
 
 		/*
-		 * Write out the old page.  We never need to touch it again, so we can
-		 * free the opage workspace too.
+		 * Write low key as origpage's pivot tuple in parent (with
+		 * origpagenumber as the downlink)
 		 */
-		_bt_blwritepage(wstate, opage, oblkno);
+		BTreeTupleSetDownLink(state->btps_lowkey, origpagenumber);
+		_bt_buildadd(wstate, state->btps_next, state->btps_lowkey, 0);
 
 		/*
-		 * Reset last_off to point to new page
+		 * Save the high key from origpage.  It is also the low key for the
+		 * new page -- we'll need it when we "split" the new npage/right page
+		 * at the same point later on.
+		 */
+		pfree(state->btps_lowkey);
+		state->btps_lowkey = lefthighkey;
+
+		/*
+		 * Write out origpage.  We never need to touch it again, so we can
+		 * free the origpage workspace too.
+		 */
+		_bt_blwritepage(wstate, origpage, origpagenumber);
+
+		/*
+		 * Reset last_off to work with new page (which is now the right
+		 * sibling page of origpage)
 		 */
 		last_off = P_FIRSTKEY;
 	}
