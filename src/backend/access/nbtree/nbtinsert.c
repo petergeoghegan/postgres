@@ -1196,8 +1196,9 @@ _bt_insertonpg(Relation rel,
 		Assert(!split_only_page);
 
 		/* split buf into left and right halves separated by lefthighkey */
-		lefthighkey = _bt_split(rel, itup_key, buf, &rbuf, cbuf, newitemoff,
-								itemsz, itup, origitup, nposting, postingoff);
+		lefthighkey = _bt_split(rel, itup_key, buf, &rbuf, cbuf,
+								newitemoff, itemsz, itup,
+								origitup, nposting, postingoff);
 		PredicateLockPageSplit(rel,
 							   BufferGetBlockNumber(buf),
 							   BufferGetBlockNumber(rbuf));
