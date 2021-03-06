@@ -2157,9 +2157,6 @@ _bt_insert_parent(Relation rel,
 			_bt_relbuf(rel, pbuf);
 		}
 
-		/* Set downlink to rbuf in our newitem */
-		BTreeTupleSetDownLink(lefthighkey, rbknum);
-
 		/*
 		 * Re-find and write lock the parent of buf.
 		 *
@@ -2192,7 +2189,11 @@ _bt_insert_parent(Relation rel,
 					 errmsg_internal("failed to re-find parent key in index \"%s\" for split pages %u/%u",
 									 RelationGetRelationName(rel), bknum, rbknum)));
 
-		/* Recursively insert into the parent */
+		/*
+		 * Recursively insert new pivot tuple into parent, containing
+		 * lefthighkey's separator key and downlink to rbuf
+		 */
+		BTreeTupleSetDownLink(lefthighkey, rbknum);
 		_bt_insertonpg(rel, NULL, pbuf, buf, stack->bts_parent,
 					   lefthighkey, MAXALIGN(IndexTupleSize(lefthighkey)),
 					   stack->bts_offset + 1, 0, isonly);
