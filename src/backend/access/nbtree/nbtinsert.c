@@ -1190,8 +1190,8 @@ _bt_insertonpg(Relation rel,
 	 */
 	if (PageGetFreeSpace(page) < itemsz)
 	{
-		Buffer		rbuf;
 		IndexTuple lefthighkey;
+		Buffer	   rbuf;
 
 		Assert(!split_only_page);
 
@@ -1210,8 +1210,7 @@ _bt_insertonpg(Relation rel,
 		 *		+  the original tuple has been inserted;
 		 *		+  we have write locks on both the old (left half)
 		 *		   and new (right half) buffers, after the split; and
-		 *		+  we know the key we want to insert into the parent
-		 *		   (it's lefthighkey, a copy of high key from buf/left page).
+		 *		+  we have lefthighkey, which we'll now insert on parent.
 		 *
 		 * We're ready to do the parent insertion.  We need to hold onto the
 		 * locks for the child pages until we locate the parent, but we can
@@ -1426,28 +1425,33 @@ _bt_insertonpg(Relation rel,
  *	_bt_split() -- split a page in the btree.
  *
  *		On entry, buf is the page to split, and is pinned and write-locked.
- *		newitemoff etc. tell us about the new item that must be inserted
- *		along with the data from the original page.
+ *		*rbuf will become its new right sibling after the split.  The pin and
+ *		lock on buf is kept on return, plus *rbuf will also be pinned and
+ *		locked.
  *
- *		itup_key is used for suffix truncation on leaf pages (internal
- *		page callers pass NULL).  When splitting a non-leaf page, 'cbuf'
- *		is the left-sibling of the page we're inserting the downlink for.
- *		This function will clear the INCOMPLETE_SPLIT flag on it, and
- *		release the buffer.
+ *		itup_key is used for suffix truncation on leaf pages (internal page
+ *		callers can just pass NULL).
+ *
+ *		When splitting a non-leaf page, 'cbuf' is the left-sibling of the page
+ *		we're inserting the downlink for.  This function will clear the
+ *		INCOMPLETE_SPLIT flag on it, and release the buffer.
+ *
+ *		newitemoff etc.  tell us about the new item that must be inserted
+ *		along with the data from the original page.
  *
  *		orignewitem, nposting, and postingoff are needed when an insert of
  *		orignewitem results in both a posting list split and a page split.
- *		These extra posting list split details are used here in the same
- *		way as they are used in the more common case where a posting list
- *		split does not coincide with a page split.  We need to deal with
- *		posting list splits directly in order to ensure that everything
- *		that follows from the insert of orignewitem is handled as a single
- *		atomic operation (though caller's insert of a new pivot/downlink
- *		into parent page will still be a separate operation).  See
- *		nbtree/README for details on the design of posting list splits.
+ *		These extra posting list split details are used here in the same way
+ *		as they are used in the more common case where a posting list split
+ *		does not coincide with a page split.  We need to deal with posting
+ *		list splits directly in order to ensure that everything that follows
+ *		from the insert of orignewitem is handled as a single atomic operation
+ *		(though caller's insert of a new pivot/downlink into parent page will
+ *		still be a separate operation).  See nbtree/README for details on the
+ *		design of posting list splits.
  *
- *		Returns the new right sibling of buf, pinned and write-locked.
- *		The pin and lock on buf are maintained.
+ *		Returns a palloc()'d copy of new high key for left half of split
+ *		(buf's page), without setting its downlink.
  */
 static IndexTuple
 _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer *rbuf,
@@ -2071,6 +2075,8 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer *rbuf,
  * page, since buf's INCOMPLETE_SPLIT flag must be cleared by the same
  * atomic operation that completes the split by inserting a new downlink.
  *
+ * lefthighkey - palloc()'d copy of high key from buf - downlink gets set
+ *			to rbuf's block here as part of parent insert
  * stack - stack showing how we got here.  Will be NULL when splitting true
  *			root, or during concurrent root split, where we can be inefficient
  * isroot - we split the true root
@@ -2426,7 +2432,7 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	BTPageOpaque lopaque;
 	IndexTuple	left_item;
 	Size		left_item_sz;
-	Size		right_item_sz;
+	Size		lefthighkey_sz;
 	Buffer		metabuf;
 	Page		metapg;
 	BTMetaPageData *metad;
@@ -2461,7 +2467,7 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	 * Create pivot tuple with downlink to right page in new root page.
 	 * Mutate caller's lefthighkey for this.
 	 */
-	right_item_sz = IndexTupleSize(lefthighkey);
+	lefthighkey_sz = IndexTupleSize(lefthighkey);
 	BTreeTupleSetDownLink(lefthighkey, rbkno);
 
 	/* NO EREPORT(ERROR) from here till newroot op is logged */
@@ -2506,7 +2512,7 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	Assert(BTreeTupleGetNAtts(lefthighkey, rel) > 0);
 	Assert(BTreeTupleGetNAtts(lefthighkey, rel) <=
 		   IndexRelationGetNumberOfKeyAttributes(rel));
-	if (PageAddItem(rootpage, (Item) lefthighkey, right_item_sz, P_FIRSTKEY,
+	if (PageAddItem(rootpage, (Item) lefthighkey, lefthighkey_sz, P_FIRSTKEY,
 					false, false) == InvalidOffsetNumber)
 		elog(PANIC, "failed to add rightkey to new root page"
 			 " while splitting block %u of index \"%s\"",
