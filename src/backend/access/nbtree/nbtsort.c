@@ -1012,16 +1012,17 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		ropaque->btpo_next = P_NONE;	/* redundant */
 
 		/*
-		 * Write low key as origpage's pivot tuple in parent (with
+		 * Write origpage's low key as origpage's pivot tuple in parent (with
 		 * origpagenumber as the downlink)
 		 */
 		BTreeTupleSetDownLink(state->btps_lowkey, origpagenumber);
 		_bt_buildadd(wstate, state->btps_next, state->btps_lowkey, 0);
 
 		/*
-		 * Save the high key from origpage.  It is also the low key for the
-		 * new page -- we'll need it when we "split" the new npage/right page
-		 * at the same point later on.
+		 * Save the high key from origpage as the low key for the new page.
+		 * We'll probably end up splitting new page in exactly the same manner
+		 * as we just split origpage (and even when we don't we'll still need
+		 * a npage low key elsewhere).
 		 */
 		pfree(state->btps_lowkey);
 		state->btps_lowkey = lefthighkey;
@@ -1040,9 +1041,9 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 	}
 
 	/*
-	 * By here, either original page is still the current page, or a new page
-	 * was created that became the current page.  Either way, the current page
-	 * definitely has space for new item.
+	 * By here, either original page is still the current page, or a new right
+	 * sibling page was created that became the current page. (Either way the
+	 * current page definitely has space for new item.)
 	 *
 	 * If the new item is the first for its page, it must also be the first
 	 * item on its entire level.  On later same-level pages, a low key for a
