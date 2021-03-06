@@ -987,6 +987,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 			BTreeTupleSetDownLink(lefthighkey, P_NONE);
 		}
 
+		/* Overwrite firstright's space in origpage with lefthighkey */
 		if (!PageIndexTupleOverwrite(origpage, P_HIKEY, (Item) lefthighkey,
 									 IndexTupleSize(lefthighkey)))
 			elog(ERROR, "failed to add high key to the index page");
