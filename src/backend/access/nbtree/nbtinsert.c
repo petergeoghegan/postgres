@@ -2190,8 +2190,8 @@ _bt_insert_parent(Relation rel,
 									 RelationGetRelationName(rel), bknum, rbknum)));
 
 		/*
-		 * Recursively insert new pivot tuple into parent, containing
-		 * lefthighkey's separator key and downlink to rbuf
+		 * Recursively insert new pivot tuple into parent.  Should contain
+		 * lefthighkey's separator key and a downlink to rbuf's block.
 		 */
 		BTreeTupleSetDownLink(lefthighkey, rbknum);
 		_bt_insertonpg(rel, NULL, pbuf, buf, stack->bts_parent,
