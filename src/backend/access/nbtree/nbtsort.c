@@ -979,20 +979,17 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 			Assert(IndexTupleSize(firstright) > last_truncextra);
 			lefthighkey = _bt_truncate(wstate->index, lastleft, firstright,
 									   wstate->inskey);
-			if (!PageIndexTupleOverwrite(origpage, P_HIKEY, (Item) lefthighkey,
-										 IndexTupleSize(lefthighkey)))
-				elog(ERROR, "failed to add high key to the index page");
 		}
 		else
 		{
-			/*
-			 * Don't perform suffix truncation on a copy of firstright to make
-			 * left page high key for internal page splits.  See corresponding
-			 * point in _bt_split() for further details.
-			 */
+			/* High key pivot tuples never have a downlink */
 			lefthighkey = CopyIndexTuple(firstright);
 			BTreeTupleSetDownLink(lefthighkey, P_NONE);
 		}
+
+		if (!PageIndexTupleOverwrite(origpage, P_HIKEY, (Item) lefthighkey,
+									 IndexTupleSize(lefthighkey)))
+			elog(ERROR, "failed to add high key to the index page");
 
 		/*
 		 * Link the old page into its parent, using its low key.  If we don't
