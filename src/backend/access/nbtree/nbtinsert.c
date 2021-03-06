@@ -2419,6 +2419,9 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
  *		two new children, metapage is updated and unlocked/unpinned.
  *		The new root buffer is returned to caller which has to unlock/unpin
  *		buf, rbuf & rootbuf.
+ *
+ *		lefthighkey is a palloc()'d copy of the high key from newly-split page
+ *		in buf.
  */
 static Buffer
 _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
@@ -2431,8 +2434,7 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	BlockNumber rootblknum;
 	BTPageOpaque rootopaque;
 	BTPageOpaque lopaque;
-	IndexTuple	left_item;
-	Size		left_item_sz;
+	IndexTupleData	minusinfitem;
 	Size		lefthighkey_sz;
 	Buffer		metabuf;
 	Page		metapg;
@@ -2454,20 +2456,15 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	metad = BTPageGetMeta(metapg);
 
 	/*
-	 * Create downlink item for left page (old root).  The key value used is
-	 * "minus infinity", a sentinel value that's reliably less than any real
-	 * key value that could appear in the left page.
+	 * Create pivot tuple with downlink pointing to left page (old root).  The
+	 * key value used is "minus infinity", a sentinel value that's reliably
+	 * less than any real key value that could appear in the left page.
 	 */
-	left_item_sz = sizeof(IndexTupleData);
-	left_item = (IndexTuple) palloc(left_item_sz);
-	left_item->t_info = left_item_sz;
-	BTreeTupleSetDownLink(left_item, lbkno);
-	BTreeTupleSetNAtts(left_item, 0, false);
+	minusinfitem.t_info = sizeof(IndexTupleData);
+	BTreeTupleSetNAtts(&minusinfitem, 0, false);
+	BTreeTupleSetDownLink(&minusinfitem, lbkno);
 
-	/*
-	 * Create pivot tuple with downlink to right page in new root page.
-	 * Mutate caller's lefthighkey for this.
-	 */
+	/* Create pivot tuple with downlink to right page in new root page */
 	lefthighkey_sz = IndexTupleSize(lefthighkey);
 	BTreeTupleSetDownLink(lefthighkey, rbkno);
 
@@ -2500,9 +2497,9 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	 * Note: we *must* insert the two items in item-number order, for the
 	 * benefit of _bt_restore_page().
 	 */
-	Assert(BTreeTupleGetNAtts(left_item, rel) == 0);
-	if (PageAddItem(rootpage, (Item) left_item, left_item_sz, P_HIKEY,
-					false, false) == InvalidOffsetNumber)
+	Assert(BTreeTupleGetNAtts(&minusinfitem, rel) == 0);
+	if (PageAddItem(rootpage, (Item) &minusinfitem, sizeof(IndexTupleData),
+					P_HIKEY, false, false) == InvalidOffsetNumber)
 		elog(PANIC, "failed to add leftkey to new root page"
 			 " while splitting block %u of index \"%s\"",
 			 BufferGetBlockNumber(buf), RelationGetRelationName(rel));
@@ -2575,8 +2572,6 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 
 	/* done with metapage */
 	_bt_relbuf(rel, metabuf);
-
-	pfree(left_item);
 
 	return rootbuf;
 }
