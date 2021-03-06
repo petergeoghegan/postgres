@@ -2426,7 +2426,7 @@ _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 static Buffer
 _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 {
-	Buffer		rootbuf;
+	Buffer		newrootbuf;
 	Page		lpage,
 				rootpage;
 	BlockNumber lbkno,
@@ -2446,9 +2446,9 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	lopaque = (BTPageOpaque) PageGetSpecialPointer(lpage);
 
 	/* get a new root page */
-	rootbuf = _bt_getbuf(rel, P_NEW, BT_WRITE);
-	rootpage = BufferGetPage(rootbuf);
-	rootblknum = BufferGetBlockNumber(rootbuf);
+	newrootbuf = _bt_getbuf(rel, P_NEW, BT_WRITE);
+	rootpage = BufferGetPage(newrootbuf);
+	rootblknum = BufferGetBlockNumber(newrootbuf);
 
 	/* acquire lock on the metapage */
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_WRITE);
@@ -2521,7 +2521,7 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	lopaque->btpo_flags &= ~BTP_INCOMPLETE_SPLIT;
 	MarkBufferDirty(buf);
 
-	MarkBufferDirty(rootbuf);
+	MarkBufferDirty(newrootbuf);
 	MarkBufferDirty(metabuf);
 
 	/* XLOG stuff */
@@ -2537,7 +2537,7 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, SizeOfBtreeNewroot);
 
-		XLogRegisterBuffer(0, rootbuf, REGBUF_WILL_INIT);
+		XLogRegisterBuffer(0, newrootbuf, REGBUF_WILL_INIT);
 		XLogRegisterBuffer(1, buf, REGBUF_STANDARD);
 		XLogRegisterBuffer(2, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
 
@@ -2573,7 +2573,7 @@ _bt_newroot(Relation rel, Buffer buf, Buffer rbuf, IndexTuple lefthighkey)
 	/* done with metapage */
 	_bt_relbuf(rel, metabuf);
 
-	return rootbuf;
+	return newrootbuf;
 }
 
 /*
