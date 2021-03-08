@@ -110,10 +110,18 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	/* Set default value */
 	params.index_cleanup = VACOPT_TERNARY_DEFAULT;
 	params.truncate = VACOPT_TERNARY_DEFAULT;
-	params.indexvacuuming = false;	/* For now */
 
 	/* By default parallel vacuum is enabled */
 	params.nworkers = 0;
+
+	/*
+	 * Initialize output param that tracks if index vacuuming was performed
+	 * within vacuumlazy.c.  This is currently used by VACUUM ANALYZE to
+	 * determine when vac_update_relstats() should be called for index
+	 * relations -- it must be called during either the VACUUM phase or the
+	 * ANALYZE phase.
+	 */
+	params.indexvacuuming = false;
 
 	/* Parse options list */
 	foreach(lc, vacstmt->options)
@@ -1198,6 +1206,9 @@ vac_estimate_reltuples(Relation relation,
  *		row.  There are additional stats that will be updated if we are
  *		doing ANALYZE, but we always update these stats.  This routine works
  *		for both index and heap relation entries in pg_class.
+ *
+ *		This should be called either during VACUUM or during ANALYZE in the
+ *		VACUUM ANALYZE case,
  *
  *		We violate transaction semantics here by overwriting the rel's
  *		existing pg_class tuple with the new values.  This is reasonably
