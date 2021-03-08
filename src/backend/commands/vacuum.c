@@ -1967,7 +1967,13 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	 * totally unimportant for toast relations.
 	 */
 	if (toast_relid != InvalidOid)
+	{
+		bool indexvacuuming = params->indexvacuuming;
+
 		vacuum_rel(toast_relid, NULL, params);
+
+		params->indexvacuuming = indexvacuuming ;
+	}
 
 	/*
 	 * Now release the session-level lock on the main table.
