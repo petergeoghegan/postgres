@@ -962,6 +962,14 @@ heap_get_root_tuples(Page page, OffsetNumber *root_offsets)
 		 */
 		for (;;)
 		{
+			/* 
+			 * Check for broken chains:
+			 * Vacuum has at some point removed never-committed hot update
+			 * and has since truncate the LP array.
+			 */
+			if (nextoffnum > maxoff)
+				break;
+
 			lp = PageGetItemId(page, nextoffnum);
 
 			/* Check for broken chains */
