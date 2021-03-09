@@ -260,6 +260,8 @@ extern int64 VacuumPageDirty;
 extern int	VacuumCostBalance;
 extern bool VacuumCostActive;
 
+extern double vacuum_cleanup_index_scale_factor;
+
 
 /* in tcop/postgres.c */
 
