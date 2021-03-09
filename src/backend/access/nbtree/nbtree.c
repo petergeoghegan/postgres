@@ -794,6 +794,9 @@ _bt_parallel_advance_array_keys(IndexScanDesc scan)
  * When we return false, VACUUM can even skip the cleanup-only call to
  * btvacuumscan (i.e. there will be no btvacuumscan call for this index at
  * all).  Otherwise, a cleanup-only btvacuumscan call is required.
+ *
+ * Postgres 13 version of this function now ignores the value of
+ * btm_last_cleanup_num_heap_tuples.
  */
 static bool
 _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
@@ -802,7 +805,7 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 	Page		metapg;
 	BTMetaPageData *metad;
 	uint32		btm_version;
-	BlockNumber prev_btm_oldest_btpo_xact;
+	TransactionId prev_btm_oldest_btpo_xact;
 
 	/*
 	 * Copy details from metapage to local variables quickly.
@@ -826,6 +829,17 @@ _bt_vacuum_needs_cleanup(IndexVacuumInfo *info)
 
 	prev_btm_oldest_btpo_xact = metad->btm_oldest_btpo_xact;
 	_bt_relbuf(info->index, metabuf);
+
+	if (TransactionIdIsValid(prev_btm_oldest_btpo_xact) &&
+		TransactionIdPrecedes(prev_btm_oldest_btpo_xact, RecentGlobalXmin))
+	{
+		/*
+		 * If any oldest btpo.xact from a previously deleted page in the index
+		 * is older than RecentGlobalXmin, then at least one deleted page can
+		 * be recycled -- don't skip cleanup.
+		 */
+		return true;
+	}
 
 	return false;
 }
@@ -870,8 +884,6 @@ btbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 IndexBulkDeleteResult *
 btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 {
-	TransactionId oldestBtpoXact = InvalidTransactionId;
-
 	/* No-op in ANALYZE ONLY mode */
 	if (info->analyze_only)
 		return stats;
@@ -910,31 +922,6 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		stats->estimated_count = true;
 		btvacuumscan(info, stats, NULL, NULL, 0);
 	}
-
-	/*
-	 * By here, we know for sure that this VACUUM operation won't be skipping
-	 * its btvacuumscan() call.  Maintain the count of the current number of
-	 * heap tuples in the metapage.  Also maintain the oldestBtpoXact value.
-	 * This information will be used by _bt_vacuum_needs_cleanup() during
-	 * future VACUUM operations that don't need to call btbulkdelete().
-	 *
-	 * The page with the oldest btpo.xact is typically a page deleted by this
-	 * VACUUM operation, since pages deleted by a previous VACUUM operation
-	 * tend to be placed in the FSM (by the current VACUUM operation) -- such
-	 * pages are not candidates to be the oldest btpo.xact.  (Note that pages
-	 * placed in the FSM are reported as deleted pages in the bulk delete
-	 * statistics, despite not counting as deleted pages for the purposes of
-	 * determining the oldest btpo.xact.)
-	 *
-	 * Note: We must delay the _bt_update_meta_cleanup_info() call until this
-	 * late stage of VACUUM (the btvacuumcleanup() phase), to keep
-	 * num_heap_tuples accurate.  The btbulkdelete()-time num_heap_tuples
-	 * value is generally just pg_class.reltuples for the heap relation
-	 * _before_ VACUUM began.  In general cleanup info should describe the
-	 * state of the index/table _after_ VACUUM finishes.
-	 */
-	_bt_update_meta_cleanup_info(info->index, oldestBtpoXact,
-								 info->num_heap_tuples);
 
 	/*
 	 * It's quite possible for us to be fooled by concurrent page splits into
@@ -1067,8 +1054,12 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 		IndexFreeSpaceMapVacuum(rel);
 
 	/*
-	 * Maintain the oldest btpo.xact and a count of the current number of heap
-	 * tuples in the metapage (for the benefit of _bt_vacuum_needs_cleanup).
+	 * Maintain the oldest btpo.xact using _bt_update_meta_cleanup_info, for
+	 * the benefit of _bt_vacuum_needs_cleanup.
+	 *
+	 * Note: We deliberately don't store the count of heap tuples here
+	 * anymore.  The numHeapTuples argument to _bt_update_meta_cleanup_info()
+	 * is left in place on Postgres 13.
 	 *
 	 * The page with the oldest btpo.xact is typically a page deleted by this
 	 * VACUUM operation, since pages deleted by a previous VACUUM operation
@@ -1078,8 +1069,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * statistics, despite not counting as deleted pages for the purposes of
 	 * determining the oldest btpo.xact.)
 	 */
-	_bt_update_meta_cleanup_info(rel, vstate.oldestBtpoXact,
-								 info->num_heap_tuples);
+	_bt_update_meta_cleanup_info(rel, vstate.oldestBtpoXact, -1);
 
 	/* update statistics */
 	stats->num_pages = num_pages;

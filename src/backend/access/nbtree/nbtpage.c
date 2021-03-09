@@ -168,7 +168,8 @@ _bt_getmeta(Relation rel, Buffer metabuf)
  *
  *		This routine checks if provided cleanup-related information is matching
  *		to those written in the metapage.  On mismatch, metapage is overwritten.
- *		Postgres 13 version of this function ignores numHeapTuples value.
+ *
+ *		Postgres 13 version of this function now ignores numHeapTuples value.
  */
 void
 _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
