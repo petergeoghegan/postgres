@@ -600,8 +600,15 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								 PROGRESS_ANALYZE_PHASE_FINALIZE_ANALYZE);
 
 	/*
-	 * Update pages/tuples stats in pg_class ... but not if we're doing
-	 * inherited stats.
+	 * Update pages/tuples stats in pg_class, and report ANALYZE to the stats
+	 * collector ... but not if we're doing inherited stats.
+	 *
+	 * We make a uniform assumption that VACUUM hasn't accurately set a
+	 * pg_class.reltuples value, regardless of whether this is a VACUUM
+	 * ANALYZE.  A "VACUUM (ANALYZE, INDEX_CLEANUP OFF)" command will never
+	 * update pg_class, for example.  It's also possible that pg_class won't
+	 * be updated during VACUUM with index AMs that opt to return NULL from
+	 * their amvacuumcleanup() routine.
 	 */
 	if (!inh)
 	{
@@ -609,6 +616,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 
 		visibilitymap_count(onerel, &relallvisible, NULL);
 
+		/* Update pg_class for table relation */
 		vac_update_relstats(onerel,
 							relpages,
 							totalrows,
@@ -617,15 +625,8 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 							InvalidTransactionId,
 							InvalidMultiXactId,
 							in_outer_xact);
-	}
 
-	/*
-	 * Same for indexes. Vacuum always scans all indexes, so if we're part of
-	 * VACUUM ANALYZE, don't overwrite the accurate count already inserted by
-	 * VACUUM.
-	 */
-	if (!inh && !(params->options & VACOPT_VACUUM))
-	{
+		/* Same for indexes */
 		for (ind = 0; ind < nindexes; ind++)
 		{
 			AnlIndexData *thisdata = &indexdata[ind];
@@ -641,20 +642,30 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								InvalidMultiXactId,
 								in_outer_xact);
 		}
+
+		/*
+		 * Now report ANALYZE to the stats collector.
+		 *
+		 * We deliberately don't report to the stats collector when doing
+		 * inherited stats. because the stats collector only tracks per-table
+		 * stats.
+		 *
+		 * Reset the changes_since_analyze counter only if we analyzed all
+		 * columns; otherwise, there is still work for auto-analyze to do.
+		 */
+		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
+							  (va_cols == NIL));
 	}
 
 	/*
-	 * Report ANALYZE to the stats collector, too.  However, if doing
-	 * inherited stats we shouldn't report, because the stats collector only
-	 * tracks per-table stats.  Reset the changes_since_analyze counter only
-	 * if we analyzed all columns; otherwise, there is still work for
-	 * auto-analyze to do.
+	 * If this isn't part of VACUUM ANALYZE, let index AMs do cleanup.
+	 *
+	 * Note that most index AMs perform a no-op as a matter of policy for
+	 * amvacuumcleanup() when called in ANALYZE-only mode.  In practice only
+	 * ginvacuumcleanup() currently does real work when called through here
+	 * (and even GIN makes it a no-op unless we're running is an autovacuum
+	 * worker).
 	 */
-	if (!inh)
-		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
-							  (va_cols == NIL));
-
-	/* If this isn't part of VACUUM ANALYZE, let index AMs do cleanup */
 	if (!(params->options & VACOPT_VACUUM))
 	{
 		for (ind = 0; ind < nindexes; ind++)
