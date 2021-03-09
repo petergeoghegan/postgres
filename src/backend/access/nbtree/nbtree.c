@@ -916,8 +916,8 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		 * cleanup-only case.
 		 */
 		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
-		stats->estimated_count = true;
 		btvacuumscan(info, stats, NULL, NULL, 0);
+		stats->estimated_count = true;
 	}
 
 	/*
