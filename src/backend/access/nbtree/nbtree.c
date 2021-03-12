@@ -864,7 +864,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * our call to btvacuumscan().  Even then, _bt_recycle_pagedel() must have
 	 * failed to recycle all of the resulting newly deleted pages at the very
 	 * end of btvacuumscan().  (Actually, it's also expected in cases where
-	 * nobody else consumes an XID between VACUUMs.)
+	 * nobody consumes an XID between VACUUMs.)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
