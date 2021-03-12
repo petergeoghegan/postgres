@@ -860,10 +860,11 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 *
 	 * num_delpages is the number of deleted pages now in the index that were
 	 * not safe to place in the FSM to be recycled just yet.  num_delpages is
-	 * greater than 0 only when _bt_pagedel() actually deleted pages, and
-	 * _bt_recycle_pagedel() could not safely recycle the newly deleted pages.
-	 * In general we prefer to avoid relying on a future VACUUM operation
-	 * taking place and finishing off the work that we started.
+	 * greater than 0 only when _bt_pagedel() actually deleted pages during
+	 * our call to btvacuumscan().  Even then, _bt_recycle_pagedel() must have
+	 * failed to recycle all of the resulting newly deleted pages at the very
+	 * end of btvacuumscan().  (Actually, it's also expected in cases where
+	 * nobody else consumes an XID between VACUUMs.)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
