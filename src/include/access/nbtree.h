@@ -279,8 +279,8 @@ BTPageGetDeleteXid(Page page)
  * Is an existing page recyclable?
  *
  * This exists to centralize the policy on which deleted pages are now safe to
- * re-use.  The _bt_newly_deleted_pages_recycle() optimization behaves more
- * aggressively, though that has certain known limitations.
+ * re-use.  The _bt_recycle_pagedel() optimization behaves more aggressively,
+ * though that has certain known limitations.
  *
  * Note: PageIsNew() pages are always safe to recycle, but we can't deal with
  * them here (caller is responsible for that case themselves).  Caller might
@@ -1215,7 +1215,7 @@ extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
 									  Relation heapRel,
 									  TM_IndexDeleteOp *delstate);
 extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
-extern void _bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate);
+extern void _bt_recycle_pagedel(Relation rel, BTVacState *vstate);
 
 /*
  * prototypes for functions in nbtsearch.c

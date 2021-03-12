@@ -2918,14 +2918,14 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 }
 
 /*
- * _bt_newly_deleted_pages_recycle() -- Are _bt_pagedel pages recyclable now?
+ * _bt_recycle_pagedel() -- Are _bt_pagedel pages recyclable now?
  *
  * Note that we assume that the array is ordered by safexid.  No further
  * entries can be safe to recycle once we encounter the first non-recyclable
  * entry in the deleted array.
  */
 void
-_bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
+_bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 {
 	IndexBulkDeleteResult *stats = vstate->stats;
 	Relation	heapRel;

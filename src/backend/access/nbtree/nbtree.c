@@ -866,10 +866,10 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * Note: Prior to PostgreSQL 14, we were completely reliant on the next
 	 * VACUUM operation taking care of recycling whatever pages the current
 	 * VACUUM operation found to be empty and then deleted.  It is now usually
-	 * possible for _bt_newly_deleted_pages_recycle() to recycle all of the
-	 * pages that any given VACUUM operation deletes, as part of the same
-	 * VACUUM operation.  As a result, it is rare for num_delpages to actually
-	 * exceed 0, including with indexes where page deletions are frequent.
+	 * possible for _bt_recycle_pagedel() to recycle all of the pages that any
+	 * given VACUUM operation deletes, as part of the same VACUUM operation.
+	 * As a result, it is rare for num_delpages to actually exceed 0,
+	 * including with indexes where page deletions are frequent.
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
@@ -945,7 +945,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  "_bt_pagedel",
 												  ALLOCSET_DEFAULT_SIZES);
 
-	/* Allocate _bt_newly_deleted_pages_recycle related information */
+	/* Allocate _bt_recycle_pagedel related information */
 	vstate.ndeletedspace = 512;
 	vstate.grow = true;
 	vstate.full = false;
@@ -1031,7 +1031,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * VACUUM.
 	 */
 	if (vstate.ndeleted > 0)
-		_bt_newly_deleted_pages_recycle(rel, &vstate);
+		_bt_recycle_pagedel(rel, &vstate);
 
 	pfree(vstate.deleted);
 
