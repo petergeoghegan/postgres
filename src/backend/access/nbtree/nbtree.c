@@ -859,17 +859,11 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * Maintain num_delpages value in metapage for _bt_vacuum_needs_cleanup().
 	 *
 	 * num_delpages is the number of deleted pages now in the index that were
-	 * not safe to place in the FSM to be recycled just yet.  We expect that
-	 * it will almost certainly be possible to place all of these pages in the
-	 * FSM during the next VACUUM operation.
-	 *
-	 * Note: Prior to PostgreSQL 14, we were completely reliant on the next
-	 * VACUUM operation taking care of recycling whatever pages the current
-	 * VACUUM operation found to be empty and then deleted.  It is now usually
-	 * possible for _bt_recycle_pagedel() to recycle all of the pages that any
-	 * given VACUUM operation deletes, as part of the same VACUUM operation.
-	 * As a result, it is rare for num_delpages to actually exceed 0,
-	 * including with indexes where page deletions are frequent.
+	 * not safe to place in the FSM to be recycled just yet.  num_delpages is
+	 * greater than 0 only when _bt_pagedel() actually deleted pages, and
+	 * _bt_recycle_pagedel() could not safely recycle the newly deleted pages.
+	 * In general we prefer to avoid relying on a future VACUUM operation
+	 * taking place and finishing off the work that we started.
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
