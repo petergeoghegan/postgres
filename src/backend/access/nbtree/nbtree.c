@@ -862,7 +862,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * not safe to place in the FSM to be recycled just yet.  num_delpages is
 	 * greater than 0 only when _bt_pagedel() actually deleted pages during
 	 * our call to btvacuumscan().  Even then, _bt_recycle_pagedel() must have
-	 * failed to recycle all of the resulting newly deleted pages at the very
+	 * failed to recycle some of the resulting newly deleted pages at the very
 	 * end of btvacuumscan().  (Actually, it also happens when nobody consumes
 	 * an XID between VACUUMs, though that has little practical relevance.)
 	 */
