@@ -21,9 +21,7 @@
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
 #include "access/relscan.h"
-#include "access/table.h"
 #include "access/xlog.h"
-#include "catalog/index.h"
 #include "commands/progress.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
@@ -34,7 +32,6 @@
 #include "storage/indexfsm.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
-#include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/builtins.h"
 #include "utils/index_selfuncs.h"
@@ -774,71 +771,6 @@ _bt_parallel_advance_array_keys(IndexScanDesc scan)
 		btscan->btps_arrayKeyCount++;
 	}
 	SpinLockRelease(&btscan->btps_mutex);
-}
-
-/*
- * _bt_newly_deleted_pages_recycle() -- Are _bt_pagedel pages recyclable now?
- *
- * Note that we assume that the array is ordered by safexid.  No further
- * entries can be safe to recycle once we encounter the first non-recyclable
- * entry in the deleted array.
- */
-static inline void
-_bt_newly_deleted_pages_recycle(Relation rel, BTVacState *vstate)
-{
-	IndexBulkDeleteResult *stats = vstate->stats;
-	Relation	heapRel;
-
-	Assert(vstate->ndeleted > 0);
-	Assert(stats->pages_newly_deleted >= vstate->ndeleted);
-
-	/*
-	 * Recompute VACUUM XID boundaries.
-	 *
-	 * We don't actually care about the oldest non-removable XID.  Computing
-	 * the oldest such XID has a useful side-effect: It updates the procarray
-	 * state that tracks XID horizon.  This is not just an optimization; it's
-	 * essential.  It allows the GlobalVisCheckRemovableFullXid() calls we
-	 * make here to notice if and when safexid values from pages this same
-	 * VACUUM operation deleted are sufficiently old to allow recycling to
-	 * take place safely.
-	 */
-	GetOldestNonRemovableTransactionId(NULL);
-
-	/*
-	 * Use the heap relation for GlobalVisCheckRemovableFullXid() calls (don't
-	 * pass NULL rel argument).
-	 *
-	 * This is an optimization; it allows us to be much more aggressive in
-	 * cases involving logical decoding (unless this happens to be a system
-	 * catalog).  We don't simply use BTPageIsRecyclable().
-	 *
-	 * XXX: The BTPageIsRecyclable() criteria creates problems for this
-	 * optimization.  Its safexid test is applied in a redundant manner within
-	 * _bt_getbuf() (via its BTPageIsRecyclable() call).  Consequently,
-	 * _bt_getbuf() may believe that it is still unsafe to recycle a page that
-	 * we know to be recycle safe -- in which case it is unnecessarily
-	 * discarded.
-	 *
-	 * We should get around to fixing this _bt_getbuf() issue some day.  For
-	 * now we can still proceed in the hopes that BTPageIsRecyclable() will
-	 * catch up with us before _bt_getbuf() ever reaches the page.
-	 */
-	heapRel = table_open(IndexGetRelation(RelationGetRelid(rel), false),
-						 AccessShareLock);
-	for (int i = 0; i < vstate->ndeleted; i++)
-	{
-		BlockNumber blkno = vstate->deleted[i].blkno;
-		FullTransactionId safexid = vstate->deleted[i].safexid;
-
-		if (!GlobalVisCheckRemovableFullXid(heapRel, safexid))
-			break;
-
-		RecordFreeIndexPage(rel, blkno);
-		stats->pages_free++;
-	}
-
-	table_close(heapRel, AccessShareLock);
 }
 
 /*
