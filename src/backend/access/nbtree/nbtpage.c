@@ -2884,10 +2884,6 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  *
  * Called at the end of a btvacuumscan(), just before free space map vacuuming
  * takes place.
- *
- * Note that we assume that the array is ordered by safexid.  No further
- * entries can be safe to recycle once we encounter the first non-recyclable
- * entry in the deleted array.
  */
 void
 _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
@@ -2943,10 +2939,9 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 		 * Do the equivalent of checking BTPageIsRecyclable(), but without
 		 * accessing the page again a second time.
 		 *
-		 * Since we assume that array is ordered by safexid, the first
-		 * non-safe XID/page can be taken as indicating that all remaining
-		 * pages are non-safe -- so give up on everything on encountering any
-		 * unsafe entries.
+		 * Give up on finding the first non-recyclable page -- all other pages
+		 * must be non-recyclable too, since _bt_save_pagedel() adds pages to
+		 * the array in safexid order.
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
 			return;
@@ -2969,6 +2964,21 @@ static void
 _bt_save_pagedel(BTVacState *vstate, BlockNumber target,
 				 FullTransactionId safexid)
 {
+#ifdef USE_ASSERT_CHECKING
+	/*
+	 * Verify an assumption made by _bt_recycle_pagedel(): pages from the
+	 * array will always be in safexid order (since that is the order that we
+	 * save them in here)
+	 */
+	if (vstate->npendingpages > 0)
+	{
+		FullTransactionId lastsafexid =
+				vstate->pendingpages[vstate->npendingpages - 1].safexid;
+
+		Assert(FullTransactionIdFollowsOrEquals(safexid, lastsafexid));
+	}
+#endif
+
 	if (vstate->full)
 		return;
 
