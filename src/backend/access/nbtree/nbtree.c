@@ -942,14 +942,14 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  ALLOCSET_DEFAULT_SIZES);
 
 	/* Allocate _bt_recycle_pagedel related information */
-	vstate.ndeletedspace = 512;
 	vstate.grow = true;
 	vstate.full = false;
-	vstate.maxndeletedspace = ((work_mem * 1024L) / sizeof(BTPendingRecycle));
-	vstate.maxndeletedspace = Min(vstate.maxndeletedspace, MaxBlockNumber);
-	vstate.maxndeletedspace = Max(vstate.maxndeletedspace, vstate.ndeletedspace);
-	vstate.ndeleted = 0;
-	vstate.deleted = palloc(sizeof(BTPendingRecycle) * vstate.ndeletedspace);
+	vstate.npendingpagesspace = 512;
+	vstate.npendingpages = 0;
+	vstate.maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingRecycle));
+	vstate.maxnpendingpages = Min(vstate.maxnpendingpages, MaxBlockNumber);
+	vstate.maxnpendingpages = Max(vstate.maxnpendingpages, vstate.npendingpagesspace);
+	vstate.pendingpages = palloc(sizeof(BTPendingRecycle) * vstate.npendingpagesspace);
 
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in
@@ -1018,12 +1018,12 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * forcibly update the upper-level FSM pages to ensure that searchers can
 	 * find them.
 	 */
-	if (vstate.ndeleted > 0)
+	if (vstate.npendingpages > 0)
 		_bt_recycle_pagedel(rel, &vstate);
 	if (stats->pages_free > 0)
 		IndexFreeSpaceMapVacuum(rel);
 
-	pfree(vstate.deleted);
+	pfree(vstate.pendingpages);
 }
 
 /*

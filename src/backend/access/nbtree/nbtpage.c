@@ -2894,8 +2894,8 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 {
 	IndexBulkDeleteResult *stats = vstate->stats;
 
-	Assert(vstate->ndeleted > 0);
-	Assert(stats->pages_newly_deleted >= vstate->ndeleted);
+	Assert(vstate->npendingpages > 0);
+	Assert(stats->pages_newly_deleted >= vstate->npendingpages);
 
 	/*
 	 * Recompute VACUUM XID boundaries.
@@ -2934,10 +2934,10 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 	 */
 	GetOldestNonRemovableTransactionId(NULL);
 
-	for (int i = 0; i < vstate->ndeleted; i++)
+	for (int i = 0; i < vstate->npendingpages; i++)
 	{
-		BlockNumber target = vstate->deleted[i].target;
-		FullTransactionId safexid = vstate->deleted[i].safexid;
+		BlockNumber target = vstate->pendingpages[i].target;
+		FullTransactionId safexid = vstate->pendingpages[i].safexid;
 
 		/*
 		 * Do the equivalent of checking BTPageIsRecyclable(), but without
@@ -2972,9 +2972,9 @@ _bt_save_pagedel(Relation rel, BTVacState *vstate, BlockNumber target,
 	if (vstate->full)
 		return;
 
-	if (vstate->ndeleted >= vstate->ndeletedspace)
+	if (vstate->npendingpages >= vstate->npendingpagesspace)
 	{
-		uint64 newndeletedspace;
+		uint64 newnpendingpagesspace;
 
 		if (!vstate->grow)
 		{
@@ -2982,20 +2982,20 @@ _bt_save_pagedel(Relation rel, BTVacState *vstate, BlockNumber target,
 			return;
 		}
 
-		newndeletedspace = vstate->ndeletedspace * 2;
-		if (newndeletedspace > vstate->maxndeletedspace)
+		newnpendingpagesspace = vstate->npendingpagesspace * 2;
+		if (newnpendingpagesspace > vstate->maxnpendingpages)
 		{
-			newndeletedspace = vstate->maxndeletedspace;
+			newnpendingpagesspace = vstate->maxnpendingpages;
 			vstate->grow = false;
 		}
-		vstate->ndeletedspace = newndeletedspace;
 
-		vstate->deleted =
-			repalloc(vstate->deleted,
-					 sizeof(BTPendingRecycle) * vstate->ndeletedspace);
+		vstate->npendingpagesspace = newnpendingpagesspace;
+		vstate->pendingpages =
+			repalloc(vstate->pendingpages,
+					 sizeof(BTPendingRecycle) * vstate->npendingpagesspace);
 	}
 
-	vstate->deleted[vstate->ndeleted].target = target;
-	vstate->deleted[vstate->ndeleted].safexid = safexid;
-	vstate->ndeleted++;
+	vstate->pendingpages[vstate->npendingpages].target = target;
+	vstate->pendingpages[vstate->npendingpages].safexid = safexid;
+	vstate->npendingpages++;
 }
