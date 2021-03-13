@@ -338,12 +338,13 @@ typedef struct BTVacState
 	/*
 	 * Details of newly deleted pages for _bt_recycle_pagedel()
 	 */
-	BTPendingRecycle *deleted;
 	bool		grow;
 	bool		full;
-	uint32		ndeletedspace;
-	uint64		maxndeletedspace;
-	uint32		ndeleted;
+	BTPendingRecycle *pendingpages;
+	uint32		npendingpages;		/* array size */
+	uint64		maxnpendingpages;	/* max # array elements */
+
+	uint32		npendingpagesspace;	/* current space in # elements */
 } BTVacState;
 
 /*
