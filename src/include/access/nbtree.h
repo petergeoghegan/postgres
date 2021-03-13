@@ -333,11 +333,11 @@ typedef struct BTVacState
 	IndexBulkDeleteCallback callback;
 	void	   *callback_state;
 	BTCycleId	cycleid;
+	MemoryContext pagedelcontext;
 
 	/*
-	 * Page deletion state for VACUUM
+	 * Details of newly deleted pages for _bt_recycle_pagedel()
 	 */
-	MemoryContext pagedelcontext;
 	BTPendingRecycle *deleted;
 	bool		grow;
 	bool		full;
