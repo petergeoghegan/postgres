@@ -2916,15 +2916,20 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 	 */
 	GetOldestNonRemovableTransactionId(NULL);
 
-	/*
-	 * Do the equivalent of checking BTPageIsRecyclable(), but without
-	 * accessing the pages again a second time.
-	 */
 	for (int i = 0; i < vstate->ndeleted; i++)
 	{
 		BlockNumber blkno = vstate->deleted[i].blkno;
 		FullTransactionId safexid = vstate->deleted[i].safexid;
 
+		/*
+		 * Do the equivalent of checking BTPageIsRecyclable(), but without
+		 * accessing the page again a second time.
+		 *
+		 * Since we assume that array is ordered by safexid, the first
+		 * non-safe XID/page can be taken as indicating that all remaining
+		 * pages are non-safe -- so give up on everything on encountering any
+		 * unsafe entries.
+		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
 			break;
 
