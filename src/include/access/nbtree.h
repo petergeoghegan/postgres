@@ -319,7 +319,7 @@ BTPageIsRecyclable(Page page)
  */
 typedef struct BTPendingRecycle
 {
-	BlockNumber blkno;
+	BlockNumber target;
 	FullTransactionId safexid;
 } BTPendingRecycle;
 

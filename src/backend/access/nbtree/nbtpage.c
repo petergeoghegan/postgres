@@ -2918,7 +2918,7 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 
 	for (int i = 0; i < vstate->ndeleted; i++)
 	{
-		BlockNumber blkno = vstate->deleted[i].blkno;
+		BlockNumber target = vstate->deleted[i].target;
 		FullTransactionId safexid = vstate->deleted[i].safexid;
 
 		/*
@@ -2933,7 +2933,7 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
 			break;
 
-		RecordFreeIndexPage(rel, blkno);
+		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
 	}
 }
@@ -2977,7 +2977,7 @@ _bt_save_pagedel(Relation rel, BTVacState *vstate, BlockNumber target,
 					 sizeof(BTPendingRecycle) * vstate->ndeletedspace);
 	}
 
-	vstate->deleted[vstate->ndeleted].blkno = target;
+	vstate->deleted[vstate->ndeleted].target = target;
 	vstate->deleted[vstate->ndeleted].safexid = safexid;
 	vstate->ndeleted++;
 }
