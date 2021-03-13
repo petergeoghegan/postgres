@@ -213,12 +213,6 @@ _bt_vacuum_needs_cleanup(Relation rel)
 	 * total size of the index.  We can reasonably expect (though are not
 	 * guaranteed) to be able to recycle this many pages if we decide to do a
 	 * btvacuumscan call during the ongoing btvacuumcleanup.
-	 *
-	 * Our approach won't reliably avoid "wasted" cleanup-only btvacuumscan
-	 * calls.  That is, we can end up scanning the entire index without ever
-	 * placing even 1 of the prev_num_delpages pages in the free space map, at
-	 * least in certain narrow cases (see nbtree/README section on recycling
-	 * deleted pages for details).  This rarely comes up in practice.
 	 */
 	if (prev_num_delpages > 0 &&
 		prev_num_delpages > RelationGetNumberOfBlocks(rel) / 20)
