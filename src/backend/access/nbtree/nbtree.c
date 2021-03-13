@@ -1009,31 +1009,21 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	MemoryContextDelete(vstate.pagedelcontext);
 
 	/*
-	 * If there were any calls to _bt_pagedel() during any of our calls to
-	 * btvacuumpage(), see if we can recycle any of the resulting pages that
-	 * we have in-memory metadata for.  Recycle newly deleted pages where
-	 * that's safe.  (We'll have to rely on a future VACUUM operation taking
-	 * care of recycling pages that are not considered safe for us to recycle
-	 * here.)
+	 * If there were any calls to _bt_pagedel() during scan of the index then
+	 * see if any of the resulting pages can be placed in the FSM now.  When
+	 * it's not safe we'll have to rely on a future VACUUM operation to take
+	 * care of it.
+	 *
+	 * Finally, if we placed any pages in the FSM (either now or earlier),
+	 * forcibly update the upper-level FSM pages to ensure that searchers can
+	 * find them.
 	 */
 	if (vstate.ndeleted > 0)
 		_bt_recycle_pagedel(rel, &vstate);
-	pfree(vstate.deleted);
-
-	/*
-	 * If we found any recyclable pages (and recorded them in the FSM), then
-	 * forcibly update the upper-level FSM pages to ensure that searchers can
-	 * find them.  It's possible that the pages were also found during
-	 * previous scans and so this is a waste of time, but it's cheap enough
-	 * relative to scanning the index that it shouldn't matter much, and
-	 * making sure that free pages are available sooner not later seems
-	 * worthwhile.
-	 *
-	 * Note that if no recyclable pages exist, we don't bother vacuuming the
-	 * FSM at all.
-	 */
 	if (stats->pages_free > 0)
 		IndexFreeSpaceMapVacuum(rel);
+
+	pfree(vstate.deleted);
 }
 
 /*

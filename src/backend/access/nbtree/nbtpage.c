@@ -24,12 +24,10 @@
 
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
-#include "access/table.h"
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xlog.h"
 #include "access/xloginsert.h"
-#include "catalog/index.h"
 #include "miscadmin.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
@@ -60,6 +58,8 @@ static bool _bt_lock_subtree_parent(Relation rel, BlockNumber child,
 									OffsetNumber *poffset,
 									BlockNumber *topparent,
 									BlockNumber *topparentrightsib);
+static void _bt_save_pagedel(Relation rel, BTVacState *vstate,
+							 BlockNumber target, FullTransactionId safexid);
 
 /*
  *	_bt_initmetapage() -- Fill a page buffer with a correct metapage image
@@ -2733,44 +2733,12 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		stats->pages_deleted++;
 
 	/*
-	 * Maintain array of pages that were deleted during current btvacuumscan()
-	 * call.  We may well be able to recycle them in a separate pass at the
-	 * end of the current btvacuumscan().
-	 *
-	 * Need to respect work_mem/maxndeletedspace limitation on size of deleted
-	 * array.  Our strategy when the array can no longer grow within the
-	 * bounds of work_mem is simple: keep earlier entries (which are likelier
-	 * to be recyclable in the end), but stop saving new entries.
+	 * Remember information about the target page (now a newly deleted page)
+	 * in dedicated vstate space for later.  The page will be considered as a
+	 * candidate to place in the FSM at the end of the current btvacuumscan()
+	 * call.
 	 */
-	if (vstate->full)
-		return true;
-
-	if (vstate->ndeleted >= vstate->ndeletedspace)
-	{
-		uint64 newndeletedspace;
-
-		if (!vstate->grow)
-		{
-			vstate->full = true;
-			return true;
-		}
-
-		newndeletedspace = vstate->ndeletedspace * 2;
-		if (newndeletedspace > vstate->maxndeletedspace)
-		{
-			newndeletedspace = vstate->maxndeletedspace;
-			vstate->grow = false;
-		}
-		vstate->ndeletedspace = newndeletedspace;
-
-		vstate->deleted =
-			repalloc(vstate->deleted,
-					 sizeof(BTPendingRecycle) * vstate->ndeletedspace);
-	}
-
-	vstate->deleted[vstate->ndeleted].blkno = target;
-	vstate->deleted[vstate->ndeleted].safexid = safexid;
-	vstate->ndeleted++;
+	_bt_save_pagedel(rel, vstate, target, safexid);
 
 	return true;
 }
@@ -2920,6 +2888,9 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 /*
  * _bt_recycle_pagedel() -- Are _bt_pagedel pages recyclable now?
  *
+ * Called at the end of a btvacuumscan(), just before free space map vacuuming
+ * takes place.
+ *
  * Note that we assume that the array is ordered by safexid.  No further
  * entries can be safe to recycle once we encounter the first non-recyclable
  * entry in the deleted array.
@@ -2928,7 +2899,6 @@ void
 _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 {
 	IndexBulkDeleteResult *stats = vstate->stats;
-	Relation	heapRel;
 
 	Assert(vstate->ndeleted > 0);
 	Assert(stats->pages_newly_deleted >= vstate->ndeleted);
@@ -2947,37 +2917,62 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 	GetOldestNonRemovableTransactionId(NULL);
 
 	/*
-	 * Use the heap relation for GlobalVisCheckRemovableFullXid() calls (don't
-	 * pass NULL rel argument).
-	 *
-	 * This is an optimization; it allows us to be much more aggressive in
-	 * cases involving logical decoding (unless this happens to be a system
-	 * catalog).  We don't simply use BTPageIsRecyclable().
-	 *
-	 * XXX: The BTPageIsRecyclable() criteria creates problems for this
-	 * optimization.  Its safexid test is applied in a redundant manner within
-	 * _bt_getbuf() (via its BTPageIsRecyclable() call).  Consequently,
-	 * _bt_getbuf() may believe that it is still unsafe to recycle a page that
-	 * we know to be recycle safe -- in which case it is unnecessarily
-	 * discarded.
-	 *
-	 * We should get around to fixing this _bt_getbuf() issue some day.  For
-	 * now we can still proceed in the hopes that BTPageIsRecyclable() will
-	 * catch up with us before _bt_getbuf() ever reaches the page.
+	 * Do the equivalent of checking BTPageIsRecyclable(), but without
+	 * accessing the pages again a second time.
 	 */
-	heapRel = table_open(IndexGetRelation(RelationGetRelid(rel), false),
-						 AccessShareLock);
 	for (int i = 0; i < vstate->ndeleted; i++)
 	{
 		BlockNumber blkno = vstate->deleted[i].blkno;
 		FullTransactionId safexid = vstate->deleted[i].safexid;
 
-		if (!GlobalVisCheckRemovableFullXid(heapRel, safexid))
+		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
 			break;
 
 		RecordFreeIndexPage(rel, blkno);
 		stats->pages_free++;
 	}
+}
 
-	table_close(heapRel, AccessShareLock);
+/*
+ * Maintain array of pages that were deleted during current btvacuumscan()
+ * call, for use in _bt_recycle_pagedel().
+ *
+ * Need to respect work_mem/maxndeletedspace limitation on size of deleted
+ * array.  Our strategy when the array can no longer grow within the bounds of
+ * work_mem is simple: keep earlier entries (which are likelier to be
+ * recyclable in the end), but stop saving new entries.
+ */
+static void
+_bt_save_pagedel(Relation rel, BTVacState *vstate, BlockNumber target,
+				 FullTransactionId safexid)
+{
+	if (vstate->full)
+		return;
+
+	if (vstate->ndeleted >= vstate->ndeletedspace)
+	{
+		uint64 newndeletedspace;
+
+		if (!vstate->grow)
+		{
+			vstate->full = true;
+			return;
+		}
+
+		newndeletedspace = vstate->ndeletedspace * 2;
+		if (newndeletedspace > vstate->maxndeletedspace)
+		{
+			newndeletedspace = vstate->maxndeletedspace;
+			vstate->grow = false;
+		}
+		vstate->ndeletedspace = newndeletedspace;
+
+		vstate->deleted =
+			repalloc(vstate->deleted,
+					 sizeof(BTPendingRecycle) * vstate->ndeletedspace);
+	}
+
+	vstate->deleted[vstate->ndeleted].blkno = target;
+	vstate->deleted[vstate->ndeleted].safexid = safexid;
+	vstate->ndeleted++;
 }
