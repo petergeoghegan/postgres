@@ -58,8 +58,8 @@ static bool _bt_lock_subtree_parent(Relation rel, BlockNumber child,
 									OffsetNumber *poffset,
 									BlockNumber *topparent,
 									BlockNumber *topparentrightsib);
-static void _bt_save_pagedel(Relation rel, BTVacState *vstate,
-							 BlockNumber target, FullTransactionId safexid);
+static void _bt_save_pagedel(BTVacState *vstate, BlockNumber target,
+							 FullTransactionId safexid);
 
 /*
  *	_bt_initmetapage() -- Fill a page buffer with a correct metapage image
@@ -2732,7 +2732,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * candidate to place in the FSM at the end of the current btvacuumscan()
 	 * call.
 	 */
-	_bt_save_pagedel(rel, vstate, target, safexid);
+	_bt_save_pagedel(vstate, target, safexid);
 
 	return true;
 }
@@ -2949,7 +2949,7 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 		 * unsafe entries.
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
-			break;
+			return;
 
 		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
@@ -2966,7 +2966,7 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
  * recyclable in the end), but stop saving new entries.
  */
 static void
-_bt_save_pagedel(Relation rel, BTVacState *vstate, BlockNumber target,
+_bt_save_pagedel(BTVacState *vstate, BlockNumber target,
 				 FullTransactionId safexid)
 {
 	if (vstate->full)
