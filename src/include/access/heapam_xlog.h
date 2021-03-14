@@ -53,7 +53,7 @@
 #define XLOG_HEAP2_REWRITE		0x00
 #define XLOG_HEAP2_CLEAN		0x10
 #define XLOG_HEAP2_FREEZE_PAGE	0x20
-#define XLOG_HEAP2_CLEANUP_INFO 0x30
+/* 0x30 is reserved */
 #define XLOG_HEAP2_VISIBLE		0x40
 #define XLOG_HEAP2_MULTI_INSERT 0x50
 #define XLOG_HEAP2_LOCK_UPDATED 0x60
@@ -397,8 +397,6 @@ extern void heap2_desc(StringInfo buf, XLogReaderState *record);
 extern const char *heap2_identify(uint8 info);
 extern void heap_xlog_logical_rewrite(XLogReaderState *r);
 
-extern XLogRecPtr log_heap_cleanup_info(RelFileNode rnode,
-										TransactionId latestRemovedXid);
 extern XLogRecPtr log_heap_clean(Relation reln, Buffer buffer,
 								 OffsetNumber *redirected, int nredirected,
 								 OffsetNumber *nowdead, int ndead,

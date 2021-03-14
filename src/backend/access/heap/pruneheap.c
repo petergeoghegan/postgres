@@ -182,13 +182,10 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		 */
 		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 		{
-			TransactionId ignore = InvalidTransactionId;	/* return value not
-															 * needed */
-
 			/* OK to prune */
 			(void) heap_page_prune(relation, buffer, vistest,
 								   limited_xmin, limited_ts,
-								   true, &ignore, NULL);
+								   true, NULL);
 		}
 
 		/* And release buffer lock */
@@ -213,8 +210,6 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
  * send its own new total to pgstats, and we don't want this delta applied
  * on top of that.)
  *
- * Sets latestRemovedXid for caller on return.
- *
  * off_loc is the offset location required by the caller to use in error
  * callback.
  *
@@ -225,7 +220,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 				GlobalVisState *vistest,
 				TransactionId old_snap_xmin,
 				TimestampTz old_snap_ts,
-				bool report_stats, TransactionId *latestRemovedXid,
+				bool report_stats,
 				OffsetNumber *off_loc)
 {
 	int			ndeleted = 0;
@@ -251,7 +246,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 	prstate.old_snap_xmin = old_snap_xmin;
 	prstate.old_snap_ts = old_snap_ts;
 	prstate.old_snap_used = false;
-	prstate.latestRemovedXid = *latestRemovedXid;
+	prstate.latestRemovedXid = InvalidTransactionId;
 	prstate.nredirected = prstate.ndead = prstate.nunused = 0;
 	memset(prstate.marked, 0, sizeof(prstate.marked));
 
@@ -362,8 +357,6 @@ heap_page_prune(Relation relation, Buffer buffer,
 	 */
 	if (report_stats && ndeleted > prstate.ndead)
 		pgstat_update_heap_dead_tuples(relation, ndeleted - prstate.ndead);
-
-	*latestRemovedXid = prstate.latestRemovedXid;
 
 	/*
 	 * XXX Should we update the FSM information of this page ?
