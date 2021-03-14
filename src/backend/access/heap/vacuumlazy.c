@@ -1709,9 +1709,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	/*
 	 * If no indexes, make log report that vacuum_indexes_mark_reuse would've
-	 * made
+	 * made when it skipped vacuuming.
+	 *
+	 * Note: We're distinguishing between "freed" (i.e. newly made LP_DEAD
+	 * through pruning) and removed (i.e. mark_reuse_page() marked LP_UNUSED).
 	 */
-	if (reuse_marked_pages)
+	if (!vacrelstats->hasindex)
 		ereport(elevel,
 				(errmsg("\"%s\": removed %.0f row versions in %u pages",
 						vacrelstats->relname,
@@ -1758,6 +1761,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 						  int nindexes, LVParallelState *lps,
 						  BlockNumber has_lpdead_pages)
 {
+	bool		skipping = false;
 	int			tupindex;
 	int			npages;
 	PGRUsage	ru0;
@@ -1771,11 +1775,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 
 	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
 	if (vacrelstats->mustskipindexes)
-	{
-		/* Skip index vacuuming */
-		vacrelstats->dead_tuples->num_tuples = 0;
-		return;
-	}
+		skipping = true;
 
 	/*
 	 * Check whether or not to do index vacuum and heap vacuum.
@@ -1794,7 +1794,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 	 * HOT-pruning but are not marked dead yet.  We do not process them because
 	 * it's a very rare condition, and the next vacuum will process them anyway.
 	 */
-	if (vacrelstats->mayskipindexes)
+	else if (vacrelstats->mayskipindexes)
 	{
 		BlockNumber rel_pages_threshold;
 
@@ -1802,11 +1802,20 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 				(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
 		if (has_lpdead_pages < rel_pages_threshold)
-		{
-			/* Skip index vacuuming */
-			vacrelstats->dead_tuples->num_tuples = 0;
-			return;
-		}
+			skipping = true;
+	}
+
+	if (skipping)
+	{
+		/* Skip index vacuuming */
+		ereport(elevel,
+				(errmsg("\"%s\": freed %d row versions in %u pages",
+						vacrelstats->relname,
+						vacrelstats->dead_tuples->num_tuples,
+						vacrelstats->rel_pages)));
+
+		vacrelstats->dead_tuples->num_tuples = 0;
+		return;
 	}
 
 	/* Okay, we're going to do index vacuuming */
