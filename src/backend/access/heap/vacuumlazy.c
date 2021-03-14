@@ -1918,6 +1918,11 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
  * tupindex is the index in vacrelstats->dead_tuples of the first dead
  * tuple for this page.  We assume the rest follow sequentially.
  * The return value is the first tupindex after the tuples of this page.
+ *
+ * Prior to PostgreSQL 14 there were rare cases where this routine had to set
+ * tuples with storage to unused.  We still share infrastructure with heap
+ * pruning, and still require a super-exclusive lock.  In the future we should
+ * be able to get away with only an exclusive lock.
  */
 static int
 mark_reuse_page(Relation onerel, BlockNumber blkno, Buffer buffer,
