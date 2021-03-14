@@ -353,7 +353,7 @@ static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 static void vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 									  Relation *Irel, IndexBulkDeleteResult **indstats,
 									  int nindexes, LVParallelState *lps,
-									  double *npages_deadlp,
+									  BlockNumber has_lpdead_pages,
 									  bool maybe_skip_indexes);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
@@ -745,13 +745,13 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	BlockNumber empty_pages,
 				reuse_marked_pages,
+				has_lpdead_pages,
 				next_fsm_block_to_vacuum;
 	double		num_tuples,		/* total number of nonremovable tuples */
 				live_tuples,	/* live tuples (reltuples estimate) */
 				tups_vacuumed,	/* tuples cleaned up by current vacuum */
 				nkeep,			/* dead-but-not-removable tuples */
 				nunused;		/* # existing unused line pointers */
-	double		npages_deadlp;
 	IndexBulkDeleteResult **indstats;
 	int			i;
 	PGRUsage	ru0;
@@ -782,10 +782,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						vacrelstats->relnamespace,
 						vacrelstats->relname)));
 
-	empty_pages = reuse_marked_pages = 0;
+	empty_pages = reuse_marked_pages = has_lpdead_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
 	num_tuples = live_tuples = tups_vacuumed = nkeep = nunused = 0;
-	npages_deadlp = 0;
 
 	indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
@@ -1045,7 +1044,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 			/* Remove the collected garbage tuples from table and indexes */
 			vacuum_indexes_mark_reuse(onerel, vacrelstats, Irel, indstats,
-									 nindexes, lps, &npages_deadlp,
+									 nindexes, lps, has_lpdead_pages,
 									 maybe_skip_indexes);
 
 			/*
@@ -1616,7 +1615,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * opportunistic pruning.
 		 */
 		if (has_dead_tuples)
-			npages_deadlp += 1;
+			has_lpdead_pages++;
 
 		/*
 		 * If we remembered any tuples for deletion, then the page will be
@@ -1670,7 +1669,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	if (dead_tuples->num_tuples > 0)
 		vacuum_indexes_mark_reuse(onerel, vacrelstats, Irel, indstats,
-								  nindexes, lps, &npages_deadlp,
+								  nindexes, lps, has_lpdead_pages,
 								  maybe_skip_indexes);
 
 	/*
@@ -1750,7 +1749,7 @@ static void
 vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 						  Relation *Irel, IndexBulkDeleteResult **indstats,
 						  int nindexes, LVParallelState *lps,
-						  double *npages_deadlp, bool maybe_skip_indexes)
+						  BlockNumber has_lpdead_pages, bool maybe_skip_indexes)
 {
 	int			tupindex;
 	int			npages;
@@ -1765,7 +1764,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
 	if (!vacrelstats->useindex)
 	{
-		/* Skip index vacuuming and heap vacuuming */
+		/* Skip index vacuuming */
 		vacrelstats->dead_tuples->num_tuples = 0;
 		return;
 	}
@@ -1787,12 +1786,19 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 	 * HOT-pruning but are not marked dead yet.  We do not process them because
 	 * it's a very rare condition, and the next vacuum will process them anyway.
 	 */
-	if (maybe_skip_indexes &&
-		*npages_deadlp < vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO)
+	if (maybe_skip_indexes)
 	{
-		/* Skip index vacuuming and heap vacuuming */
-		vacrelstats->dead_tuples->num_tuples = 0;
-		return;
+		BlockNumber rel_pages_threshold;
+
+		rel_pages_threshold =
+				(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+
+		if (has_lpdead_pages < rel_pages_threshold)
+		{
+			/* Skip index vacuuming */
+			vacrelstats->dead_tuples->num_tuples = 0;
+			return;
+		}
 	}
 
 	/* Okay, we're going to do index vacuuming */
@@ -1903,9 +1909,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 
 	/*
 	 * Forget the now-vacuumed tuples, and press on, but be careful not to
-	 * reset latestRemovedXid since we want that value to be valid.  Also
-	 * don't reset npages_deadlp, since that's supposed to be for the entire
-	 * VACUUM operation.
+	 * reset latestRemovedXid since we want that value to be valid
 	 */
 	vacrelstats->dead_tuples->num_tuples = 0;
 }
