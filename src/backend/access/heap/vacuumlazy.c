@@ -509,6 +509,14 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 
 	/* Open all indexes of the relation */
 	vac_open_indexes(onerel, RowExclusiveLock, &nindexes, &Irel);
+
+	/*
+	 * FIXME: We should preserve index_cleanup's default in caller, and then
+	 * interpret that as "decide dynamically".  Under this scheme the existing
+	 * index_cleanup reloption forces us to always or never skip inside
+	 * vacuum_indexes_mark_reuse().  So the new mechanism is defined in terms
+	 * of index_cleanup (and vice versa).
+	 */
 	vacrelstats->useindex = (nindexes > 0 &&
 							 params->index_cleanup == VACOPT_TERNARY_ENABLED);
 
