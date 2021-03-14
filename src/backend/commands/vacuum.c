@@ -1885,7 +1885,7 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	 * set -- we want VACOPT_TERNARY_DEFAULT to mean "decide dynamically in
 	 * vacuumlazy.c".
 	 *
-	 * FIXME: This doesn't work when some other reloption is set -- whatwe
+	 * FIXME: This doesn't work when some other reloption is set -- what we
 	 * need is a new default, 'auto' or similar.
 	 */
 	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT &&
