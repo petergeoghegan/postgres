@@ -1805,14 +1805,14 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 
 		if (has_lpdead_pages < rel_pages_threshold)
 		{
-			elog(WARNING, "decided to skip index vacuuming of %s with %u LP_DEAD blocks and %u blocks in total",
-				 vacrelstats->relname, has_lpdead_pages, rel_pages_threshold);
+			elog(WARNING, "decided to skip index vacuuming of %s with %u LP_DEAD blocks and %u block threshold with %u blocks in total",
+				 vacrelstats->relname, has_lpdead_pages, rel_pages_threshold, vacrelstats->rel_pages);
 			skipping = true;
 		}
 		else
 		{
-			elog(WARNING, "decided not to skip index vacuuming of %s with %u LP_DEAD blocks and %u blocks in total",
-				 vacrelstats->relname, has_lpdead_pages, rel_pages_threshold);
+			elog(WARNING, "decided not to skip index vacuuming of %s with %u LP_DEAD blocks and %u block threshold with %u blocks in total",
+				 vacrelstats->relname, has_lpdead_pages, rel_pages_threshold, vacrelstats->rel_pages);
 		}
 	}
 	else
