@@ -7946,29 +7946,6 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
 }
 
 /*
- * Perform XLogInsert to register a heap cleanup info message. These
- * messages are sent once per VACUUM and are required because
- * of the phasing of removal operations during a lazy VACUUM.
- * see comments for vacuum_log_cleanup_info().
- */
-XLogRecPtr
-log_heap_cleanup_info(RelFileNode rnode, TransactionId latestRemovedXid)
-{
-	xl_heap_cleanup_info xlrec;
-	XLogRecPtr	recptr;
-
-	xlrec.node = rnode;
-	xlrec.latestRemovedXid = latestRemovedXid;
-
-	XLogBeginInsert();
-	XLogRegisterData((char *) &xlrec, SizeOfHeapCleanupInfo);
-
-	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_CLEANUP_INFO);
-
-	return recptr;
-}
-
-/*
  * Perform XLogInsert for a heap-clean operation.  Caller must already
  * have modified the buffer and marked it dirty.
  *
@@ -8498,27 +8475,6 @@ ExtractReplicaIdentity(Relation relation, HeapTuple tp, bool key_changed,
 }
 
 /*
- * Handles CLEANUP_INFO
- */
-static void
-heap_xlog_cleanup_info(XLogReaderState *record)
-{
-	xl_heap_cleanup_info *xlrec = (xl_heap_cleanup_info *) XLogRecGetData(record);
-
-	if (InHotStandby)
-		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, xlrec->node);
-
-	/*
-	 * Actual operation is a no-op. Record type exists to provide a means for
-	 * conflict processing to occur before we begin index vacuum actions. see
-	 * vacuumlazy.c and also comments in btvacuumpage()
-	 */
-
-	/* Backup blocks are not used in cleanup_info records */
-	Assert(!XLogRecHasAnyBlockRefs(record));
-}
-
-/*
  * Handles XLOG_HEAP2_CLEAN record type
  */
 static void
@@ -8536,10 +8492,6 @@ heap_xlog_clean(XLogReaderState *record)
 	/*
 	 * We're about to remove tuples. In Hot Standby mode, ensure that there's
 	 * no queries running for which the removed tuples are still visible.
-	 *
-	 * Not all HEAP2_CLEAN records remove tuples with xids, so we only want to
-	 * conflict on the records that cause MVCC failures for user queries. If
-	 * latestRemovedXid is invalid, skip conflict processing.
 	 */
 	if (InHotStandby && TransactionIdIsValid(xlrec->latestRemovedXid))
 		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, rnode);
@@ -9715,9 +9667,6 @@ heap2_redo(XLogReaderState *record)
 			break;
 		case XLOG_HEAP2_FREEZE_PAGE:
 			heap_xlog_freeze_page(record);
-			break;
-		case XLOG_HEAP2_CLEANUP_INFO:
-			heap_xlog_cleanup_info(record);
 			break;
 		case XLOG_HEAP2_VISIBLE:
 			heap_xlog_visible(record);

@@ -481,7 +481,6 @@ DecodeHeap2Op(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 			 */
 		case XLOG_HEAP2_FREEZE_PAGE:
 		case XLOG_HEAP2_CLEAN:
-		case XLOG_HEAP2_CLEANUP_INFO:
 		case XLOG_HEAP2_VISIBLE:
 		case XLOG_HEAP2_LOCK_UPDATED:
 			break;
