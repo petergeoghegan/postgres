@@ -1920,9 +1920,13 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
  * The return value is the first tupindex after the tuples of this page.
  *
  * Prior to PostgreSQL 14 there were rare cases where this routine had to set
- * tuples with storage to unused.  We still share infrastructure with heap
- * pruning, and still require a super-exclusive lock.  In the future we should
- * be able to get away with only an exclusive lock.
+ * tuples with storage to unused.  These days it is strictly responsible for
+ * marking LP_DEAD stub line pointers from pruning that took place during
+ * lazy_scan_heap() (or from existing LP_DEAD line pointers encountered
+ * there).  However, we still share infrastructure with heap pruning, and
+ * still require a super-exclusive lock -- this should now be unnecessary.  In
+ * the future we should be able to optimize this -- it can work with only an
+ * exclusive lock.
  */
 static int
 mark_reuse_page(Relation onerel, BlockNumber blkno, Buffer buffer,
