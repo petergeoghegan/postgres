@@ -1985,7 +1985,7 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 		recptr = log_heap_clean(onerel, buffer,
 								NULL, 0, NULL, 0,
 								unused, uncnt,
-								vacrelstats->latestRemovedXid);
+								InvalidTransactionId);
 		PageSetLSN(page, recptr);
 	}
 
