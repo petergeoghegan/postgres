@@ -1891,12 +1891,7 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 		vacrelstats->blkno = tblk;
 		buf = ReadBufferExtended(onerel, MAIN_FORKNUM, tblk, RBM_NORMAL,
 								 vac_strategy);
-		if (!ConditionalLockBufferForCleanup(buf))
-		{
-			ReleaseBuffer(buf);
-			++tupindex;
-			continue;
-		}
+		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
 		tupindex = lazy_vacuum_page(onerel, tblk, buf, tupindex, vacrelstats,
 									&vmbuffer);
 
@@ -1932,7 +1927,7 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
  *	lazy_vacuum_page() -- free dead tuples on a page
  *					 and repair its fragmentation.
  *
- * Caller must hold pin and buffer cleanup lock on the buffer.
+ * Caller must hold pin and exclusive buffer lock on the buffer.
  *
  * tupindex is the index in vacrelstats->dead_tuples of the first dead
  * tuple for this page.  We assume the rest follow sequentially.
