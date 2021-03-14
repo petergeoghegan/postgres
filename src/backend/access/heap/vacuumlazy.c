@@ -1677,7 +1677,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	}
 
 	/* If any tuples need to be deleted, perform final vacuum cycle */
-	Assert(!vacrelstats->hasindex || dead_tuples->num_tuples == 0);
+	Assert(vacrelstats->hasindex || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
 		vacuum_indexes_mark_unused(onerel, vacrelstats, Irel, indstats,
 								   nindexes, lps, has_lpdead_pages);
