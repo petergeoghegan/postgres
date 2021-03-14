@@ -1612,7 +1612,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Remember the number of pages having at least one LP_DEAD line
 		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
-		 * opportunistic pruning.
+		 * even opportunistic pruning.
 		 */
 		if (has_dead_tuples)
 			has_lpdead_pages++;
