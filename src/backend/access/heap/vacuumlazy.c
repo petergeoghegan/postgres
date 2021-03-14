@@ -1775,7 +1775,7 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
 	if (vacrelstats->mustskipindexes)
 	{
-		elog(WARNING, "must skip vacuuming of %s", vacrelstats->relname);
+		elog(WARNING, "must skip index vacuuming of %s", vacrelstats->relname);
 		skipping = true;
 	}
 
@@ -1805,17 +1805,17 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 
 		if (has_lpdead_pages < rel_pages_threshold)
 		{
-			elog(WARNING, "decided to skip vacuuming of %s", vacrelstats->relname);
+			elog(WARNING, "decided to skip index vacuuming of %s", vacrelstats->relname);
 			skipping = true;
 		}
 		else
 		{
-			elog(WARNING, "decided not to skip vacuuming of %s", vacrelstats->relname);
+			elog(WARNING, "decided not to skip index vacuuming of %s", vacrelstats->relname);
 		}
 	}
 	else
 	{
-		elog(WARNING, "never had the choice to skip vacuuming of %s", vacrelstats->relname);
+		elog(WARNING, "never had the choice to skip index vacuuming of %s", vacrelstats->relname);
 	}
 
 	if (skipping)
