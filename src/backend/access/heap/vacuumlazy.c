@@ -361,8 +361,9 @@ static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
 static void lazy_cleanup_index(Relation indrel,
 							   IndexBulkDeleteResult **stats,
 							   double reltuples, bool estimated_count, LVRelStats *vacrelstats);
-static int	lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
-							 int tupindex, LVRelStats *vacrelstats, Buffer *vmbuffer);
+static int mark_reuse_page(Relation onerel, BlockNumber blkno, Buffer buffer,
+						   int tupindex, LVRelStats *vacrelstats,
+						   Buffer *vmbuffer);
 static bool should_attempt_truncation(VacuumParams *params,
 									  LVRelStats *vacrelstats);
 static void lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats);
@@ -1313,7 +1314,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					 * because it hardly seems worth introducing a special
 					 * case.  This allows us to delay committing to index
 					 * vacuuming until the last moment -- no need to worry
-					 * about making tuple LP_DEAD within lazy_vacuum_page().
+					 * about making tuple LP_DEAD within mark_reuse_page().
 					 *
 					 * If this were to happen for a tuple that actually needed
 					 * to be deleted, we'd be in trouble, because it'd
@@ -1476,14 +1477,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			Assert(!vacrelstats->useindex);
 
 			/*
-			 * Remove tuples from heap if the table has no index
-			 *
-			 * Table has no index -- vacuum_indexes_mark_reuse() won't be
-			 * called at any point.  We do processing a single heap page at a
-			 * time instead.
+			 * Mark LP_DEAD item pointers for reuse now, in an incremental
+			 * fashion.  This is safe because the table has no indexes (and so
+			 * vacuum_indexes_mark_reuse() will never be called).
 			 */
-			/* Remove tuples from heap if the table has no index */
-			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
+			mark_reuse_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
 			vacuumed_pages++;
 			has_dead_tuples = false;
 
@@ -1857,8 +1855,8 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 		buf = ReadBufferExtended(onerel, MAIN_FORKNUM, tblk, RBM_NORMAL,
 								 vac_strategy);
 		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
-		tupindex = lazy_vacuum_page(onerel, tblk, buf, tupindex, vacrelstats,
-									&vmbuffer);
+		tupindex = mark_reuse_page(onerel, tblk, buf, tupindex, vacrelstats,
+								   &vmbuffer);
 
 		/* Now that we've compacted the page, record its available space */
 		page = BufferGetPage(buf);
@@ -1897,8 +1895,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 }
 
 /*
- *	lazy_vacuum_page() -- free dead tuples on a page
- *					 and repair its fragmentation.
+ *	mark_reuse_page() -- mark dead line pointers on page for reuse.
  *
  * Caller must hold pin and exclusive buffer lock on the buffer.
  *
@@ -1907,8 +1904,8 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
  * The return value is the first tupindex after the tuples of this page.
  */
 static int
-lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
-				 int tupindex, LVRelStats *vacrelstats, Buffer *vmbuffer)
+mark_reuse_page(Relation onerel, BlockNumber blkno, Buffer buffer,
+				int tupindex, LVRelStats *vacrelstats, Buffer *vmbuffer)
 {
 	LVDeadTuples *dead_tuples = vacrelstats->dead_tuples;
 	Page		page = BufferGetPage(buffer);
