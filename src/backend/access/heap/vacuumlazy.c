@@ -135,7 +135,7 @@
  * The threshold of the percentage of heap blocks having LP_DEAD line pointer
  * to trigger both table vacuum and index vacuum.
  */
-#define SKIP_VACUUM_PAGES_RATIO		0.01
+#define SKIP_VACUUM_PAGES_RATIO		0.90
 
 /*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
@@ -1755,7 +1755,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  * We may be able to skip index vacuuming (we may even be required to do so by
  * reloption)
  */
-#define DEBUGELOG LOG
+#define DEBUGELOG WARNING
 static void
 vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 						   Relation *Irel, IndexBulkDeleteResult **indstats,
