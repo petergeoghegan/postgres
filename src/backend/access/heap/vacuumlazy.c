@@ -1823,7 +1823,11 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 
 	if (skipping)
 	{
-		/* Skip index vacuuming */
+		/*
+		 * Note: We're distinguishing between "freed" (i.e. newly made LP_DEAD
+		 * through pruning) and removed (i.e. mark_unused_page() marked
+		 * LP_UNUSED).
+		 */
 		ereport(elevel,
 				(errmsg("\"%s\": freed %d row versions in %u pages",
 						vacrelstats->relname,
