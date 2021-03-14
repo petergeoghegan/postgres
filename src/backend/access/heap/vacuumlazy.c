@@ -300,8 +300,12 @@ typedef struct LVRelStats
 {
 	char	   *relnamespace;
 	char	   *relname;
-	/* useindex = true means two-pass strategy; false means one-pass */
-	bool		useindex;
+	/* hasindex = true means two-pass strategy; false means one-pass */
+	bool		hasindex;
+	/* mayskipindexes = true means we may decide to skip vacuum indexing */
+	bool		mayskipindexes;
+	/* mustskipindexes = true means we must always skip vacuum indexing */
+	bool		mustskipindexes;
 	/* Overall statistics about rel */
 	BlockNumber old_rel_pages;	/* previous value of pg_class.relpages */
 	BlockNumber rel_pages;		/* total number of pages */
@@ -353,8 +357,7 @@ static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 static void vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 									  Relation *Irel, IndexBulkDeleteResult **indstats,
 									  int nindexes, LVParallelState *lps,
-									  BlockNumber has_lpdead_pages,
-									  bool maybe_skip_indexes);
+									  BlockNumber has_lpdead_pages);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
 static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
@@ -450,7 +453,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	ErrorContextCallback errcallback;
 
 	Assert(params != NULL);
-	Assert(params->index_cleanup != VACOPT_TERNARY_DEFAULT);
 	Assert(params->truncate != VACOPT_TERNARY_DEFAULT);
 
 	/* not every AM requires these to be valid, but heap does */
@@ -511,14 +513,22 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	vac_open_indexes(onerel, RowExclusiveLock, &nindexes, &Irel);
 
 	/*
-	 * FIXME: We should preserve index_cleanup's default in caller, and then
-	 * interpret that as "decide dynamically".  Under this scheme the existing
-	 * index_cleanup reloption forces us to always or never skip inside
-	 * vacuum_indexes_mark_reuse().  So the new mechanism is defined in terms
-	 * of index_cleanup (and vice versa).
+	 * hasindex determines if we'll use one-pass strategy.  Note that this is
+	 * not the same thing as skipping index vacuuming.
+	 *
+	 * mayskipindexes tracks if we could in principle decide to skip index
+	 * vacuuming.  This can become false later.
+	 *
+	 * mustskipindexes tracks if we are obligated to skip index vacuuming
+	 * because of index_cleanup reloption.
+	 *
+	 * XXX: This is too duplicative
 	 */
-	vacrelstats->useindex = (nindexes > 0 &&
-							 params->index_cleanup == VACOPT_TERNARY_ENABLED);
+	vacrelstats->hasindex = (nindexes > 0);
+	vacrelstats->mayskipindexes =
+			(params->index_cleanup != VACOPT_TERNARY_ENABLED);
+	vacrelstats->mustskipindexes =
+			(params->index_cleanup == VACOPT_TERNARY_DISABLED);
 
 	/*
 	 * Setup error traceback support for ereport().  The idea is to set up an
@@ -758,7 +768,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Buffer		vmbuffer = InvalidBuffer;
 	BlockNumber next_unskippable_block;
 	bool		skipping_blocks;
-	bool		maybe_skip_indexes = true;
 	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
@@ -803,8 +812,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * be used for an index, so we invoke parallelism only if there are at
 	 * least two indexes on a table.
 	 */
-	if (params->nworkers >= 0 && vacrelstats->useindex && nindexes > 1)
+	if (params->nworkers >= 0 && nindexes > 1)
 	{
+		Assert(vacrelstats->hasindex);
+
 		/*
 		 * Since parallel workers cannot access data in temporary tables, we
 		 * can't perform parallel vacuum on them.
@@ -1040,12 +1051,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * something vacuum_indexes_mark_reuse() does when dead tuple
 			 * space hasn't been overrun.
 			 */
-			maybe_skip_indexes = false;
+			vacrelstats->mayskipindexes = false;
 
 			/* Remove the collected garbage tuples from table and indexes */
 			vacuum_indexes_mark_reuse(onerel, vacrelstats, Irel, indstats,
-									 nindexes, lps, has_lpdead_pages,
-									 maybe_skip_indexes);
+									 nindexes, lps, has_lpdead_pages);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1483,7 +1493,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 */
 		if (nindexes == 0 && dead_tuples->num_tuples > 0)
 		{
-			Assert(!vacrelstats->useindex);
+			Assert(!vacrelstats->hasindex);
 
 			/*
 			 * Mark LP_DEAD item pointers for reuse now, in an incremental
@@ -1669,8 +1679,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	if (dead_tuples->num_tuples > 0)
 		vacuum_indexes_mark_reuse(onerel, vacrelstats, Irel, indstats,
-								  nindexes, lps, has_lpdead_pages,
-								  maybe_skip_indexes);
+								  nindexes, lps, has_lpdead_pages);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1684,7 +1693,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_VACUUMED, blkno);
 
 	/* Do post-vacuum cleanup */
-	if (vacrelstats->useindex)
+	if (vacrelstats->hasindex)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
 
 	/*
@@ -1695,7 +1704,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		end_parallel_vacuum(indstats, lps, nindexes);
 
 	/* Update index statistics */
-	if (vacrelstats->useindex)
+	if (vacrelstats->hasindex)
 		update_index_statistics(Irel, indstats, nindexes);
 
 	/*
@@ -1740,16 +1749,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 /*
  * Remove the collected garbage tuples from the table and its indexes.
  *
- * maybe_skip_indexes indicates if this VACUUM is eligible to skip all the
- * steps we perform here. This is only possible for a VACUUM operation that
- * will only need to call here once either way.  The INDEX_CLEANUP reloption
- * being set to ON explicitly also prevents us from skipping.
+ * We may be able to skip index vacuuming (we may even be required to do so by
+ * reloption)
  */
 static void
 vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 						  Relation *Irel, IndexBulkDeleteResult **indstats,
 						  int nindexes, LVParallelState *lps,
-						  BlockNumber has_lpdead_pages, bool maybe_skip_indexes)
+						  BlockNumber has_lpdead_pages)
 {
 	int			tupindex;
 	int			npages;
@@ -1758,11 +1765,12 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 	LVSavedErrInfo saved_err_info;
 
 	/* Should not end up here with no indexes */
+	Assert(vacrelstats->hasindex);
 	Assert(nindexes > 0);
 	Assert(!IsParallelWorker());
 
 	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
-	if (!vacrelstats->useindex)
+	if (vacrelstats->mustskipindexes)
 	{
 		/* Skip index vacuuming */
 		vacrelstats->dead_tuples->num_tuples = 0;
@@ -1786,7 +1794,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 	 * HOT-pruning but are not marked dead yet.  We do not process them because
 	 * it's a very rare condition, and the next vacuum will process them anyway.
 	 */
-	if (maybe_skip_indexes)
+	if (vacrelstats->mayskipindexes)
 	{
 		BlockNumber rel_pages_threshold;
 
@@ -2860,14 +2868,14 @@ count_nondeletable_pages(Relation onerel, LVRelStats *vacrelstats)
  * Return the maximum number of dead tuples we can record.
  */
 static long
-compute_max_dead_tuples(BlockNumber relblocks, bool useindex)
+compute_max_dead_tuples(BlockNumber relblocks, bool hasindex)
 {
 	long		maxtuples;
 	int			vac_work_mem = IsAutoVacuumWorkerProcess() &&
 	autovacuum_work_mem != -1 ?
 	autovacuum_work_mem : maintenance_work_mem;
 
-	if (useindex)
+	if (hasindex)
 	{
 		maxtuples = MAXDEADTUPLES(vac_work_mem * 1024L);
 		maxtuples = Min(maxtuples, INT_MAX);
@@ -2897,7 +2905,7 @@ lazy_space_alloc(LVRelStats *vacrelstats, BlockNumber relblocks)
 	LVDeadTuples *dead_tuples = NULL;
 	long		maxtuples;
 
-	maxtuples = compute_max_dead_tuples(relblocks, vacrelstats->useindex);
+	maxtuples = compute_max_dead_tuples(relblocks, vacrelstats->hasindex);
 
 	dead_tuples = (LVDeadTuples *) palloc(SizeOfDeadTuples(maxtuples));
 	dead_tuples->num_tuples = 0;

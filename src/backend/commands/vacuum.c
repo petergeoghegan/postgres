@@ -1880,11 +1880,18 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	onerelid = onerel->rd_lockInfo.lockRelId;
 	LockRelationIdForSession(&onerelid, lmode);
 
-	/* Set index cleanup option based on reloptions if not yet */
-	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT)
+	/*
+	 * Set index cleanup option based on reloptions if not yet, though only if
+	 * set -- we want VACOPT_TERNARY_DEFAULT to mean "decide dynamically in
+	 * vacuumlazy.c".
+	 *
+	 * FIXME: This doesn't work when some other reloption is set -- whatwe
+	 * need is a new default, 'auto' or similar.
+	 */
+	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT &&
+		onerel->rd_options != NULL)
 	{
-		if (onerel->rd_options == NULL ||
-			((StdRdOptions *) onerel->rd_options)->vacuum_index_cleanup)
+		if (((StdRdOptions *) onerel->rd_options)->vacuum_index_cleanup)
 			params->index_cleanup = VACOPT_TERNARY_ENABLED;
 		else
 			params->index_cleanup = VACOPT_TERNARY_DISABLED;
