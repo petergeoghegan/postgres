@@ -1695,8 +1695,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Do post-vacuum cleanup.
 	 *
-	 * Note that we deliberately call lazy_cleanup_all_indexes() in the case
-	 * where vacuum_indexes_mark_unused() decided to skip index vacuuming.
+	 * Note that this take places when vacuum_indexes_mark_unused() decided to
+	 * skip index vacuuming.
 	 */
 	if (vacrelstats->hasindex)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
@@ -1711,8 +1711,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Update index statistics.
 	 *
-	 * This is also intended to take place when vacuum_indexes_mark_unused()
-	 * decided to skip index vacuuming.
+	 * Note that this take places when vacuum_indexes_mark_unused() decided to
+	 * skip index vacuuming.
 	 */
 	if (vacrelstats->hasindex)
 		update_index_statistics(Irel, indstats, nindexes);
