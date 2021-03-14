@@ -1032,10 +1032,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			}
 
 			/* Remove the collected garbage tuples from table and indexes */
-			if (vacrelstats->useindex)
-				lazy_vacuum_indexes_heap(onerel, vacrelstats, Irel, indstats,
-										 nindexes, lps, &npages_deadlp,
-										 false);
+			lazy_vacuum_indexes_heap(onerel, vacrelstats, Irel, indstats,
+									 nindexes, lps, &npages_deadlp,
+									 false);
+
 			/*
 			 * Remember not to skip indexes in final call to
 			 * lazy_vacuum_indexes_heap() now
@@ -1480,6 +1480,13 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			Assert(!vacrelstats->useindex);
 
+			/*
+			 * Remove tuples from heap if the table has no index
+			 *
+			 * Table has no index -- lazy_vacuum_indexes_heap() won't be
+			 * called at any point.  We do processing a single heap page at a
+			 * time instead.
+			 */
 			/* Remove tuples from heap if the table has no index */
 			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
 			vacuumed_pages++;
@@ -1600,7 +1607,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		if (hastup)
 			vacrelstats->nonempty_pages = blkno + 1;
 
-		/* Remember the number of pages having at least one LP_DEAD line pointer */
+		/*
+		 * Remember the number of pages having at least one LP_DEAD line
+		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
+		 * opportunistic pruning.
+		 */
 		if (has_dead_tuples)
 			npages_deadlp += 1;
 
@@ -1608,8 +1619,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * If we remembered any tuples for deletion, then the page will be
 		 * visited again by lazy_vacuum_heap, which will compute and record
 		 * its post-compaction free space.  If not, then we're done with this
-		 * page, so remember its free space as-is.  (This path will always be
-		 * taken if there are no indexes.)
+		 * page, so remember its free space as-is.
+		 *
+		 * This path will always be taken if there are no indexes.  However,
+		 * it might not be taken if INDEX_CLEANUP is off -- that works the
+		 * same as the case where we decide to skip index vacuuming.  See also
+		 * lazy_vacuum_indexes_heap(), where that is decided.
 		 */
 		if (dead_tuples->num_tuples == prev_dead_count)
 			RecordPageWithFreeSpace(onerel, blkno, freespace);
@@ -1650,14 +1665,15 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	}
 
 	/* If any tuples need to be deleted, perform final vacuum cycle */
-	if (vacrelstats->useindex && dead_tuples->num_tuples > 0)
+	if (dead_tuples->num_tuples > 0)
 		lazy_vacuum_indexes_heap(onerel, vacrelstats, Irel, indstats,
 								 nindexes, lps, &npages_deadlp,
 								 did_indexpass);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
-	 * not there were indexes.
+	 * not there were indexes, and regardless of lazy_vacuum_indexes_heap()'s
+	 * choice about skipping index vacuuming.
 	 */
 	if (blkno > next_fsm_block_to_vacuum)
 		FreeSpaceMapVacuumRange(onerel, next_fsm_block_to_vacuum, blkno);
@@ -1716,7 +1732,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	pfree(buf.data);
 }
 
-
 /*
  * Remove the collected garbage tuples from the table and its indexes.
  *
@@ -1730,9 +1745,16 @@ lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 						 int nindexes, LVParallelState *lps,
 						 double *npages_deadlp, bool maybe_skip)
 {
-	/* Should not end up here with no indexes or INDEX_CLEANUP off */
+	/* Should not end up here with no indexes */
 	Assert(nindexes > 0);
-	Assert(vacrelstats->useindex);
+
+	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
+	if (!vacrelstats->useindex)
+	{
+		/* Skip index vacuuming and heap vacuuming */
+		vacrelstats->dead_tuples->num_tuples = 0;
+		return;
+	}
 
 	/*
 	 * Check whether or not to do index vacuum and heap vacuum.
@@ -1773,7 +1795,6 @@ lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 	 */
 	vacrelstats->dead_tuples->num_tuples = 0;
 }
-
 
 /*
  *	lazy_vacuum_all_indexes() -- vacuum all indexes of relation.
