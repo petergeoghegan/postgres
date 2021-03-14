@@ -753,7 +753,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Buffer		vmbuffer = InvalidBuffer;
 	BlockNumber next_unskippable_block;
 	bool		skipping_blocks;
-	bool		vacuum_index_pass = false;
+	bool		did_indexpass = false;
 	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
@@ -1040,7 +1040,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * Remember not to skip indexes in final call to
 			 * lazy_vacuum_table_and_indexes() now
 			 */
-			vacuum_index_pass = true;
+			did_indexpass = true;
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1653,7 +1653,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	if (vacrelstats->useindex && dead_tuples->num_tuples > 0)
 		lazy_vacuum_table_and_indexes(onerel, vacrelstats, Irel, indstats,
 									  nindexes, lps, &npages_deadlp,
-									  vacuum_index_pass);
+									  did_indexpass);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
