@@ -353,7 +353,8 @@ static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 static void vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 									  Relation *Irel, IndexBulkDeleteResult **indstats,
 									  int nindexes, LVParallelState *lps,
-									  double *npages_deadlp, bool maybe_skip);
+									  double *npages_deadlp,
+									  bool maybe_skip_indexes);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
 static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
@@ -735,7 +736,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	BlockNumber empty_pages,
-				vacuumed_pages,
+				reuse_marked_pages,
 				next_fsm_block_to_vacuum;
 	double		num_tuples,		/* total number of nonremovable tuples */
 				live_tuples,	/* live tuples (reltuples estimate) */
@@ -749,7 +750,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Buffer		vmbuffer = InvalidBuffer;
 	BlockNumber next_unskippable_block;
 	bool		skipping_blocks;
-	bool		did_indexpass = false;
+	bool		maybe_skip_indexes = true;
 	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
@@ -773,7 +774,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						vacrelstats->relnamespace,
 						vacrelstats->relname)));
 
-	empty_pages = vacuumed_pages = 0;
+	empty_pages = reuse_marked_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
 	num_tuples = live_tuples = tups_vacuumed = nkeep = nunused = 0;
 	npages_deadlp = 0;
@@ -1027,16 +1028,17 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				vmbuffer = InvalidBuffer;
 			}
 
+			/*
+			 * Won't be skipping index vacuuming now, since that is only
+			 * something vacuum_indexes_mark_reuse() does when dead tuple
+			 * space hasn't been overrun.
+			 */
+			maybe_skip_indexes = false;
+
 			/* Remove the collected garbage tuples from table and indexes */
 			vacuum_indexes_mark_reuse(onerel, vacrelstats, Irel, indstats,
 									 nindexes, lps, &npages_deadlp,
-									 false);
-
-			/*
-			 * Remember not to skip indexes in final call to
-			 * vacuum_indexes_mark_reuse() now
-			 */
-			did_indexpass = true;
+									 maybe_skip_indexes);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1482,7 +1484,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * vacuum_indexes_mark_reuse() will never be called).
 			 */
 			mark_reuse_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
-			vacuumed_pages++;
+			reuse_marked_pages++;
 			has_dead_tuples = false;
 
 			/*
@@ -1660,8 +1662,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	if (dead_tuples->num_tuples > 0)
 		vacuum_indexes_mark_reuse(onerel, vacrelstats, Irel, indstats,
-								 nindexes, lps, &npages_deadlp,
-								 did_indexpass);
+								  nindexes, lps, &npages_deadlp,
+								  maybe_skip_indexes);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1693,11 +1695,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * If no indexes, make log report that vacuum_indexes_mark_reuse would've
 	 * made
 	 */
-	if (vacuumed_pages)
+	if (reuse_marked_pages)
 		ereport(elevel,
 				(errmsg("\"%s\": removed %.0f row versions in %u pages",
 						vacrelstats->relname,
-						tups_vacuumed, vacuumed_pages)));
+						tups_vacuumed, reuse_marked_pages)));
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
@@ -1731,15 +1733,16 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 /*
  * Remove the collected garbage tuples from the table and its indexes.
  *
- * maybe_skip is true on final call here iff this is also the first call here.
- * This allows us to consider skipping index vacuuming, which works just like
- * the INDEX_CLEANUP off case.
+ * maybe_skip_indexes indicates if this VACUUM is eligible to skip all the
+ * steps we perform here. This is only possible for a VACUUM operation that
+ * will only need to call here once either way.  The INDEX_CLEANUP reloption
+ * being set to ON explicitly also prevents us from skipping.
  */
 static void
 vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 						  Relation *Irel, IndexBulkDeleteResult **indstats,
 						  int nindexes, LVParallelState *lps,
-						  double *npages_deadlp, bool maybe_skip)
+						  double *npages_deadlp, bool maybe_skip_indexes)
 {
 	int			tupindex;
 	int			npages;
@@ -1776,7 +1779,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 	 * HOT-pruning but are not marked dead yet.  We do not process them because
 	 * it's a very rare condition, and the next vacuum will process them anyway.
 	 */
-	if (maybe_skip &&
+	if (maybe_skip_indexes &&
 		*npages_deadlp < vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO)
 	{
 		/* Skip index vacuuming and heap vacuuming */
