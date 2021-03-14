@@ -2880,7 +2880,9 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 }
 
 /*
- * _bt_recycle_pagedel() -- Are _bt_pagedel pages recyclable now?
+ * Place any newly deleted pages (i.e. pages that _bt_pagedel() deleted during
+ * the ongoing VACUUM operation) into the free space map when it happens to be
+ * safe to do so already.
  *
  * Called at the end of a btvacuumscan(), just before free space map vacuuming
  * takes place.
