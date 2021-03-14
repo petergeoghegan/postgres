@@ -357,10 +357,6 @@ static void lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
-static void lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
-									IndexBulkDeleteResult **stats,
-									LVRelStats *vacrelstats, LVParallelState *lps,
-									int nindexes);
 static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
 							  LVDeadTuples *dead_tuples, double reltuples, LVRelStats *vacrelstats);
 static void lazy_cleanup_index(Relation indrel,
@@ -1747,6 +1743,7 @@ lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 {
 	/* Should not end up here with no indexes */
 	Assert(nindexes > 0);
+	Assert(!IsParallelWorker());
 
 	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
 	if (!vacrelstats->useindex)
@@ -1781,34 +1778,7 @@ lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 		return;
 	}
 
-	/* Work on all the indexes, then the heap */
-	lazy_vacuum_all_indexes(onerel, Irel, indstats, vacrelstats, lps, nindexes);
-
-	/* Remove tuples from heap */
-	lazy_vacuum_heap(onerel, vacrelstats);
-
-	/*
-	 * Forget the now-vacuumed tuples, and press on, but be careful not to
-	 * reset latestRemovedXid since we want that value to be valid.  Also
-	 * don't reset npages_deadlp, since that's supposed to be for the entire
-	 * VACUUM operation.
-	 */
-	vacrelstats->dead_tuples->num_tuples = 0;
-}
-
-/*
- *	lazy_vacuum_all_indexes() -- vacuum all indexes of relation.
- *
- * We process the indexes serially unless we are doing parallel vacuum.
- */
-static void
-lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
-						IndexBulkDeleteResult **stats,
-						LVRelStats *vacrelstats, LVParallelState *lps,
-						int nindexes)
-{
-	Assert(!IsParallelWorker());
-	Assert(nindexes > 0);
+	/* Okay, we're going to do index vacuuming */
 
 	/* Report that we are now vacuuming indexes */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -1828,14 +1798,16 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 		lps->lvshared->reltuples = vacrelstats->old_live_tuples;
 		lps->lvshared->estimated_count = true;
 
-		lazy_parallel_vacuum_indexes(Irel, stats, vacrelstats, lps, nindexes);
+		lazy_parallel_vacuum_indexes(Irel, indstats, vacrelstats, lps,
+									 nindexes);
 	}
 	else
 	{
 		int			idx;
 
 		for (idx = 0; idx < nindexes; idx++)
-			lazy_vacuum_index(Irel[idx], &stats[idx], vacrelstats->dead_tuples,
+			lazy_vacuum_index(Irel[idx], &indstats[idx],
+							  vacrelstats->dead_tuples,
 							  vacrelstats->old_live_tuples, vacrelstats);
 	}
 
@@ -1843,8 +1815,18 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 	vacrelstats->num_index_scans++;
 	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_INDEX_VACUUMS,
 								 vacrelstats->num_index_scans);
-}
 
+	/* Remove tuples from heap */
+	lazy_vacuum_heap(onerel, vacrelstats);
+
+	/*
+	 * Forget the now-vacuumed tuples, and press on, but be careful not to
+	 * reset latestRemovedXid since we want that value to be valid.  Also
+	 * don't reset npages_deadlp, since that's supposed to be for the entire
+	 * VACUUM operation.
+	 */
+	vacrelstats->dead_tuples->num_tuples = 0;
+}
 
 /*
  *	lazy_vacuum_heap() -- second pass over the heap
