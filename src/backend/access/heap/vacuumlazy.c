@@ -350,10 +350,10 @@ static BufferAccessStrategy vac_strategy;
 static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 						   LVRelStats *vacrelstats, Relation *Irel, int nindexes,
 						   bool aggressive);
-static void lazy_vacuum_table_and_indexes(Relation onerel, LVRelStats *vacrelstats,
-										  Relation *Irel, IndexBulkDeleteResult **indstats,
-										  int nindexes, LVParallelState *lps,
-										  double *npages_deadlp, bool maybe_skip);
+static void lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
+									 Relation *Irel, IndexBulkDeleteResult **indstats,
+									 int nindexes, LVParallelState *lps,
+									 double *npages_deadlp, bool maybe_skip);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
@@ -1033,12 +1033,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 			/* Remove the collected garbage tuples from table and indexes */
 			if (vacrelstats->useindex)
-				lazy_vacuum_table_and_indexes(onerel, vacrelstats, Irel,
-											  indstats, nindexes, lps,
-											  &npages_deadlp, false);
+				lazy_vacuum_indexes_heap(onerel, vacrelstats, Irel, indstats,
+										 nindexes, lps, &npages_deadlp,
+										 false);
 			/*
 			 * Remember not to skip indexes in final call to
-			 * lazy_vacuum_table_and_indexes() now
+			 * lazy_vacuum_indexes_heap() now
 			 */
 			did_indexpass = true;
 
@@ -1651,9 +1651,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	if (vacrelstats->useindex && dead_tuples->num_tuples > 0)
-		lazy_vacuum_table_and_indexes(onerel, vacrelstats, Irel, indstats,
-									  nindexes, lps, &npages_deadlp,
-									  did_indexpass);
+		lazy_vacuum_indexes_heap(onerel, vacrelstats, Irel, indstats,
+								 nindexes, lps, &npages_deadlp,
+								 did_indexpass);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1725,10 +1725,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  * the INDEX_CLEANUP off case.
  */
 static void
-lazy_vacuum_table_and_indexes(Relation onerel, LVRelStats *vacrelstats,
-							  Relation *Irel, IndexBulkDeleteResult **indstats,
-							  int nindexes, LVParallelState *lps,
-							  double *npages_deadlp, bool maybe_skip)
+lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
+						 Relation *Irel, IndexBulkDeleteResult **indstats,
+						 int nindexes, LVParallelState *lps,
+						 double *npages_deadlp, bool maybe_skip)
 {
 	/* Should not end up here with no indexes or INDEX_CLEANUP off */
 	Assert(nindexes > 0);
