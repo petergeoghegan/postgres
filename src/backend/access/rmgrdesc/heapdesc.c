@@ -134,12 +134,6 @@ heap2_desc(StringInfo buf, XLogReaderState *record)
 		appendStringInfo(buf, "cutoff xid %u ntuples %u",
 						 xlrec->cutoff_xid, xlrec->ntuples);
 	}
-	else if (info == XLOG_HEAP2_CLEANUP_INFO)
-	{
-		xl_heap_cleanup_info *xlrec = (xl_heap_cleanup_info *) rec;
-
-		appendStringInfo(buf, "latestRemovedXid %u", xlrec->latestRemovedXid);
-	}
 	else if (info == XLOG_HEAP2_VISIBLE)
 	{
 		xl_heap_visible *xlrec = (xl_heap_visible *) rec;
@@ -234,9 +228,6 @@ heap2_identify(uint8 info)
 			break;
 		case XLOG_HEAP2_FREEZE_PAGE:
 			id = "FREEZE_PAGE";
-			break;
-		case XLOG_HEAP2_CLEANUP_INFO:
-			id = "CLEANUP_INFO";
 			break;
 		case XLOG_HEAP2_VISIBLE:
 			id = "VISIBLE";
