@@ -714,7 +714,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
  *		on the number of live tuples in the heap, and marks pages as
  *		all-visible if appropriate.  When done, or when we run low on space
  *		for dead-tuple TIDs, invoke vacuum_indexes_mark_reuse to vacuum
- *		indexes and mark dead line pointers for reuse in a second heap pass.
+ *		indexes and mark dead line pointers for reuse via a second heap pass.
  *
  *		If the table has at least two indexes, we execute both index vacuum
  *		and index cleanup with parallel workers unless parallel vacuum is
@@ -1865,7 +1865,12 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 		vacrelstats->blkno = tblk;
 		buf = ReadBufferExtended(onerel, MAIN_FORKNUM, tblk, RBM_NORMAL,
 								 vac_strategy);
-		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
+		if (!ConditionalLockBufferForCleanup(buf))
+		{
+			ReleaseBuffer(buf);
+			++tupindex;
+			continue;
+		}
 		tupindex = mark_reuse_page(onerel, tblk, buf, tupindex, vacrelstats,
 								   &vmbuffer);
 
@@ -1908,7 +1913,7 @@ vacuum_indexes_mark_reuse(Relation onerel, LVRelStats *vacrelstats,
 /*
  *	mark_reuse_page() -- mark dead line pointers on page for reuse.
  *
- * Caller must hold pin and exclusive buffer lock on the buffer.
+ * Caller must hold pin and buffer cleanup lock on the buffer.
  *
  * tupindex is the index in vacrelstats->dead_tuples of the first dead
  * tuple for this page.  We assume the rest follow sequentially.
