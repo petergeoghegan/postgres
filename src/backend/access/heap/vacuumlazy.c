@@ -353,7 +353,7 @@ static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 static void lazy_vacuum_table_and_indexes(Relation onerel, LVRelStats *vacrelstats,
 										  Relation *Irel, IndexBulkDeleteResult **indstats,
 										  int nindexes, LVParallelState *lps,
-										  double *npages_deadlp);
+										  double *npages_deadlp, bool maybe_skip);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
@@ -700,39 +700,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 }
 
 /*
- * For Hot Standby we need to know the highest transaction id that will
- * be removed by any change. VACUUM proceeds in a number of passes so
- * we need to consider how each pass operates. The first phase runs
- * heap_page_prune(), which can issue XLOG_HEAP2_CLEAN records as it
- * progresses - these will have a latestRemovedXid on each record.
- * In some cases this removes all of the tuples to be removed, though
- * often we have dead tuples with index pointers so we must remember them
- * for removal in phase 3. Index records for those rows are removed
- * in phase 2 and index blocks do not have MVCC information attached.
- * So before we can allow removal of any index tuples we need to issue
- * a WAL record containing the latestRemovedXid of rows that will be
- * removed in phase three. This allows recovery queries to block at the
- * correct place, i.e. before phase two, rather than during phase three
- * which would be after the rows have become inaccessible.
- */
-static void
-vacuum_log_cleanup_info(Relation rel, LVRelStats *vacrelstats)
-{
-	/*
-	 * Skip this for relations for which no WAL is to be written, or if we're
-	 * not trying to support archive recovery.
-	 */
-	if (!RelationNeedsWAL(rel) || !XLogIsNeeded())
-		return;
-
-	/*
-	 * No need to write the record at all unless it contains a valid value
-	 */
-	if (TransactionIdIsValid(vacrelstats->latestRemovedXid))
-		(void) log_heap_cleanup_info(rel->rd_node, vacrelstats->latestRemovedXid);
-}
-
-/*
  *	lazy_scan_heap() -- scan an open heap relation
  *
  *		This routine prunes each page in the heap, which will among other
@@ -786,6 +753,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Buffer		vmbuffer = InvalidBuffer;
 	BlockNumber next_unskippable_block;
 	bool		skipping_blocks;
+	bool		vacuum_index_pass = false;
 	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
@@ -949,8 +917,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		Page		page;
 		OffsetNumber offnum,
 					maxoff;
-		bool		tupgone,
-					hastup;
+		bool		hastup;
 		int			prev_dead_count;
 		int			nfrozen;
 		Size		freespace;
@@ -959,6 +926,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		bool		all_frozen = true;	/* provided all_visible is also true */
 		bool		has_dead_tuples;
 		TransactionId visibility_cutoff_xid = InvalidTransactionId;
+		bool		tuple_totally_frozen;
 
 		/* see note above about forcing scanning of last page */
 #define FORCE_CHECK_PAGE() \
@@ -1064,8 +1032,15 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			}
 
 			/* Remove the collected garbage tuples from table and indexes */
-			lazy_vacuum_table_and_indexes(onerel, vacrelstats, Irel, indstats,
-										  nindexes, lps, &npages_deadlp);
+			if (vacrelstats->useindex)
+				lazy_vacuum_table_and_indexes(onerel, vacrelstats, Irel,
+											  indstats, nindexes, lps,
+											  &npages_deadlp, false);
+			/*
+			 * Remember not to skip indexes in final call to
+			 * lazy_vacuum_table_and_indexes() now
+			 */
+			vacuum_index_pass = true;
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1314,8 +1289,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			tuple.t_len = ItemIdGetLength(itemid);
 			tuple.t_tableOid = RelationGetRelid(onerel);
 
-			tupgone = false;
-
 			/*
 			 * The criteria for counting a tuple as live in this block need to
 			 * match what analyze.c's acquire_sample_rows() does, otherwise
@@ -1341,14 +1314,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					 *
 					 * If the tuple is HOT-updated then it must only be
 					 * removed by a prune operation; so we keep it just as if
-					 * it were RECENTLY_DEAD.  Also, if it's a heap-only
-					 * tuple, we choose to keep it, because it'll be a lot
-					 * cheaper to get rid of it in the next pruning pass than
-					 * to treat it like an indexed tuple. Finally, if index
-					 * cleanup is disabled, the second heap pass will not
-					 * execute, and the tuple will not get removed, so we must
-					 * treat it like any other dead tuple that we choose to
-					 * keep.
+					 * it were RECENTLY_DEAD.  Actually we always keep it
+					 * because it hardly seems worth introducing a special
+					 * case.  This allows us to delay committing to index
+					 * vacuuming until the last moment -- no need to worry
+					 * about making tuple LP_DEAD within lazy_vacuum_page().
 					 *
 					 * If this were to happen for a tuple that actually needed
 					 * to be deleted, we'd be in trouble, because it'd
@@ -1357,12 +1327,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					 * to detect that case and abort the transaction,
 					 * preventing corruption.
 					 */
-					if (HeapTupleIsHotUpdated(&tuple) ||
-						HeapTupleIsHeapOnly(&tuple) ||
-						params->index_cleanup == VACOPT_TERNARY_DISABLED)
-						nkeep += 1;
-					else
-						tupgone = true; /* we can delete the tuple */
+					nkeep += 1;
 					all_visible = false;
 					break;
 				case HEAPTUPLE_LIVE:
@@ -1447,35 +1412,22 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					break;
 			}
 
-			if (tupgone)
-			{
-				lazy_record_dead_tuple(dead_tuples, &(tuple.t_self));
-				HeapTupleHeaderAdvanceLatestRemovedXid(tuple.t_data,
-													   &vacrelstats->latestRemovedXid);
-				tups_vacuumed += 1;
-				has_dead_tuples = true;
-			}
-			else
-			{
-				bool		tuple_totally_frozen;
+			num_tuples += 1;
+			hastup = true;
 
-				num_tuples += 1;
-				hastup = true;
+			/*
+			 * Each non-removable tuple must be checked to see if it needs
+			 * freezing.  Note we already have exclusive buffer lock.
+			 */
+			if (heap_prepare_freeze_tuple(tuple.t_data,
+										  relfrozenxid, relminmxid,
+										  FreezeLimit, MultiXactCutoff,
+										  &frozen[nfrozen],
+										  &tuple_totally_frozen))
+				frozen[nfrozen++].offset = offnum;
 
-				/*
-				 * Each non-removable tuple must be checked to see if it needs
-				 * freezing.  Note we already have exclusive buffer lock.
-				 */
-				if (heap_prepare_freeze_tuple(tuple.t_data,
-											  relfrozenxid, relminmxid,
-											  FreezeLimit, MultiXactCutoff,
-											  &frozen[nfrozen],
-											  &tuple_totally_frozen))
-					frozen[nfrozen++].offset = offnum;
-
-				if (!tuple_totally_frozen)
-					all_frozen = false;
-			}
+			if (!tuple_totally_frozen)
+				all_frozen = false;
 		}						/* scan along page */
 
 		/*
@@ -1522,32 +1474,16 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
-		 * doing a second scan. Also we don't do that but forget dead tuples
-		 * when index cleanup is disabled.
+		 * doing a second scan
 		 */
-		if (!vacrelstats->useindex && dead_tuples->num_tuples > 0)
+		if (nindexes == 0 && dead_tuples->num_tuples > 0)
 		{
-			if (nindexes == 0)
-			{
-				/* Remove tuples from heap if the table has no index */
-				lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
-				vacuumed_pages++;
-				has_dead_tuples = false;
-			}
-			else
-			{
-				/*
-				 * Here, we have indexes but index cleanup is disabled.
-				 * Instead of vacuuming the dead tuples on the heap, we just
-				 * forget them.
-				 *
-				 * Note that vacrelstats->dead_tuples could have tuples which
-				 * became dead after HOT-pruning but are not marked dead yet.
-				 * We do not process them because it's a very rare condition,
-				 * and the next vacuum will process them anyway.
-				 */
-				Assert(params->index_cleanup == VACOPT_TERNARY_DISABLED);
-			}
+			Assert(!vacrelstats->useindex);
+
+			/* Remove tuples from heap if the table has no index */
+			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
+			vacuumed_pages++;
+			has_dead_tuples = false;
 
 			/*
 			 * Forget the now-vacuumed tuples, and press on, but be careful
@@ -1714,9 +1650,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	}
 
 	/* If any tuples need to be deleted, perform final vacuum cycle */
-	if (dead_tuples->num_tuples > 0)
+	if (vacrelstats->useindex && dead_tuples->num_tuples > 0)
 		lazy_vacuum_table_and_indexes(onerel, vacrelstats, Irel, indstats,
-									  nindexes, lps, &npages_deadlp);
+									  nindexes, lps, &npages_deadlp,
+									  vacuum_index_pass);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1782,13 +1719,21 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 /*
  * Remove the collected garbage tuples from the table and its indexes.
+ *
+ * maybe_skip is true on final call here iff this is also the first call here.
+ * This allows us to consider skipping index vacuuming, which works just like
+ * the INDEX_CLEANUP off case.
  */
 static void
 lazy_vacuum_table_and_indexes(Relation onerel, LVRelStats *vacrelstats,
 							  Relation *Irel, IndexBulkDeleteResult **indstats,
 							  int nindexes, LVParallelState *lps,
-							  double *npages_deadlp)
+							  double *npages_deadlp, bool maybe_skip)
 {
+	/* Should not end up here with no indexes or INDEX_CLEANUP off */
+	Assert(nindexes > 0);
+	Assert(vacrelstats->useindex);
+
 	/*
 	 * Check whether or not to do index vacuum and heap vacuum.
 	 *
@@ -1806,22 +1751,27 @@ lazy_vacuum_table_and_indexes(Relation onerel, LVRelStats *vacrelstats,
 	 * HOT-pruning but are not marked dead yet.  We do not process them because
 	 * it's a very rare condition, and the next vacuum will process them anyway.
 	 */
-	if (*npages_deadlp > RelationGetNumberOfBlocks(onerel) * SKIP_VACUUM_PAGES_RATIO)
+	if (maybe_skip &&
+		*npages_deadlp < vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO)
 	{
-		/* Work on all the indexes, then the heap */
-		lazy_vacuum_all_indexes(onerel, Irel, indstats, vacrelstats, lps, nindexes);
-
-		/* Remove tuples from heap */
-		lazy_vacuum_heap(onerel, vacrelstats);
+		/* Skip index vacuuming and heap vacuuming */
+		vacrelstats->dead_tuples->num_tuples = 0;
+		return;
 	}
 
+	/* Work on all the indexes, then the heap */
+	lazy_vacuum_all_indexes(onerel, Irel, indstats, vacrelstats, lps, nindexes);
+
+	/* Remove tuples from heap */
+	lazy_vacuum_heap(onerel, vacrelstats);
+
 	/*
-	 * Forget the now-vacuumed tuples, and press on, but be careful
-	 * not to reset latestRemovedXid since we want that value to be
-	 * valid.
+	 * Forget the now-vacuumed tuples, and press on, but be careful not to
+	 * reset latestRemovedXid since we want that value to be valid.  Also
+	 * don't reset npages_deadlp, since that's supposed to be for the entire
+	 * VACUUM operation.
 	 */
 	vacrelstats->dead_tuples->num_tuples = 0;
-	*npages_deadlp = 0;
 }
 
 
@@ -1838,9 +1788,6 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 {
 	Assert(!IsParallelWorker());
 	Assert(nindexes > 0);
-
-	/* Log cleanup info before we touch indexes */
-	vacuum_log_cleanup_info(onerel, vacrelstats);
 
 	/* Report that we are now vacuuming indexes */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -2001,6 +1948,8 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 			break;				/* past end of tuples for this block */
 		toff = ItemPointerGetOffsetNumber(&dead_tuples->itemptrs[tupindex]);
 		itemid = PageGetItemId(page, toff);
+
+		Assert(ItemIdIsDead(itemid));
 		ItemIdSetUnused(itemid);
 		unused[uncnt++] = toff;
 	}
