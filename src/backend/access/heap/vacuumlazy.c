@@ -1774,7 +1774,9 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 
 	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
 	if (vacrelstats->mustskipindexes)
+	{
 		skipping = true;
+	}
 
 	/*
 	 * Check whether or not to do index vacuum and heap vacuum.
