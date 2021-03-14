@@ -1754,6 +1754,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  * We may be able to skip index vacuuming (we may even be required to do so by
  * reloption)
  */
+#define DEBUGELOG LOG
 static void
 vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 						   Relation *Irel, IndexBulkDeleteResult **indstats,
@@ -1775,7 +1776,7 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 	/* In INDEX_CLEANUP off case we always skip index and heap vacuuming */
 	if (vacrelstats->mustskipindexes)
 	{
-		elog(WARNING, "must skip index vacuuming of %s", vacrelstats->relname);
+		elog(DEBUGELOG, "must skip index vacuuming of %s", vacrelstats->relname);
 		skipping = true;
 	}
 
@@ -1805,19 +1806,19 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 
 		if (has_lpdead_pages < rel_pages_threshold)
 		{
-			elog(WARNING, "decided to skip index vacuuming of %s with %u LP_DEAD blocks and %u block threshold with %u blocks in total",
+			elog(DEBUGELOG, "decided to skip index vacuuming of %s with %u LP_DEAD blocks and %u block threshold with %u blocks in total",
 				 vacrelstats->relname, has_lpdead_pages, rel_pages_threshold, vacrelstats->rel_pages);
 			skipping = true;
 		}
 		else
 		{
-			elog(WARNING, "decided not to skip index vacuuming of %s with %u LP_DEAD blocks and %u block threshold with %u blocks in total",
+			elog(DEBUGELOG, "decided not to skip index vacuuming of %s with %u LP_DEAD blocks and %u block threshold with %u blocks in total",
 				 vacrelstats->relname, has_lpdead_pages, rel_pages_threshold, vacrelstats->rel_pages);
 		}
 	}
 	else
 	{
-		elog(WARNING, "never had the choice to skip index vacuuming of %s", vacrelstats->relname);
+		elog(DEBUGELOG, "never had the choice to skip index vacuuming of %s", vacrelstats->relname);
 	}
 
 	if (skipping)
