@@ -354,7 +354,6 @@ static void lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 									 Relation *Irel, IndexBulkDeleteResult **indstats,
 									 int nindexes, LVParallelState *lps,
 									 double *npages_deadlp, bool maybe_skip);
-static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
 static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
@@ -703,9 +702,9 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
  *		page, and set commit status bits (see heap_page_prune).  It also builds
  *		lists of dead tuples and pages with free space, calculates statistics
  *		on the number of live tuples in the heap, and marks pages as
- *		all-visible if appropriate.  When done, or when we run low on space for
- *		dead-tuple TIDs, invoke vacuuming of indexes and call lazy_vacuum_heap
- *		to reclaim dead line pointers.
+ *		all-visible if appropriate.  When done, or when we run low on space
+ *		for dead-tuple TIDs, invoke lazy_vacuum_indexes_heap to vacuum indexes
+ *		and mark dead line pointers for reuse in a second heap pass .
  *
  *		If the table has at least two indexes, we execute both index vacuum
  *		and index cleanup with parallel workers unless parallel vacuum is
@@ -1613,9 +1612,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 		/*
 		 * If we remembered any tuples for deletion, then the page will be
-		 * visited again by lazy_vacuum_heap, which will compute and record
-		 * its post-compaction free space.  If not, then we're done with this
-		 * page, so remember its free space as-is.
+		 * visited again by lazy_vacuum_indexes_heap, which will compute and
+		 * record its post-compaction free space.  If not, then we're done
+		 * with this page, so remember its free space as-is.
 		 *
 		 * This path will always be taken if there are no indexes.  However,
 		 * it might not be taken if INDEX_CLEANUP is off -- that works the
@@ -1692,7 +1691,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	if (vacrelstats->useindex)
 		update_index_statistics(Irel, indstats, nindexes);
 
-	/* If no indexes, make log report that lazy_vacuum_heap would've made */
+	/*
+	 * If no indexes, make log report that lazy_vacuum_indexes_heap would've
+	 * made
+	 */
 	if (vacuumed_pages)
 		ereport(elevel,
 				(errmsg("\"%s\": removed %.0f row versions in %u pages",
@@ -1741,6 +1743,12 @@ lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 						 int nindexes, LVParallelState *lps,
 						 double *npages_deadlp, bool maybe_skip)
 {
+	int			tupindex;
+	int			npages;
+	PGRUsage	ru0;
+	Buffer		vmbuffer = InvalidBuffer;
+	LVSavedErrInfo saved_err_info;
+
 	/* Should not end up here with no indexes */
 	Assert(nindexes > 0);
 	Assert(!IsParallelWorker());
@@ -1816,37 +1824,12 @@ lazy_vacuum_indexes_heap(Relation onerel, LVRelStats *vacrelstats,
 	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_INDEX_VACUUMS,
 								 vacrelstats->num_index_scans);
 
-	/* Remove tuples from heap */
-	lazy_vacuum_heap(onerel, vacrelstats);
-
 	/*
-	 * Forget the now-vacuumed tuples, and press on, but be careful not to
-	 * reset latestRemovedXid since we want that value to be valid.  Also
-	 * don't reset npages_deadlp, since that's supposed to be for the entire
-	 * VACUUM operation.
+	 * Now mark LP_DEAD line pointers deleted from indexes as unused, and
+	 * compact out free space on pages -- this is the second heap pass.  Pages
+	 * not having dead tuples recorded from lazy_scan_heap are not visited at
+	 * all.
 	 */
-	vacrelstats->dead_tuples->num_tuples = 0;
-}
-
-/*
- *	lazy_vacuum_heap() -- second pass over the heap
- *
- *		This routine marks dead tuples as unused and compacts out free
- *		space on their pages.  Pages not having dead tuples recorded from
- *		lazy_scan_heap are not visited at all.
- *
- * Note: the reason for doing this as a second pass is we cannot remove
- * the tuples until we've removed their index entries, and we want to
- * process index entry removal in batches as large as possible.
- */
-static void
-lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
-{
-	int			tupindex;
-	int			npages;
-	PGRUsage	ru0;
-	Buffer		vmbuffer = InvalidBuffer;
-	LVSavedErrInfo saved_err_info;
 
 	/* Report that we are now vacuuming the heap */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -1903,6 +1886,14 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 
 	/* Revert to the previous phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
+
+	/*
+	 * Forget the now-vacuumed tuples, and press on, but be careful not to
+	 * reset latestRemovedXid since we want that value to be valid.  Also
+	 * don't reset npages_deadlp, since that's supposed to be for the entire
+	 * VACUUM operation.
+	 */
+	vacrelstats->dead_tuples->num_tuples = 0;
 }
 
 /*
