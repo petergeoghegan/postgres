@@ -1292,6 +1292,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			{
 				lazy_record_dead_tuple(dead_tuples, &(tuple.t_self));
 				all_visible = false;
+				has_dead_tuples = true;
 				continue;
 			}
 
