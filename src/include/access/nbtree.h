@@ -279,8 +279,8 @@ BTPageGetDeleteXid(Page page)
  * Is an existing page recyclable?
  *
  * This exists to centralize the policy on which deleted pages are now safe to
- * re-use.  However, _bt_recycle_pagedel() duplicates some of the same logic
- * because it doesn't work with page images -- keep it in sync.
+ * re-use.  However, _bt_pendingfsm_finalize() duplicates some of the same
+ * logic because it doesn't work with pages -- keep the two in sync.
  *
  * Note: PageIsNew() pages are always safe to recycle, but we can't deal with
  * them here (caller is responsible for that case themselves).  Caller might
@@ -336,7 +336,7 @@ typedef struct BTVacState
 	MemoryContext pagedelcontext;
 
 	/*
-	 * Details of newly deleted pages for _bt_recycle_pagedel()
+	 * Details of newly deleted pages for _bt_pendingfsm_finalize()
 	 */
 	bool		grow;
 	bool		full;
@@ -1216,8 +1216,8 @@ extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
 									  Relation heapRel,
 									  TM_IndexDeleteOp *delstate);
 extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
-extern void _bt_pagedel_mem(Relation rel, BTVacState *vstate);
-extern void _bt_recycle_pagedel(Relation rel, BTVacState *vstate);
+extern void _bt_pendingfsm_mem(Relation rel, BTVacState *vstate);
+extern void _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate);
 
 /*
  * prototypes for functions in nbtsearch.c

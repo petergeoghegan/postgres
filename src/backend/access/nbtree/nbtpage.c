@@ -2906,7 +2906,7 @@ _bt_pagedel_mem(Relation rel, BTVacState *vstate)
  * takes place.
  */
 void
-_bt_recycle_pagedel(Relation rel, BTVacState *vstate)
+_bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 {
 	IndexBulkDeleteResult *stats = vstate->stats;
 
@@ -2973,7 +2973,7 @@ _bt_recycle_pagedel(Relation rel, BTVacState *vstate)
 
 /*
  * Maintain array of pages that were deleted during current btvacuumscan()
- * call, for use in _bt_recycle_pagedel().
+ * call, for use in _bt_pendingfsm_finalize().
  *
  * Need to respect work_mem/maxndeletedspace limitation on size of deleted
  * array.  Our strategy when the array can no longer grow within the bounds of
@@ -2986,7 +2986,7 @@ _bt_save_pagedel(BTVacState *vstate, BlockNumber target,
 {
 #ifdef USE_ASSERT_CHECKING
 	/*
-	 * Verify an assumption made by _bt_recycle_pagedel(): pages from the
+	 * Verify an assumption made by _bt_pendingfsm_finalize(): pages from the
 	 * array will always be in safexid order (since that is the order that we
 	 * save them in here)
 	 */

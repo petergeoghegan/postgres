@@ -861,11 +861,16 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * num_delpages is the number of deleted pages now in the index that were
 	 * not safe to place in the FSM to be recycled just yet.  num_delpages is
 	 * greater than 0 only when _bt_pagedel() actually deleted pages during
-	 * our call to btvacuumscan().  Even then, _bt_recycle_pagedel() must have
-	 * failed to recycle some of the resulting newly deleted pages at the very
-	 * end of btvacuumscan().  (Actually, it also happens when nobody else
-	 * consumes an XID between _bt_pagedel() and _bt_recycle_pagedel() calls,
-	 * due to an implementation restriction.)
+	 * our call to btvacuumscan().  Even then, _bt_pendingfsm_finalize() must
+	 * have failed to place some of the resulting newly deleted pages in the
+	 * FSM just moments ago -- though that should be rare with larger indexes.
+	 *
+	 * (Actually, there are some further complicating factors.  This analysis
+	 * ignores cases where BTPageIsRecyclable() considers a page that was
+	 * deleted during an earlier VACUUM operation non-recyclable now.  That
+	 * has little practical relevance, though, since VACUUM's oldestXmin value
+	 * will be held back anyway -- which will have far worse consequences than
+	 * blocking recycling of already-deleted pages.)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
@@ -941,8 +946,8 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  "_bt_pagedel",
 												  ALLOCSET_DEFAULT_SIZES);
 
-	/* Set up remaining vstate fields used by _bt_recycle_pagedel */
-	_bt_pagedel_mem(rel, &vstate);
+	/* Set up remaining vstate fields used by _bt_pendingfsm_finalize */
+	_bt_pendingfsm_mem(rel, &vstate);
 
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in
@@ -1012,7 +1017,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * find them.
 	 */
 	if (vstate.npendingpages > 0)
-		_bt_recycle_pagedel(rel, &vstate);
+		_bt_pendingfsm_finalize(rel, &vstate);
 	if (stats->pages_free > 0)
 		IndexFreeSpaceMapVacuum(rel);
 
