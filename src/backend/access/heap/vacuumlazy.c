@@ -522,7 +522,8 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	 * mustskipindexes tracks if we are obligated to skip index vacuuming
 	 * because of index_cleanup reloption.
 	 *
-	 * XXX: This is too duplicative
+	 * FIXME: This is too duplicative.  Fix this issue when you fix the
+	 * closely related VACOPT_TERNARY_DEFAULT issue in vacuum.c.
 	 */
 	vacrelstats->hasindex = (nindexes > 0);
 	vacrelstats->mayskipindexes =
