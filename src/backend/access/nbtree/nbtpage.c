@@ -58,8 +58,8 @@ static bool _bt_lock_subtree_parent(Relation rel, BlockNumber child,
 									OffsetNumber *poffset,
 									BlockNumber *topparent,
 									BlockNumber *topparentrightsib);
-static void _bt_save_pagedel(BTVacState *vstate, BlockNumber target,
-							 FullTransactionId safexid);
+static void bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+							  FullTransactionId safexid);
 
 /*
  *	_bt_initmetapage() -- Fill a page buffer with a correct metapage image
@@ -2732,7 +2732,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * candidate to place in the FSM at the end of the current btvacuumscan()
 	 * call.
 	 */
-	_bt_save_pagedel(vstate, target, safexid);
+	bt_pendingfsm_add(vstate, target, safexid);
 
 	return true;
 }
@@ -2960,7 +2960,7 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		 * accessing the page again a second time.
 		 *
 		 * Give up on finding the first non-recyclable page -- all other pages
-		 * must be non-recyclable too, since _bt_save_pagedel() adds pages to
+		 * must be non-recyclable too, since bt_pendingfsm_add() adds pages to
 		 * the array in safexid order.
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
@@ -2981,8 +2981,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
  * recyclable in the end), but stop saving new entries.
  */
 static void
-_bt_save_pagedel(BTVacState *vstate, BlockNumber target,
-				 FullTransactionId safexid)
+bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+				  FullTransactionId safexid)
 {
 #ifdef USE_ASSERT_CHECKING
 	/*
