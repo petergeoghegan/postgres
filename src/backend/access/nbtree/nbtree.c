@@ -947,7 +947,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  ALLOCSET_DEFAULT_SIZES);
 
 	/* Set up remaining vstate fields used by _bt_pendingfsm_finalize */
-	_bt_pendingfsm_mem(rel, &vstate);
+	_bt_pendingfsm_init(rel, &vstate);
 
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in

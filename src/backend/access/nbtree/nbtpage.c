@@ -2885,7 +2885,7 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  * Called at the start of a btvacuumscan().
  */
 void
-_bt_pagedel_mem(Relation rel, BTVacState *vstate)
+_bt_pendingfsm_init(Relation rel, BTVacState *vstate)
 {
 	vstate->grow = true;
 	vstate->full = false;
