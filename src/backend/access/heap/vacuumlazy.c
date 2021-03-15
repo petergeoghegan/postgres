@@ -322,7 +322,6 @@ typedef struct LVRelStats
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
 	LVDeadTuples *dead_tuples;
 	int			num_index_scans;
-	TransactionId latestRemovedXid;
 	bool		lock_waiter_detected;
 
 	/* Used for error callback */
@@ -804,7 +803,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	vacrelstats->scanned_pages = 0;
 	vacrelstats->tupcount_pages = 0;
 	vacrelstats->nonempty_pages = 0;
-	vacrelstats->latestRemovedXid = InvalidTransactionId;
 
 	vistest = GlobalVisTestFor(onerel);
 
@@ -1235,7 +1233,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 */
 		tups_vacuumed += heap_page_prune(onerel, buf, vistest,
 										 InvalidTransactionId, 0, false,
-										 &vacrelstats->latestRemovedXid,
 										 &vacrelstats->offnum);
 
 		/*
@@ -1505,11 +1502,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			reuse_marked_pages++;
 			has_dead_tuples = false;
 
-			/*
-			 * Forget the now-vacuumed tuples, and press on, but be careful
-			 * not to reset latestRemovedXid since we want that value to be
-			 * valid.
-			 */
+			/* Forget the now-vacuumed tuples */
 			dead_tuples->num_tuples = 0;
 
 			/*
@@ -1956,10 +1949,7 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 	/* Revert to the previous phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
 
-	/*
-	 * Forget the now-vacuumed tuples, and press on, but be careful not to
-	 * reset latestRemovedXid since we want that value to be valid
-	 */
+	/* Forget the now-vacuumed tuples */
 	vacrelstats->dead_tuples->num_tuples = 0;
 }
 
