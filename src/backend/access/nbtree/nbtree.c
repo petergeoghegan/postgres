@@ -941,15 +941,8 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  "_bt_pagedel",
 												  ALLOCSET_DEFAULT_SIZES);
 
-	/* Allocate _bt_recycle_pagedel related information */
-	vstate.grow = true;
-	vstate.full = false;
-	vstate.npendingpagesspace = 512;
-	vstate.npendingpages = 0;
-	vstate.maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingRecycle));
-	vstate.maxnpendingpages = Min(vstate.maxnpendingpages, MaxBlockNumber);
-	vstate.maxnpendingpages = Max(vstate.maxnpendingpages, vstate.npendingpagesspace);
-	vstate.pendingpages = palloc(sizeof(BTPendingRecycle) * vstate.npendingpagesspace);
+	/* Set up remaining vstate fields used by _bt_recycle_pagedel */
+	_bt_pagedel_mem(rel, &vstate);
 
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in

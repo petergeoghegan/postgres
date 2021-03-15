@@ -1216,6 +1216,7 @@ extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
 									  Relation heapRel,
 									  TM_IndexDeleteOp *delstate);
 extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
+extern void _bt_pagedel_mem(Relation rel, BTVacState *vstate);
 extern void _bt_recycle_pagedel(Relation rel, BTVacState *vstate);
 
 /*

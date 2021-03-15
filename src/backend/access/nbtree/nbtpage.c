@@ -2880,6 +2880,24 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 }
 
 /*
+ * Initialize local memory state used by VACUUM inside .
+ *
+ * Called at the start of a btvacuumscan().
+ */
+void
+_bt_pagedel_mem(Relation rel, BTVacState *vstate)
+{
+	vstate->grow = true;
+	vstate->full = false;
+	vstate->npendingpagesspace = 512;
+	vstate->npendingpages = 0;
+	vstate->maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingRecycle));
+	vstate->maxnpendingpages = Min(vstate->maxnpendingpages, MaxBlockNumber);
+	vstate->maxnpendingpages = Max(vstate->maxnpendingpages, vstate->npendingpagesspace);
+	vstate->pendingpages = palloc(sizeof(BTPendingRecycle) * vstate->npendingpagesspace);
+}
+
+/*
  * Place any newly deleted pages (i.e. pages that _bt_pagedel() deleted during
  * the ongoing VACUUM operation) into the free space map when it happens to be
  * safe to do so already.
