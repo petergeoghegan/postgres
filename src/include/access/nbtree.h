@@ -317,11 +317,11 @@ BTPageIsRecyclable(Page page)
  * BTVacState is private nbtree.c state used during VACUUM.  It is exported
  * for use by page deletion related code in nbtpage.c.
  */
-typedef struct BTPendingRecycle
+typedef struct BTPendingFSMPageInfo
 {
 	BlockNumber target;
 	FullTransactionId safexid;
-} BTPendingRecycle;
+} BTPendingFSMPageInfo;
 
 typedef struct BTVacState
 {
@@ -340,7 +340,7 @@ typedef struct BTVacState
 	 */
 	bool		grow;
 	bool		full;
-	BTPendingRecycle *pendingpages;
+	BTPendingFSMPageInfo *pendingpages;
 	uint32		npendingpages;		/* array size */
 	uint64		maxnpendingpages;	/* max # array elements */
 

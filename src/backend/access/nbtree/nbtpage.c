@@ -2892,10 +2892,10 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate)
 	vstate->full = false;
 	vstate->npendingpagesspace = 512;
 	vstate->npendingpages = 0;
-	vstate->maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingRecycle));
+	vstate->maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
 	vstate->maxnpendingpages = Min(vstate->maxnpendingpages, MaxBlockNumber);
 	vstate->maxnpendingpages = Max(vstate->maxnpendingpages, vstate->npendingpagesspace);
-	vstate->pendingpages = palloc(sizeof(BTPendingRecycle) * vstate->npendingpagesspace);
+	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * vstate->npendingpagesspace);
 }
 
 /*
@@ -3002,7 +3002,8 @@ bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
 		vstate->npendingpagesspace = newnpendingpagesspace;
 		vstate->pendingpages =
 			repalloc(vstate->pendingpages,
-					 sizeof(BTPendingRecycle) * vstate->npendingpagesspace);
+					 sizeof(BTPendingFSMPageInfo) *
+					 vstate->npendingpagesspace);
 	}
 
 	vstate->pendingpages[vstate->npendingpages].target = target;
