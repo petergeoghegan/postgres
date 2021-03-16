@@ -736,18 +736,16 @@ lazy_scan_heap_page(Relation onerel,
 					Relation *Irel,
 					int nindexes,
 
-					/* Per-page params: */
+					lazy_counters *l,
 					GlobalVisState *vistest,
+
+					/* Per-page params: */
 					bool *all_visible,
 					bool *has_dead_items,
 					bool *all_frozen,
-					bool *hastup,
-					double *tups_vacuumed,
-					double *live_tuples)
+					bool *hastup)
 {
-	double		num_tuples,		/* total number of nonremovable tuples */
-				nkeep,			/* dead-but-not-removable tuples */
-				nunused;		/* # existing unused line pointers */
+	lazy_counters p;
 	HeapTupleData tuple;
 	BlockNumber blkno;
 	xl_heap_freeze_tuple *frozen;
@@ -771,15 +769,17 @@ lazy_scan_heap_page(Relation onerel,
 
 prune:
 
+	memset(&p, 0, sizeof(lazy_counters));
+
 	/*
 	 * Prune all HOT-update chains in this page.
 	 *
 	 * We count tuples removed by the pruning step as removed by VACUUM
 	 * (existing LP_DEAD line pointers don't count).
 	 */
-	*tups_vacuumed += heap_page_prune(onerel, buf, vistest,
-									 InvalidTransactionId, 0, false,
-									 &vacrelstats->offnum);
+	p.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
+									  InvalidTransactionId, 0, false,
+									  &vacrelstats->offnum);
 	//pg_usleep(10000);
 
 
@@ -814,7 +814,7 @@ prune:
 		/* Unused items require no processing, but we count 'em */
 		if (!ItemIdIsUsed(itemid))
 		{
-			nunused += 1;
+			p.nunused += 1;
 			continue;
 		}
 
@@ -893,7 +893,7 @@ prune:
 				 * Count it as live.  Not only is this natural, but it's
 				 * also what acquire_sample_rows() does.
 				 */
-				*live_tuples += 1;
+				p.live_tuples += 1;
 
 				/*
 				 * Is the tuple definitely visible to all transactions?
@@ -936,7 +936,7 @@ prune:
 				 * If tuple is recently deleted then we must not remove it
 				 * from relation.
 				 */
-				nkeep += 1;
+				p.nkeep += 1;
 				*all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
@@ -962,14 +962,14 @@ prune:
 				 * deleting transaction will commit and update the
 				 * counters after we report.
 				 */
-				*live_tuples += 1;
+				p.live_tuples += 1;
 				break;
 			default:
 				elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
 				break;
 		}
 
-		num_tuples += 1;
+		p.num_tuples += 1;
 		*hastup = true;
 
 		/*
@@ -1036,6 +1036,12 @@ prune:
 	}
 
 	pfree(frozen);
+
+	l->num_tuples += p.num_tuples;
+	l->live_tuples += p.live_tuples;
+	l->tups_vacuumed += p.tups_vacuumed;
+	l->nkeep += p.nkeep;
+	l->nunused += p.nunused;
 }
 
 /*
@@ -1108,7 +1114,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	empty_pages = reuse_marked_pages = has_dead_items_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
-	l.num_tuples = l.live_tuples = l.tups_vacuumed = l.nkeep = l.nunused = 0;
+	memset(&l, 0, sizeof(lazy_counters));
 
 	indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
@@ -1542,14 +1548,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 							Irel,
 							nindexes,
 
-							/* Per-page params: */
+							&l,
 							vistest,
+
+							/* Per-page params: */
 							&all_visible,
 							&has_dead_items,
 							&all_frozen,
-							&hastup,
-							&l.tups_vacuumed,
-							&l.live_tuples);
+							&hastup);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
