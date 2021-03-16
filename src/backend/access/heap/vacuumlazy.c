@@ -745,8 +745,6 @@ lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
 
 prune:
 
-	nkilled = 0;
-
 	/*
 	 * Prune all HOT-update chains in this page.
 	 *
@@ -766,6 +764,7 @@ prune:
 	*all_visible = true;
 	*has_dead_items = false;
 	nfrozen = 0;
+	nkilled = 0;
 	*hastup = false;
 	maxoff = PageGetMaxOffsetNumber(page);
 
