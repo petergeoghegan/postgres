@@ -718,10 +718,10 @@ static void
 lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
 					LVRelStats *vacrelstats, Relation *Irel, int nindexes,
 					GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
-					bool *all_visible, bool *has_dead_items, bool *all_frozen, bool *hastup, double *tups_vacuumed)
+					bool *all_visible, bool *has_dead_items, bool *all_frozen,
+					bool *hastup, double *tups_vacuumed, double *live_tuples)
 {
 	double		num_tuples,		/* total number of nonremovable tuples */
-				live_tuples,	/* live tuples (reltuples estimate) */
 				nkeep,			/* dead-but-not-removable tuples */
 				nunused;		/* # existing unused line pointers */
 	HeapTupleData tuple;
@@ -859,7 +859,7 @@ prune:
 				 * Count it as live.  Not only is this natural, but it's
 				 * also what acquire_sample_rows() does.
 				 */
-				live_tuples += 1;
+				*live_tuples += 1;
 
 				/*
 				 * Is the tuple definitely visible to all transactions?
@@ -928,7 +928,7 @@ prune:
 				 * deleting transaction will commit and update the
 				 * counters after we report.
 				 */
-				live_tuples += 1;
+				*live_tuples += 1;
 				break;
 			default:
 				elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
@@ -1502,7 +1502,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		prev_dead_count = dead_tuples->num_tuples;
 		lazy_scan_heap_page(onerel, params, buf, vacrelstats, Irel, nindexes,
 							vistest, frozen, &all_visible, &has_dead_items,
-							&all_frozen, &hastup, &tups_vacuumed);
+							&all_frozen, &hastup, &tups_vacuumed, &live_tuples);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
