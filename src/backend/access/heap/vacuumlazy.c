@@ -726,14 +726,14 @@ typedef struct lazy_scan_prune_page_state
 	TransactionId visibility_cutoff_xid;
 } lazy_scan_prune_page_state;
 
-typedef struct lazy_counters
+typedef struct lazy_scan_heap_counters
 {
 	double		num_tuples,		/* total number of nonremovable tuples */
 				live_tuples,	/* live tuples (reltuples estimate) */
 				tups_vacuumed,	/* tuples cleaned up by current vacuum */
 				nkeep,			/* dead-but-not-removable tuples */
 				nunused;		/* # existing unused line pointers */
-} lazy_counters;
+} lazy_scan_heap_counters;
 
 static void
 lazy_scan_prune_page(Relation onerel,
@@ -742,10 +742,10 @@ lazy_scan_prune_page(Relation onerel,
 					 Relation *Irel,
 					 int nindexes,
 					 GlobalVisState *vistest,
-					 lazy_counters *l,
+					 lazy_scan_heap_counters *l,
 					 lazy_scan_prune_page_state *ls)
 {
-	lazy_counters p;
+	lazy_scan_heap_counters p;
 	HeapTupleData tuple;
 	BlockNumber blkno;
 	xl_heap_freeze_tuple *frozen;
@@ -766,7 +766,7 @@ lazy_scan_prune_page(Relation onerel,
 
 prune:
 
-	memset(&p, 0, sizeof(lazy_counters));
+	memset(&p, 0, sizeof(lazy_scan_heap_counters));
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1081,7 +1081,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				reuse_marked_pages,
 				has_dead_items_pages,
 				next_fsm_block_to_vacuum;
-	lazy_counters l;
+	lazy_scan_heap_counters l;
 	IndexBulkDeleteResult **indstats;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
@@ -1111,7 +1111,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	empty_pages = reuse_marked_pages = has_dead_items_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
-	memset(&l, 0, sizeof(lazy_counters));
+	memset(&l, 0, sizeof(lazy_scan_heap_counters));
 
 	indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
