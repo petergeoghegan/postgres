@@ -714,6 +714,18 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	}
 }
 
+typedef struct lazy_prune_state
+{
+	bool		  hastup;
+	int			  prev_dead_count;
+	Size		  freespace;
+	bool		  all_visible_according_to_vm;
+	bool		  all_visible;
+	bool		  all_frozen;	  /* provided all_visible is also true */
+	bool		  has_dead_items; /* includes existing LP_DEAD items */
+	TransactionId visibility_cutoff_xid;
+} lazy_prune_state;
+
 typedef struct lazy_counters
 {
 	double		num_tuples,		/* total number of nonremovable tuples */
@@ -724,9 +736,23 @@ typedef struct lazy_counters
 } lazy_counters;
 
 #if 0
-static void
-lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
-			   Relation *Irel, int nindexes, bool aggressive)
+	for (blkno = 0; blkno < nblocks; blkno++)
+	{
+		Buffer		buf;
+		Page		page;
+		bool		hastup;
+		int			prev_dead_count;
+		Size		freespace;
+		bool		all_visible_according_to_vm = false;
+		bool		all_visible;
+		bool		all_frozen = true;	/* provided all_visible is also true */
+		bool		has_dead_items;		/* includes existing LP_DEAD items */
+		TransactionId visibility_cutoff_xid = InvalidTransactionId;
+
+		/* see note above about forcing scanning of last page */
+#define FORCE_CHECK_PAGE() \
+		(blkno == nblocks - 1 && should_attempt_truncation(params, vacrelstats))
+
 #endif
 
 static void
@@ -736,14 +762,9 @@ lazy_scan_heap_page(Relation onerel,
 					Relation *Irel,
 					int nindexes,
 
-					lazy_counters *l,
 					GlobalVisState *vistest,
-
-					/* Per-page params: */
-					bool *all_visible,
-					bool *has_dead_items,
-					bool *all_frozen,
-					bool *hastup)
+					lazy_counters *l,
+					lazy_prune_state *ls)
 {
 	lazy_counters p;
 	HeapTupleData tuple;
@@ -753,7 +774,6 @@ lazy_scan_heap_page(Relation onerel,
 	OffsetNumber offnum,
 				maxoff;
 	int			nfrozen;
-	TransactionId visibility_cutoff_xid = InvalidTransactionId;
 	bool		tuple_totally_frozen;
 	LVDeadTuples *dead_tuples;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
@@ -787,11 +807,11 @@ prune:
 	 * Now scan the page to collect vacuumable items and check for tuples
 	 * requiring freezing.
 	 */
-	*all_visible = true;
-	*has_dead_items = false;
+	ls->all_visible = true;
+	ls->has_dead_items = false;
 	nfrozen = 0;
 	nkilled = 0;
-	*hastup = false;
+	ls->hastup = false;
 	maxoff = PageGetMaxOffsetNumber(page);
 
 	/*
@@ -821,7 +841,7 @@ prune:
 		/* Redirect items mustn't be touched */
 		if (ItemIdIsRedirected(itemid))
 		{
-			*hastup = true;	/* this page won't be truncatable */
+			ls->hastup = true;	/* this page won't be truncatable */
 			continue;
 		}
 
@@ -839,8 +859,8 @@ prune:
 		if (ItemIdIsDead(itemid))
 		{
 			killed[nkilled++] = offnum;
-			*all_visible = false;
-			*has_dead_items = true;
+			ls->all_visible = false;
+			ls->has_dead_items = true;
 			continue;
 		}
 
@@ -904,13 +924,13 @@ prune:
 				 * that the tuple is hinted xmin-committed because of
 				 * that.
 				 */
-				if (*all_visible)
+				if (ls->all_visible)
 				{
 					TransactionId xmin;
 
 					if (!HeapTupleHeaderXminCommitted(tuple.t_data))
 					{
-						*all_visible = false;
+						ls->all_visible = false;
 						break;
 					}
 
@@ -921,13 +941,13 @@ prune:
 					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
 					if (!TransactionIdPrecedes(xmin, OldestXmin))
 					{
-						*all_visible = false;
+						ls->all_visible = false;
 						break;
 					}
 
 					/* Track newest xmin on page. */
-					if (TransactionIdFollows(xmin, visibility_cutoff_xid))
-						visibility_cutoff_xid = xmin;
+					if (TransactionIdFollows(xmin, ls->visibility_cutoff_xid))
+						ls->visibility_cutoff_xid = xmin;
 				}
 				break;
 			case HEAPTUPLE_RECENTLY_DEAD:
@@ -937,7 +957,7 @@ prune:
 				 * from relation.
 				 */
 				p.nkeep += 1;
-				*all_visible = false;
+				ls->all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
 
@@ -951,11 +971,11 @@ prune:
 				 * but it is what acquire_sample_rows() does, so be
 				 * consistent.
 				 */
-				*all_visible = false;
+				ls->all_visible = false;
 				break;
 			case HEAPTUPLE_DELETE_IN_PROGRESS:
 				/* This is an expected case during concurrent vacuum */
-				*all_visible = false;
+				ls->all_visible = false;
 
 				/*
 				 * Count such rows as live.  As above, we assume the
@@ -970,7 +990,7 @@ prune:
 		}
 
 		p.num_tuples += 1;
-		*hastup = true;
+		ls->hastup = true;
 
 		/*
 		 * Each non-removable tuple must be checked to see if it needs
@@ -984,8 +1004,8 @@ prune:
 			frozen[nfrozen++].offset = offnum;
 
 		if (!tuple_totally_frozen)
-			*all_frozen = false;
-	}						/* scan along page */
+			ls->all_frozen = false;
+	}
 
 	for (int i = 0; i < nkilled; i++)
 	{
@@ -1249,14 +1269,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	{
 		Buffer		buf;
 		Page		page;
-		bool		hastup;
-		int			prev_dead_count;
-		Size		freespace;
-		bool		all_visible_according_to_vm = false;
-		bool		all_visible;
-		bool		all_frozen = true;	/* provided all_visible is also true */
-		bool		has_dead_items;		/* includes existing LP_DEAD items */
-		TransactionId visibility_cutoff_xid = InvalidTransactionId;
+		lazy_prune_state ls;
+
+		ls.all_visible_according_to_vm = false;
+		ls.all_frozen = true;
+		ls.visibility_cutoff_xid = InvalidTransactionId;
 
 		/* see note above about forcing scanning of last page */
 #define FORCE_CHECK_PAGE() \
@@ -1310,7 +1327,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * that it's not all-frozen, so it might still be all-visible.
 			 */
 			if (aggressive && VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
-				all_visible_according_to_vm = true;
+				ls.all_visible_according_to_vm = true;
 		}
 		else
 		{
@@ -1337,7 +1354,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					vacrelstats->frozenskipped_pages++;
 				continue;
 			}
-			all_visible_according_to_vm = true;
+			ls.all_visible_according_to_vm = true;
 		}
 
 		vacuum_delay_point();
@@ -1433,12 +1450,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * to use lazy_check_needs_freeze() for both situations, though.
 			 */
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
-			if (!lazy_check_needs_freeze(buf, &hastup, vacrelstats))
+			if (!lazy_check_needs_freeze(buf, &ls.hastup, vacrelstats))
 			{
 				UnlockReleaseBuffer(buf);
 				vacrelstats->scanned_pages++;
 				vacrelstats->pinskipped_pages++;
-				if (hastup)
+				if (ls.hastup)
 					vacrelstats->nonempty_pages = blkno + 1;
 				continue;
 			}
@@ -1450,7 +1467,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				 */
 				UnlockReleaseBuffer(buf);
 				vacrelstats->pinskipped_pages++;
-				if (hastup)
+				if (ls.hastup)
 					vacrelstats->nonempty_pages = blkno + 1;
 				continue;
 			}
@@ -1502,7 +1519,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		if (PageIsEmpty(page))
 		{
 			empty_pages++;
-			freespace = PageGetHeapFreeSpace(page);
+			ls.freespace = PageGetHeapFreeSpace(page);
 
 			/*
 			 * Empty pages are always all-visible and all-frozen (note that
@@ -1537,25 +1554,18 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			}
 
 			UnlockReleaseBuffer(buf);
-			RecordPageWithFreeSpace(onerel, blkno, freespace);
+			RecordPageWithFreeSpace(onerel, blkno, ls.freespace);
 			continue;
 		}
 
-		prev_dead_count = dead_tuples->num_tuples;
+		ls.prev_dead_count = dead_tuples->num_tuples;
 		lazy_scan_heap_page(onerel,
 							buf,
 							vacrelstats,
 							Irel,
 							nindexes,
-
-							&l,
 							vistest,
-
-							/* Per-page params: */
-							&all_visible,
-							&has_dead_items,
-							&all_frozen,
-							&hastup);
+							&l, &ls);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
@@ -1572,7 +1582,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 */
 			mark_unused_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
 			reuse_marked_pages++;
-			has_dead_items = false;
+			ls.has_dead_items = false;
 
 			/* Forget the now-vacuumed tuples */
 			dead_tuples->num_tuples = 0;
@@ -1591,14 +1601,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			}
 		}
 
-		freespace = PageGetHeapFreeSpace(page);
+		ls.freespace = PageGetHeapFreeSpace(page);
 
 		/* mark page all-visible, if appropriate */
-		if (all_visible && !all_visible_according_to_vm)
+		if (ls.all_visible && !ls.all_visible_according_to_vm)
 		{
 			uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
-			if (all_frozen)
+			if (ls.all_frozen)
 				flags |= VISIBILITYMAP_ALL_FROZEN;
 
 			/*
@@ -1617,7 +1627,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			PageSetAllVisible(page);
 			MarkBufferDirty(buf);
 			visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-							  vmbuffer, visibility_cutoff_xid, flags);
+							  vmbuffer, ls.visibility_cutoff_xid, flags);
 		}
 
 		/*
@@ -1627,8 +1637,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * content lock, so we must recheck before jumping to the conclusion
 		 * that something bad has happened.
 		 */
-		else if (all_visible_according_to_vm && !PageIsAllVisible(page)
-				 && VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
+		else if (ls.all_visible_according_to_vm && !PageIsAllVisible(page) &&
+				 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
 		{
 			elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
 				 vacrelstats->relname, blkno);
@@ -1651,7 +1661,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * There should never be dead tuples on a page with PD_ALL_VISIBLE
 		 * set, however.
 		 */
-		else if (PageIsAllVisible(page) && has_dead_items)
+		else if (PageIsAllVisible(page) && ls.has_dead_items)
 		{
 			elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
 				 vacrelstats->relname, blkno);
@@ -1666,8 +1676,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * mark it as all-frozen.  Note that all_frozen is only valid if
 		 * all_visible is true, so we must check both.
 		 */
-		else if (all_visible_according_to_vm && all_visible && all_frozen &&
-				 !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
+		else if (ls.all_visible_according_to_vm && ls.all_visible &&
+				 ls.all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
 		{
 			/*
 			 * We can pass InvalidTransactionId as the cutoff XID here,
@@ -1682,7 +1692,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		UnlockReleaseBuffer(buf);
 
 		/* Remember the location of the last page with nonremovable tuples */
-		if (hastup)
+		if (ls.hastup)
 			vacrelstats->nonempty_pages = blkno + 1;
 
 		/*
@@ -1690,7 +1700,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
 		 * even opportunistic pruning.
 		 */
-		if (has_dead_items)
+		if (ls.has_dead_items)
 			has_dead_items_pages++;
 
 		/*
@@ -1704,8 +1714,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * same as the case where we decide to skip index vacuuming.  See also
 		 * vacuum_indexes_mark_unused(), where that is decided.
 		 */
-		if (dead_tuples->num_tuples == prev_dead_count)
-			RecordPageWithFreeSpace(onerel, blkno, freespace);
+		if (dead_tuples->num_tuples == ls.prev_dead_count)
+			RecordPageWithFreeSpace(onerel, blkno, ls.freespace);
 	}
 
 	/* report that everything is scanned and vacuumed */
