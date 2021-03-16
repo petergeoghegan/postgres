@@ -322,14 +322,14 @@ BTPageIsRecyclable(Page page)
  */
 typedef struct BTPendingFSMPageInfo
 {
-	BlockNumber target;
-	FullTransactionId safexid;
+	BlockNumber target;			/* Page deleted by current VACUUM */
+	FullTransactionId safexid;	/* Page's BTDeletedPageData.safexid */
 } BTPendingFSMPageInfo;
 
 typedef struct BTVacState
 {
 	/*
-	 * VACUUM operation state
+	 * State manages by btvacuumscan()
 	 */
 	IndexVacuumInfo *info;
 	IndexBulkDeleteResult *stats;
@@ -339,7 +339,7 @@ typedef struct BTVacState
 	MemoryContext pagedelcontext;
 
 	/*
-	 * Details of newly deleted pages for _bt_pendingfsm_finalize()
+	 * State manages by _bt_pendingfsm_init() and _bt_pendingfsm_finalize()
 	 */
 	bool		grow;
 	bool		full;
