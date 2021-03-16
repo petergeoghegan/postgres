@@ -1536,6 +1536,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 							vacrelstats,
 							Irel,
 							nindexes,
+
+							/* Per-page params: */
 							vistest,
 							&all_visible,
 							&has_dead_items,
