@@ -315,7 +315,10 @@ BTPageIsRecyclable(Page page)
 
 /*
  * BTVacState is private nbtree.c state used during VACUUM.  It is exported
- * for use by page deletion related code in nbtpage.c.
+ * for use by page deletion related code in nbtpage.c.  This includes state
+ * managed by _bt_pendingfsm_init() which is used to figure out if it's safe
+ * to place newly deleted pages into the FSM without waiting for the next
+ * VACUUM to get to them.
  */
 typedef struct BTPendingFSMPageInfo
 {
