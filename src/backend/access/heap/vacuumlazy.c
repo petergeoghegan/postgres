@@ -714,6 +714,15 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	}
 }
 
+typedef struct lazy_counters
+{
+	double		num_tuples,		/* total number of nonremovable tuples */
+				live_tuples,	/* live tuples (reltuples estimate) */
+				tups_vacuumed,	/* tuples cleaned up by current vacuum */
+				nkeep,			/* dead-but-not-removable tuples */
+				nunused;		/* # existing unused line pointers */
+} lazy_counters;
+
 #if 0
 static void
 lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
