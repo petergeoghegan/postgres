@@ -2882,7 +2882,8 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 /*
  * Initialize local memory state used by VACUUM inside .
  *
- * Called at the start of a btvacuumscan().
+ * Called at the start of a btvacuumscan().  We expect to allocate memory
+ * inside VACUUM's top-level memory context.
  */
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate)
@@ -2912,7 +2913,6 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 {
 	IndexBulkDeleteResult *stats = vstate->stats;
 
-	Assert(vstate->npendingpages > 0);
 	Assert(stats->pages_newly_deleted >= vstate->npendingpages);
 
 	/*
@@ -2942,7 +2942,7 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		 * the array in safexid order.
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
-			return;
+			break;
 
 		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
