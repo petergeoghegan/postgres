@@ -726,6 +726,8 @@ lazy_scan_heap_page(Relation onerel,
 					LVRelStats *vacrelstats,
 					Relation *Irel,
 					int nindexes,
+
+					/* Per-page params: */
 					GlobalVisState *vistest,
 					bool *all_visible,
 					bool *has_dead_items,
