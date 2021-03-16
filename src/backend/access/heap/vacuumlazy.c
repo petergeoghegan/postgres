@@ -717,16 +717,16 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 static void
 lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
 					LVRelStats *vacrelstats, Relation *Irel, int nindexes,
-					GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
-					bool *all_visible, bool *has_dead_items, bool *all_frozen,
-					bool *hastup, double *tups_vacuumed, double *live_tuples)
+					GlobalVisState *vistest, bool *all_visible,
+					bool *has_dead_items, bool *all_frozen, bool *hastup,
+					double *tups_vacuumed, double *live_tuples)
 {
 	double		num_tuples,		/* total number of nonremovable tuples */
 				nkeep,			/* dead-but-not-removable tuples */
 				nunused;		/* # existing unused line pointers */
 	HeapTupleData tuple;
 	BlockNumber blkno;
-
+	xl_heap_freeze_tuple *frozen;
 	Page		page;
 	OffsetNumber offnum,
 				maxoff;
@@ -743,6 +743,7 @@ lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
 
+	frozen = palloc(sizeof(xl_heap_freeze_tuple) * MaxHeapTuplesPerPage);
 prune:
 
 	/*
@@ -1008,6 +1009,8 @@ prune:
 
 		END_CRIT_SECTION();
 	}
+
+	pfree(frozen);
 }
 
 /*
@@ -1060,7 +1063,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Buffer		vmbuffer = InvalidBuffer;
 	BlockNumber next_unskippable_block;
 	bool		skipping_blocks;
-	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
@@ -1136,7 +1138,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		lazy_space_alloc(vacrelstats, nblocks);
 
 	dead_tuples = vacrelstats->dead_tuples;
-	frozen = palloc(sizeof(xl_heap_freeze_tuple) * MaxHeapTuplesPerPage);
 
 	/* Report that we're scanning the heap, advertising total # of blocks */
 	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
@@ -1515,8 +1516,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 		prev_dead_count = dead_tuples->num_tuples;
 		lazy_scan_heap_page(onerel, params, buf, vacrelstats, Irel, nindexes,
-							vistest, frozen, &all_visible, &has_dead_items,
-							&all_frozen, &hastup, &tups_vacuumed, &live_tuples);
+							vistest, &all_visible, &has_dead_items,
+							&all_frozen, &hastup, &tups_vacuumed,
+							&live_tuples);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
@@ -1674,8 +1676,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	/* Clear the block number information */
 	vacrelstats->blkno = InvalidBlockNumber;
-
-	pfree(frozen);
 
 	/* save stats for use later */
 	vacrelstats->tuples_deleted = tups_vacuumed;
