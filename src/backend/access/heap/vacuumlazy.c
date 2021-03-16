@@ -941,11 +941,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		bool		has_dead_items;		/* includes existing LP_DEAD items */
 		TransactionId visibility_cutoff_xid = InvalidTransactionId;
 		bool		tuple_totally_frozen;
-		double		num_tuples_page,		/* total number of nonremovable tuples */
-					live_tuples_page,	/* live tuples (reltuples estimate) */
-					tups_vacuumed_page,	/* tuples cleaned up by current vacuum */
-					nkeep_page,			/* dead-but-not-removable tuples */
-					nunused_page;		/* # existing unused line pointers */
 
 		/* see note above about forcing scanning of last page */
 #define FORCE_CHECK_PAGE() \
@@ -1242,8 +1237,6 @@ prune:
 										 InvalidTransactionId, 0, false,
 										 &vacrelstats->offnum);
 
-		pg_usleep(10000);
-
 		/*
 		 * Now scan the page to collect vacuumable items and check for tuples
 		 * requiring freezing.
@@ -1344,8 +1337,6 @@ prune:
 					 * Our solution is to restart the page from scratch, so
 					 * that pruning runs again and we don't end up back here.
 					 */
-					elog(WARNING, "htsv DEAD in (%u,%u) of %s", blkno, offnum,
-						 RelationGetRelationName(onerel));
 					goto prune;
 
 				case HEAPTUPLE_LIVE:
