@@ -718,11 +718,10 @@ static void
 lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
 					LVRelStats *vacrelstats, Relation *Irel, int nindexes,
 					GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
-					bool *all_visible, bool *has_dead_items, bool *all_frozen, bool *hastup)
+					bool *all_visible, bool *has_dead_items, bool *all_frozen, bool *hastup, double *tups_vacuumed)
 {
 	double		num_tuples,		/* total number of nonremovable tuples */
 				live_tuples,	/* live tuples (reltuples estimate) */
-				tups_vacuumed,	/* tuples cleaned up by current vacuum */
 				nkeep,			/* dead-but-not-removable tuples */
 				nunused;		/* # existing unused line pointers */
 	HeapTupleData tuple;
@@ -749,7 +748,7 @@ prune:
 	 * We count tuples removed by the pruning step as removed by VACUUM
 	 * (existing LP_DEAD line pointers don't count).
 	 */
-	tups_vacuumed += heap_page_prune(onerel, buf, vistest,
+	*tups_vacuumed += heap_page_prune(onerel, buf, vistest,
 									 InvalidTransactionId, 0, false,
 									 &vacrelstats->offnum);
 
@@ -1503,7 +1502,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		prev_dead_count = dead_tuples->num_tuples;
 		lazy_scan_heap_page(onerel, params, buf, vacrelstats, Irel, nindexes,
 							vistest, frozen, &all_visible, &has_dead_items,
-							&all_frozen, &hastup);
+							&all_frozen, &hastup, &tups_vacuumed);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
