@@ -715,11 +715,19 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 }
 
 static void
-lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
-					LVRelStats *vacrelstats, Relation *Irel, int nindexes,
-					GlobalVisState *vistest, bool *all_visible,
-					bool *has_dead_items, bool *all_frozen, bool *hastup,
-					double *tups_vacuumed, double *live_tuples)
+lazy_scan_heap_page(Relation onerel,
+					VacuumParams *params,
+					Buffer buf,
+					LVRelStats *vacrelstats,
+					Relation *Irel,
+					int nindexes,
+					GlobalVisState *vistest,
+					bool *all_visible,
+					bool *has_dead_items,
+					bool *all_frozen,
+					bool *hastup,
+					double *tups_vacuumed,
+					double *live_tuples)
 {
 	double		num_tuples,		/* total number of nonremovable tuples */
 				nkeep,			/* dead-but-not-removable tuples */
