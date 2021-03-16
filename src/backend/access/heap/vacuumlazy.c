@@ -1225,6 +1225,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			continue;
 		}
 
+prune:
+
 		/*
 		 * Prune all HOT-update chains in this page.
 		 *
@@ -1326,23 +1328,17 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					 * cannot be considered an error condition.
 					 *
 					 * If the tuple is HOT-updated then it must only be
-					 * removed by a prune operation; so we keep it just as if
-					 * it were RECENTLY_DEAD.  Actually we always keep it
-					 * because it hardly seems worth introducing a special
-					 * case.  This allows us to delay committing to index
-					 * vacuuming until the last moment -- no need to worry
-					 * about making tuple LP_DEAD within mark_unused_page().
+					 * removed by a prune operation.  Also, we cannot tolerate
+					 * having a tuple that is both dead and needs to be
+					 * considered for freezing.  heap_prepare_freeze_tuple()
+					 * will detect that case and abort the transaction,
+					 * assuming corruption.
 					 *
-					 * If this were to happen for a tuple that actually needed
-					 * to be deleted, we'd be in trouble, because it'd
-					 * possibly leave a tuple below the relation's xmin
-					 * horizon alive.  heap_prepare_freeze_tuple() is prepared
-					 * to detect that case and abort the transaction,
-					 * preventing corruption.
+					 * Our solution is to restart the page from scratch, so
+					 * that pruning runs again and we don't end up back here.
 					 */
-					nkeep += 1;
-					all_visible = false;
-					break;
+					goto prune;
+
 				case HEAPTUPLE_LIVE:
 
 					/*
