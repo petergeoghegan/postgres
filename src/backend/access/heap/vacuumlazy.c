@@ -717,7 +717,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 typedef struct lazy_scan_prune_page_state
 {
 	bool		  hastup;
-	int			  prev_dead_count;
 	Size		  freespace;
 	bool		  all_visible_according_to_vm;
 	bool		  all_visible;
@@ -1081,7 +1080,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				reuse_marked_pages,
 				has_dead_items_pages,
 				next_fsm_block_to_vacuum;
-	lazy_scan_heap_counters l;
+	lazy_scan_heap_counters c;
 	IndexBulkDeleteResult **indstats;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
@@ -1111,7 +1110,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	empty_pages = reuse_marked_pages = has_dead_items_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
-	memset(&l, 0, sizeof(lazy_scan_heap_counters));
+	memset(&c, 0, sizeof(lazy_scan_heap_counters));
 
 	indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
@@ -1251,6 +1250,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		ls.all_visible_according_to_vm = false;
 		ls.all_frozen = true;
 		ls.visibility_cutoff_xid = InvalidTransactionId;
+		ls.has_dead_items = false;
 
 		/* see note above about forcing scanning of last page */
 #define FORCE_CHECK_PAGE() \
@@ -1535,9 +1535,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			continue;
 		}
 
-		ls.prev_dead_count = dead_tuples->num_tuples;
 		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
-							 vistest, &l, &ls);
+							 vistest, &c, &ls);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
@@ -1673,6 +1672,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * even opportunistic pruning.
 		 */
 		if (ls.has_dead_items)
+		{
 			has_dead_items_pages++;
 
 		/*
@@ -1686,8 +1686,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * same as the case where we decide to skip index vacuuming.  See also
 		 * vacuum_indexes_mark_unused(), where that is decided.
 		 */
-		if (dead_tuples->num_tuples == ls.prev_dead_count)
 			RecordPageWithFreeSpace(onerel, blkno, ls.freespace);
+		}
 	}
 
 	/* report that everything is scanned and vacuumed */
@@ -1697,14 +1697,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	vacrelstats->blkno = InvalidBlockNumber;
 
 	/* save stats for use later */
-	vacrelstats->tuples_deleted = l.tups_vacuumed;
-	vacrelstats->new_dead_tuples = l.nkeep;
+	vacrelstats->tuples_deleted = c.tups_vacuumed;
+	vacrelstats->new_dead_tuples = c.nkeep;
 
 	/* now we can compute the new value for pg_class.reltuples */
 	vacrelstats->new_live_tuples = vac_estimate_reltuples(onerel,
 														  nblocks,
 														  vacrelstats->tupcount_pages,
-														  l.live_tuples);
+														  c.live_tuples);
 
 	/*
 	 * Also compute the total number of surviving heap entries.  In the
@@ -1774,14 +1774,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		ereport(elevel,
 				(errmsg("\"%s\": removed %.0f row versions in %u pages",
 						vacrelstats->relname,
-						l.tups_vacuumed, reuse_marked_pages)));
+						c.tups_vacuumed, reuse_marked_pages)));
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
 					 _("%.0f dead row versions cannot be removed yet, oldest xmin: %u\n"),
-					 l.nkeep, OldestXmin);
+					 c.nkeep, OldestXmin);
 	appendStringInfo(&buf, _("There were %.0f unused item identifiers.\n"),
-					 l.nunused);
+					 c.nunused);
 	appendStringInfo(&buf, ngettext("Skipped %u page due to buffer pins, ",
 									"Skipped %u pages due to buffer pins, ",
 									vacrelstats->pinskipped_pages),
@@ -1799,7 +1799,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	ereport(elevel,
 			(errmsg("\"%s\": found %.0f removable, %.0f nonremovable row versions in %u out of %u pages",
 					vacrelstats->relname,
-					l.tups_vacuumed, l.num_tuples,
+					c.tups_vacuumed, c.num_tuples,
 					vacrelstats->scanned_pages, nblocks),
 			 errdetail_internal("%s", buf.data)));
 	pfree(buf.data);
