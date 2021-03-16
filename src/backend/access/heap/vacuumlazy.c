@@ -736,11 +736,16 @@ lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
 	LVDeadTuples *dead_tuples;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
+	OffsetNumber killed[MaxHeapTuplesPerPage];
+	int nkilled;
 
 	dead_tuples = vacrelstats->dead_tuples;
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
+
 prune:
+
+	nkilled = 0;
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -806,7 +811,7 @@ prune:
 		 */
 		if (ItemIdIsDead(itemid))
 		{
-			lazy_record_dead_tuple(dead_tuples, &(tuple.t_self));
+			killed[nkilled++] = offnum;
 			*all_visible = false;
 			*has_dead_items = true;
 			continue;
@@ -952,6 +957,12 @@ prune:
 		if (!tuple_totally_frozen)
 			*all_frozen = false;
 	}						/* scan along page */
+
+	for (int i = 0; i < nkilled; i++)
+	{
+		ItemPointerSet(&(tuple.t_self), blkno, killed[i]);
+		lazy_record_dead_tuple(dead_tuples, &(tuple.t_self));
+	}
 
 	/*
 	 * Clear the offset information once we have processed all the tuples
