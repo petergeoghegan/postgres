@@ -755,7 +755,7 @@ prune:
 	*tups_vacuumed += heap_page_prune(onerel, buf, vistest,
 									 InvalidTransactionId, 0, false,
 									 &vacrelstats->offnum);
-	pg_usleep(10000);
+	//pg_usleep(10000);
 
 
 	/*
