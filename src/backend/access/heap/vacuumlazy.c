@@ -744,6 +744,7 @@ lazy_scan_heap_page(Relation onerel, VacuumParams *params, Buffer buf,
 	page = BufferGetPage(buf);
 
 	frozen = palloc(sizeof(xl_heap_freeze_tuple) * MaxHeapTuplesPerPage);
+
 prune:
 
 	/*
