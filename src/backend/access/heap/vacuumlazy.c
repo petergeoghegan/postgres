@@ -714,9 +714,14 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	}
 }
 
+#if 0
+static void
+lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
+			   Relation *Irel, int nindexes, bool aggressive)
+#endif
+
 static void
 lazy_scan_heap_page(Relation onerel,
-					VacuumParams *params,
 					Buffer buf,
 					LVRelStats *vacrelstats,
 					Relation *Irel,
@@ -1524,9 +1529,17 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		}
 
 		prev_dead_count = dead_tuples->num_tuples;
-		lazy_scan_heap_page(onerel, params, buf, vacrelstats, Irel, nindexes,
-							vistest, &all_visible, &has_dead_items,
-							&all_frozen, &hastup, &tups_vacuumed,
+		lazy_scan_heap_page(onerel,
+							buf,
+							vacrelstats,
+							Irel,
+							nindexes,
+							vistest,
+							&all_visible,
+							&has_dead_items,
+							&all_frozen,
+							&hastup,
+							&tups_vacuumed,
 							&live_tuples);
 
 		/*
