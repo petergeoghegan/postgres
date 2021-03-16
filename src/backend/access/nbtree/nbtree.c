@@ -1020,8 +1020,6 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 		_bt_pendingfsm_finalize(rel, &vstate);
 	if (stats->pages_free > 0)
 		IndexFreeSpaceMapVacuum(rel);
-
-	pfree(vstate.pendingpages);
 }
 
 /*

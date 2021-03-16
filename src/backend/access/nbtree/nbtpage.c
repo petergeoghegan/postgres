@@ -2900,10 +2900,12 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate)
 /*
  * Place any newly deleted pages (i.e. pages that _bt_pagedel() deleted during
  * the ongoing VACUUM operation) into the free space map when it happens to be
- * safe to do so already.
+ * safe to do so by now.
  *
  * Called at the end of a btvacuumscan(), just before free space map vacuuming
  * takes place.
+ *
+ * Frees memory allocated by _bt_pendingfsm_init().
  */
 void
 _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
@@ -2923,30 +2925,6 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 	 * make here to notice if and when safexid values from pages this same
 	 * VACUUM operation deleted are sufficiently old to allow recycling to
 	 * take place safely.
-	 *
-	 * XXX It would make a great deal more sense if each nbtree index's FSM
-	 * (or some equivalent structure) was completely crash-safe.  Importantly,
-	 * this would enable page recycling's REDO side to work in a way that
-	 * naturally matches original execution.
-	 *
-	 * Page deletion has to be crash safe already, plus xl_btree_reuse_page
-	 * records are logged any time a backend has to recycle -- full crash
-	 * safety is unlikely to add much overhead, and has clear efficiency
-	 * benefits.  It would also simplify things by more explicitly decoupling
-	 * page deletion and page recycling.  The benefits for REDO all follow
-	 * from that.
-	 *
-	 * Under this scheme, the whole question of recycle safety could be moved
-	 * from VACUUM to the consumer side.  That is, VACUUM would no longer have
-	 * to defer placing a page that it deletes in the FSM until
-	 * BTPageIsRecyclable() starts to return true -- _bt_getbut() would handle
-	 * all details of safely deferring recycling instead.  _bt_getbut() would
-	 * use the improved/crash-safe FSM to explicitly find a free page whose
-	 * safexid is sufficiently old for recycling to be safe from the point of
-	 * view of backends that run during original execution.  That just leaves
-	 * the REDO side.  Instead of xl_btree_reuse_page records, we'd have FSM
-	 * "consume/recycle page from the FSM" records that are associated with
-	 * FSM page buffers/blocks.
 	 */
 	GetOldestNonRemovableTransactionId(NULL);
 
@@ -2969,6 +2947,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
 	}
+
+	pfree(vstate->pendingpages);
 }
 
 /*
