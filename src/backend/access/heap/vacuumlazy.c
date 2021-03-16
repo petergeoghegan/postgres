@@ -742,10 +742,10 @@ lazy_scan_prune_page(Relation onerel,
 					 Relation *Irel,
 					 int nindexes,
 					 GlobalVisState *vistest,
-					 lazy_scan_heap_counters *l,
+					 lazy_scan_heap_counters *c,
 					 lazy_scan_prune_page_state *ls)
 {
-	lazy_scan_heap_counters p;
+	lazy_scan_heap_counters pc;
 	HeapTupleData tuple;
 	BlockNumber blkno;
 	xl_heap_freeze_tuple *frozen;
@@ -766,7 +766,7 @@ lazy_scan_prune_page(Relation onerel,
 
 prune:
 
-	memset(&p, 0, sizeof(lazy_scan_heap_counters));
+	memset(&pc, 0, sizeof(lazy_scan_heap_counters));
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -774,7 +774,7 @@ prune:
 	 * We count tuples removed by the pruning step as removed by VACUUM
 	 * (existing LP_DEAD line pointers don't count).
 	 */
-	p.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
+	pc.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
 									  InvalidTransactionId, 0, false,
 									  &vacrelstats->offnum);
 	//pg_usleep(10000);
@@ -811,7 +811,7 @@ prune:
 		/* Unused items require no processing, but we count 'em */
 		if (!ItemIdIsUsed(itemid))
 		{
-			p.nunused += 1;
+			pc.nunused += 1;
 			continue;
 		}
 
@@ -890,7 +890,7 @@ prune:
 				 * Count it as live.  Not only is this natural, but it's
 				 * also what acquire_sample_rows() does.
 				 */
-				p.live_tuples += 1;
+				pc.live_tuples += 1;
 
 				/*
 				 * Is the tuple definitely visible to all transactions?
@@ -933,7 +933,7 @@ prune:
 				 * If tuple is recently deleted then we must not remove it
 				 * from relation.
 				 */
-				p.nkeep += 1;
+				pc.nkeep += 1;
 				ls->all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
@@ -959,14 +959,14 @@ prune:
 				 * deleting transaction will commit and update the
 				 * counters after we report.
 				 */
-				p.live_tuples += 1;
+				pc.live_tuples += 1;
 				break;
 			default:
 				elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
 				break;
 		}
 
-		p.num_tuples += 1;
+		pc.num_tuples += 1;
 		ls->hastup = true;
 
 		/*
@@ -1034,11 +1034,11 @@ prune:
 
 	pfree(frozen);
 
-	l->num_tuples += p.num_tuples;
-	l->live_tuples += p.live_tuples;
-	l->tups_vacuumed += p.tups_vacuumed;
-	l->nkeep += p.nkeep;
-	l->nunused += p.nunused;
+	c->num_tuples += pc.num_tuples;
+	c->live_tuples += pc.live_tuples;
+	c->tups_vacuumed += pc.tups_vacuumed;
+	c->nkeep += pc.nkeep;
+	c->nunused += pc.nunused;
 }
 
 /*
