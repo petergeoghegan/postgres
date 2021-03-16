@@ -756,6 +756,8 @@ prune:
 	*tups_vacuumed += heap_page_prune(onerel, buf, vistest,
 									 InvalidTransactionId, 0, false,
 									 &vacrelstats->offnum);
+	pg_usleep(10000);
+
 
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
@@ -856,6 +858,8 @@ prune:
 				 * Our solution is to restart the page from scratch, so
 				 * that pruning runs again and we don't end up back here.
 				 */
+				elog(WARNING, "htsv DEAD in (%u,%u) of %s", blkno, offnum,
+					 RelationGetRelationName(onerel));
 				goto prune;
 
 			case HEAPTUPLE_LIVE:
