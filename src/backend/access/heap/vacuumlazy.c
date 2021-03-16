@@ -714,7 +714,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	}
 }
 
-typedef struct lazy_prune_state
+typedef struct lazy_scan_prune_page_state
 {
 	bool		  hastup;
 	int			  prev_dead_count;
@@ -724,7 +724,7 @@ typedef struct lazy_prune_state
 	bool		  all_frozen;	  /* provided all_visible is also true */
 	bool		  has_dead_items; /* includes existing LP_DEAD items */
 	TransactionId visibility_cutoff_xid;
-} lazy_prune_state;
+} lazy_scan_prune_page_state;
 
 typedef struct lazy_counters
 {
@@ -735,36 +735,15 @@ typedef struct lazy_counters
 				nunused;		/* # existing unused line pointers */
 } lazy_counters;
 
-#if 0
-	for (blkno = 0; blkno < nblocks; blkno++)
-	{
-		Buffer		buf;
-		Page		page;
-		bool		hastup;
-		int			prev_dead_count;
-		Size		freespace;
-		bool		all_visible_according_to_vm = false;
-		bool		all_visible;
-		bool		all_frozen = true;	/* provided all_visible is also true */
-		bool		has_dead_items;		/* includes existing LP_DEAD items */
-		TransactionId visibility_cutoff_xid = InvalidTransactionId;
-
-		/* see note above about forcing scanning of last page */
-#define FORCE_CHECK_PAGE() \
-		(blkno == nblocks - 1 && should_attempt_truncation(params, vacrelstats))
-
-#endif
-
 static void
-lazy_scan_heap_page(Relation onerel,
-					Buffer buf,
-					LVRelStats *vacrelstats,
-					Relation *Irel,
-					int nindexes,
-
-					GlobalVisState *vistest,
-					lazy_counters *l,
-					lazy_prune_state *ls)
+lazy_scan_prune_page(Relation onerel,
+					 Buffer buf,
+					 LVRelStats *vacrelstats,
+					 Relation *Irel,
+					 int nindexes,
+					 GlobalVisState *vistest,
+					 lazy_counters *l,
+					 lazy_scan_prune_page_state *ls)
 {
 	lazy_counters p;
 	HeapTupleData tuple;
@@ -775,13 +754,11 @@ lazy_scan_heap_page(Relation onerel,
 				maxoff;
 	int			nfrozen;
 	bool		tuple_totally_frozen;
-	LVDeadTuples *dead_tuples;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	OffsetNumber killed[MaxHeapTuplesPerPage];
 	int nkilled;
 
-	dead_tuples = vacrelstats->dead_tuples;
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
 
@@ -1010,7 +987,7 @@ prune:
 	for (int i = 0; i < nkilled; i++)
 	{
 		ItemPointerSet(&(tuple.t_self), blkno, killed[i]);
-		lazy_record_dead_tuple(dead_tuples, &(tuple.t_self));
+		lazy_record_dead_tuple(vacrelstats->dead_tuples, &(tuple.t_self));
 	}
 
 	/*
@@ -1269,7 +1246,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	{
 		Buffer		buf;
 		Page		page;
-		lazy_prune_state ls;
+		lazy_scan_prune_page_state ls;
 
 		ls.all_visible_according_to_vm = false;
 		ls.all_frozen = true;
@@ -1559,13 +1536,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		}
 
 		ls.prev_dead_count = dead_tuples->num_tuples;
-		lazy_scan_heap_page(onerel,
-							buf,
-							vacrelstats,
-							Irel,
-							nindexes,
-							vistest,
-							&l, &ls);
+		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
+							 vistest, &l, &ls);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
