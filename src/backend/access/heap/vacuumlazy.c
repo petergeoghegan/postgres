@@ -1078,11 +1078,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				reuse_marked_pages,
 				has_dead_items_pages,
 				next_fsm_block_to_vacuum;
-	double		num_tuples,		/* total number of nonremovable tuples */
-				live_tuples,	/* live tuples (reltuples estimate) */
-				tups_vacuumed,	/* tuples cleaned up by current vacuum */
-				nkeep,			/* dead-but-not-removable tuples */
-				nunused;		/* # existing unused line pointers */
+	lazy_counters l;
 	IndexBulkDeleteResult **indstats;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
@@ -1112,7 +1108,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	empty_pages = reuse_marked_pages = has_dead_items_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
-	num_tuples = live_tuples = tups_vacuumed = nkeep = nunused = 0;
+	l.num_tuples = l.live_tuples = l.tups_vacuumed = l.nkeep = l.nunused = 0;
 
 	indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
@@ -1552,8 +1548,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 							&has_dead_items,
 							&all_frozen,
 							&hastup,
-							&tups_vacuumed,
-							&live_tuples);
+							&l.tups_vacuumed,
+							&l.live_tuples);
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
@@ -1713,14 +1709,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	vacrelstats->blkno = InvalidBlockNumber;
 
 	/* save stats for use later */
-	vacrelstats->tuples_deleted = tups_vacuumed;
-	vacrelstats->new_dead_tuples = nkeep;
+	vacrelstats->tuples_deleted = l.tups_vacuumed;
+	vacrelstats->new_dead_tuples = l.nkeep;
 
 	/* now we can compute the new value for pg_class.reltuples */
 	vacrelstats->new_live_tuples = vac_estimate_reltuples(onerel,
 														  nblocks,
 														  vacrelstats->tupcount_pages,
-														  live_tuples);
+														  l.live_tuples);
 
 	/*
 	 * Also compute the total number of surviving heap entries.  In the
@@ -1790,14 +1786,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		ereport(elevel,
 				(errmsg("\"%s\": removed %.0f row versions in %u pages",
 						vacrelstats->relname,
-						tups_vacuumed, reuse_marked_pages)));
+						l.tups_vacuumed, reuse_marked_pages)));
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
 					 _("%.0f dead row versions cannot be removed yet, oldest xmin: %u\n"),
-					 nkeep, OldestXmin);
+					 l.nkeep, OldestXmin);
 	appendStringInfo(&buf, _("There were %.0f unused item identifiers.\n"),
-					 nunused);
+					 l.nunused);
 	appendStringInfo(&buf, ngettext("Skipped %u page due to buffer pins, ",
 									"Skipped %u pages due to buffer pins, ",
 									vacrelstats->pinskipped_pages),
@@ -1815,7 +1811,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	ereport(elevel,
 			(errmsg("\"%s\": found %.0f removable, %.0f nonremovable row versions in %u out of %u pages",
 					vacrelstats->relname,
-					tups_vacuumed, num_tuples,
+					l.tups_vacuumed, l.num_tuples,
 					vacrelstats->scanned_pages, nblocks),
 			 errdetail_internal("%s", buf.data)));
 	pfree(buf.data);
