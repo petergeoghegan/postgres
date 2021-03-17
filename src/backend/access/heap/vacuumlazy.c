@@ -921,16 +921,16 @@ lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 	lazy_scan_heap_counters pc;
 	HeapTupleData tuple;
 	BlockNumber blkno;
-	xl_heap_freeze_tuple *frozen;
 	Page		page;
 	OffsetNumber offnum,
 				maxoff;
-	int			nfrozen;
+	int			  nfrozen,
+				  nkilled;
 	HTSV_Result state;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
+	xl_heap_freeze_tuple *frozen;
 	OffsetNumber killed[MaxHeapTuplesPerPage];
-	int nkilled;
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -996,8 +996,6 @@ retry:
 			continue;
 		}
 
-		ItemPointerSet(&(tuple.t_self), blkno, offnum);
-
 		/*
 		 * LP_DEAD line pointers are to be vacuumed normally; but we don't
 		 * count them in tups_vacuumed, else we'd be double-counting (at
@@ -1017,6 +1015,7 @@ retry:
 
 		Assert(ItemIdIsNormal(itemid));
 
+		ItemPointerSet(&(tuple.t_self), blkno, offnum);
 		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
 		tuple.t_len = ItemIdGetLength(itemid);
 		tuple.t_tableOid = RelationGetRelid(onerel);
