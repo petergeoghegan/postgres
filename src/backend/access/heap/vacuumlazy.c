@@ -1981,6 +1981,9 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 						LVRelStats *vacrelstats, LVParallelState *lps,
 						int nindexes)
 {
+	Assert(!IsParallelWorker());
+	Assert(nindexes > 0);
+
 	/* Report that we are now vacuuming indexes */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
 								 PROGRESS_VACUUM_PHASE_VACUUM_INDEX);
