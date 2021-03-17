@@ -1886,7 +1886,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  * We may be able to skip index vacuuming (we may even be required to do so by
  * reloption)
  */
-#define DEBUGELOG LOG
+#define DEBUGELOG WARNING
 static void
 two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 				  IndexBulkDeleteResult **indstats, int nindexes,
