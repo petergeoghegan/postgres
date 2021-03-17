@@ -1714,7 +1714,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * happens.
 			 */
 		}
-		else if (nindexes > 0 && !ls.has_dead_items)
+		else
 		{
 			/*
 			 * Will never reach lazy_vacuum_heap() (or will, but won't reach
@@ -1723,7 +1723,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			savefreespace = true;
 			freespace = PageGetHeapFreeSpace(page);
 		}
-		else if (nindexes == 0 && ls.has_dead_items)
+
+		if (nindexes == 0 && ls.has_dead_items)
 		{
 			Assert(dead_tuples->num_tuples > 0);
 
@@ -1737,14 +1738,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
 			vacuumed_pages++;
 
+			/* This won't have changed: */
+			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
+
 			/* Make sure lazy_scan_vmbit_page() doesn't get confused: */
 			ls.has_dead_items = false;
 
 			/* Forget the now-vacuumed tuples */
 			dead_tuples->num_tuples = 0;
-
-			savefreespace = true;
-			freespace = PageGetHeapFreeSpace(page);
 
 			/*
 			 * Periodically do incremental FSM vacuuming to make newly-freed
