@@ -887,8 +887,8 @@ retry:
 	 * (existing LP_DEAD line pointers don't count).
 	 */
 	pc.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
-									  InvalidTransactionId, 0, false,
-									  &vacrelstats->offnum);
+									   InvalidTransactionId, 0, false,
+									   &vacrelstats->offnum);
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
 	 * requiring freezing.
