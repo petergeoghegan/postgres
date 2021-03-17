@@ -1692,6 +1692,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			has_dead_items_pages++;
 
 		/*
+		 * Step 7 for block: Set up details for saving free space in FSM at
+		 * end of loop.  (Also performs extra single pass strategy steps in
+		 * "nindexes == 0" case.)
+		 *
 		 * If we have any LP_DEAD items on this page (i.e. any new dead_tuples
 		 * entries compared to just before lazy_scan_prune_page()) then the
 		 * page will be visited again by lazy_vacuum_heap(), which will
@@ -1724,7 +1728,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			freespace = PageGetHeapFreeSpace(page);
 		}
 
-		/* Step 6.5 for block: Special one pass strategy steps */
 		if (nindexes == 0 && ls.has_dead_items)
 		{
 			Assert(dead_tuples->num_tuples > 0);
@@ -1765,20 +1768,25 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/* One pass strategy had better have no dead tuples by now: */
 		Assert(nindexes > 0 || dead_tuples->num_tuples == 0);
 
-		/* Step 7 for block: Handle visibility map */
+		/*
+		 * Step 8 for block: Handle setting visibility map bit as appropriate
+		 */
 		lazy_scan_vmbit_page(onerel, blkno, buf, page, vmbuffer, vacrelstats,
 							 &ls);
 
-		UnlockReleaseBuffer(buf);
+		/*
+		 * Step 8 for block: drop super-exclusive lock, finalize page by
+		 * recording its free space in the FSM as appropriate
+		 */
 
+		UnlockReleaseBuffer(buf);
 		/* Remember the location of the last page with nonremovable tuples */
 		if (ls.hastup)
 			vacrelstats->nonempty_pages = blkno + 1;
-
 		if (savefreespace)
 			RecordPageWithFreeSpace(onerel, blkno, freespace);
 
-		/* Finished all steps for block by here at the latest */
+		/* Finished all steps for block by here (at the latest) */
 	}
 
 	/* report that everything is scanned and vacuumed */
