@@ -919,16 +919,16 @@ lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 {
 	BlockNumber blkno;
 	Page		page;
-	lazy_scan_heap_counters pc;
 	OffsetNumber offnum,
 				maxoff;
-	int			  nfrozen,
-				  nkilled;
 	HTSV_Result tuplestate;
+	int			  nfrozen,
+				  ndead;
+	lazy_scan_heap_counters pc;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
+	OffsetNumber deaditems[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple *frozen;
-	OffsetNumber killed[MaxHeapTuplesPerPage];
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -958,7 +958,7 @@ retry:
 	ls->all_visible = true;
 	ls->has_dead_items = false;
 	nfrozen = 0;
-	nkilled = 0;
+	ndead = 0;
 	ls->hastup = false;
 	maxoff = PageGetMaxOffsetNumber(page);
 
@@ -1008,7 +1008,7 @@ retry:
 		 */
 		if (ItemIdIsDead(itemid))
 		{
-			killed[nkilled++] = offnum;
+			deaditems[ndead++] = offnum;
 			ls->all_visible = false;
 			ls->has_dead_items = true;
 			continue;
@@ -1157,11 +1157,11 @@ retry:
 			ls->all_frozen = false;
 	}
 
-	for (int i = 0; i < nkilled; i++)
+	for (int i = 0; i < ndead; i++)
 	{
 		ItemPointerData itemptr;
 
-		ItemPointerSet(&itemptr, blkno, killed[i]);
+		ItemPointerSet(&itemptr, blkno, deaditems[i]);
 		lazy_record_dead_tuple(vacrelstats->dead_tuples, &itemptr);
 	}
 
