@@ -340,6 +340,7 @@ typedef struct lazy_scan_prune_page_state
 	bool		  all_visible;
 	bool		  all_frozen;	  /* provided all_visible is also true */
 	bool		  has_dead_items; /* includes existing LP_DEAD items */
+	xl_heap_freeze_tuple *frozen;
 	TransactionId visibility_cutoff_xid;
 } lazy_scan_prune_page_state;
 
@@ -923,12 +924,10 @@ lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	OffsetNumber deaditems[MaxHeapTuplesPerPage];
-	xl_heap_freeze_tuple *frozen;
+	xl_heap_freeze_tuple *frozen = ls->frozen;
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
-
-	frozen = palloc(sizeof(xl_heap_freeze_tuple) * MaxHeapTuplesPerPage);
 
 retry:
 
@@ -1202,8 +1201,6 @@ retry:
 		END_CRIT_SECTION();
 	}
 
-	pfree(frozen);
-
 	c->num_tuples += pc.num_tuples;
 	c->live_tuples += pc.live_tuples;
 	c->tups_vacuumed += pc.tups_vacuumed;
@@ -1257,6 +1254,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Buffer		vmbuffer = InvalidBuffer;
 	BlockNumber next_unskippable_block;
 	bool		skipping_blocks;
+	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
@@ -1331,6 +1329,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		lazy_space_alloc(vacrelstats, nblocks, nindexes > 0);
 
 	dead_tuples = vacrelstats->dead_tuples;
+	frozen = palloc(sizeof(xl_heap_freeze_tuple) * MaxHeapTuplesPerPage);
 
 	/* Report that we're scanning the heap, advertising total # of blocks */
 	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
@@ -1423,6 +1422,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		ls.all_frozen = true;
 		ls.visibility_cutoff_xid = InvalidTransactionId;
 		ls.has_dead_items = false;
+		ls.frozen = frozen;
 
 		/*
 		 * Step 1 for block: Consider need to skip blocks.
@@ -1764,6 +1764,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	/* Clear the block number information */
 	vacrelstats->blkno = InvalidBlockNumber;
+
+	pfree(frozen);
 
 	/* save stats for use later */
 	vacrelstats->tuples_deleted = c.tups_vacuumed;
