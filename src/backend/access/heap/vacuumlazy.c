@@ -885,8 +885,12 @@ scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 
 retry:
 
-	/* Reset page-level counters */
-	memset(&pc, 0, sizeof(LVTempCounters));
+	/* Initialize (or reset) page-level counters */
+	pc.num_tuples = 0;
+	pc.live_tuples = 0;
+	pc.tups_vacuumed = 0;
+	pc.nkeep = 0;
+	pc.nunused = 0;
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1327,7 +1331,13 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
-	memset(&c, 0, sizeof(LVTempCounters));
+
+	/* Initialize counters */
+	c.num_tuples = 0;
+	c.live_tuples = 0;
+	c.tups_vacuumed = 0;
+	c.nkeep = 0;
+	c.nunused = 0;
 
 	indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
