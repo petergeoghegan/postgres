@@ -491,13 +491,13 @@ relopt_enum_elt_def viewCheckOptValues[] =
  */
 relopt_enum_elt_def vacOptTernaryOptValues[] =
 {
-	{"auto", VACOPT_TERNARY_DEFAULT},
-	{"true", VACOPT_TERNARY_ENABLED},
-	{"false", VACOPT_TERNARY_DISABLED},
-	{"on", VACOPT_TERNARY_ENABLED},
-	{"off", VACOPT_TERNARY_DISABLED},
-	{"1", VACOPT_TERNARY_ENABLED},
-	{"0", VACOPT_TERNARY_DISABLED}
+	{"auto", VACOPT_CLEANUP_AUTO},
+	{"true", VACOPT_CLEANUP_ENABLED},
+	{"false", VACOPT_CLEANUP_DISABLED},
+	{"on", VACOPT_CLEANUP_ENABLED},
+	{"off", VACOPT_CLEANUP_DISABLED},
+	{"1", VACOPT_CLEANUP_ENABLED},
+	{"0", VACOPT_CLEANUP_DISABLED}
 };
 
 static relopt_enum enumRelOpts[] =
@@ -532,7 +532,7 @@ static relopt_enum enumRelOpts[] =
 			ShareUpdateExclusiveLock
 		},
 		vacOptTernaryOptValues,
-		VACOPT_TERNARY_DEFAULT,
+		VACOPT_CLEANUP_AUTO,
 		gettext_noop("Valid values are \"on\", \"off\", and \"auto\".")
 	},
 	/* list terminator */

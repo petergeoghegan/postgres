@@ -369,7 +369,7 @@ static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 static void two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 							  Relation *Irel, IndexBulkDeleteResult **indstats,
 							  int nindexes, LVParallelState *lps,
-							  VacOptTernaryValue index_cleanup,
+							  VacOptIndexCleanupValue index_cleanup,
 							  BlockNumber has_dead_items_pages, bool onecall);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
@@ -1811,10 +1811,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Do post-vacuum cleanup.
 	 *
-	 * Note that this take places when two_pass_strategy() decided to skip
-	 * index vacuuming, but not with INDEX_CLEANUP OFF.
+	 * Note that post-vacuum cleanup is supposed to take place when
+	 * two_pass_strategy() decided to skip index vacuuming, but not with
+	 * INDEX_CLEANUP OFF.
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
 
 	/*
@@ -1830,7 +1831,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * Note that this take places when two_pass_strategy() decided to skip
 	 * index vacuuming, but not with INDEX_CLEANUP OFF.
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		update_index_statistics(Irel, indstats, nindexes);
 
 	/* If no indexes, make log report that two_pass_strategy() would've made */
@@ -1879,7 +1880,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 static void
 two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 				  IndexBulkDeleteResult **indstats, int nindexes,
-				  LVParallelState *lps, VacOptTernaryValue index_cleanup,
+				  LVParallelState *lps, VacOptIndexCleanupValue index_cleanup,
 				  BlockNumber has_dead_items_pages, bool onecall)
 {
 	bool		skipping;
@@ -1905,15 +1906,15 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 	 * HOT-pruning but are not marked dead yet.  We do not process them because
 	 * it's a very rare condition, and the next vacuum will process them anyway.
 	 */
-	if (index_cleanup == VACOPT_TERNARY_DISABLED)
+	if (index_cleanup == VACOPT_CLEANUP_DISABLED)
 		skipping = true;
-	else if (index_cleanup == VACOPT_TERNARY_ENABLED)
+	else if (index_cleanup == VACOPT_CLEANUP_ENABLED)
 		skipping = false;
 	else
 	{
 		BlockNumber rel_pages_threshold;
 
-		Assert(index_cleanup == VACOPT_TERNARY_DEFAULT);
+		Assert(index_cleanup == VACOPT_CLEANUP_AUTO);
 
 		rel_pages_threshold =
 				(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
@@ -1947,7 +1948,7 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 		 * one or more LP_DEAD items (could be from us or from another
 		 * VACUUM), not # blocks scanned.
 		 */
-		if (index_cleanup == VACOPT_TERNARY_DEFAULT)
+		if (index_cleanup == VACOPT_CLEANUP_AUTO)
 			ereport(elevel,
 					(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
 							vacrelstats->relname,

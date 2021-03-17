@@ -108,7 +108,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	ListCell   *lc;
 
 	/* Set default value */
-	params.index_cleanup = VACOPT_TERNARY_DEFAULT;
+	params.index_cleanup = VACOPT_CLEANUP_AUTO;
 	params.truncate = VACOPT_TERNARY_DEFAULT;
 
 	/* By default parallel vacuum is enabled */
@@ -140,7 +140,14 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		else if (strcmp(opt->defname, "disable_page_skipping") == 0)
 			disable_page_skipping = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "index_cleanup") == 0)
-			params.index_cleanup = get_vacopt_ternary_value(opt);
+		{
+			if (opt->arg == NULL || strcmp(defGetString(opt), "auto") == 0)
+				params.index_cleanup = VACOPT_CLEANUP_AUTO;
+			else if (defGetBoolean(opt))
+				params.index_cleanup = VACOPT_CLEANUP_ENABLED;
+			else
+				params.index_cleanup = VACOPT_CLEANUP_DISABLED;
+		}
 		else if (strcmp(opt->defname, "process_toast") == 0)
 			process_toast = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "truncate") == 0)
@@ -1880,12 +1887,8 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	onerelid = onerel->rd_lockInfo.lockRelId;
 	LockRelationIdForSession(&onerelid, lmode);
 
-	/*
-	 * Set index cleanup option based on reloptions if not yet, though only if
-	 * set -- we want VACOPT_TERNARY_DEFAULT to mean "decide dynamically in
-	 * vacuumlazy.c".
-	 */
-	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT &&
+	/* Set index cleanup option based on reloptions if not yet set */
+	if (params->index_cleanup == VACOPT_CLEANUP_AUTO &&
 		onerel->rd_options != NULL)
 		params->index_cleanup =
 			((StdRdOptions *) onerel->rd_options)->vacuum_index_cleanup;
