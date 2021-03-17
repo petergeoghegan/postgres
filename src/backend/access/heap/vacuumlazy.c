@@ -1032,25 +1032,22 @@ retry:
 		 * VACUUM can't run inside a transaction block, which makes some
 		 * cases impossible (e.g. in-progress insert from the same
 		 * transaction).
+		 *
+		 * DEAD tuples are almost always pruned into LP_DEAD line pointers by
+		 * heap_page_prune(), but it's possible that the tuple state changed
+		 * since heap_page_prune() looked.  In particular, an
+		 * INSERT_IN_PROGRESS tuple could have changed to DEAD if the inserter
+		 * aborted.  So this cannot be considered an error condition.  At the
+		 * same time, we cannot tolerate having a tuple that is both dead and
+		 * needs to be considered for freezing.  heap_prepare_freeze_tuple()
+		 * will detect that case and abort the transaction, assuming
+		 * corruption.
+		 *
+		 * Our solution is to have this precheck.  We restart pruning the page
+		 * from scratch in rare cases when this happens.
 		 */
 		state = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
 
-		/*
-		 * Ordinarily, DEAD tuples would have been removed by
-		 * heap_page_prune(), but it's possible that the tuple state changed
-		 * since heap_page_prune() looked.  In particular an
-		 * INSERT_IN_PROGRESS tuple could have changed to DEAD if the inserter
-		 * aborted.  So this cannot be considered an error condition.
-		 *
-		 * If the tuple is HOT-updated then it must only be removed by a prune
-		 * operation.  Also, we cannot tolerate having a tuple that is both
-		 * dead and needs to be considered for freezing.
-		 * heap_prepare_freeze_tuple() will detect that case and abort the
-		 * transaction, assuming corruption.
-		 *
-		 * Our solution is to restart the page from scratch, so that pruning
-		 * runs again and we don't end up back here.
-		 */
 		if (unlikely(state == HEAPTUPLE_DEAD))
 		{
 			elog(WARNING, "htsv DEAD in (%u,%u) of %s", blkno, offnum,
