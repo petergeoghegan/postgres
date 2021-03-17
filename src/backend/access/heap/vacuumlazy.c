@@ -2097,9 +2097,6 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 
 	/* Revert to the previous phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
-
-	/* Forget the now-vacuumed tuples */
-	vacrelstats->dead_tuples->num_tuples = 0;
 }
 
 /*
