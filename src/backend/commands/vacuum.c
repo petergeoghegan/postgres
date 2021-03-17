@@ -1887,7 +1887,13 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	onerelid = onerel->rd_lockInfo.lockRelId;
 	LockRelationIdForSession(&onerelid, lmode);
 
-	/* Set index cleanup option based on reloptions if not yet set */
+	/*
+	 * Set index cleanup option based on reloptions if not set to either ON or
+	 * OFF.  Note that an VACUUM(INDEX_CLEANUP=AUTO) command is interpreted as
+	 * "prefer reloption, but if it's not set dynamically determine if index
+	 * vacuuming and cleanup" takes place in vacuumlazy.c.  Note also that the
+	 * reloption might be explicitly set to AUTO.
+	 */
 	if (params->index_cleanup == VACOPT_CLEANUP_AUTO &&
 		onerel->rd_options != NULL)
 		params->index_cleanup =
