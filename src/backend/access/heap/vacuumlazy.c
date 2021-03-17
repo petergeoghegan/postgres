@@ -813,104 +813,6 @@ lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 }
 
 /*
- * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
- */
-static void
-lazy_scan_vmbit_page(Relation onerel,
-					 BlockNumber blkno,
-					 Buffer buf,
-					 Buffer vmbuffer,
-					 LVRelStats *vacrelstats,
-					 lazy_scan_prune_page_state *ls)
-{
-	Page	page = BufferGetPage(buf);
-
-	/* mark page all-visible, if appropriate */
-	if (ls->all_visible && !ls->all_visible_according_to_vm)
-	{
-		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
-
-		if (ls->all_frozen)
-			flags |= VISIBILITYMAP_ALL_FROZEN;
-
-		/*
-		 * It should never be the case that the visibility map page is set
-		 * while the page-level bit is clear, but the reverse is allowed (if
-		 * checksums are not enabled).  Regardless, set both bits so that we
-		 * get back in sync.
-		 *
-		 * NB: If the heap page is all-visible but the VM bit is not set, we
-		 * don't need to dirty the heap page.  However, if checksums are
-		 * enabled, we do need to make sure that the heap page is dirtied
-		 * before passing it to visibilitymap_set(), because it may be logged.
-		 * Given that this situation should only happen in rare cases after a
-		 * crash, it is not worth optimizing.
-		 */
-		PageSetAllVisible(page);
-		MarkBufferDirty(buf);
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, ls->visibility_cutoff_xid, flags);
-	}
-
-	/*
-	 * The visibility map bit should never be set if the page-level bit is
-	 * clear.  However, it's possible that the bit got cleared after we
-	 * checked it and before we took the buffer content lock, so we must
-	 * recheck before jumping to the conclusion that something bad has
-	 * happened.
-	 */
-	else if (ls->all_visible_according_to_vm && !PageIsAllVisible(page) &&
-			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
-	{
-		elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
-			 vacrelstats->relname, blkno);
-		visibilitymap_clear(onerel, blkno, vmbuffer,
-							VISIBILITYMAP_VALID_BITS);
-	}
-
-	/*
-	 * It's possible for the value returned by
-	 * GetOldestNonRemovableTransactionId() to move backwards, so it's not
-	 * wrong for us to see tuples that appear to not be visible to everyone
-	 * yet, while PD_ALL_VISIBLE is already set. The real safe xmin value
-	 * never moves backwards, but GetOldestNonRemovableTransactionId() is
-	 * conservative and sometimes returns a value that's unnecessarily small,
-	 * so if we see that contradiction it just means that the tuples that we
-	 * think are not visible to everyone yet actually are, and the
-	 * PD_ALL_VISIBLE flag is correct.
-	 *
-	 * There should never be dead tuples on a page with PD_ALL_VISIBLE set,
-	 * however.
-	 */
-	else if (PageIsAllVisible(page) && ls->has_dead_items)
-	{
-		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
-			 vacrelstats->relname, blkno);
-		PageClearAllVisible(page);
-		MarkBufferDirty(buf);
-		visibilitymap_clear(onerel, blkno, vmbuffer,
-							VISIBILITYMAP_VALID_BITS);
-	}
-
-	/*
-	 * If the all-visible page is all-frozen but not marked as such yet, mark
-	 * it as all-frozen.  Note that all_frozen is only valid if all_visible is
-	 * true, so we must check both.
-	 */
-	else if (ls->all_visible_according_to_vm && ls->all_visible &&
-			 ls->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
-	{
-		/*
-		 * We can pass InvalidTransactionId as the cutoff XID here, because
-		 * setting the all-frozen bit doesn't cause recovery conflicts.
-		 */
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, InvalidTransactionId,
-						  VISIBILITYMAP_ALL_FROZEN);
-	}
-}
-
-/*
  *	lazy_scan_prune_page() -- lazy_scan_heap() pruning and freezing.
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
@@ -1228,6 +1130,104 @@ retry:
 	c->tups_vacuumed += pc.tups_vacuumed;
 	c->nkeep += pc.nkeep;
 	c->nunused += pc.nunused;
+}
+
+/*
+ * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
+ */
+static void
+lazy_scan_vmbit_page(Relation onerel,
+					 BlockNumber blkno,
+					 Buffer buf,
+					 Buffer vmbuffer,
+					 LVRelStats *vacrelstats,
+					 lazy_scan_prune_page_state *ls)
+{
+	Page	page = BufferGetPage(buf);
+
+	/* mark page all-visible, if appropriate */
+	if (ls->all_visible && !ls->all_visible_according_to_vm)
+	{
+		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
+
+		if (ls->all_frozen)
+			flags |= VISIBILITYMAP_ALL_FROZEN;
+
+		/*
+		 * It should never be the case that the visibility map page is set
+		 * while the page-level bit is clear, but the reverse is allowed (if
+		 * checksums are not enabled).  Regardless, set both bits so that we
+		 * get back in sync.
+		 *
+		 * NB: If the heap page is all-visible but the VM bit is not set, we
+		 * don't need to dirty the heap page.  However, if checksums are
+		 * enabled, we do need to make sure that the heap page is dirtied
+		 * before passing it to visibilitymap_set(), because it may be logged.
+		 * Given that this situation should only happen in rare cases after a
+		 * crash, it is not worth optimizing.
+		 */
+		PageSetAllVisible(page);
+		MarkBufferDirty(buf);
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, ls->visibility_cutoff_xid, flags);
+	}
+
+	/*
+	 * The visibility map bit should never be set if the page-level bit is
+	 * clear.  However, it's possible that the bit got cleared after we
+	 * checked it and before we took the buffer content lock, so we must
+	 * recheck before jumping to the conclusion that something bad has
+	 * happened.
+	 */
+	else if (ls->all_visible_according_to_vm && !PageIsAllVisible(page) &&
+			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
+	{
+		elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
+			 vacrelstats->relname, blkno);
+		visibilitymap_clear(onerel, blkno, vmbuffer,
+							VISIBILITYMAP_VALID_BITS);
+	}
+
+	/*
+	 * It's possible for the value returned by
+	 * GetOldestNonRemovableTransactionId() to move backwards, so it's not
+	 * wrong for us to see tuples that appear to not be visible to everyone
+	 * yet, while PD_ALL_VISIBLE is already set. The real safe xmin value
+	 * never moves backwards, but GetOldestNonRemovableTransactionId() is
+	 * conservative and sometimes returns a value that's unnecessarily small,
+	 * so if we see that contradiction it just means that the tuples that we
+	 * think are not visible to everyone yet actually are, and the
+	 * PD_ALL_VISIBLE flag is correct.
+	 *
+	 * There should never be dead tuples on a page with PD_ALL_VISIBLE set,
+	 * however.
+	 */
+	else if (PageIsAllVisible(page) && ls->has_dead_items)
+	{
+		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
+			 vacrelstats->relname, blkno);
+		PageClearAllVisible(page);
+		MarkBufferDirty(buf);
+		visibilitymap_clear(onerel, blkno, vmbuffer,
+							VISIBILITYMAP_VALID_BITS);
+	}
+
+	/*
+	 * If the all-visible page is all-frozen but not marked as such yet, mark
+	 * it as all-frozen.  Note that all_frozen is only valid if all_visible is
+	 * true, so we must check both.
+	 */
+	else if (ls->all_visible_according_to_vm && ls->all_visible &&
+			 ls->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
+	{
+		/*
+		 * We can pass InvalidTransactionId as the cutoff XID here, because
+		 * setting the all-frozen bit doesn't cause recovery conflicts.
+		 */
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, InvalidTransactionId,
+						  VISIBILITYMAP_ALL_FROZEN);
+	}
 }
 
 /*
