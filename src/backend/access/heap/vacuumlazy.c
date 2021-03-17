@@ -914,8 +914,7 @@ lazy_scan_vmbit_page(Relation onerel,
  */
 static void
 lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
-					 Relation *Irel, int nindexes, GlobalVisState *vistest,
-					 lazy_scan_heap_counters *c,
+					 GlobalVisState *vistest, lazy_scan_heap_counters *c,
 					 lazy_scan_prune_page_state *ls)
 {
 	BlockNumber blkno;
@@ -1682,8 +1681,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * Also handles tuple freezing -- considers freezing XIDs from all
 		 * tuple headers left behind following pruning.
 		 */
-		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
-							 vistest, &c, &ls);
+		lazy_scan_prune_page(onerel, buf, vacrelstats, vistest, &c, &ls);
 
 		/*
 		 * Remember the number of pages having at least one LP_DEAD line
