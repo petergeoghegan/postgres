@@ -1817,9 +1817,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * Do post-vacuum cleanup.
 	 *
 	 * Note that this take places when two_pass_strategy() decided to skip
-	 * index vacuuming.
+	 * index vacuuming, but not with INDEX_CLEANUP OFF.
 	 */
-	if (vacrelstats->hasindex)
+	if (vacrelstats->hasindex && !vacrelstats->mustskipindexes)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
 
 	/*
@@ -1833,13 +1833,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * Update index statistics.
 	 *
 	 * Note that this take places when two_pass_strategy() decided to skip
-	 * index vacuuming.
+	 * index vacuuming, but not with INDEX_CLEANUP OFF.
 	 */
-	if (vacrelstats->hasindex)
+	if (vacrelstats->hasindex && !vacrelstats->mustskipindexes)
 		update_index_statistics(Irel, indstats, nindexes);
 
 	/*
-	 * If no indexes, make log report that lazy_vacuum_heap would've made.
+	 * If no indexes, make log report that two_pass_strategy() or
+	 * lazy_vacuum_heap would've made.
 	 *
 	 * Note: We're distinguishing between "freed" (i.e. newly made LP_DEAD
 	 * through pruning) and removed (i.e. mark_unused_page() marked LP_UNUSED).
