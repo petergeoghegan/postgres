@@ -1106,6 +1106,14 @@ retry:
 			ls->all_frozen = false;
 	}
 
+	/*
+	 * Okay, we're done pruning, and have determined which tuples are to be
+	 * recorded as dead in local array.  We've also prepared the details of
+	 * which remaining tuples are to be frozen.
+	 *
+	 * Save the local dead items array to VACUUM's dead_tuples array.  Also
+	 * execute tuple freezing as planned.
+	 */
 	for (int i = 0; i < ndead; i++)
 	{
 		ItemPointerData itemptr;
