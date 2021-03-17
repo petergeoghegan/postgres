@@ -1650,7 +1650,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			empty_pages++;
 			/* Releases lock for us: */
-			lazy_scan_empty_page(onerel, blkno, buf, page, vmbuffer, vacrelstats, &ls);
+			lazy_scan_empty_page(onerel, blkno, buf, page, vmbuffer,
+								 vacrelstats, &ls);
 			continue;
 		}
 		else
