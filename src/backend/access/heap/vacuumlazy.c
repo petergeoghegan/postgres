@@ -852,11 +852,11 @@ lazy_scan_vmbit_page(Relation onerel,
 	}
 
 	/*
-	 * As of PostgreSQL 9.2, the visibility map bit should never be set if the
-	 * page-level bit is clear.  However, it's possible that the bit got
-	 * cleared after we checked it and before we took the buffer content lock,
-	 * so we must recheck before jumping to the conclusion that something bad
-	 * has happened.
+	 * The visibility map bit should never be set if the page-level bit is
+	 * clear.  However, it's possible that the bit got cleared after we
+	 * checked it and before we took the buffer content lock, so we must
+	 * recheck before jumping to the conclusion that something bad has
+	 * happened.
 	 */
 	else if (ls->all_visible_according_to_vm && !PageIsAllVisible(page) &&
 			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
