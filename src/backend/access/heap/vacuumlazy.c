@@ -1144,8 +1144,9 @@ retry:
  * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
  */
 static void
-lazy_scan_vmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-					 LVRelStats *vacrelstats, lazy_scan_prune_page_state *ls)
+lazy_scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+						LVRelStats *vacrelstats,
+						lazy_scan_prune_page_state *ls)
 {
 	Page	page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -1769,7 +1770,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			/* This won't have changed: */
 			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
 
-			/* Make sure lazy_scan_vmbit_page() doesn't get confused: */
+			/* Make sure lazy_scan_setvmbit_page() doesn't get confused: */
 			ls.has_dead_items = false;
 
 			/* Forget the now-vacuumed tuples */
@@ -1795,7 +1796,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		lazy_scan_vmbit_page(onerel, buf, vmbuffer, vacrelstats, &ls);
+		lazy_scan_setvmbit_page(onerel, buf, vmbuffer, vacrelstats, &ls);
 
 		/*
 		 * Step 8 for block: drop super-exclusive lock, finalize page by
