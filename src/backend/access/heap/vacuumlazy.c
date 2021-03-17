@@ -1806,8 +1806,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		update_index_statistics(Irel, indstats, nindexes);
 
 	/*
-	 * If no indexes, make log report that vacuum_indexes_mark_unused would've
-	 * made when it skipped vacuuming.
+	 * If no indexes, make log report that lazy_vacuum_heap would've made.
 	 *
 	 * Note: We're distinguishing between "freed" (i.e. newly made LP_DEAD
 	 * through pruning) and removed (i.e. mark_unused_page() marked LP_UNUSED).
@@ -1915,29 +1914,29 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 		elog(DEBUGELOG, "never had the choice to skip index vacuuming of %s", vacrelstats->relname);
 	}
 
-	if (skipping)
+	if (!skipping)
+	{
+		/* Okay, we're going to do index vacuuming */
+		lazy_vacuum_all_indexes(onerel, Irel, indstats, vacrelstats, lps,
+								nindexes);
+
+		/* Remove tuples from heap */
+		lazy_vacuum_heap(onerel, vacrelstats);
+	}
+	else
 	{
 		/*
+		 * Make log report that lazy_vacuum_heap would've made.
+		 *
 		 * Note: We're distinguishing between "freed" (i.e. newly made LP_DEAD
-		 * through pruning) and removed (i.e. mark_unused_page() marked
-		 * LP_UNUSED).
+		 * through pruning) and removed (i.e. mark_unused_page() marked LP_UNUSED).
 		 */
 		ereport(elevel,
 				(errmsg("\"%s\": freed %d row versions in %u pages",
 						vacrelstats->relname,
 						vacrelstats->dead_tuples->num_tuples,
 						vacrelstats->rel_pages)));
-
-		vacrelstats->dead_tuples->num_tuples = 0;
-		return;
 	}
-
-	/* Okay, we're going to do index vacuuming */
-	lazy_vacuum_all_indexes(onerel, Irel, indstats,
-							vacrelstats, lps, nindexes);
-
-	/* Remove tuples from heap */
-	lazy_vacuum_heap(onerel, vacrelstats);
 
 	/*
 	 * Forget the now-vacuumed tuples, and press on, but be careful
