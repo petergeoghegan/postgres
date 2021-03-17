@@ -335,13 +335,15 @@ typedef struct LVSavedErrInfo
 
 typedef struct scan_prune_page_state
 {
+	/* State reset on each scan_prune_page() retry: */
 	bool		  hastup;
-	bool		  all_visible_according_to_vm;
 	bool		  all_visible;
-	bool		  all_frozen;	  /* provided all_visible is also true */
 	bool		  has_dead_items; /* includes existing LP_DEAD items */
-	xl_heap_freeze_tuple *frozen;
+
 	TransactionId visibility_cutoff_xid;
+	bool		  all_visible_according_to_vm;
+	bool		  all_frozen;	  /* provided all_visible is also true */
+	xl_heap_freeze_tuple *frozen;
 } scan_prune_page_state;
 
 typedef struct lazy_scan_heap_counters
@@ -885,12 +887,15 @@ retry:
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
 	 * requiring freezing.
+	 *
+	 * ls is state shared with caller that tracks information about the page
+	 * from buf.
 	 */
+	ls->hastup = false;
 	ls->all_visible = true;
 	ls->has_dead_items = false;
 	nfrozen = 0;
 	ndead = 0;
-	ls->hastup = false;
 	maxoff = PageGetMaxOffsetNumber(page);
 
 #ifdef DEBUG
@@ -2241,7 +2246,7 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	END_CRIT_SECTION();
 
 	/*
-	 * Now that we have removed the dead tuples from the page, once again
+	 * Now that we have removed the LD_DEAD items from the page, once again
 	 * check if the page has become all-visible.  The page is already marked
 	 * dirty, exclusively locked, and, if needed, a full page image has been
 	 * emitted in the log_heap_clean() above.
