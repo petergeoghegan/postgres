@@ -333,7 +333,7 @@ typedef struct LVSavedErrInfo
 	VacErrPhase phase;
 } LVSavedErrInfo;
 
-typedef struct lazy_scan_prune_page_state
+typedef struct scan_prune_page_state
 {
 	bool		  hastup;
 	bool		  all_visible_according_to_vm;
@@ -342,7 +342,7 @@ typedef struct lazy_scan_prune_page_state
 	bool		  has_dead_items; /* includes existing LP_DEAD items */
 	xl_heap_freeze_tuple *frozen;
 	TransactionId visibility_cutoff_xid;
-} lazy_scan_prune_page_state;
+} scan_prune_page_state;
 
 typedef struct lazy_scan_heap_counters
 {
@@ -756,7 +756,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
  * after all.
  */
 static void
-lazy_scan_new_page(Relation onerel, Buffer buf)
+scan_new_page(Relation onerel, Buffer buf)
 {
 	BlockNumber blkno = BufferGetBlockNumber(buf);
 
@@ -778,8 +778,8 @@ lazy_scan_new_page(Relation onerel, Buffer buf)
  * Caller must hold pin and buffer cleanup lock on the buffer.
  */
 static void
-lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-					 LVRelStats *vacrelstats, lazy_scan_prune_page_state *ls)
+scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+				LVRelStats *vacrelstats, scan_prune_page_state *ls)
 {
 	Page	page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -787,7 +787,7 @@ lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 
 	/*
 	 * Empty pages are always all-visible and all-frozen (note that the same
-	 * is currently not true for new pages, see lazy_scan_new_page()).
+	 * is currently not true for new pages, see scan_new_page()).
 	 */
 	if (!PageIsAllVisible(page))
 	{
@@ -821,7 +821,7 @@ lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 }
 
 /*
- *	lazy_scan_prune_page() -- lazy_scan_heap() pruning and freezing.
+ *	scan_prune_page() -- lazy_scan_heap() pruning and freezing.
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
  *
@@ -847,9 +847,9 @@ lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
  * avoid double counting.
  */
 static void
-lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
-					 GlobalVisState *vistest, lazy_scan_heap_counters *c,
-					 lazy_scan_prune_page_state *ls)
+scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
+				GlobalVisState *vistest, lazy_scan_heap_counters *c,
+				scan_prune_page_state *ls)
 {
 	BlockNumber blkno;
 	Page		page;
@@ -1144,9 +1144,8 @@ retry:
  * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
  */
 static void
-lazy_scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-						LVRelStats *vacrelstats,
-						lazy_scan_prune_page_state *ls)
+scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+				   LVRelStats *vacrelstats, scan_prune_page_state *ls)
 {
 	Page	page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -1442,7 +1441,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	{
 		Buffer		buf;
 		Page		page;
-		lazy_scan_prune_page_state ls;
+		scan_prune_page_state ls;
 		bool		savefreespace = false;
 		Size		freespace;
 
@@ -1681,14 +1680,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			empty_pages++;
 			/* Releases lock for us: */
-			lazy_scan_new_page(onerel, buf);
+			scan_new_page(onerel, buf);
 			continue;
 		}
 		else if (PageIsEmpty(page))
 		{
 			empty_pages++;
 			/* Releases lock for us: */
-			lazy_scan_empty_page(onerel, buf, vmbuffer, vacrelstats, &ls);
+			scan_empty_page(onerel, buf, vmbuffer, vacrelstats, &ls);
 			continue;
 		}
 
@@ -1703,15 +1702,15 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * Also handles tuple freezing -- considers freezing XIDs from all
 		 * tuple headers left behind following pruning.
 		 */
-		lazy_scan_prune_page(onerel, buf, vacrelstats, vistest, &c, &ls);
+		scan_prune_page(onerel, buf, vacrelstats, vistest, &c, &ls);
 
 		/*
 		 * Remember the number of pages having at least one LP_DEAD line
 		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
 		 * even opportunistic pruning.  Note that this is exactly the same
 		 * thing as having items that are stored in dead_tuples space, because
-		 * lazy_scan_prune_page() doesn't count anything other than LP_DEAD
-		 * items as dead (as of PostgreSQL 14).
+		 * scan_prune_page() doesn't count anything other than LP_DEAD items
+		 * as dead (as of PostgreSQL 14).
 		 */
 		if (ls.has_dead_items)
 			has_dead_items_pages++;
@@ -1722,10 +1721,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * "nindexes == 0" case.)
 		 *
 		 * If we have any LP_DEAD items on this page (i.e. any new dead_tuples
-		 * entries compared to just before lazy_scan_prune_page()) then the
-		 * page will be visited again by lazy_vacuum_heap(), which will
-		 * compute and record its post-compaction free space.  If not, then
-		 * we're done with this page, so remember its free space as-is.
+		 * entries compared to just before scan_prune_page()) then the page
+		 * will be visited again by lazy_vacuum_heap(), which will compute and
+		 * record its post-compaction free space.  If not, then we're done
+		 * with this page, so remember its free space as-is.
 		 */
 		savefreespace = false;
 		freespace = 0;
@@ -1770,7 +1769,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			/* This won't have changed: */
 			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
 
-			/* Make sure lazy_scan_setvmbit_page() doesn't get confused: */
+			/* Make sure scan_setvmbit_page() doesn't get confused: */
 			ls.has_dead_items = false;
 
 			/* Forget the now-vacuumed tuples */
@@ -1796,7 +1795,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		lazy_scan_setvmbit_page(onerel, buf, vmbuffer, vacrelstats, &ls);
+		scan_setvmbit_page(onerel, buf, vmbuffer, vacrelstats, &ls);
 
 		/*
 		 * Step 8 for block: drop super-exclusive lock, finalize page by
