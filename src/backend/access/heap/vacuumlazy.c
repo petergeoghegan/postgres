@@ -1684,45 +1684,57 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * Remember the number of pages having at least one LP_DEAD line
 		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
 		 * even opportunistic pruning.  Note that this is exactly the same
-		 * thing as having items that are stored in dead tuple space.
-		 *
-		 * If we had any dead items, then the page will be visited again by
-		 * two_pass_strategy, which will compute and record its
-		 * post-compaction free space.  If not, then we're done with this
-		 * page, so remember its free space as-is.
-		 *
-		 * We figure out what to do immediately after pruning so that the
-		 * single-scan strategy remembers to do the right thing.  It will
-		 * clear has_dead_items below, before we save space in FSM, so we
-		 * won't be able to rely on it for this later.
+		 * thing as having items that are stored in dead_tuples space, because
+		 * lazy_scan_prune_page() doesn't count anything other than LP_DEAD
+		 * items as dead (as of PostgreSQL 14).
 		 */
 		if (ls.has_dead_items)
-		{
-			savefreespace = false;
 			has_dead_items_pages++;
-			freespace = 0;
-		}
-		else
+
+		/*
+		 * If we have any LP_DEAD items on this page (i.e. any new dead_tuples
+		 * entries compared to just before lazy_scan_prune_page()) then the
+		 * page will be visited again by lazy_vacuum_heap(), which will
+		 * compute and record its post-compaction free space.  If not, then
+		 * we're done with this page, so remember its free space as-is.
+		 */
+		savefreespace = false;
+		freespace = 0;
+		if (nindexes > 0 && ls.has_dead_items &&
+			params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		{
+			/*
+			 * Wait until lazy_vacuum_heap() to save free space.
+			 *
+			 * Note: It's not in fact 100% certain that we really will call
+			 * lazy_vacuum_heap() in INDEX_CLEANUP = AUTO case (which is the
+			 * common case) -- two_pass_strategy() might opt to skip index
+			 * vacuuming (and so must skip heap vacuuming).  This is deemed
+			 * okay, because there can't be very much free space when this
+			 * happens.
+			 */
+		}
+		else if (nindexes > 0 && !ls.has_dead_items)
+		{
+			/*
+			 * Will never reach lazy_vacuum_heap() (or will, but won't reach
+			 * this specific page)
+			 */
 			savefreespace = true;
 			freespace = PageGetHeapFreeSpace(page);
 		}
-
-		/*
-		 * Step 7 for block: Do one pass strategy when we have no indexes to
-		 * consider
-		 */
-		if (nindexes == 0 && dead_tuples->num_tuples > 0)
+		else if (nindexes == 0 && ls.has_dead_items)
 		{
+			Assert(dead_tuples->num_tuples > 0);
+
 			/*
 			 * One pass strategy (no indexes) case.
 			 *
 			 * Mark LP_DEAD item pointers for reuse now, in an incremental
 			 * fashion.  This is safe because the table has no indexes (and so
-			 * two_pass_strategy() will never be called).
+			 * lazy_vacuum_heap() will never be called).
 			 */
 			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
-			savefreespace = false;
 			vacuumed_pages++;
 
 			/* Make sure lazy_scan_vmbit_page() doesn't get confused: */
@@ -1730,6 +1742,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 			/* Forget the now-vacuumed tuples */
 			dead_tuples->num_tuples = 0;
+
+			savefreespace = true;
+			freespace = PageGetHeapFreeSpace(page);
 
 			/*
 			 * Periodically do incremental FSM vacuuming to make newly-freed
@@ -1745,7 +1760,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			}
 		}
 
-		/* Step 8 for block: Handle visibility map */
+		/* One pass strategy had better have no dead tuples by now: */
+		Assert(nindexes > 0 || dead_tuples->num_tuples == 0);
+
+		/* Step 7 for block: Handle visibility map */
 		lazy_scan_vmbit_page(onerel, blkno, buf, page, vmbuffer, vacrelstats,
 							 &ls);
 
@@ -1817,7 +1835,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 *
 	 * Note that post-vacuum cleanup is supposed to take place when
 	 * two_pass_strategy() decided to skip index vacuuming, but not with
-	 * INDEX_CLEANUP OFF.
+	 * INDEX_CLEANUP=OFF.
 	 */
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
@@ -1833,7 +1851,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * Update index statistics.
 	 *
 	 * Note that this take places when two_pass_strategy() decided to skip
-	 * index vacuuming, but not with INDEX_CLEANUP OFF.
+	 * index vacuuming, but not with INDEX_CLEANUP=OFF.
 	 */
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		update_index_statistics(Irel, indstats, nindexes);
@@ -2106,7 +2124,7 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 }
 
 /*
- *	lazy_vacuum_page() -- free dead tuples on a page
+ *	lazy_vacuum_page() -- free LP_DEAD items on a page,
  *					 and repair its fragmentation.
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
