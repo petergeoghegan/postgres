@@ -717,7 +717,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 typedef struct lazy_scan_prune_page_state
 {
 	bool		  hastup;
-	Size		  freespace;
 	bool		  all_visible_according_to_vm;
 	bool		  all_visible;
 	bool		  all_frozen;	  /* provided all_visible is also true */
@@ -752,7 +751,6 @@ lazy_scan_prune_page(Relation onerel,
 	OffsetNumber offnum,
 				maxoff;
 	int			nfrozen;
-	bool		tuple_totally_frozen;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	OffsetNumber killed[MaxHeapTuplesPerPage];
@@ -799,6 +797,7 @@ prune:
 		 offnum = OffsetNumberNext(offnum))
 	{
 		ItemId		itemid;
+		bool		tuple_totally_frozen;
 
 		/*
 		 * Set the offset number so that we can display it along with any
@@ -1246,6 +1245,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		Buffer		buf;
 		Page		page;
 		lazy_scan_prune_page_state ls;
+		bool		savefreespace = false;
+		Size		freespace;
 
 		ls.all_visible_according_to_vm = false;
 		ls.all_frozen = true;
@@ -1485,8 +1486,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 			if (GetRecordedFreeSpace(onerel, blkno) == 0)
 			{
-				Size		freespace;
-
 				freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
 				RecordPageWithFreeSpace(onerel, blkno, freespace);
 			}
@@ -1496,7 +1495,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		if (PageIsEmpty(page))
 		{
 			empty_pages++;
-			ls.freespace = PageGetHeapFreeSpace(page);
+			freespace = PageGetHeapFreeSpace(page);
 
 			/*
 			 * Empty pages are always all-visible and all-frozen (note that
@@ -1531,12 +1530,39 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			}
 
 			UnlockReleaseBuffer(buf);
-			RecordPageWithFreeSpace(onerel, blkno, ls.freespace);
+			RecordPageWithFreeSpace(onerel, blkno, freespace);
 			continue;
 		}
 
 		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
 							 vistest, &c, &ls);
+
+		/*
+		 * Remember the number of pages having at least one LP_DEAD line
+		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
+		 * even opportunistic pruning.  Note that this is exactly the same
+		 * thing as having items that are stored in dead tuple space.
+		 *
+		 * If we had any dead items, then the page will be visited again by
+		 * vacuum_indexes_mark_unused, which will compute and record its
+		 * post-compaction free space.  If not, then we're done with this
+		 * page, so remember its free space as-is.
+		 *
+		 * We figure out what to do immediately after pruning so that the
+		 * single-scan strategy remembers to do the right thing.  It will
+		 * clear has_dead_items below, before we save space in FSM, so we
+		 * won't be able to rely on it for this later.
+		 */
+		if (ls.has_dead_items)
+		{
+			savefreespace = false;
+			has_dead_items_pages++;
+		}
+		else
+		{
+			savefreespace = true;
+			freespace = PageGetHeapFreeSpace(page);
+		}
 
 		/*
 		 * If there are no indexes we can vacuum the page right now instead of
@@ -1571,8 +1597,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				next_fsm_block_to_vacuum = blkno;
 			}
 		}
-
-		ls.freespace = PageGetHeapFreeSpace(page);
 
 		/* mark page all-visible, if appropriate */
 		if (ls.all_visible && !ls.all_visible_according_to_vm)
@@ -1666,28 +1690,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		if (ls.hastup)
 			vacrelstats->nonempty_pages = blkno + 1;
 
-		/*
-		 * Remember the number of pages having at least one LP_DEAD line
-		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
-		 * even opportunistic pruning.
-		 */
-		if (ls.has_dead_items)
-		{
-			has_dead_items_pages++;
-
-		/*
-		 * If we remembered any tuples for deletion, then the page will be
-		 * visited again by vacuum_indexes_mark_unused, which will compute and
-		 * record its post-compaction free space.  If not, then we're done
-		 * with this page, so remember its free space as-is.
-		 *
-		 * This path will always be taken if there are no indexes.  However,
-		 * it might not be taken if INDEX_CLEANUP is off -- that works the
-		 * same as the case where we decide to skip index vacuuming.  See also
-		 * vacuum_indexes_mark_unused(), where that is decided.
-		 */
-			RecordPageWithFreeSpace(onerel, blkno, ls.freespace);
-		}
+		if (savefreespace)
+			RecordPageWithFreeSpace(onerel, blkno, freespace);
 	}
 
 	/* report that everything is scanned and vacuumed */
