@@ -1039,36 +1039,30 @@ prune:
 	c->nunused += pc.nunused;
 }
 
+/*
+ * All-zeroes pages can be left over if either a backend extends the relation
+ * by a single page, but crashes before the newly initialized page has been
+ * written out, or when bulk-extending the relation (which creates a number of
+ * empty pages at the tail end of the relation, but enters them into the FSM).
+ *
+ * Note we do not enter the page into the visibilitymap. That has the downside
+ * that we repeatedly visit this page in subsequent vacuums, but otherwise
+ * we'll never not discover the space on a promoted standby. The harm of
+ * repeated checking ought to normally not be too bad - the space usually
+ * should be used at some point, otherwise there wouldn't be any regular
+ * vacuums.
+ *
+ * Make sure these pages are in the FSM, to ensure they can be reused. Do that
+ * by testing if there's any space recorded for the page. If not, enter it. We
+ * do so after releasing the lock on the heap page, the FSM is approximate,
+ * after all.
+ */
 static void
 lazy_scan_new_page(Relation onerel,
 				   BlockNumber blkno,
 				   Buffer buf,
-				   Page page,
-				   Buffer vmbuffer,
-				   LVRelStats *vacrelstats,
 				   lazy_scan_prune_page_state *ls)
 {
-	/*
-	 * All-zeroes pages can be left over if either a backend extends the
-	 * relation by a single page, but crashes before the newly initialized
-	 * page has been written out, or when bulk-extending the relation (which
-	 * creates a number of empty pages at the tail end of the relation, but
-	 * enters them into the FSM).
-	 *
-	 * Note we do not enter the page into the visibilitymap. That has the
-	 * downside that we repeatedly visit this page in subsequent vacuums, but
-	 * otherwise we'll never not discover the space on a promoted standby. The
-	 * harm of repeated checking ought to normally not be too bad - the space
-	 * usually should be used at some point, otherwise there wouldn't be any
-	 * regular vacuums.
-	 *
-	 * Make sure these pages are in the FSM, to ensure they can be reused. Do
-	 * that by testing if there's any space recorded for the page. If not,
-	 * enter it. We do so after releasing the lock on the heap page, the FSM
-	 * is approximate, after all.
-	 */
-	UnlockReleaseBuffer(buf);
-
 	if (GetRecordedFreeSpace(onerel, blkno) == 0)
 	{
 		Size freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
@@ -1090,8 +1084,8 @@ lazy_scan_empty_page(Relation onerel,
 	Size freespace = PageGetHeapFreeSpace(page);
 
 	/*
-	 * Empty pages are always all-visible and all-frozen (note that
-	 * the same is currently not true for new pages, see above).
+	 * Empty pages are always all-visible and all-frozen (note that the same
+	 * is currently not true for new pages, see lazy_scan_new_page()).
 	 */
 	if (!PageIsAllVisible(page))
 	{
@@ -1102,13 +1096,12 @@ lazy_scan_empty_page(Relation onerel,
 
 		/*
 		 * It's possible that another backend has extended the heap,
-		 * initialized the page, and then failed to WAL-log the page
-		 * due to an ERROR.  Since heap extension is not WAL-logged,
-		 * recovery might try to replay our record setting the page
-		 * all-visible and find that the page isn't initialized, which
-		 * will cause a PANIC.  To prevent that, check whether the
-		 * page has been previously WAL-logged, and if not, do that
-		 * now.
+		 * initialized the page, and then failed to WAL-log the page due to an
+		 * ERROR.  Since heap extension is not WAL-logged, recovery might try
+		 * to replay our record setting the page all-visible and find that the
+		 * page isn't initialized, which will cause a PANIC.  To prevent that,
+		 * check whether the page has been previously WAL-logged, and if not,
+		 * do that now.
 		 */
 		if (RelationNeedsWAL(onerel) &&
 			PageGetLSN(page) == InvalidXLogRecPtr)
@@ -1641,9 +1634,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		if (PageIsNew(page))
 		{
 			empty_pages++;
-			/* Releases lock for us: */
-			lazy_scan_new_page(onerel, blkno, buf, page, vmbuffer,
-							   vacrelstats, &ls);
+			UnlockReleaseBuffer(buf);
+			lazy_scan_new_page(onerel, blkno, buf, &ls);
 			continue;
 		}
 		else if (PageIsEmpty(page))
@@ -1654,11 +1646,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 								 vacrelstats, &ls);
 			continue;
 		}
-		else
-		{
-			lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
-								 vistest, &c, &ls);
-		}
+
+		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
+							 vistest, &c, &ls);
 
 		/*
 		 * Remember the number of pages having at least one LP_DEAD line
