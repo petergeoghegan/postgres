@@ -931,6 +931,7 @@ lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 
 retry:
 
+	/* Reset page-level counters */
 	memset(&pc, 0, sizeof(lazy_scan_heap_counters));
 
 	/*
@@ -942,9 +943,6 @@ retry:
 	pc.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
 									  InvalidTransactionId, 0, false,
 									  &vacrelstats->offnum);
-	//pg_usleep(10000);
-
-
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
 	 * requiring freezing.
@@ -955,6 +953,14 @@ retry:
 	ndead = 0;
 	ls->hastup = false;
 	maxoff = PageGetMaxOffsetNumber(page);
+
+#ifdef DEBUG
+	/*
+	 * Enable this to debug the retry logic -- it's actually quite hard to hit
+	 * even with this artificial delay
+	 */
+	pg_usleep(10000);
+#endif
 
 	/*
 	 * Note: If you change anything in the loop below, also look at
@@ -1042,12 +1048,7 @@ retry:
 		tuplestate = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
 
 		if (unlikely(tuplestate == HEAPTUPLE_DEAD))
-		{
-			elog(WARNING, "htsv DEAD in (%u,%u) of %s", blkno, offnum,
-				 RelationGetRelationName(onerel));
-
 			goto retry;
-		}
 
 		switch (tuplestate)
 		{
@@ -1201,6 +1202,7 @@ retry:
 		END_CRIT_SECTION();
 	}
 
+	/* Success -- add page-level counters to caller's totals */
 	c->num_tuples += pc.num_tuples;
 	c->live_tuples += pc.live_tuples;
 	c->tups_vacuumed += pc.tups_vacuumed;
