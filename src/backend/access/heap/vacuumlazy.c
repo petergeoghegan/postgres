@@ -1107,12 +1107,26 @@ retry:
 	}
 
 	/*
-	 * Okay, we're done pruning, and have determined which tuples are to be
-	 * recorded as dead in local array.  We've also prepared the details of
+	 * Success -- we're done pruning, and have determined which tuples are to
+	 * be recorded as dead in local array.  We've also prepared the details of
 	 * which remaining tuples are to be frozen.
 	 *
-	 * Save the local dead items array to VACUUM's dead_tuples array.  Also
-	 * execute tuple freezing as planned.
+	 * First clear the offset information once we have processed all the
+	 * tuples on the page.
+	 */
+	vacrelstats->offnum = InvalidOffsetNumber;
+
+	/*
+	 * Next add page level counters to caller's counts
+	 */
+	c->num_tuples += pc.num_tuples;
+	c->live_tuples += pc.live_tuples;
+	c->tups_vacuumed += pc.tups_vacuumed;
+	c->nkeep += pc.nkeep;
+	c->nunused += pc.nunused;
+
+	/*
+	 * Now save the local dead items array to VACUUM's dead_tuples array.
 	 */
 	for (int i = 0; i < ndead; i++)
 	{
@@ -1123,14 +1137,10 @@ retry:
 	}
 
 	/*
-	 * Clear the offset information once we have processed all the tuples
-	 * on the page.
-	 */
-	vacrelstats->offnum = InvalidOffsetNumber;
-
-	/*
-	 * If we froze any tuples, mark the buffer dirty, and write a WAL
-	 * record recording the changes.  We must log the changes to be
+	 * Finally, execute tuple freezing as planned.
+	 *
+	 * If we need to freeze any tuples we'll mark the buffer dirty, and write
+	 * a WAL record recording the changes.  We must log the changes to be
 	 * crash-safe against future truncation of CLOG.
 	 */
 	if (nfrozen > 0)
@@ -1163,13 +1173,6 @@ retry:
 
 		END_CRIT_SECTION();
 	}
-
-	/* Success -- add page-level counters to caller's totals */
-	c->num_tuples += pc.num_tuples;
-	c->live_tuples += pc.live_tuples;
-	c->tups_vacuumed += pc.tups_vacuumed;
-	c->nkeep += pc.nkeep;
-	c->nunused += pc.nunused;
 }
 
 /*
