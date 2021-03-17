@@ -1165,8 +1165,7 @@ retry:
  */
 static void
 scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				   LVRelStats *vacrelstats, LVPrunePageState *ls,
-				   LVVisMapPageState *vms)
+				   LVPrunePageState *ls, LVVisMapPageState *vms)
 {
 	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -1209,7 +1208,7 @@ scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
 	{
 		elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
-			 vacrelstats->relname, blkno);
+			 RelationGetRelationName(onerel), blkno);
 		visibilitymap_clear(onerel, blkno, vmbuffer,
 							VISIBILITYMAP_VALID_BITS);
 	}
@@ -1231,7 +1230,7 @@ scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 	else if (PageIsAllVisible(page) && ls->has_dead_items)
 	{
 		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
-			 vacrelstats->relname, blkno);
+			 RelationGetRelationName(onerel), blkno);
 		PageClearAllVisible(page);
 		MarkBufferDirty(buf);
 		visibilitymap_clear(onerel, blkno, vmbuffer,
@@ -1816,7 +1815,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		scan_setvmbit_page(onerel, buf, vmbuffer, vacrelstats, &ls, &vms);
+		scan_setvmbit_page(onerel, buf, vmbuffer, &ls, &vms);
 
 		/*
 		 * Step 8 for block: drop super-exclusive lock, finalize page by
