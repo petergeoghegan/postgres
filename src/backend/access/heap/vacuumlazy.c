@@ -333,24 +333,9 @@ typedef struct LVSavedErrInfo
 	VacErrPhase phase;
 } LVSavedErrInfo;
 
-typedef struct scan_vm_page_state
-{
-	TransactionId visibility_cutoff_xid;
-	bool		  all_visible_according_to_vm;
-} scan_vm_page_state;
-
 /*
- * State output by scan_prune_page():
+ * Counters maintained by lazy_scan_heap() (and scan_prune_page()):
  */
-typedef struct scan_prune_page_state
-{
-	/* State set on output by scan_prune_page(): */
-	bool		  hastup;
-	bool		  has_dead_items; /* includes existing LP_DEAD items */
-	bool		  all_visible;
-	bool		  all_frozen;	  /* provided all_visible is also true */
-} scan_prune_page_state;
-
 typedef struct lazy_scan_heap_counters
 {
 	double		num_tuples,		/* total number of nonremovable tuples */
@@ -359,6 +344,29 @@ typedef struct lazy_scan_heap_counters
 				nkeep,			/* dead-but-not-removable tuples */
 				nunused;		/* # existing unused line pointers */
 } lazy_scan_heap_counters;
+
+/*
+ * State output by scan_prune_page():
+ */
+typedef struct scan_prune_page_state
+{
+	bool		  hastup;
+	bool		  has_dead_items; /* includes existing LP_DEAD items */
+	bool		  all_visible;
+	bool		  all_frozen;	  /* provided all_visible is also true */
+} scan_prune_page_state;
+
+/*
+ * State set up and maintained in lazy_scan_heap() (also maintained in
+ * scan_prune_page()) that represents VM bit status.
+ *
+ * Used by scan_setvmbit_page() when we're done pruning.
+ */
+typedef struct scan_vm_page_state
+{
+	TransactionId visibility_cutoff_xid;
+	bool		  all_visible_according_to_vm;
+} scan_vm_page_state;
 
 /* A few variables that don't seem worth passing around as parameters */
 static int	elevel = -1;
