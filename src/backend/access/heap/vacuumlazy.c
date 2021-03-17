@@ -350,10 +350,10 @@ typedef struct LVTempCounters
  */
 typedef struct LVPrunePageState
 {
-	bool		  hastup;
-	bool		  has_dead_items; /* includes existing LP_DEAD items */
-	bool		  all_visible;
-	bool		  all_frozen;	  /* provided all_visible is also true */
+	bool		  hastup;			/* Page is truncatable? */
+	bool		  has_dead_items;	/* includes existing LP_DEAD items */
+	bool		  all_visible;		/* Every item visible to all? */
+	bool		  all_frozen;		/* provided all_visible is also true */
 } LVPrunePageState;
 
 /*
