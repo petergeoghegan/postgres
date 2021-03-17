@@ -336,25 +336,25 @@ typedef struct LVSavedErrInfo
 /*
  * Counters maintained by lazy_scan_heap() (and scan_prune_page()):
  */
-typedef struct lazy_scan_heap_counters
+typedef struct LVTempCounters
 {
 	double	num_tuples;		/* total number of nonremovable tuples */
 	double	live_tuples;	/* live tuples (reltuples estimate) */
 	double	tups_vacuumed;	/* tuples cleaned up by current vacuum */
 	double	nkeep;			/* dead-but-not-removable tuples */
 	double	nunused;		/* # existing unused line pointers */
-} lazy_scan_heap_counters;
+} LVTempCounters;
 
 /*
  * State output by scan_prune_page():
  */
-typedef struct scan_prune_page_state
+typedef struct LVPrunePageState
 {
 	bool		  hastup;
 	bool		  has_dead_items; /* includes existing LP_DEAD items */
 	bool		  all_visible;
 	bool		  all_frozen;	  /* provided all_visible is also true */
-} scan_prune_page_state;
+} LVPrunePageState;
 
 /*
  * State set up and maintained in lazy_scan_heap() (also maintained in
@@ -362,11 +362,11 @@ typedef struct scan_prune_page_state
  *
  * Used by scan_setvmbit_page() when we're done pruning.
  */
-typedef struct scan_vm_page_state
+typedef struct LVVMPageState
 {
 	TransactionId visibility_cutoff_xid;
 	bool		  all_visible_according_to_vm;
-} scan_vm_page_state;
+} LVVMPageState;
 
 /* A few variables that don't seem worth passing around as parameters */
 static int	elevel = -1;
@@ -795,7 +795,7 @@ scan_new_page(Relation onerel, Buffer buf)
  */
 static void
 scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				LVRelStats *vacrelstats, scan_prune_page_state *ls)
+				LVRelStats *vacrelstats, LVPrunePageState *ls)
 {
 	Page	page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -865,8 +865,7 @@ scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 static void
 scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 				GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
-				lazy_scan_heap_counters *c, scan_prune_page_state *ls,
-				scan_vm_page_state *vms)
+				LVTempCounters *c, LVPrunePageState *ls, LVVMPageState *vms)
 {
 	BlockNumber blkno;
 	Page		page;
@@ -875,7 +874,7 @@ scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 	HTSV_Result tuplestate;
 	int			  nfrozen,
 				  ndead;
-	lazy_scan_heap_counters pc;
+	LVTempCounters pc;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	OffsetNumber deaditems[MaxHeapTuplesPerPage];
@@ -886,7 +885,7 @@ scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 retry:
 
 	/* Reset page-level counters */
-	memset(&pc, 0, sizeof(lazy_scan_heap_counters));
+	memset(&pc, 0, sizeof(LVTempCounters));
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1165,10 +1164,10 @@ retry:
  */
 static void
 scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				   LVRelStats *vacrelstats, scan_prune_page_state *ls,
-				   scan_vm_page_state *vms)
+				   LVRelStats *vacrelstats, LVPrunePageState *ls,
+				   LVVMPageState *vms)
 {
-	Page	page = BufferGetPage(buf);
+	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
 
 	/* mark page all-visible, if appropriate */
@@ -1296,7 +1295,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				vacuumed_pages,
 				has_dead_items_pages,
 				next_fsm_block_to_vacuum;
-	lazy_scan_heap_counters c;
+	LVTempCounters c;
 	IndexBulkDeleteResult **indstats;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
@@ -1328,7 +1327,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
-	memset(&c, 0, sizeof(lazy_scan_heap_counters));
+	memset(&c, 0, sizeof(LVTempCounters));
 
 	indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
@@ -1462,8 +1461,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	{
 		Buffer		buf;
 		Page		page;
-		scan_vm_page_state vms;
-		scan_prune_page_state ls;
+		LVVMPageState vms;
+		LVPrunePageState ls;
 		bool		savefreespace = false;
 		Size		freespace;
 
