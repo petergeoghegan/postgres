@@ -734,6 +734,8 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 }
 
 /*
+ * Handle new page during lazy_scan_heap().
+ *
  * All-zeroes pages can be left over if either a backend extends the relation
  * by a single page, but crashes before the newly initialized page has been
  * written out, or when bulk-extending the relation (which creates a number of
@@ -752,10 +754,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
  * after all.
  */
 static void
-lazy_scan_new_page(Relation onerel,
-				   BlockNumber blkno,
-				   Buffer buf)
+lazy_scan_new_page(Relation onerel, Buffer buf)
 {
+	BlockNumber blkno = BufferGetBlockNumber(buf);
+
 	if (GetRecordedFreeSpace(onerel, blkno) == 0)
 	{
 		Size freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
@@ -764,16 +766,15 @@ lazy_scan_new_page(Relation onerel,
 	}
 }
 
+/*
+ * Handle empty page during lazy_scan_heap().
+ */
 static void
-lazy_scan_empty_page(Relation onerel,
-					 BlockNumber blkno,
-					 Buffer buf,
-					 Page page,
-					 Buffer vmbuffer,
-					 LVRelStats *vacrelstats,
-					 lazy_scan_prune_page_state *ls)
+lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+					 LVRelStats *vacrelstats, lazy_scan_prune_page_state *ls)
 {
-
+	Page	page = BufferGetPage(buf);
+	BlockNumber blkno = BufferGetBlockNumber(buf);
 	Size freespace = PageGetHeapFreeSpace(page);
 
 	/*
@@ -811,15 +812,19 @@ lazy_scan_empty_page(Relation onerel,
 	RecordPageWithFreeSpace(onerel, blkno, freespace);
 }
 
+/*
+ * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
+ */
 static void
 lazy_scan_vmbit_page(Relation onerel,
 					 BlockNumber blkno,
 					 Buffer buf,
-					 Page page,
 					 Buffer vmbuffer,
 					 LVRelStats *vacrelstats,
 					 lazy_scan_prune_page_state *ls)
 {
+	Page	page = BufferGetPage(buf);
+
 	/* mark page all-visible, if appropriate */
 	if (ls->all_visible && !ls->all_visible_according_to_vm)
 	{
@@ -1670,15 +1675,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			empty_pages++;
 			UnlockReleaseBuffer(buf);
-			lazy_scan_new_page(onerel, blkno, buf);
+			lazy_scan_new_page(onerel, buf);
 			continue;
 		}
 		else if (PageIsEmpty(page))
 		{
 			empty_pages++;
 			/* Releases lock for us: */
-			lazy_scan_empty_page(onerel, blkno, buf, page, vmbuffer,
-								 vacrelstats, &ls);
+			lazy_scan_empty_page(onerel, buf, vmbuffer, vacrelstats, &ls);
 			continue;
 		}
 
@@ -1786,8 +1790,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		lazy_scan_vmbit_page(onerel, blkno, buf, page, vmbuffer, vacrelstats,
-							 &ls);
+		lazy_scan_vmbit_page(onerel, blkno, buf, vmbuffer, vacrelstats, &ls);
 
 		/*
 		 * Step 8 for block: drop super-exclusive lock, finalize page by
