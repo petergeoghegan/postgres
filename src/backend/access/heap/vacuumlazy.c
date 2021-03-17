@@ -737,13 +737,184 @@ typedef struct lazy_scan_heap_counters
 				nunused;		/* # existing unused line pointers */
 } lazy_scan_heap_counters;
 
+/*
+ * All-zeroes pages can be left over if either a backend extends the relation
+ * by a single page, but crashes before the newly initialized page has been
+ * written out, or when bulk-extending the relation (which creates a number of
+ * empty pages at the tail end of the relation, but enters them into the FSM).
+ *
+ * Note we do not enter the page into the visibilitymap. That has the downside
+ * that we repeatedly visit this page in subsequent vacuums, but otherwise
+ * we'll never not discover the space on a promoted standby. The harm of
+ * repeated checking ought to normally not be too bad - the space usually
+ * should be used at some point, otherwise there wouldn't be any regular
+ * vacuums.
+ *
+ * Make sure these pages are in the FSM, to ensure they can be reused. Do that
+ * by testing if there's any space recorded for the page. If not, enter it. We
+ * do so after releasing the lock on the heap page, the FSM is approximate,
+ * after all.
+ */
 static void
-lazy_scan_prune_page(Relation onerel,
+lazy_scan_new_page(Relation onerel,
+				   BlockNumber blkno,
+				   Buffer buf)
+{
+	if (GetRecordedFreeSpace(onerel, blkno) == 0)
+	{
+		Size freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
+
+		RecordPageWithFreeSpace(onerel, blkno, freespace);
+	}
+}
+
+static void
+lazy_scan_empty_page(Relation onerel,
+					 BlockNumber blkno,
 					 Buffer buf,
+					 Page page,
+					 Buffer vmbuffer,
 					 LVRelStats *vacrelstats,
-					 Relation *Irel,
-					 int nindexes,
-					 GlobalVisState *vistest,
+					 lazy_scan_prune_page_state *ls)
+{
+
+	Size freespace = PageGetHeapFreeSpace(page);
+
+	/*
+	 * Empty pages are always all-visible and all-frozen (note that the same
+	 * is currently not true for new pages, see lazy_scan_new_page()).
+	 */
+	if (!PageIsAllVisible(page))
+	{
+		START_CRIT_SECTION();
+
+		/* mark buffer dirty before writing a WAL record */
+		MarkBufferDirty(buf);
+
+		/*
+		 * It's possible that another backend has extended the heap,
+		 * initialized the page, and then failed to WAL-log the page due to an
+		 * ERROR.  Since heap extension is not WAL-logged, recovery might try
+		 * to replay our record setting the page all-visible and find that the
+		 * page isn't initialized, which will cause a PANIC.  To prevent that,
+		 * check whether the page has been previously WAL-logged, and if not,
+		 * do that now.
+		 */
+		if (RelationNeedsWAL(onerel) &&
+			PageGetLSN(page) == InvalidXLogRecPtr)
+			log_newpage_buffer(buf, true);
+
+		PageSetAllVisible(page);
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, InvalidTransactionId,
+						  VISIBILITYMAP_ALL_VISIBLE | VISIBILITYMAP_ALL_FROZEN);
+		END_CRIT_SECTION();
+	}
+
+	UnlockReleaseBuffer(buf);
+	RecordPageWithFreeSpace(onerel, blkno, freespace);
+}
+
+static void
+lazy_scan_vmbit_page(Relation onerel,
+					 BlockNumber blkno,
+					 Buffer buf,
+					 Page page,
+					 Buffer vmbuffer,
+					 LVRelStats *vacrelstats,
+					 lazy_scan_prune_page_state *ls)
+{
+	/* mark page all-visible, if appropriate */
+	if (ls->all_visible && !ls->all_visible_according_to_vm)
+	{
+		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
+
+		if (ls->all_frozen)
+			flags |= VISIBILITYMAP_ALL_FROZEN;
+
+		/*
+		 * It should never be the case that the visibility map page is set
+		 * while the page-level bit is clear, but the reverse is allowed (if
+		 * checksums are not enabled).  Regardless, set both bits so that we
+		 * get back in sync.
+		 *
+		 * NB: If the heap page is all-visible but the VM bit is not set, we
+		 * don't need to dirty the heap page.  However, if checksums are
+		 * enabled, we do need to make sure that the heap page is dirtied
+		 * before passing it to visibilitymap_set(), because it may be logged.
+		 * Given that this situation should only happen in rare cases after a
+		 * crash, it is not worth optimizing.
+		 */
+		PageSetAllVisible(page);
+		MarkBufferDirty(buf);
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, ls->visibility_cutoff_xid, flags);
+	}
+
+	/*
+	 * As of PostgreSQL 9.2, the visibility map bit should never be set if the
+	 * page-level bit is clear.  However, it's possible that the bit got
+	 * cleared after we checked it and before we took the buffer content lock,
+	 * so we must recheck before jumping to the conclusion that something bad
+	 * has happened.
+	 */
+	else if (ls->all_visible_according_to_vm && !PageIsAllVisible(page) &&
+			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
+	{
+		elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
+			 vacrelstats->relname, blkno);
+		visibilitymap_clear(onerel, blkno, vmbuffer,
+							VISIBILITYMAP_VALID_BITS);
+	}
+
+	/*
+	 * It's possible for the value returned by
+	 * GetOldestNonRemovableTransactionId() to move backwards, so it's not
+	 * wrong for us to see tuples that appear to not be visible to everyone
+	 * yet, while PD_ALL_VISIBLE is already set. The real safe xmin value
+	 * never moves backwards, but GetOldestNonRemovableTransactionId() is
+	 * conservative and sometimes returns a value that's unnecessarily small,
+	 * so if we see that contradiction it just means that the tuples that we
+	 * think are not visible to everyone yet actually are, and the
+	 * PD_ALL_VISIBLE flag is correct.
+	 *
+	 * There should never be dead tuples on a page with PD_ALL_VISIBLE set,
+	 * however.
+	 */
+	else if (PageIsAllVisible(page) && ls->has_dead_items)
+	{
+		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
+			 vacrelstats->relname, blkno);
+		PageClearAllVisible(page);
+		MarkBufferDirty(buf);
+		visibilitymap_clear(onerel, blkno, vmbuffer,
+							VISIBILITYMAP_VALID_BITS);
+	}
+
+	/*
+	 * If the all-visible page is all-frozen but not marked as such yet, mark
+	 * it as all-frozen.  Note that all_frozen is only valid if all_visible is
+	 * true, so we must check both.
+	 */
+	else if (ls->all_visible_according_to_vm && ls->all_visible &&
+			 ls->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
+	{
+		/*
+		 * We can pass InvalidTransactionId as the cutoff XID here, because
+		 * setting the all-frozen bit doesn't cause recovery conflicts.
+		 */
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, InvalidTransactionId,
+						  VISIBILITYMAP_ALL_FROZEN);
+	}
+}
+
+/*
+ *	lazy_scan_prune_page() -- lazy_scan_heap() pruning and freezing
+ */
+static void
+lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
+					 Relation *Irel, int nindexes, GlobalVisState *vistest,
 					 lazy_scan_heap_counters *c,
 					 lazy_scan_prune_page_state *ls)
 {
@@ -1044,178 +1215,6 @@ retry:
 	c->tups_vacuumed += pc.tups_vacuumed;
 	c->nkeep += pc.nkeep;
 	c->nunused += pc.nunused;
-}
-
-/*
- * All-zeroes pages can be left over if either a backend extends the relation
- * by a single page, but crashes before the newly initialized page has been
- * written out, or when bulk-extending the relation (which creates a number of
- * empty pages at the tail end of the relation, but enters them into the FSM).
- *
- * Note we do not enter the page into the visibilitymap. That has the downside
- * that we repeatedly visit this page in subsequent vacuums, but otherwise
- * we'll never not discover the space on a promoted standby. The harm of
- * repeated checking ought to normally not be too bad - the space usually
- * should be used at some point, otherwise there wouldn't be any regular
- * vacuums.
- *
- * Make sure these pages are in the FSM, to ensure they can be reused. Do that
- * by testing if there's any space recorded for the page. If not, enter it. We
- * do so after releasing the lock on the heap page, the FSM is approximate,
- * after all.
- */
-static void
-lazy_scan_new_page(Relation onerel,
-				   BlockNumber blkno,
-				   Buffer buf)
-{
-	if (GetRecordedFreeSpace(onerel, blkno) == 0)
-	{
-		Size freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
-
-		RecordPageWithFreeSpace(onerel, blkno, freespace);
-	}
-}
-
-static void
-lazy_scan_empty_page(Relation onerel,
-					 BlockNumber blkno,
-					 Buffer buf,
-					 Page page,
-					 Buffer vmbuffer,
-					 LVRelStats *vacrelstats,
-					 lazy_scan_prune_page_state *ls)
-{
-
-	Size freespace = PageGetHeapFreeSpace(page);
-
-	/*
-	 * Empty pages are always all-visible and all-frozen (note that the same
-	 * is currently not true for new pages, see lazy_scan_new_page()).
-	 */
-	if (!PageIsAllVisible(page))
-	{
-		START_CRIT_SECTION();
-
-		/* mark buffer dirty before writing a WAL record */
-		MarkBufferDirty(buf);
-
-		/*
-		 * It's possible that another backend has extended the heap,
-		 * initialized the page, and then failed to WAL-log the page due to an
-		 * ERROR.  Since heap extension is not WAL-logged, recovery might try
-		 * to replay our record setting the page all-visible and find that the
-		 * page isn't initialized, which will cause a PANIC.  To prevent that,
-		 * check whether the page has been previously WAL-logged, and if not,
-		 * do that now.
-		 */
-		if (RelationNeedsWAL(onerel) &&
-			PageGetLSN(page) == InvalidXLogRecPtr)
-			log_newpage_buffer(buf, true);
-
-		PageSetAllVisible(page);
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, InvalidTransactionId,
-						  VISIBILITYMAP_ALL_VISIBLE | VISIBILITYMAP_ALL_FROZEN);
-		END_CRIT_SECTION();
-	}
-
-	UnlockReleaseBuffer(buf);
-	RecordPageWithFreeSpace(onerel, blkno, freespace);
-}
-
-static void
-lazy_scan_vmbit_page(Relation onerel,
-					 BlockNumber blkno,
-					 Buffer buf,
-					 Page page,
-					 Buffer vmbuffer,
-					 LVRelStats *vacrelstats,
-					 lazy_scan_prune_page_state *ls)
-{
-	/* mark page all-visible, if appropriate */
-	if (ls->all_visible && !ls->all_visible_according_to_vm)
-	{
-		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
-
-		if (ls->all_frozen)
-			flags |= VISIBILITYMAP_ALL_FROZEN;
-
-		/*
-		 * It should never be the case that the visibility map page is set
-		 * while the page-level bit is clear, but the reverse is allowed (if
-		 * checksums are not enabled).  Regardless, set both bits so that we
-		 * get back in sync.
-		 *
-		 * NB: If the heap page is all-visible but the VM bit is not set, we
-		 * don't need to dirty the heap page.  However, if checksums are
-		 * enabled, we do need to make sure that the heap page is dirtied
-		 * before passing it to visibilitymap_set(), because it may be logged.
-		 * Given that this situation should only happen in rare cases after a
-		 * crash, it is not worth optimizing.
-		 */
-		PageSetAllVisible(page);
-		MarkBufferDirty(buf);
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, ls->visibility_cutoff_xid, flags);
-	}
-
-	/*
-	 * As of PostgreSQL 9.2, the visibility map bit should never be set if the
-	 * page-level bit is clear.  However, it's possible that the bit got
-	 * cleared after we checked it and before we took the buffer content lock,
-	 * so we must recheck before jumping to the conclusion that something bad
-	 * has happened.
-	 */
-	else if (ls->all_visible_according_to_vm && !PageIsAllVisible(page) &&
-			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
-	{
-		elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
-			 vacrelstats->relname, blkno);
-		visibilitymap_clear(onerel, blkno, vmbuffer,
-							VISIBILITYMAP_VALID_BITS);
-	}
-
-	/*
-	 * It's possible for the value returned by
-	 * GetOldestNonRemovableTransactionId() to move backwards, so it's not
-	 * wrong for us to see tuples that appear to not be visible to everyone
-	 * yet, while PD_ALL_VISIBLE is already set. The real safe xmin value
-	 * never moves backwards, but GetOldestNonRemovableTransactionId() is
-	 * conservative and sometimes returns a value that's unnecessarily small,
-	 * so if we see that contradiction it just means that the tuples that we
-	 * think are not visible to everyone yet actually are, and the
-	 * PD_ALL_VISIBLE flag is correct.
-	 *
-	 * There should never be dead tuples on a page with PD_ALL_VISIBLE set,
-	 * however.
-	 */
-	else if (PageIsAllVisible(page) && ls->has_dead_items)
-	{
-		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
-			 vacrelstats->relname, blkno);
-		PageClearAllVisible(page);
-		MarkBufferDirty(buf);
-		visibilitymap_clear(onerel, blkno, vmbuffer,
-							VISIBILITYMAP_VALID_BITS);
-	}
-
-	/*
-	 * If the all-visible page is all-frozen but not marked as such yet, mark
-	 * it as all-frozen.  Note that all_frozen is only valid if all_visible is
-	 * true, so we must check both.
-	 */
-	else if (ls->all_visible_according_to_vm && ls->all_visible &&
-			 ls->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
-	{
-		/*
-		 * We can pass InvalidTransactionId as the cutoff XID here, because
-		 * setting the all-frozen bit doesn't cause recovery conflicts.
-		 */
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, InvalidTransactionId,
-						  VISIBILITYMAP_ALL_FROZEN);
-	}
 }
 
 /*
