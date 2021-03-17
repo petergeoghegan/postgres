@@ -357,16 +357,20 @@ static void vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 									   Relation *Irel, IndexBulkDeleteResult **indstats,
 									   int nindexes, LVParallelState *lps,
 									   BlockNumber has_dead_items_pages);
+static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
+static void lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
+									IndexBulkDeleteResult **indstats,
+									LVRelStats *vacrelstats, LVParallelState *lps,
+									int nindexes);
 static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
 							  LVDeadTuples *dead_tuples, double reltuples, LVRelStats *vacrelstats);
 static void lazy_cleanup_index(Relation indrel,
 							   IndexBulkDeleteResult **stats,
 							   double reltuples, bool estimated_count, LVRelStats *vacrelstats);
-static int mark_unused_page(Relation onerel, BlockNumber blkno, Buffer buffer,
-							int tupindex, LVRelStats *vacrelstats,
-							Buffer *vmbuffer);
+static int	lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
+							 int tupindex, LVRelStats *vacrelstats, Buffer *vmbuffer);
 static bool should_attempt_truncation(VacuumParams *params,
 									  LVRelStats *vacrelstats);
 static void lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats);
@@ -1691,7 +1695,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * fashion.  This is safe because the table has no indexes (and so
 			 * vacuum_indexes_mark_unused() will never be called).
 			 */
-			mark_unused_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
+			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
 			savefreespace = false;
 			reuse_marked_pages++;
 
@@ -1857,11 +1861,6 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 						   BlockNumber has_dead_items_pages)
 {
 	bool		skipping = false;
-	int			tupindex;
-	int			npages;
-	PGRUsage	ru0;
-	Buffer		vmbuffer = InvalidBuffer;
-	LVSavedErrInfo saved_err_info;
 
 	/* Should not end up here with no indexes */
 	Assert(vacrelstats->hasindex);
@@ -1934,7 +1933,26 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 	}
 
 	/* Okay, we're going to do index vacuuming */
+	lazy_vacuum_all_indexes(onerel, Irel, indstats,
+							vacrelstats, lps, nindexes);
 
+	/* Remove tuples from heap */
+	lazy_vacuum_heap(onerel, vacrelstats);
+
+	/*
+	 * Forget the now-vacuumed tuples, and press on, but be careful
+	 * not to reset latestRemovedXid since we want that value to be
+	 * valid.
+	 */
+	vacrelstats->dead_tuples->num_tuples = 0;
+}
+
+static void
+lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
+						IndexBulkDeleteResult **indstats,
+						LVRelStats *vacrelstats, LVParallelState *lps,
+						int nindexes)
+{
 	/* Report that we are now vacuuming indexes */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
 								 PROGRESS_VACUUM_PHASE_VACUUM_INDEX);
@@ -1970,13 +1988,27 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 	vacrelstats->num_index_scans++;
 	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_INDEX_VACUUMS,
 								 vacrelstats->num_index_scans);
+}
 
-	/*
-	 * Now mark LP_DEAD line pointers deleted from indexes as unused, and
-	 * compact out free space on pages -- this is the second heap pass.  Pages
-	 * not having dead tuples recorded from lazy_scan_heap are not visited at
-	 * all.
-	 */
+/*
+ *	lazy_vacuum_heap() -- second pass over the heap
+ *
+ *		This routine marks dead tuples as unused and compacts out free
+ *		space on their pages.  Pages not having dead tuples recorded from
+ *		lazy_scan_heap are not visited at all.
+ *
+ * Note: the reason for doing this as a second pass is we cannot remove
+ * the tuples until we've removed their index entries, and we want to
+ * process index entry removal in batches as large as possible.
+ */
+static void
+lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
+{
+	int			tupindex;
+	int			npages;
+	PGRUsage	ru0;
+	Buffer		vmbuffer = InvalidBuffer;
+	LVSavedErrInfo saved_err_info;
 
 	/* Report that we are now vacuuming the heap */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -2009,7 +2041,7 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 			++tupindex;
 			continue;
 		}
-		tupindex = mark_unused_page(onerel, tblk, buf, tupindex, vacrelstats,
+		tupindex = lazy_vacuum_page(onerel, tblk, buf, tupindex, vacrelstats,
 									&vmbuffer);
 
 		/* Now that we've compacted the page, record its available space */
@@ -2044,7 +2076,8 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
 }
 
 /*
- * mark_unused_page() -- mark dead line pointers on page for reuse.
+ *	lazy_vacuum_page() -- free dead tuples on a page
+ *					 and repair its fragmentation.
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
  *
@@ -2062,7 +2095,7 @@ vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
  * exclusive lock.
  */
 static int
-mark_unused_page(Relation onerel, BlockNumber blkno, Buffer buffer,
+lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 				 int tupindex, LVRelStats *vacrelstats, Buffer *vmbuffer)
 {
 	LVDeadTuples *dead_tuples = vacrelstats->dead_tuples;
