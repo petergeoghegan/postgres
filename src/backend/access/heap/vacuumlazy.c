@@ -337,18 +337,18 @@ typedef struct scan_vm_page_state
 {
 	TransactionId visibility_cutoff_xid;
 	bool		  all_visible_according_to_vm;
-	bool		  all_frozen;	  /* provided all_visible is also true */
 } scan_vm_page_state;
 
+/*
+ * State output by scan_prune_page():
+ */
 typedef struct scan_prune_page_state
 {
-	/* palloc()'d buffer used across scan_prune_page() calls: */
-	xl_heap_freeze_tuple *frozen;
-
 	/* State set on output by scan_prune_page(): */
 	bool		  hastup;
-	bool		  all_visible;
 	bool		  has_dead_items; /* includes existing LP_DEAD items */
+	bool		  all_visible;
+	bool		  all_frozen;	  /* provided all_visible is also true */
 } scan_prune_page_state;
 
 typedef struct lazy_scan_heap_counters
@@ -856,8 +856,9 @@ scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
  */
 static void
 scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
-				GlobalVisState *vistest, lazy_scan_heap_counters *c,
-				scan_prune_page_state *ls, scan_vm_page_state *vms)
+				GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
+				lazy_scan_heap_counters *c, scan_prune_page_state *ls,
+				scan_vm_page_state *vms)
 {
 	BlockNumber blkno;
 	Page		page;
@@ -870,7 +871,6 @@ scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	OffsetNumber deaditems[MaxHeapTuplesPerPage];
-	xl_heap_freeze_tuple *frozen = ls->frozen;
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -898,6 +898,7 @@ retry:
 	 */
 	ls->hastup = false;
 	ls->all_visible = true;
+	ls->all_frozen = true;
 	ls->has_dead_items = false;
 	nfrozen = 0;
 	ndead = 0;
@@ -1080,7 +1081,7 @@ retry:
 
 		/*
 		 * Each non-removable tuple must be checked to see if it needs
-		 * freezing.  Note we already have exclusive buffer lock.
+		 * freezing
 		 */
 		if (heap_prepare_freeze_tuple(tuple.t_data,
 									  relfrozenxid, relminmxid,
@@ -1090,7 +1091,7 @@ retry:
 			frozen[nfrozen++].offset = offnum;
 
 		if (!tuple_totally_frozen)
-			vms->all_frozen = false;
+			ls->all_frozen = false;
 	}
 
 	for (int i = 0; i < ndead; i++)
@@ -1167,7 +1168,7 @@ scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 	{
 		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
-		if (vms->all_frozen)
+		if (ls->all_frozen)
 			flags |= VISIBILITYMAP_ALL_FROZEN;
 
 		/*
@@ -1235,7 +1236,7 @@ scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 	 * true, so we must check both.
 	 */
 	else if (vms->all_visible_according_to_vm && ls->all_visible &&
-			 vms->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
+			 ls->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
 	{
 		/*
 		 * We can pass InvalidTransactionId as the cutoff XID here, because
@@ -1460,11 +1461,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 		/* Initialize vm state for block: */
 		vms.all_visible_according_to_vm = false;
-		vms.all_frozen = true;
 		vms.visibility_cutoff_xid = InvalidTransactionId;
-
-		/* Set up scratch buffer used inside scan_prune_page(): */
-		ls.frozen = frozen;
 
 		/*
 		 * Step 1 for block: Consider need to skip blocks.
@@ -1717,7 +1714,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * Also handles tuple freezing -- considers freezing XIDs from all
 		 * tuple headers left behind following pruning.
 		 */
-		scan_prune_page(onerel, buf, vacrelstats, vistest, &c, &ls, &vms);
+		scan_prune_page(onerel, buf, vacrelstats, vistest, frozen,
+						&c, &ls, &vms);
 
 		/*
 		 * Remember the number of pages having at least one LP_DEAD line
