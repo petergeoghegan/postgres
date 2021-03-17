@@ -1814,8 +1814,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * Note that this take places when two_pass_strategy() decided to skip
 	 * index vacuuming, but not with INDEX_CLEANUP OFF.
 	 */
-	if (nindexes > 0 &&
-		params->index_cleanup != VACOPT_TERNARY_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
 
 	/*
@@ -1831,8 +1830,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * Note that this take places when two_pass_strategy() decided to skip
 	 * index vacuuming, but not with INDEX_CLEANUP OFF.
 	 */
-	if (nindexes > 0 &&
-		params->index_cleanup != VACOPT_TERNARY_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
 		update_index_statistics(Irel, indstats, nindexes);
 
 	/* If no indexes, make log report that two_pass_strategy() would've made */
