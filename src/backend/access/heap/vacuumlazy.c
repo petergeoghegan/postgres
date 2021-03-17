@@ -339,6 +339,25 @@ typedef struct LVSavedErrInfo
 	VacErrPhase phase;
 } LVSavedErrInfo;
 
+typedef struct lazy_scan_prune_page_state
+{
+	bool		  hastup;
+	bool		  all_visible_according_to_vm;
+	bool		  all_visible;
+	bool		  all_frozen;	  /* provided all_visible is also true */
+	bool		  has_dead_items; /* includes existing LP_DEAD items */
+	TransactionId visibility_cutoff_xid;
+} lazy_scan_prune_page_state;
+
+typedef struct lazy_scan_heap_counters
+{
+	double		num_tuples,		/* total number of nonremovable tuples */
+				live_tuples,	/* live tuples (reltuples estimate) */
+				tups_vacuumed,	/* tuples cleaned up by current vacuum */
+				nkeep,			/* dead-but-not-removable tuples */
+				nunused;		/* # existing unused line pointers */
+} lazy_scan_heap_counters;
+
 /* A few variables that don't seem worth passing around as parameters */
 static int	elevel = -1;
 
@@ -717,25 +736,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 		}
 	}
 }
-
-typedef struct lazy_scan_prune_page_state
-{
-	bool		  hastup;
-	bool		  all_visible_according_to_vm;
-	bool		  all_visible;
-	bool		  all_frozen;	  /* provided all_visible is also true */
-	bool		  has_dead_items; /* includes existing LP_DEAD items */
-	TransactionId visibility_cutoff_xid;
-} lazy_scan_prune_page_state;
-
-typedef struct lazy_scan_heap_counters
-{
-	double		num_tuples,		/* total number of nonremovable tuples */
-				live_tuples,	/* live tuples (reltuples estimate) */
-				tups_vacuumed,	/* tuples cleaned up by current vacuum */
-				nkeep,			/* dead-but-not-removable tuples */
-				nunused;		/* # existing unused line pointers */
-} lazy_scan_heap_counters;
 
 /*
  * All-zeroes pages can be left over if either a backend extends the relation
@@ -1253,7 +1253,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	BlockNumber nblocks,
 				blkno;
 	BlockNumber empty_pages,
-				reuse_marked_pages,
+				vacuumed_pages,
 				has_dead_items_pages,
 				next_fsm_block_to_vacuum;
 	lazy_scan_heap_counters c;
@@ -1284,7 +1284,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						vacrelstats->relnamespace,
 						vacrelstats->relname)));
 
-	empty_pages = reuse_marked_pages = has_dead_items_pages = 0;
+	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
 	next_fsm_block_to_vacuum = (BlockNumber) 0;
 	memset(&c, 0, sizeof(lazy_scan_heap_counters));
 
@@ -1727,7 +1727,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			Assert(!vacrelstats->hasindex);
 			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
 			savefreespace = false;
-			reuse_marked_pages++;
+			vacuumed_pages++;
 
 			/* Make sure lazy_scan_vmbit_page() doesn't get confused: */
 			ls.has_dead_items = false;
@@ -1838,18 +1838,13 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	if (vacrelstats->hasindex && !vacrelstats->mustskipindexes)
 		update_index_statistics(Irel, indstats, nindexes);
 
-	/*
-	 * If no indexes, make log report that two_pass_strategy() or
-	 * lazy_vacuum_heap would've made.
-	 *
-	 * Note: We're distinguishing between "freed" (i.e. newly made LP_DEAD
-	 * through pruning) and removed (i.e. mark_unused_page() marked LP_UNUSED).
-	 */
+	/* If no indexes, make log report that two_pass_strategy() would've made */
+	Assert(!vacrelstats->hasindex || vacuumed_pages == 0);
 	if (!vacrelstats->hasindex)
 		ereport(elevel,
 				(errmsg("\"%s\": removed %.0f row versions in %u pages",
 						vacrelstats->relname,
-						c.tups_vacuumed, reuse_marked_pages)));
+						vacrelstats->tuples_deleted, vacuumed_pages)));
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
@@ -1872,7 +1867,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	appendStringInfo(&buf, _("%s."), pg_rusage_show(&ru0));
 
 	ereport(elevel,
-			(errmsg("\"%s\": found %.0f removable, %.0f nonremovable row versions in %u out of %u pages",
+			(errmsg("\"%s\": newly pruned %.0f items, found %.0f nonremovable items in %u out of %u pages",
 					vacrelstats->relname,
 					c.tups_vacuumed, c.num_tuples,
 					vacrelstats->scanned_pages, nblocks),
@@ -1886,7 +1881,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  * We may be able to skip index vacuuming (we may even be required to do so by
  * reloption)
  */
-#define DEBUGELOG WARNING
+#define DEBUGELOG DEBUG1
 static void
 two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 				  IndexBulkDeleteResult **indstats, int nindexes,
@@ -1959,16 +1954,22 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 	else
 	{
 		/*
-		 * Make log report that lazy_vacuum_heap would've made.
+		 * skipped index vacuuming.  Make log report that lazy_vacuum_heap
+		 * would've made.
 		 *
-		 * Note: We're distinguishing between "freed" (i.e. newly made LP_DEAD
-		 * through pruning) and removed (i.e. mark_unused_page() marked LP_UNUSED).
+		 * Don't report tups_vacuumed here because it will be zero here in
+		 * common case where there are no newly pruned LP_DEAD items for this
+		 * VACUUM.  This is roughly consistent with lazy_vacuum_heap(), and
+		 * the similar !useindex ereport() at the end of lazy_scan_heap().
+		 * Note, however, that has_dead_items_pages is # of heap pages with
+		 * one or more LP_DEAD items (could be from us or from another
+		 * VACUUM), not # blocks scanned.
 		 */
 		ereport(elevel,
-				(errmsg("\"%s\": freed %d row versions in %u pages",
+				(errmsg("\"%s\": skipped opportunity to totally remove %d pruned items in %u pages",
 						vacrelstats->relname,
 						vacrelstats->dead_tuples->num_tuples,
-						vacrelstats->rel_pages)));
+						has_dead_items_pages)));
 	}
 
 	/*
