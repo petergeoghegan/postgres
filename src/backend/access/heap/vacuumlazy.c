@@ -1629,6 +1629,15 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			/* drop through to normal processing */
 		}
 
+		/*
+		 * Okay, we're all set up to do real processing -- we've skipped
+		 * blocks that we know don't have interesting tuples, we know we're
+		 * not going to run out of space for TIDs from this page, we have a
+		 * super-exclusive lock, and we have the vm page set up to be set or
+		 * unset as needed.
+		 *
+		 * Before pruning, check if this is either a new page or empty page.
+		 */
 		vacrelstats->scanned_pages++;
 		vacrelstats->tupcount_pages++;
 
@@ -1650,6 +1659,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			continue;
 		}
 
+		/*
+		 * Do pruning
+		 */
 		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
 							 vistest, &c, &ls);
 
@@ -1945,6 +1957,11 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 	vacrelstats->dead_tuples->num_tuples = 0;
 }
 
+/*
+ *	lazy_vacuum_all_indexes() -- Main entry for index vacuuming
+ *
+ * Should only be called through two_pass_strategy()
+ */
 static void
 lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 						IndexBulkDeleteResult **indstats,
@@ -1989,15 +2006,13 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 }
 
 /*
- *	lazy_vacuum_heap() -- second pass over the heap
+ *	lazy_vacuum_heap() -- second pass over the heap for two pass strategy
  *
  *		This routine marks dead tuples as unused and compacts out free
  *		space on their pages.  Pages not having dead tuples recorded from
  *		lazy_scan_heap are not visited at all.
  *
- * Note: the reason for doing this as a second pass is we cannot remove
- * the tuples until we've removed their index entries, and we want to
- * process index entry removal in batches as large as possible.
+ * Should only be called through two_pass_strategy()
  */
 static void
 lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
