@@ -736,7 +736,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 /*
  * Handle new page during lazy_scan_heap().
  *
- * Caller must hold pin and buffer cleanup lock on the buffer.
+ * Caller must hold pin and buffer cleanup lock on buf.
  *
  * All-zeroes pages can be left over if either a backend extends the relation
  * by a single page, but crashes before the newly initialized page has been
@@ -775,7 +775,8 @@ scan_new_page(Relation onerel, Buffer buf)
 /*
  * Handle empty page during lazy_scan_heap().
  *
- * Caller must hold pin and buffer cleanup lock on the buffer.
+ * Caller must hold pin and buffer cleanup lock on buf, as well as a pin (but
+ * not a lock) on vmbuffer.
  */
 static void
 scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
@@ -1679,14 +1680,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		if (PageIsNew(page))
 		{
 			empty_pages++;
-			/* Releases lock for us: */
+			/* Releases lock on buf for us: */
 			scan_new_page(onerel, buf);
 			continue;
 		}
 		else if (PageIsEmpty(page))
 		{
 			empty_pages++;
-			/* Releases lock for us: */
+			/* Releases lock on buf for us (though keeps vmbuffer pin): */
 			scan_empty_page(onerel, buf, vmbuffer, vacrelstats, &ls);
 			continue;
 		}
