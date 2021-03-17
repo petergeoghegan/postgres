@@ -353,10 +353,10 @@ static BufferAccessStrategy vac_strategy;
 static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 						   LVRelStats *vacrelstats, Relation *Irel, int nindexes,
 						   bool aggressive);
-static void vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
-									   Relation *Irel, IndexBulkDeleteResult **indstats,
-									   int nindexes, LVParallelState *lps,
-									   BlockNumber has_dead_items_pages);
+static void two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
+							  Relation *Irel, IndexBulkDeleteResult **indstats,
+							  int nindexes, LVParallelState *lps,
+							  BlockNumber has_dead_items_pages);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
@@ -1064,8 +1064,7 @@ prune:
 static void
 lazy_scan_new_page(Relation onerel,
 				   BlockNumber blkno,
-				   Buffer buf,
-				   lazy_scan_prune_page_state *ls)
+				   Buffer buf)
 {
 	if (GetRecordedFreeSpace(onerel, blkno) == 0)
 	{
@@ -1225,8 +1224,8 @@ lazy_scan_vmbit_page(Relation onerel,
  *		lists of dead tuples and pages with free space, calculates statistics
  *		on the number of live tuples in the heap, and marks pages as
  *		all-visible if appropriate.  When done, or when we run low on space
- *		for dead-tuple TIDs, invoke vacuum_indexes_mark_unused to vacuum
- *		indexes and mark dead line pointers for reuse via a second heap pass.
+ *		for dead-tuple TIDs, invoke two_pass_strategy to vacuum indexes and
+ *		mark dead line pointers for reuse via a second heap pass.
  *
  *		If the table has at least two indexes, we execute both index vacuum
  *		and index cleanup with parallel workers unless parallel vacuum is
@@ -1535,14 +1534,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 			/*
 			 * Won't be skipping index vacuuming now, since that is only
-			 * something vacuum_indexes_mark_unused() does when dead tuple
-			 * space hasn't been overrun.
+			 * something two_pass_strategy() does when dead tuple space hasn't
+			 * been overrun.
 			 */
 			vacrelstats->mayskipindexes = false;
 
 			/* Remove the collected garbage tuples from table and indexes */
-			vacuum_indexes_mark_unused(onerel, vacrelstats, Irel, indstats,
-									   nindexes, lps, has_dead_items_pages);
+			two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes,
+							  lps, has_dead_items_pages);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1639,7 +1638,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			empty_pages++;
 			UnlockReleaseBuffer(buf);
-			lazy_scan_new_page(onerel, blkno, buf, &ls);
+			lazy_scan_new_page(onerel, blkno, buf);
 			continue;
 		}
 		else if (PageIsEmpty(page))
@@ -1661,7 +1660,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * thing as having items that are stored in dead tuple space.
 		 *
 		 * If we had any dead items, then the page will be visited again by
-		 * vacuum_indexes_mark_unused, which will compute and record its
+		 * two_pass_strategy, which will compute and record its
 		 * post-compaction free space.  If not, then we're done with this
 		 * page, so remember its free space as-is.
 		 *
@@ -1688,13 +1687,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 */
 		if (nindexes == 0 && dead_tuples->num_tuples > 0)
 		{
-			Assert(!vacrelstats->hasindex);
-
 			/*
+			 * One pass strategy (no indexes) case.
+			 *
 			 * Mark LP_DEAD item pointers for reuse now, in an incremental
 			 * fashion.  This is safe because the table has no indexes (and so
-			 * vacuum_indexes_mark_unused() will never be called).
+			 * two_pass_strategy() will never be called).
 			 */
+			Assert(!vacrelstats->hasindex);
 			lazy_vacuum_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
 			savefreespace = false;
 			reuse_marked_pages++;
@@ -1767,8 +1767,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	Assert(vacrelstats->hasindex || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
-		vacuum_indexes_mark_unused(onerel, vacrelstats, Irel, indstats,
-								   nindexes, lps, has_dead_items_pages);
+		two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes, lps,
+						  has_dead_items_pages);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1783,8 +1783,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Do post-vacuum cleanup.
 	 *
-	 * Note that this take places when vacuum_indexes_mark_unused() decided to
-	 * skip index vacuuming.
+	 * Note that this take places when two_pass_strategy() decided to skip
+	 * index vacuuming.
 	 */
 	if (vacrelstats->hasindex)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
@@ -1799,8 +1799,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Update index statistics.
 	 *
-	 * Note that this take places when vacuum_indexes_mark_unused() decided to
-	 * skip index vacuuming.
+	 * Note that this take places when two_pass_strategy() decided to skip
+	 * index vacuuming.
 	 */
 	if (vacrelstats->hasindex)
 		update_index_statistics(Irel, indstats, nindexes);
@@ -1854,10 +1854,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  */
 #define DEBUGELOG LOG
 static void
-vacuum_indexes_mark_unused(Relation onerel, LVRelStats *vacrelstats,
-						   Relation *Irel, IndexBulkDeleteResult **indstats,
-						   int nindexes, LVParallelState *lps,
-						   BlockNumber has_dead_items_pages)
+two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
+				  IndexBulkDeleteResult **indstats, int nindexes,
+				  LVParallelState *lps, BlockNumber has_dead_items_pages)
 {
 	bool		skipping = false;
 
