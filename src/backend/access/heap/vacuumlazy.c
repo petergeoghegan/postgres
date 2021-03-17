@@ -736,6 +736,8 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 /*
  * Handle new page during lazy_scan_heap().
  *
+ * Caller must hold pin and buffer cleanup lock on the buffer.
+ *
  * All-zeroes pages can be left over if either a backend extends the relation
  * by a single page, but crashes before the newly initialized page has been
  * written out, or when bulk-extending the relation (which creates a number of
@@ -762,12 +764,18 @@ lazy_scan_new_page(Relation onerel, Buffer buf)
 	{
 		Size freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
 
+		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(onerel, blkno, freespace);
+		return;
 	}
+
+	UnlockReleaseBuffer(buf);
 }
 
 /*
  * Handle empty page during lazy_scan_heap().
+ *
+ * Caller must hold pin and buffer cleanup lock on the buffer.
  */
 static void
 lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
@@ -1136,14 +1144,11 @@ retry:
  * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
  */
 static void
-lazy_scan_vmbit_page(Relation onerel,
-					 BlockNumber blkno,
-					 Buffer buf,
-					 Buffer vmbuffer,
-					 LVRelStats *vacrelstats,
-					 lazy_scan_prune_page_state *ls)
+lazy_scan_vmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+					 LVRelStats *vacrelstats, lazy_scan_prune_page_state *ls)
 {
 	Page	page = BufferGetPage(buf);
+	BlockNumber blkno = BufferGetBlockNumber(buf);
 
 	/* mark page all-visible, if appropriate */
 	if (ls->all_visible && !ls->all_visible_according_to_vm)
@@ -1674,7 +1679,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		if (PageIsNew(page))
 		{
 			empty_pages++;
-			UnlockReleaseBuffer(buf);
+			/* Releases lock for us: */
 			lazy_scan_new_page(onerel, buf);
 			continue;
 		}
@@ -1790,7 +1795,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		lazy_scan_vmbit_page(onerel, blkno, buf, vmbuffer, vacrelstats, &ls);
+		lazy_scan_vmbit_page(onerel, buf, vmbuffer, vacrelstats, &ls);
 
 		/*
 		 * Step 8 for block: drop super-exclusive lock, finalize page by
