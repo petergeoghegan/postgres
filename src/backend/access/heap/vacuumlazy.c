@@ -362,11 +362,11 @@ typedef struct LVPrunePageState
  *
  * Used by scan_setvmbit_page() when we're done pruning.
  */
-typedef struct LVVMPageState
+typedef struct LVVisMapPageState
 {
 	TransactionId visibility_cutoff_xid;
 	bool		  all_visible_according_to_vm;
-} LVVMPageState;
+} LVVisMapPageState;
 
 /* A few variables that don't seem worth passing around as parameters */
 static int	elevel = -1;
@@ -865,7 +865,8 @@ scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 static void
 scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 				GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
-				LVTempCounters *c, LVPrunePageState *ls, LVVMPageState *vms)
+				LVTempCounters *c, LVPrunePageState *ls,
+				LVVisMapPageState *vms)
 {
 	BlockNumber blkno;
 	Page		page;
@@ -1165,7 +1166,7 @@ retry:
 static void
 scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 				   LVRelStats *vacrelstats, LVPrunePageState *ls,
-				   LVVMPageState *vms)
+				   LVVisMapPageState *vms)
 {
 	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -1461,7 +1462,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	{
 		Buffer		buf;
 		Page		page;
-		LVVMPageState vms;
+		LVVisMapPageState vms;
 		LVPrunePageState ls;
 		bool		savefreespace = false;
 		Size		freespace;
