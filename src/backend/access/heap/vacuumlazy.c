@@ -1040,6 +1040,44 @@ prune:
 }
 
 static void
+lazy_scan_new_page(Relation onerel,
+				   BlockNumber blkno,
+				   Buffer buf,
+				   Page page,
+				   Buffer vmbuffer,
+				   LVRelStats *vacrelstats,
+				   lazy_scan_prune_page_state *ls)
+{
+	/*
+	 * All-zeroes pages can be left over if either a backend extends the
+	 * relation by a single page, but crashes before the newly initialized
+	 * page has been written out, or when bulk-extending the relation (which
+	 * creates a number of empty pages at the tail end of the relation, but
+	 * enters them into the FSM).
+	 *
+	 * Note we do not enter the page into the visibilitymap. That has the
+	 * downside that we repeatedly visit this page in subsequent vacuums, but
+	 * otherwise we'll never not discover the space on a promoted standby. The
+	 * harm of repeated checking ought to normally not be too bad - the space
+	 * usually should be used at some point, otherwise there wouldn't be any
+	 * regular vacuums.
+	 *
+	 * Make sure these pages are in the FSM, to ensure they can be reused. Do
+	 * that by testing if there's any space recorded for the page. If not,
+	 * enter it. We do so after releasing the lock on the heap page, the FSM
+	 * is approximate, after all.
+	 */
+	UnlockReleaseBuffer(buf);
+
+	if (GetRecordedFreeSpace(onerel, blkno) == 0)
+	{
+		Size freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
+
+		RecordPageWithFreeSpace(onerel, blkno, freespace);
+	}
+}
+
+static void
 lazy_scan_empty_page(Relation onerel,
 					 BlockNumber blkno,
 					 Buffer buf,
@@ -1602,47 +1640,24 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 
 		if (PageIsNew(page))
 		{
-			/*
-			 * All-zeroes pages can be left over if either a backend extends
-			 * the relation by a single page, but crashes before the newly
-			 * initialized page has been written out, or when bulk-extending
-			 * the relation (which creates a number of empty pages at the tail
-			 * end of the relation, but enters them into the FSM).
-			 *
-			 * Note we do not enter the page into the visibilitymap. That has
-			 * the downside that we repeatedly visit this page in subsequent
-			 * vacuums, but otherwise we'll never not discover the space on a
-			 * promoted standby. The harm of repeated checking ought to
-			 * normally not be too bad - the space usually should be used at
-			 * some point, otherwise there wouldn't be any regular vacuums.
-			 *
-			 * Make sure these pages are in the FSM, to ensure they can be
-			 * reused. Do that by testing if there's any space recorded for
-			 * the page. If not, enter it. We do so after releasing the lock
-			 * on the heap page, the FSM is approximate, after all.
-			 */
-			UnlockReleaseBuffer(buf);
-
 			empty_pages++;
-
-			if (GetRecordedFreeSpace(onerel, blkno) == 0)
-			{
-				freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
-				RecordPageWithFreeSpace(onerel, blkno, freespace);
-			}
+			/* Releases lock for us: */
+			lazy_scan_new_page(onerel, blkno, buf, page, vmbuffer,
+							   vacrelstats, &ls);
 			continue;
 		}
-
-		if (PageIsEmpty(page))
+		else if (PageIsEmpty(page))
 		{
 			empty_pages++;
 			/* Releases lock for us: */
 			lazy_scan_empty_page(onerel, blkno, buf, page, vmbuffer, vacrelstats, &ls);
 			continue;
 		}
-
-		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
-							 vistest, &c, &ls);
+		else
+		{
+			lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
+								 vistest, &c, &ls);
+		}
 
 		/*
 		 * Remember the number of pages having at least one LP_DEAD line
@@ -1664,6 +1679,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			savefreespace = false;
 			has_dead_items_pages++;
+			freespace = 0;
 		}
 		else
 		{
@@ -1685,7 +1701,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * vacuum_indexes_mark_unused() will never be called).
 			 */
 			mark_unused_page(onerel, blkno, buf, 0, vacrelstats, &vmbuffer);
+			savefreespace = false;
 			reuse_marked_pages++;
+
+			/* Make sure lazy_scan_vmbit_page() doesn't get confused: */
 			ls.has_dead_items = false;
 
 			/* Forget the now-vacuumed tuples */
