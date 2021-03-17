@@ -1673,8 +1673,15 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		}
 
 		/*
-		 * Step 6 for block: Do pruning and accumulate details of reaming
-		 * LP_DEAD line pointers on page in dead tuple list.
+		 * Step 6 for block: Do pruning.
+		 *
+		 * Also accumulates details of remaining LP_DEAD line pointers on page
+		 * in dead tuple list.  This includes LP_DEAD line pointers that we
+		 * ourselves just pruned, as well as existing LP_DEAD line pointers
+		 * pruned earlier.
+		 *
+		 * Also handles tuple freezing -- considers freezing XIDs from all
+		 * tuple headers left behind following pruning.
 		 */
 		lazy_scan_prune_page(onerel, buf, vacrelstats, Irel, nindexes,
 							 vistest, &c, &ls);
