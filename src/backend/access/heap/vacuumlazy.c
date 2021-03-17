@@ -919,7 +919,6 @@ lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 					 lazy_scan_prune_page_state *ls)
 {
 	lazy_scan_heap_counters pc;
-	HeapTupleData tuple;
 	BlockNumber blkno;
 	Page		page;
 	OffsetNumber offnum,
@@ -973,6 +972,7 @@ retry:
 		 offnum = OffsetNumberNext(offnum))
 	{
 		ItemId		itemid;
+		HeapTupleData tuple;
 		bool		tuple_totally_frozen;
 
 		/*
@@ -998,12 +998,14 @@ retry:
 
 		/*
 		 * LP_DEAD line pointers are to be vacuumed normally; but we don't
-		 * count them in tups_vacuumed, else we'd be double-counting (at
-		 * least in the common case where heap_page_prune() just freed up
-		 * a non-HOT tuple).  Note also that the final tups_vacuumed value
-		 * might be very low for tables where opportunistic page pruning
-		 * happens to occur very frequently (via heap_page_prune_opt()
-		 * calls that free up non-HOT tuples).
+		 * count them in tups_vacuumed, else we'd be double-counting (at least
+		 * in the common case where heap_page_prune() just freed up a non-HOT
+		 * tuple).
+		 *
+		 * Note also that the final tups_vacuumed value might be very low for
+		 * tables where opportunistic page pruning happens to occur very
+		 * frequently (via heap_page_prune_opt() calls that free up non-HOT
+		 * tuples).
 		 */
 		if (ItemIdIsDead(itemid))
 		{
@@ -1161,8 +1163,10 @@ retry:
 
 	for (int i = 0; i < nkilled; i++)
 	{
-		ItemPointerSet(&(tuple.t_self), blkno, killed[i]);
-		lazy_record_dead_tuple(vacrelstats->dead_tuples, &(tuple.t_self));
+		ItemPointerData itemptr;
+
+		ItemPointerSet(&itemptr, blkno, killed[i]);
+		lazy_record_dead_tuple(vacrelstats->dead_tuples, &itemptr);
 	}
 
 	/*
