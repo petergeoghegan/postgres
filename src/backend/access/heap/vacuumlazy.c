@@ -906,7 +906,30 @@ lazy_scan_vmbit_page(Relation onerel,
 }
 
 /*
- *	lazy_scan_prune_page() -- lazy_scan_heap() pruning and freezing
+ *	lazy_scan_prune_page() -- lazy_scan_heap() pruning and freezing.
+ *
+ * Caller must hold pin and buffer cleanup lock on the buffer.
+ *
+ * Prior to PostgreSQL 14 there were very rare cases where lazy_scan_heap()
+ * treated tuples that still had storage after pruning as DEAD.  That happened
+ * when heap_page_prune() could not prune tuples that were nevertheless deemed
+ * DEAD by its own HeapTupleSatisfiesVacuum() call.  This created rare hard to
+ * test cases.  It meant that there was no very sharp distinction between DEAD
+ * tuples and tuples that are to be kept and be considered for freezing inside
+ * heap_prepare_freeze_tuple().  It also meant that lazy_vacuum_page() had to
+ * be prepared to remove items with storage (tuples with tuple headers) that
+ * didn't get pruned, which created a special case to handle recovery
+ * conflicts.
+ *
+ * The approach taken here (to eliminate all of the complexity) is to simply
+ * restart pruning in these very rare cases -- cases where a concurrent abort
+ * of an xact makes our HeapTupleSatisfiesVacuum() call disagrees with what
+ * heap_page_prune() thought about the tuple only microseconds earlier.
+ *
+ * Since we might have to prune a second time here, the code is structured to
+ * use a local per-page copy of the counters that caller accumulates.  We add
+ * our per-page counters to the per-VACUUM totals from caller last of all, to
+ * avoid double counting.
  */
 static void
 lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
@@ -1034,16 +1057,8 @@ retry:
 		 *
 		 * DEAD tuples are almost always pruned into LP_DEAD line pointers by
 		 * heap_page_prune(), but it's possible that the tuple state changed
-		 * since heap_page_prune() looked.  In particular, an
-		 * INSERT_IN_PROGRESS tuple could have changed to DEAD if the inserter
-		 * aborted.  So this cannot be considered an error condition.  At the
-		 * same time, we cannot tolerate having a tuple that is both dead and
-		 * needs to be considered for freezing.  heap_prepare_freeze_tuple()
-		 * will detect that case and abort the transaction, assuming
-		 * corruption.
-		 *
-		 * Our solution is to have this precheck.  We restart pruning the page
-		 * from scratch in rare cases when this happens.
+		 * since heap_page_prune() looked.  Handle that here by restarting.
+		 * (See comments at the top of function for a full explanation.)
 		 */
 		tuplestate = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
 
