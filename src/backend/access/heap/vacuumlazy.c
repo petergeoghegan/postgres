@@ -755,6 +755,7 @@ lazy_scan_prune_page(Relation onerel,
 	OffsetNumber offnum,
 				maxoff;
 	int			nfrozen;
+	HTSV_Result state;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	OffsetNumber killed[MaxHeapTuplesPerPage];
@@ -765,7 +766,7 @@ lazy_scan_prune_page(Relation onerel,
 
 	frozen = palloc(sizeof(xl_heap_freeze_tuple) * MaxHeapTuplesPerPage);
 
-prune:
+retry:
 
 	memset(&pc, 0, sizeof(lazy_scan_heap_counters));
 
@@ -860,32 +861,34 @@ prune:
 		 * cases impossible (e.g. in-progress insert from the same
 		 * transaction).
 		 */
-		switch (HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf))
+		state = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
+
+		/*
+		 * Ordinarily, DEAD tuples would have been removed by
+		 * heap_page_prune(), but it's possible that the tuple state changed
+		 * since heap_page_prune() looked.  In particular an
+		 * INSERT_IN_PROGRESS tuple could have changed to DEAD if the inserter
+		 * aborted.  So this cannot be considered an error condition.
+		 *
+		 * If the tuple is HOT-updated then it must only be removed by a prune
+		 * operation.  Also, we cannot tolerate having a tuple that is both
+		 * dead and needs to be considered for freezing.
+		 * heap_prepare_freeze_tuple() will detect that case and abort the
+		 * transaction, assuming corruption.
+		 *
+		 * Our solution is to restart the page from scratch, so that pruning
+		 * runs again and we don't end up back here.
+		 */
+		if (unlikely(state == HEAPTUPLE_DEAD))
 		{
-			case HEAPTUPLE_DEAD:
+			elog(WARNING, "htsv DEAD in (%u,%u) of %s", blkno, offnum,
+				 RelationGetRelationName(onerel));
 
-				/*
-				 * Ordinarily, DEAD tuples would have been removed by
-				 * heap_page_prune(), but it's possible that the tuple
-				 * state changed since heap_page_prune() looked.  In
-				 * particular an INSERT_IN_PROGRESS tuple could have
-				 * changed to DEAD if the inserter aborted.  So this
-				 * cannot be considered an error condition.
-				 *
-				 * If the tuple is HOT-updated then it must only be
-				 * removed by a prune operation.  Also, we cannot tolerate
-				 * having a tuple that is both dead and needs to be
-				 * considered for freezing.  heap_prepare_freeze_tuple()
-				 * will detect that case and abort the transaction,
-				 * assuming corruption.
-				 *
-				 * Our solution is to restart the page from scratch, so
-				 * that pruning runs again and we don't end up back here.
-				 */
-				elog(WARNING, "htsv DEAD in (%u,%u) of %s", blkno, offnum,
-					 RelationGetRelationName(onerel));
-				goto prune;
+			goto retry;
+		}
 
+		switch (state)
+		{
 			case HEAPTUPLE_LIVE:
 
 				/*
