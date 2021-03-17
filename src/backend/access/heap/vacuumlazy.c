@@ -1724,6 +1724,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			freespace = PageGetHeapFreeSpace(page);
 		}
 
+		/* Step 6.5 for block: Special one pass strategy steps */
 		if (nindexes == 0 && ls.has_dead_items)
 		{
 			Assert(dead_tuples->num_tuples > 0);
