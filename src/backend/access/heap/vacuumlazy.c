@@ -338,11 +338,11 @@ typedef struct LVSavedErrInfo
  */
 typedef struct lazy_scan_heap_counters
 {
-	double		num_tuples,		/* total number of nonremovable tuples */
-				live_tuples,	/* live tuples (reltuples estimate) */
-				tups_vacuumed,	/* tuples cleaned up by current vacuum */
-				nkeep,			/* dead-but-not-removable tuples */
-				nunused;		/* # existing unused line pointers */
+	double	num_tuples;		/* total number of nonremovable tuples */
+	double	live_tuples;	/* live tuples (reltuples estimate) */
+	double	tups_vacuumed;	/* tuples cleaned up by current vacuum */
+	double	nkeep;			/* dead-but-not-removable tuples */
+	double	nunused;		/* # existing unused line pointers */
 } lazy_scan_heap_counters;
 
 /*
