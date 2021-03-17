@@ -364,8 +364,8 @@ typedef struct LVPrunePageState
  */
 typedef struct LVVisMapPageState
 {
-	TransactionId visibility_cutoff_xid;
 	bool		  all_visible_according_to_vm;
+	TransactionId visibility_cutoff_xid;
 } LVVisMapPageState;
 
 /* A few variables that don't seem worth passing around as parameters */
@@ -901,13 +901,13 @@ retry:
 	 * Now scan the page to collect vacuumable items and check for tuples
 	 * requiring freezing.
 	 *
-	 * ls is state shared with caller that tracks information about the page
-	 * from buf.
+	 * Note: If we retry having set vms.visibility_cutoff_xid it doesn't
+	 * matter -- the newest XMIN on page can't be missed this way.
 	 */
 	ls->hastup = false;
+	ls->has_dead_items = false;
 	ls->all_visible = true;
 	ls->all_frozen = true;
-	ls->has_dead_items = false;
 	nfrozen = 0;
 	ndead = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
