@@ -925,7 +925,7 @@ lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 				maxoff;
 	int			  nfrozen,
 				  nkilled;
-	HTSV_Result state;
+	HTSV_Result tuplestate;
 	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
 	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	xl_heap_freeze_tuple *frozen;
@@ -1046,9 +1046,9 @@ retry:
 		 * Our solution is to have this precheck.  We restart pruning the page
 		 * from scratch in rare cases when this happens.
 		 */
-		state = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
+		tuplestate = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
 
-		if (unlikely(state == HEAPTUPLE_DEAD))
+		if (unlikely(tuplestate == HEAPTUPLE_DEAD))
 		{
 			elog(WARNING, "htsv DEAD in (%u,%u) of %s", blkno, offnum,
 				 RelationGetRelationName(onerel));
@@ -1056,7 +1056,7 @@ retry:
 			goto retry;
 		}
 
-		switch (state)
+		switch (tuplestate)
 		{
 			case HEAPTUPLE_LIVE:
 
