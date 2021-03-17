@@ -918,9 +918,9 @@ lazy_scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 					 lazy_scan_heap_counters *c,
 					 lazy_scan_prune_page_state *ls)
 {
-	lazy_scan_heap_counters pc;
 	BlockNumber blkno;
 	Page		page;
+	lazy_scan_heap_counters pc;
 	OffsetNumber offnum,
 				maxoff;
 	int			  nfrozen,
