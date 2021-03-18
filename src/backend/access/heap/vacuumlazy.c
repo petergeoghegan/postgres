@@ -1814,7 +1814,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			/* This won't have changed: */
 			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
 
-			/* Make sure scan_setvmbit_page() doesn't get confused: */
+			/*
+			 * Make sure scan_setvmbit_page() won't stop setting VM due to
+			 * now-vacuumed LP_DEAD items:
+			 */
 			ls.has_dead_items = false;
 
 			/* Forget the now-vacuumed tuples */
