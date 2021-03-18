@@ -801,7 +801,7 @@ scan_new_page(Relation onerel, Buffer buf)
  */
 static void
 scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				LVRelStats *vacrelstats, LVPrunePageState *ls)
+				LVRelStats *vacrelstats)
 {
 	Page	page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -1490,12 +1490,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		Page		page;
 		LVVisMapPageState vms;
 		LVPrunePageState ls;
-		bool		savefreespace = false;
+		bool		savefreespace;
 		Size		freespace;
 
 		/* Initialize vm state for block: */
 		vms.all_visible_according_to_vm = false;
 		vms.visibility_cutoff_xid = InvalidTransactionId;
+
+		/* Note: Can't touch ls until we reach scan_prune_page() */
 
 		/*
 		 * Step 1 for block: Consider need to skip blocks.
@@ -1655,6 +1657,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 */
 		if (!ConditionalLockBufferForCleanup(buf))
 		{
+			bool		  hastup;
+
 			/*
 			 * If we're not performing an aggressive scan to guard against XID
 			 * wraparound, and we don't want to forcibly check the page, then
@@ -1685,12 +1689,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * to use lazy_check_needs_freeze() for both situations, though.
 			 */
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
-			if (!lazy_check_needs_freeze(buf, &ls.hastup, vacrelstats))
+			if (!lazy_check_needs_freeze(buf, &hastup, vacrelstats))
 			{
 				UnlockReleaseBuffer(buf);
 				vacrelstats->scanned_pages++;
 				vacrelstats->pinskipped_pages++;
-				if (ls.hastup)
+				if (hastup)
 					vacrelstats->nonempty_pages = blkno + 1;
 				continue;
 			}
@@ -1702,7 +1706,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				 */
 				UnlockReleaseBuffer(buf);
 				vacrelstats->pinskipped_pages++;
-				if (ls.hastup)
+				if (hastup)
 					vacrelstats->nonempty_pages = blkno + 1;
 				continue;
 			}
@@ -1733,7 +1737,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			empty_pages++;
 			/* Releases lock on buf for us (though keeps vmbuffer pin): */
-			scan_empty_page(onerel, buf, vmbuffer, vacrelstats, &ls);
+			scan_empty_page(onerel, buf, vmbuffer, vacrelstats);
 			continue;
 		}
 
