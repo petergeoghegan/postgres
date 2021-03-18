@@ -338,11 +338,11 @@ typedef struct LVSavedErrInfo
  */
 typedef struct LVTempCounters
 {
-	double	num_tuples;		/* total number of nonremovable tuples */
-	double	live_tuples;	/* live tuples (reltuples estimate) */
-	double	tups_vacuumed;	/* tuples cleaned up by current vacuum */
-	double	nkeep;			/* dead-but-not-removable tuples */
-	double	nunused;		/* # existing unused line pointers */
+	double		num_tuples;		/* total number of nonremovable tuples */
+	double		live_tuples;	/* live tuples (reltuples estimate) */
+	double		tups_vacuumed;	/* tuples cleaned up by current vacuum */
+	double		nkeep;			/* dead-but-not-removable tuples */
+	double		nunused;		/* # existing unused line pointers */
 } LVTempCounters;
 
 /*
@@ -350,10 +350,10 @@ typedef struct LVTempCounters
  */
 typedef struct LVPrunePageState
 {
-	bool		  hastup;			/* Page is truncatable? */
-	bool		  has_dead_items;	/* includes existing LP_DEAD items */
-	bool		  all_visible;		/* Every item visible to all? */
-	bool		  all_frozen;		/* provided all_visible is also true */
+	bool		hastup;			/* Page is truncatable? */
+	bool		has_dead_items; /* includes existing LP_DEAD items */
+	bool		all_visible;	/* Every item visible to all? */
+	bool		all_frozen;		/* provided all_visible is also true */
 } LVPrunePageState;
 
 /*
@@ -364,7 +364,7 @@ typedef struct LVPrunePageState
  */
 typedef struct LVVisMapPageState
 {
-	bool		  all_visible_according_to_vm;
+	bool		all_visible_according_to_vm;
 	TransactionId visibility_cutoff_xid;
 } LVVisMapPageState;
 
@@ -783,7 +783,7 @@ scan_new_page(Relation onerel, Buffer buf)
 
 	if (GetRecordedFreeSpace(onerel, blkno) == 0)
 	{
-		Size freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
+		Size		freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
 
 		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(onerel, blkno, freespace);
@@ -803,9 +803,9 @@ static void
 scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 				LVRelStats *vacrelstats)
 {
-	Page	page = BufferGetPage(buf);
+	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
-	Size freespace = PageGetHeapFreeSpace(page);
+	Size		freespace = PageGetHeapFreeSpace(page);
 
 	/*
 	 * Empty pages are always all-visible and all-frozen (note that the same
@@ -880,8 +880,8 @@ scan_prune_page(Relation onerel, Buffer buf,
 	OffsetNumber offnum,
 				maxoff;
 	HTSV_Result tuplestate;
-	int			  nfrozen,
-				  ndead;
+	int			nfrozen,
+				ndead;
 	LVTempCounters pc;
 	OffsetNumber deaditems[MaxHeapTuplesPerPage];
 
@@ -906,6 +906,7 @@ retry:
 	pc.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
 									   InvalidTransactionId, 0, false,
 									   &vacrelstats->offnum);
+
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
 	 * requiring freezing.
@@ -922,6 +923,7 @@ retry:
 	maxoff = PageGetMaxOffsetNumber(page);
 
 #ifdef DEBUG
+
 	/*
 	 * Enable this to debug the retry logic -- it's actually quite hard to hit
 	 * even with this artificial delay
@@ -1014,8 +1016,8 @@ retry:
 			case HEAPTUPLE_LIVE:
 
 				/*
-				 * Count it as live.  Not only is this natural, but it's
-				 * also what acquire_sample_rows() does.
+				 * Count it as live.  Not only is this natural, but it's also
+				 * what acquire_sample_rows() does.
 				 */
 				pc.live_tuples += 1;
 
@@ -1024,9 +1026,8 @@ retry:
 				 *
 				 * NB: Like with per-tuple hint bits, we can't set the
 				 * PD_ALL_VISIBLE flag if the inserter committed
-				 * asynchronously. See SetHintBits for more info. Check
-				 * that the tuple is hinted xmin-committed because of
-				 * that.
+				 * asynchronously. See SetHintBits for more info. Check that
+				 * the tuple is hinted xmin-committed because of that.
 				 */
 				if (ps->all_visible)
 				{
@@ -1039,8 +1040,8 @@ retry:
 					}
 
 					/*
-					 * The inserter definitely committed. But is it old
-					 * enough that everyone sees it as committed?
+					 * The inserter definitely committed. But is it old enough
+					 * that everyone sees it as committed?
 					 */
 					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
 					if (!TransactionIdPrecedes(xmin, OldestXmin))
@@ -1068,12 +1069,11 @@ retry:
 				/*
 				 * This is an expected case during concurrent vacuum.
 				 *
-				 * We do not count these rows as live, because we expect
-				 * the inserting transaction to update the counters at
-				 * commit, and we assume that will happen only after we
-				 * report our results.  This assumption is a bit shaky,
-				 * but it is what acquire_sample_rows() does, so be
-				 * consistent.
+				 * We do not count these rows as live, because we expect the
+				 * inserting transaction to update the counters at commit, and
+				 * we assume that will happen only after we report our
+				 * results.  This assumption is a bit shaky, but it is what
+				 * acquire_sample_rows() does, so be consistent.
 				 */
 				ps->all_visible = false;
 				break;
@@ -1082,9 +1082,9 @@ retry:
 				ps->all_visible = false;
 
 				/*
-				 * Count such rows as live.  As above, we assume the
-				 * deleting transaction will commit and update the
-				 * counters after we report.
+				 * Count such rows as live.  As above, we assume the deleting
+				 * transaction will commit and update the counters after we
+				 * report.
 				 */
 				pc.live_tuples += 1;
 				break;
@@ -1326,7 +1326,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	};
 	int64		initprog_val[3];
 	GlobalVisState *vistest;
-	bool			calledtwopass = false;
+	bool		calledtwopass = false;
 	LVTempCounters c;
 
 	/* Counters of # blocks in onerel: */
@@ -1625,8 +1625,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
 			 * upper-level FSM pages.  Note we have not yet processed blkno.
-			 * Even if we skipped heap vacuum, FSM vacuuming could be worthwhile
-			 * since we could have updated the freespace of empty pages.
+			 * Even if we skipped heap vacuum, FSM vacuuming could be
+			 * worthwhile since we could have updated the freespace of empty
+			 * pages.
 			 */
 			FreeSpaceMapVacuumRange(onerel, next_fsm_block_to_vacuum, blkno);
 			next_fsm_block_to_vacuum = blkno;
@@ -1658,7 +1659,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 */
 		if (!ConditionalLockBufferForCleanup(buf))
 		{
-			bool		  hastup;
+			bool		hastup;
 
 			/*
 			 * If we're not performing an aggressive scan to guard against XID
@@ -2015,8 +2016,9 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 	 *
 	 * If we skip vacuum, we just ignore the collected dead tuples.  Note that
 	 * vacrelstats->dead_tuples could have tuples which became dead after
-	 * HOT-pruning but are not marked dead yet.  We do not process them because
-	 * it's a very rare condition, and the next vacuum will process them anyway.
+	 * HOT-pruning but are not marked dead yet.  We do not process them
+	 * because it's a very rare condition, and the next vacuum will process
+	 * them anyway.
 	 */
 	if (index_cleanup == VACOPT_CLEANUP_DISABLED)
 		skipping = true;
@@ -2031,7 +2033,7 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 		Assert(onecall && index_cleanup == VACOPT_CLEANUP_AUTO);
 
 		rel_pages_threshold =
-				(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+			(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
 		if (has_dead_items_pages < rel_pages_threshold)
 			skipping = true;
@@ -2077,9 +2079,8 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 	}
 
 	/*
-	 * Forget the now-vacuumed tuples, and press on, but be careful
-	 * not to reset latestRemovedXid since we want that value to be
-	 * valid.
+	 * Forget the now-vacuumed tuples, and press on, but be careful not to
+	 * reset latestRemovedXid since we want that value to be valid.
 	 */
 	vacrelstats->dead_tuples->num_tuples = 0;
 }

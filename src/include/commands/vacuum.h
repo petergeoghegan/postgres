@@ -218,7 +218,8 @@ typedef struct VacuumParams
 									 * which  verbose logs are activated, -1
 									 * to use default */
 	VacOptIndexCleanupValue index_cleanup;	/* Do index vacuum and cleanup,
-										 * default value depends on reloptions */
+											 * default value depends on
+											 * reloptions */
 	VacOptTernaryValue truncate;	/* Truncate empty pages at the end,
 									 * default value depends on reloptions */
 
