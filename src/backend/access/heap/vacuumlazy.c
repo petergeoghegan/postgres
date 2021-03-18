@@ -1931,8 +1931,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Update index statistics.
 	 *
-	 * Note that this take places when two_pass_strategy() decided to skip
-	 * index vacuuming, but not with INDEX_CLEANUP=OFF.
+	 * Note that updating the statistics takes places when two_pass_strategy()
+	 * decided to skip index vacuuming, but not with INDEX_CLEANUP=OFF.  (In
+	 * practice most index AMs won't have accurate statistics from cleanup,
+	 * but the index AM API allows them to, so we must check.)
 	 */
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		update_index_statistics(Irel, indstats, nindexes);
