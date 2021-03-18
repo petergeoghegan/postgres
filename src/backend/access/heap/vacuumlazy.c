@@ -371,6 +371,9 @@ typedef struct LVVisMapPageState
 /* A few variables that don't seem worth passing around as parameters */
 static int	elevel = -1;
 
+static TransactionId RelFrozenXid;
+static MultiXactId RelMinMxid;
+
 static TransactionId OldestXmin;
 static TransactionId FreezeLimit;
 static MultiXactId MultiXactCutoff;
@@ -491,10 +494,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	Assert(params != NULL);
 	Assert(params->truncate != VACOPT_TERNARY_DEFAULT);
 
-	/* not every AM requires these to be valid, but heap does */
-	Assert(TransactionIdIsNormal(onerel->rd_rel->relfrozenxid));
-	Assert(MultiXactIdIsValid(onerel->rd_rel->relminmxid));
-
 	/* measure elapsed time iff autovacuum logging requires it */
 	if (IsAutoVacuumWorkerProcess() && params->log_min_duration >= 0)
 	{
@@ -516,6 +515,13 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 								  RelationGetRelid(onerel));
 
 	vac_strategy = bstrategy;
+
+	RelFrozenXid = onerel->rd_rel->relfrozenxid;
+	RelMinMxid = onerel->rd_rel->relminmxid;
+
+	/* not every AM requires these to be valid, but heap does */
+	Assert(TransactionIdIsNormal(RelFrozenXid));
+	Assert(MultiXactIdIsValid(RelMinMxid));
 
 	vacuum_set_xid_limits(onerel,
 						  params->freeze_min_age,
@@ -876,8 +882,6 @@ scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
 	int			  nfrozen,
 				  ndead;
 	LVTempCounters pc;
-	TransactionId relfrozenxid = onerel->rd_rel->relfrozenxid;
-	TransactionId relminmxid = onerel->rd_rel->relminmxid;
 	OffsetNumber deaditems[MaxHeapTuplesPerPage];
 
 	blkno = BufferGetBlockNumber(buf);
@@ -1096,7 +1100,7 @@ retry:
 		 * freezing
 		 */
 		if (heap_prepare_freeze_tuple(tuple.t_data,
-									  relfrozenxid, relminmxid,
+									  RelFrozenXid, RelMinMxid,
 									  FreezeLimit, MultiXactCutoff,
 									  &frozen[nfrozen],
 									  &tuple_totally_frozen))
