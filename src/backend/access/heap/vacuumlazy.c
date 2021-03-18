@@ -2022,7 +2022,7 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 	{
 		BlockNumber rel_pages_threshold;
 
-		Assert(index_cleanup == VACOPT_CLEANUP_AUTO);
+		Assert(onecall && index_cleanup == VACOPT_CLEANUP_AUTO);
 
 		rel_pages_threshold =
 				(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
