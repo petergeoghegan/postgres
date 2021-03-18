@@ -2016,9 +2016,8 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 	 *
 	 * If we skip vacuum, we just ignore the collected dead tuples.  Note that
 	 * vacrelstats->dead_tuples could have tuples which became dead after
-	 * HOT-pruning but are not marked dead yet.  We do not process them
-	 * because it's a very rare condition, and the next vacuum will process
-	 * them anyway.
+	 * HOT-pruning but are not marked dead yet.  We do not process them because
+	 * it's a very rare condition, and the next vacuum will process them anyway.
 	 */
 	if (index_cleanup == VACOPT_CLEANUP_DISABLED)
 		skipping = true;
@@ -2033,7 +2032,7 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 		Assert(onecall && index_cleanup == VACOPT_CLEANUP_AUTO);
 
 		rel_pages_threshold =
-			(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+				(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
 		if (has_dead_items_pages < rel_pages_threshold)
 			skipping = true;
