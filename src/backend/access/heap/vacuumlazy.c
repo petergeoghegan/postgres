@@ -2016,6 +2016,8 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
 		skipping = true;
 	else if (index_cleanup == VACOPT_CLEANUP_ENABLED)
 		skipping = false;
+	else if (!onecall)
+		skipping = false;
 	else
 	{
 		BlockNumber rel_pages_threshold;
