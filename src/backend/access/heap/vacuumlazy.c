@@ -1309,16 +1309,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	LVParallelState *lps = NULL;
 	LVDeadTuples *dead_tuples;
 	BlockNumber nblocks,
-				blkno;
-	BlockNumber empty_pages,
-				vacuumed_pages,
-				has_dead_items_pages,
+				blkno,
+				next_unskippable_block,
 				next_fsm_block_to_vacuum;
-	LVTempCounters c;
 	IndexBulkDeleteResult **indstats;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
-	BlockNumber next_unskippable_block;
 	bool		skipping_blocks;
 	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
@@ -1330,6 +1326,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	int64		initprog_val[3];
 	GlobalVisState *vistest;
 	bool			calledtwopass = false;
+	LVTempCounters c;
+
+	/* Counters of # blocks in onerel: */
+	BlockNumber empty_pages,
+				vacuumed_pages,
+				has_dead_items_pages;
 
 	pg_rusage_init(&ru0);
 
@@ -1345,7 +1347,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						vacrelstats->relname)));
 
 	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
-	next_fsm_block_to_vacuum = (BlockNumber) 0;
 
 	/* Initialize counters */
 	c.num_tuples = 0;
@@ -1358,6 +1359,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
 
 	nblocks = RelationGetNumberOfBlocks(onerel);
+	next_unskippable_block = 0;
+	next_fsm_block_to_vacuum = 0;
 	vacrelstats->rel_pages = nblocks;
 	vacrelstats->scanned_pages = 0;
 	vacrelstats->tupcount_pages = 0;
@@ -1453,7 +1456,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * the last page.  This is worth avoiding mainly because such a lock must
 	 * be replayed on any hot standby, where it can be disruptive.
 	 */
-	next_unskippable_block = 0;
 	if ((params->options & VACOPT_DISABLE_PAGE_SKIPPING) == 0)
 	{
 		while (next_unskippable_block < nblocks)
