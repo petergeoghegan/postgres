@@ -1904,9 +1904,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	Assert(nindexes > 0 || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
-		two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes, lps,
-						  params->index_cleanup, has_dead_items_pages,
-						  !calledtwopass);
+		two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes,
+						  lps, params->index_cleanup,
+						  has_dead_items_pages, !calledtwopass);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1991,8 +1991,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  * reloption)
  */
 static void
-two_pass_strategy(Relation onerel, LVRelStats *vacrelstats, Relation *Irel,
-				  IndexBulkDeleteResult **indstats, int nindexes,
+two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
+				  Relation *Irel, IndexBulkDeleteResult **indstats, int nindexes,
 				  LVParallelState *lps, VacOptIndexCleanupValue index_cleanup,
 				  BlockNumber has_dead_items_pages, bool onecall)
 {
