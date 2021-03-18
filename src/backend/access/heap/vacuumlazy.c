@@ -388,7 +388,8 @@ static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 static void two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 							  Relation *Irel, IndexBulkDeleteResult **indstats,
 							  int nindexes, LVParallelState *lps,
-							  VacOptTernaryValue index_cleanup);
+							  VacOptIndexCleanupValue index_cleanup,
+							  BlockNumber has_dead_items_pages, bool onecall);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
@@ -1325,11 +1326,13 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	};
 	int64		initprog_val[3];
 	GlobalVisState *vistest;
+	bool			calledtwopass = false;
 	LVTempCounters c;
 
 	/* Counters of # blocks in onerel: */
 	BlockNumber empty_pages,
-				vacuumed_pages;
+				vacuumed_pages,
+				has_dead_items_pages;
 
 	pg_rusage_init(&ru0);
 
@@ -1344,7 +1347,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						vacrelstats->relnamespace,
 						vacrelstats->relname)));
 
-	empty_pages = vacuumed_pages = 0;
+	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
 
 	/* Initialize counters */
 	c.num_tuples = 0;
@@ -1607,9 +1610,17 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				vmbuffer = InvalidBuffer;
 			}
 
+			/*
+			 * Won't be skipping index vacuuming now, since that is only
+			 * something two_pass_strategy() does when dead tuple space hasn't
+			 * been overrun.
+			 */
+			calledtwopass = true;
+
 			/* Remove the collected garbage tuples from table and indexes */
 			two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes,
-							  lps, params->index_cleanup);
+							  lps, params->index_cleanup,
+							  has_dead_items_pages, false);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1746,6 +1757,17 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						&c, &ls, &vms);
 
 		/*
+		 * Remember the number of pages having at least one LP_DEAD line
+		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
+		 * even opportunistic pruning.  Note that this is exactly the same
+		 * thing as having items that are stored in dead_tuples space, because
+		 * scan_prune_page() doesn't count anything other than LP_DEAD items
+		 * as dead (as of PostgreSQL 14).
+		 */
+		if (ls.has_dead_items)
+			has_dead_items_pages++;
+
+		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
 		 * end of loop.  (Also performs extra single pass strategy steps in
 		 * "nindexes == 0" case.)
@@ -1759,9 +1781,18 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		savefreespace = false;
 		freespace = 0;
 		if (nindexes > 0 && ls.has_dead_items &&
-			params->index_cleanup != VACOPT_TERNARY_DISABLED)
+			params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		{
-			/* Wait until lazy_vacuum_heap() to save free space */
+			/*
+			 * Wait until lazy_vacuum_heap() to save free space.
+			 *
+			 * Note: It's not in fact 100% certain that we really will call
+			 * lazy_vacuum_heap() in INDEX_CLEANUP = AUTO case (which is the
+			 * common case) -- two_pass_strategy() might opt to skip index
+			 * vacuuming (and so must skip heap vacuuming).  This is deemed
+			 * okay, because there can't be very much free space when this
+			 * happens.
+			 */
 		}
 		else
 		{
@@ -1874,7 +1905,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Assert(nindexes > 0 || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
 		two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes,
-						  lps, params->index_cleanup);
+						  lps, params->index_cleanup,
+						  has_dead_items_pages, !calledtwopass);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1889,10 +1921,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Do post-vacuum cleanup.
 	 *
-	 * Note that post-vacuum cleanup does not take place with
+	 * Note that post-vacuum cleanup is supposed to take place when
+	 * two_pass_strategy() decided to skip index vacuuming, but not with
 	 * INDEX_CLEANUP=OFF.
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
 
 	/*
@@ -1905,13 +1938,13 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Update index statistics.
 	 *
-	 * Note that updating the statistics does not take place with
-	 * INDEX_CLEANUP=OFF.
+	 * Note that updating the statistics takes places when two_pass_strategy()
+	 * decided to skip index vacuuming, but not with INDEX_CLEANUP=OFF.
 	 *
 	 * (In practice most index AMs won't have accurate statistics from
 	 * cleanup, but the index AM API allows them to, so we must check.)
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		update_index_statistics(Irel, indstats, nindexes);
 
 	/* If no indexes, make log report that two_pass_strategy() would've made */
@@ -1954,12 +1987,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 /*
  * Remove the collected garbage tuples from the table and its indexes.
  *
- * We may be required to skip index vacuuming by INDEX_CLEANUP reloption.
+ * We may be able to skip index vacuuming (we may even be required to do so by
+ * reloption)
  */
 static void
 two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 				  Relation *Irel, IndexBulkDeleteResult **indstats, int nindexes,
-				  LVParallelState *lps, VacOptTernaryValue index_cleanup)
+				  LVParallelState *lps, VacOptIndexCleanupValue index_cleanup,
+				  BlockNumber has_dead_items_pages, bool onecall)
 {
 	bool		skipping;
 
@@ -1967,11 +2002,43 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 	Assert(nindexes > 0);
 	Assert(!IsParallelWorker());
 
-	/* Check whether or not to do index vacuum and heap vacuum */
-	if (index_cleanup == VACOPT_TERNARY_DISABLED)
+	/*
+	 * Check whether or not to do index vacuum and heap vacuum.
+	 *
+	 * We do both index vacuum and heap vacuum if more than
+	 * SKIP_VACUUM_PAGES_RATIO of all heap pages have at least one LP_DEAD
+	 * line pointer.  This is normally a case where dead tuples on the heap
+	 * are highly concentrated in relatively few heap blocks, where the
+	 * index's enhanced deletion mechanism that is clever about heap block
+	 * dead tuple concentrations including btree's bottom-up index deletion
+	 * works well.  Also, since we can clean only a few heap blocks, it would
+	 * be a less negative impact in terms of visibility map update.
+	 *
+	 * If we skip vacuum, we just ignore the collected dead tuples.  Note that
+	 * vacrelstats->dead_tuples could have tuples which became dead after
+	 * HOT-pruning but are not marked dead yet.  We do not process them because
+	 * it's a very rare condition, and the next vacuum will process them anyway.
+	 */
+	if (index_cleanup == VACOPT_CLEANUP_DISABLED)
 		skipping = true;
-	else
+	else if (index_cleanup == VACOPT_CLEANUP_ENABLED)
 		skipping = false;
+	else if (!onecall)
+		skipping = false;
+	else
+	{
+		BlockNumber rel_pages_threshold;
+
+		Assert(onecall && index_cleanup == VACOPT_CLEANUP_AUTO);
+
+		rel_pages_threshold =
+				(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+
+		if (has_dead_items_pages < rel_pages_threshold)
+			skipping = true;
+		else
+			skipping = false;
+	}
 
 	if (!skipping)
 	{
@@ -1996,10 +2063,18 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 		 * one or more LP_DEAD items (could be from us or from another
 		 * VACUUM), not # blocks scanned.
 		 */
-		ereport(elevel,
-				(errmsg("\"%s\": INDEX_CLEANUP off forced VACUUM to not totally remove %d pruned items",
-						vacrelstats->relname,
-						vacrelstats->dead_tuples->num_tuples)));
+		if (index_cleanup == VACOPT_CLEANUP_AUTO)
+			ereport(elevel,
+					(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
+							vacrelstats->relname,
+							vacrelstats->dead_tuples->num_tuples,
+							has_dead_items_pages)));
+		else
+			ereport(elevel,
+					(errmsg("\"%s\": INDEX_CLEANUP off forced VACUUM to not totally remove %d pruned items in %u pages",
+							vacrelstats->relname,
+							vacrelstats->dead_tuples->num_tuples,
+							has_dead_items_pages)));
 	}
 
 	/*

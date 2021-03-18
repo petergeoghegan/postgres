@@ -21,6 +21,7 @@
 #include "parser/parse_node.h"
 #include "storage/buf.h"
 #include "storage/lock.h"
+#include "utils/rel.h"
 #include "utils/relcache.h"
 
 /*
@@ -216,7 +217,7 @@ typedef struct VacuumParams
 	int			log_min_duration;	/* minimum execution threshold in ms at
 									 * which  verbose logs are activated, -1
 									 * to use default */
-	VacOptTernaryValue index_cleanup;	/* Do index vacuum and cleanup,
+	VacOptIndexCleanupValue index_cleanup;	/* Do index vacuum and cleanup,
 										 * default value depends on reloptions */
 	VacOptTernaryValue truncate;	/* Truncate empty pages at the end,
 									 * default value depends on reloptions */
