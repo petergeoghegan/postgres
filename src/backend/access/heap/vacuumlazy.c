@@ -869,7 +869,8 @@ scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
  * avoid double counting.
  */
 static void
-scan_prune_page(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
+scan_prune_page(Relation onerel, Buffer buf,
+				LVRelStats *vacrelstats,
 				GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
 				LVTempCounters *c, LVPrunePageState *ls,
 				LVVisMapPageState *vms)
