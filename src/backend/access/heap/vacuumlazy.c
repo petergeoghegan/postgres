@@ -988,16 +988,6 @@ retry:
 		tuple.t_tableOid = RelationGetRelid(onerel);
 
 		/*
-		 * The criteria for counting a tuple as live in this block need to
-		 * match what analyze.c's acquire_sample_rows() does, otherwise
-		 * VACUUM and ANALYZE may produce wildly different reltuples
-		 * values, e.g. when there are many recently-dead tuples.
-		 *
-		 * The logic here is a bit simpler than acquire_sample_rows(), as
-		 * VACUUM can't run inside a transaction block, which makes some
-		 * cases impossible (e.g. in-progress insert from the same
-		 * transaction).
-		 *
 		 * DEAD tuples are almost always pruned into LP_DEAD line pointers by
 		 * heap_page_prune(), but it's possible that the tuple state changed
 		 * since heap_page_prune() looked.  Handle that here by restarting.
@@ -1008,6 +998,16 @@ retry:
 		if (unlikely(tuplestate == HEAPTUPLE_DEAD))
 			goto retry;
 
+		/*
+		 * The criteria for counting a tuple as live in this block need to
+		 * match what analyze.c's acquire_sample_rows() does, otherwise VACUUM
+		 * and ANALYZE may produce wildly different reltuples values, e.g.
+		 * when there are many recently-dead tuples.
+		 *
+		 * The logic here is a bit simpler than acquire_sample_rows(), as
+		 * VACUUM can't run inside a transaction block, which makes some cases
+		 * impossible (e.g. in-progress insert from the same transaction).
+		 */
 		switch (tuplestate)
 		{
 			case HEAPTUPLE_LIVE:
