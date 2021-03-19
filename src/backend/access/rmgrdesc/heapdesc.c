@@ -127,6 +127,12 @@ heap2_desc(StringInfo buf, XLogReaderState *record)
 
 		appendStringInfo(buf, "latestRemovedXid %u", xlrec->latestRemovedXid);
 	}
+	else if (info == XLOG_HEAP2_UNUSED)
+	{
+		xl_heap_clean *xlrec = (xl_heap_clean *) rec;
+
+		appendStringInfo(buf, "latestRemovedXid %u", xlrec->latestRemovedXid);
+	}
 	else if (info == XLOG_HEAP2_FREEZE_PAGE)
 	{
 		xl_heap_freeze_page *xlrec = (xl_heap_freeze_page *) rec;
@@ -225,6 +231,9 @@ heap2_identify(uint8 info)
 	{
 		case XLOG_HEAP2_CLEAN:
 			id = "CLEAN";
+			break;
+		case XLOG_HEAP2_UNUSED:
+			id = "UNUSED";
 			break;
 		case XLOG_HEAP2_FREEZE_PAGE:
 			id = "FREEZE_PAGE";

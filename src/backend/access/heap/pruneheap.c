@@ -292,7 +292,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * Apply the planned item changes, then repair page fragmentation, and
 		 * update the page's hint bit about whether it has free line pointers.
 		 */
-		heap_page_prune_execute(buffer,
+		heap_page_prune_execute(buffer, false,
 								prstate.redirected, prstate.nredirected,
 								prstate.nowdead, prstate.ndead,
 								prstate.nowunused, prstate.nunused);
@@ -319,7 +319,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 		{
 			XLogRecPtr	recptr;
 
-			recptr = log_heap_clean(relation, buffer,
+			recptr = log_heap_clean(relation, buffer, false,
 									prstate.redirected, prstate.nredirected,
 									prstate.nowdead, prstate.ndead,
 									prstate.nowunused, prstate.nunused,
@@ -810,7 +810,7 @@ heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum)
  * arguments are identical to those of log_heap_clean().
  */
 void
-heap_page_prune_execute(Buffer buffer,
+heap_page_prune_execute(Buffer buffer, bool unusedmark,
 						OffsetNumber *redirected, int nredirected,
 						OffsetNumber *nowdead, int ndead,
 						OffsetNumber *nowunused, int nunused)
@@ -854,7 +854,14 @@ heap_page_prune_execute(Buffer buffer,
 	 * Finally, repair any fragmentation, and update the page's hint bit about
 	 * whether it has free pointers.
 	 */
-	PageRepairFragmentation(page);
+	if (!unusedmark)
+		PageRepairFragmentation(page);
+	else
+	{
+		Assert(nunused > 0);
+		Assert(ndead == 0 && nredirected == 0);
+		PageSetHasFreeLinePointers(page);
+	}
 }
 
 

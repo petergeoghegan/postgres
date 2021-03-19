@@ -2177,12 +2177,7 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 		vacrelstats->blkno = tblk;
 		buf = ReadBufferExtended(onerel, MAIN_FORKNUM, tblk, RBM_NORMAL,
 								 vac_strategy);
-		if (!ConditionalLockBufferForCleanup(buf))
-		{
-			ReleaseBuffer(buf);
-			++tupindex;
-			continue;
-		}
+		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
 		tupindex = lazy_vacuum_page(onerel, tblk, buf, tupindex, vacrelstats,
 									&vmbuffer);
 
@@ -2270,7 +2265,7 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 		unused[uncnt++] = toff;
 	}
 
-	PageRepairFragmentation(page);
+	PageSetHasFreeLinePointers(page);
 
 	/*
 	 * Mark buffer dirty before we write WAL.
@@ -2282,7 +2277,7 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	{
 		XLogRecPtr	recptr;
 
-		recptr = log_heap_clean(onerel, buffer,
+		recptr = log_heap_clean(onerel, buffer, true,
 								NULL, 0, NULL, 0,
 								unused, uncnt,
 								InvalidTransactionId);

@@ -7960,7 +7960,7 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
  * for long standby queries that can still see these tuples.
  */
 XLogRecPtr
-log_heap_clean(Relation reln, Buffer buffer,
+log_heap_clean(Relation reln, Buffer buffer, bool unusedmark,
 			   OffsetNumber *redirected, int nredirected,
 			   OffsetNumber *nowdead, int ndead,
 			   OffsetNumber *nowunused, int nunused,
@@ -7968,9 +7968,11 @@ log_heap_clean(Relation reln, Buffer buffer,
 {
 	xl_heap_clean xlrec;
 	XLogRecPtr	recptr;
+	uint8		info;
 
 	/* Caller should not call me on a non-WAL-logged relation */
 	Assert(RelationNeedsWAL(reln));
+	Assert(!unusedmark || (ndead == 0 && nredirected == 0));
 
 	xlrec.latestRemovedXid = latestRemovedXid;
 	xlrec.nredirected = nredirected;
@@ -8001,7 +8003,8 @@ log_heap_clean(Relation reln, Buffer buffer,
 		XLogRegisterBufData(0, (char *) nowunused,
 							nunused * sizeof(OffsetNumber));
 
-	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_CLEAN);
+	info = unusedmark ? XLOG_HEAP2_UNUSED : XLOG_HEAP2_CLEAN;
+	recptr = XLogInsert(RM_HEAP2_ID, info);
 
 	return recptr;
 }
@@ -8480,7 +8483,7 @@ ExtractReplicaIdentity(Relation relation, HeapTuple tp, bool key_changed,
  * Handles XLOG_HEAP2_CLEAN record type
  */
 static void
-heap_xlog_clean(XLogReaderState *record)
+heap_xlog_clean(XLogReaderState *record, bool unusedmark)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_heap_clean *xlrec = (xl_heap_clean *) XLogRecGetData(record);
@@ -8496,13 +8499,16 @@ heap_xlog_clean(XLogReaderState *record)
 	 * no queries running for which the removed tuples are still visible.
 	 */
 	if (InHotStandby && TransactionIdIsValid(xlrec->latestRemovedXid))
+	{
+		Assert(!unusedmark);
 		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, rnode);
+	}
 
 	/*
-	 * If we have a full-page image, restore it (using a cleanup lock) and
-	 * we're done.
+	 * If we have a full-page image, restore it (using a cleanup lock when
+	 * we're pruning rather than just LP_UNUSED marking) and we're done.
 	 */
-	action = XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, true,
+	action = XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, !unusedmark,
 										   &buffer);
 	if (action == BLK_NEEDS_REDO)
 	{
@@ -8527,7 +8533,7 @@ heap_xlog_clean(XLogReaderState *record)
 		Assert(nunused >= 0);
 
 		/* Update all line pointers per the record, and repair fragmentation */
-		heap_page_prune_execute(buffer,
+		heap_page_prune_execute(buffer, unusedmark,
 								redirected, nredirected,
 								nowdead, ndead,
 								nowunused, nunused);
@@ -9665,7 +9671,10 @@ heap2_redo(XLogReaderState *record)
 	switch (info & XLOG_HEAP_OPMASK)
 	{
 		case XLOG_HEAP2_CLEAN:
-			heap_xlog_clean(record);
+			heap_xlog_clean(record, false);
+			break;
+		case XLOG_HEAP2_UNUSED:
+			heap_xlog_clean(record, true);
 			break;
 		case XLOG_HEAP2_FREEZE_PAGE:
 			heap_xlog_freeze_page(record);
