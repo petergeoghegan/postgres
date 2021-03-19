@@ -857,6 +857,7 @@ heap_page_prune_execute(Buffer buffer,
 	PageRepairFragmentation(page);
 }
 
+
 /*
  * For all items in this page, find their respective root line pointers.
  * If item k is part of a HOT-chain with root at item j, then we set

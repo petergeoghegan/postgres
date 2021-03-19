@@ -227,7 +227,7 @@ typedef struct xl_heap_update
 #define SizeOfHeapUpdate	(offsetof(xl_heap_update, new_offnum) + sizeof(OffsetNumber))
 
 /*
- * This is what we need to know about vacuum page cleanup/redirect
+ * This is what we need to know about vacuum page pruning/redirect
  *
  * The array of OffsetNumbers following the fixed part of the record contains:
  *	* for each redirected item: the item offset, then the offset redirected to
@@ -245,13 +245,19 @@ typedef struct xl_heap_clean
 	/* OFFSET NUMBERS are in the block reference 0 */
 } xl_heap_clean;
 
+#define SizeOfHeapClean (offsetof(xl_heap_clean, ndead) + sizeof(uint16))
+
+/*
+ * The mark unused record is similar, but can only mark items unused
+ *
+ * Use by heap vacuuming, which does not need a super-exclusive lock
+ */
 typedef struct xl_heap_unused
 {
 	uint16		nunused ;
 	/* OFFSET NUMBERS are in the block reference 0 */
 } xl_heap_unused;
 
-#define SizeOfHeapClean (offsetof(xl_heap_clean, ndead) + sizeof(uint16))
 #define SizeOfHeapUnused (offsetof(xl_heap_unused, nunused) + sizeof(uint16))
 
 /*
