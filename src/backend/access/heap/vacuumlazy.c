@@ -2088,7 +2088,12 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 /*
  *	lazy_vacuum_all_indexes() -- Main entry for index vacuuming
  *
- * Should only be called through two_pass_strategy()
+ * Should only be called through two_pass_strategy().
+ *
+ * We don't need a latestRemovedXid value for recovery conflicts here -- we
+ * rely conflicts from heap pruning instead (i.e. a heap_page_prune() call
+ * that took earlier, usually though not always during the ongoing VACUUM
+ * operation).
  */
 static void
 lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
@@ -2141,7 +2146,12 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
  *		space on their pages.  Pages not having dead tuples recorded from
  *		lazy_scan_heap are not visited at all.
  *
- * Should only be called through two_pass_strategy()
+ * Should only be called through two_pass_strategy().
+ *
+ * We don't need a latestRemovedXid value for recovery conflicts here -- we
+ * rely conflicts from heap pruning instead (i.e. a heap_page_prune() call
+ * that took earlier, usually though not always during the ongoing VACUUM
+ * operation).
  */
 static void
 lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
