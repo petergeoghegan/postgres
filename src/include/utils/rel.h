@@ -295,13 +295,6 @@ typedef struct AutoVacOpts
 	float8		analyze_scale_factor;
 } AutoVacOpts;
 
-typedef enum VacOptIndexCleanupValue
-{
-	VACOPT_CLEANUP_AUTO = 0,
-	VACOPT_CLEANUP_DISABLED,
-	VACOPT_CLEANUP_ENABLED
-} VacOptIndexCleanupValue;
-
 typedef struct StdRdOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
@@ -311,8 +304,7 @@ typedef struct StdRdOptions
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
 	int			parallel_workers;	/* max number of parallel workers */
-	VacOptIndexCleanupValue vacuum_index_cleanup;	/* enables index vacuuming
-													 * and cleanup */
+	bool		vacuum_index_cleanup;	/* enables index vacuuming and cleanup */
 	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
 } StdRdOptions;
 

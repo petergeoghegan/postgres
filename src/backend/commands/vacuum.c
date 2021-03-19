@@ -108,7 +108,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	ListCell   *lc;
 
 	/* Set default value */
-	params.index_cleanup = VACOPT_CLEANUP_AUTO;
+	params.index_cleanup = VACOPT_TERNARY_DEFAULT;
 	params.truncate = VACOPT_TERNARY_DEFAULT;
 
 	/* By default parallel vacuum is enabled */
@@ -140,14 +140,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		else if (strcmp(opt->defname, "disable_page_skipping") == 0)
 			disable_page_skipping = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "index_cleanup") == 0)
-		{
-			if (opt->arg == NULL || strcmp(defGetString(opt), "auto") == 0)
-				params.index_cleanup = VACOPT_CLEANUP_AUTO;
-			else if (defGetBoolean(opt))
-				params.index_cleanup = VACOPT_CLEANUP_ENABLED;
-			else
-				params.index_cleanup = VACOPT_CLEANUP_DISABLED;
-		}
+			params.index_cleanup = get_vacopt_ternary_value(opt);
 		else if (strcmp(opt->defname, "process_toast") == 0)
 			process_toast = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "truncate") == 0)
@@ -1887,19 +1880,15 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	onerelid = onerel->rd_lockInfo.lockRelId;
 	LockRelationIdForSession(&onerelid, lmode);
 
-	/*
-	 * Set index cleanup option based on reloptions if not set to either ON or
-	 * OFF.  Note that an VACUUM(INDEX_CLEANUP=AUTO) command is interpreted as
-	 * "prefer reloption, but if it's not set dynamically determine if index
-	 * vacuuming and cleanup" takes place in vacuumlazy.c.  Note also that the
-	 * reloption might be explicitly set to AUTO.
-	 *
-	 * XXX: Do we really want that?
-	 */
-	if (params->index_cleanup == VACOPT_CLEANUP_AUTO &&
-		onerel->rd_options != NULL)
-		params->index_cleanup =
-			((StdRdOptions *) onerel->rd_options)->vacuum_index_cleanup;
+	/* Set index cleanup option based on reloptions if not yet */
+	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT)
+	{
+		if (onerel->rd_options == NULL ||
+			((StdRdOptions *) onerel->rd_options)->vacuum_index_cleanup)
+			params->index_cleanup = VACOPT_TERNARY_ENABLED;
+		else
+			params->index_cleanup = VACOPT_TERNARY_DISABLED;
+	}
 
 	/* Set truncate option based on reloptions if not yet */
 	if (params->truncate == VACOPT_TERNARY_DEFAULT)

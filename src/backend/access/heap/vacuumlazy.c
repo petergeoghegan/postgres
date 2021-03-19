@@ -132,12 +132,6 @@
 #define PREFETCH_SIZE			((BlockNumber) 32)
 
 /*
- * The threshold of the percentage of heap blocks having LP_DEAD line pointer
- * above which index vacuuming goes ahead.
- */
-#define SKIP_VACUUM_PAGES_RATIO		0.01
-
-/*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
  * we don't need to worry about DSM keys conflicting with plan_node_id we can
  * use small integers.
@@ -316,6 +310,7 @@ typedef struct LVRelStats
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
 	LVDeadTuples *dead_tuples;
 	int			num_index_scans;
+	TransactionId latestRemovedXid;
 	bool		lock_waiter_detected;
 
 	/* Used for error callback */
@@ -388,8 +383,7 @@ static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 static void two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 							  Relation *Irel, IndexBulkDeleteResult **indstats,
 							  int nindexes, LVParallelState *lps,
-							  VacOptIndexCleanupValue index_cleanup,
-							  BlockNumber has_dead_items_pages, bool onecall);
+							  VacOptTernaryValue index_cleanup);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
@@ -492,6 +486,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	PgStat_Counter startwritetime = 0;
 
 	Assert(params != NULL);
+	Assert(params->index_cleanup != VACOPT_TERNARY_DEFAULT);
 	Assert(params->truncate != VACOPT_TERNARY_DEFAULT);
 
 	/* measure elapsed time iff autovacuum logging requires it */
@@ -755,6 +750,39 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 }
 
 /*
+ * For Hot Standby we need to know the highest transaction id that will
+ * be removed by any change. VACUUM proceeds in a number of passes so
+ * we need to consider how each pass operates. The first phase runs
+ * heap_page_prune(), which can issue XLOG_HEAP2_CLEAN records as it
+ * progresses - these will have a latestRemovedXid on each record.
+ * In some cases this removes all of the tuples to be removed, though
+ * often we have dead tuples with index pointers so we must remember them
+ * for removal in phase 3. Index records for those rows are removed
+ * in phase 2 and index blocks do not have MVCC information attached.
+ * So before we can allow removal of any index tuples we need to issue
+ * a WAL record containing the latestRemovedXid of rows that will be
+ * removed in phase three. This allows recovery queries to block at the
+ * correct place, i.e. before phase two, rather than during phase three
+ * which would be after the rows have become inaccessible.
+ */
+static void
+vacuum_log_cleanup_info(Relation rel, LVRelStats *vacrelstats)
+{
+	/*
+	 * Skip this for relations for which no WAL is to be written, or if we're
+	 * not trying to support archive recovery.
+	 */
+	if (!RelationNeedsWAL(rel) || !XLogIsNeeded())
+		return;
+
+	/*
+	 * No need to write the record at all unless it contains a valid value
+	 */
+	if (TransactionIdIsValid(vacrelstats->latestRemovedXid))
+		(void) log_heap_cleanup_info(rel->rd_node, vacrelstats->latestRemovedXid);
+}
+
+/*
  * Handle new page during lazy_scan_heap().
  *
  * Caller must hold pin and buffer cleanup lock on buf.
@@ -905,6 +933,7 @@ retry:
 	 */
 	pc.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
 									   InvalidTransactionId, 0, false,
+									   &vacrelstats->latestRemovedXid,
 									   &vacrelstats->offnum);
 
 	/*
@@ -1326,13 +1355,11 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	};
 	int64		initprog_val[3];
 	GlobalVisState *vistest;
-	bool		calledtwopass = false;
 	LVTempCounters c;
 
 	/* Counters of # blocks in onerel: */
 	BlockNumber empty_pages,
-				vacuumed_pages,
-				has_dead_items_pages;
+				vacuumed_pages;
 
 	pg_rusage_init(&ru0);
 
@@ -1347,7 +1374,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						vacrelstats->relnamespace,
 						vacrelstats->relname)));
 
-	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
+	empty_pages = vacuumed_pages = 0;
 
 	/* Initialize counters */
 	c.num_tuples = 0;
@@ -1610,17 +1637,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 				vmbuffer = InvalidBuffer;
 			}
 
-			/*
-			 * Won't be skipping index vacuuming now, since that is only
-			 * something two_pass_strategy() does when dead tuple space hasn't
-			 * been overrun.
-			 */
-			calledtwopass = true;
-
 			/* Remove the collected garbage tuples from table and indexes */
 			two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes,
-							  lps, params->index_cleanup,
-							  has_dead_items_pages, false);
+							  lps, params->index_cleanup);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1758,17 +1777,6 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 						&c, &ps, &vms);
 
 		/*
-		 * Remember the number of pages having at least one LP_DEAD line
-		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
-		 * even opportunistic pruning.  Note that this is exactly the same
-		 * thing as having items that are stored in dead_tuples space, because
-		 * scan_prune_page() doesn't count anything other than LP_DEAD items
-		 * as dead (as of PostgreSQL 14).
-		 */
-		if (ps.has_dead_items)
-			has_dead_items_pages++;
-
-		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
 		 * end of loop.  (Also performs extra single pass strategy steps in
 		 * "nindexes == 0" case.)
@@ -1782,18 +1790,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		savefreespace = false;
 		freespace = 0;
 		if (nindexes > 0 && ps.has_dead_items &&
-			params->index_cleanup != VACOPT_CLEANUP_DISABLED)
+			params->index_cleanup != VACOPT_TERNARY_DISABLED)
 		{
-			/*
-			 * Wait until lazy_vacuum_heap() to save free space.
-			 *
-			 * Note: It's not in fact 100% certain that we really will call
-			 * lazy_vacuum_heap() in INDEX_CLEANUP = AUTO case (which is the
-			 * common case) -- two_pass_strategy() might opt to skip index
-			 * vacuuming (and so must skip heap vacuuming).  This is deemed
-			 * okay, because there can't be very much free space when this
-			 * happens.
-			 */
+			/* Wait until lazy_vacuum_heap() to save free space */
 		}
 		else
 		{
@@ -1905,8 +1904,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	Assert(nindexes > 0 || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
 		two_pass_strategy(onerel, vacrelstats, Irel, indstats, nindexes,
-						  lps, params->index_cleanup,
-						  has_dead_items_pages, !calledtwopass);
+						  lps, params->index_cleanup);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1921,11 +1919,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Do post-vacuum cleanup.
 	 *
-	 * Note that post-vacuum cleanup is supposed to take place when
-	 * two_pass_strategy() decided to skip index vacuuming, but not with
+	 * Note that post-vacuum cleanup does not take place with
 	 * INDEX_CLEANUP=OFF.
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
 		lazy_cleanup_all_indexes(Irel, indstats, vacrelstats, lps, nindexes);
 
 	/*
@@ -1938,13 +1935,10 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/*
 	 * Update index statistics.
 	 *
-	 * Note that updating the statistics takes places when two_pass_strategy()
-	 * decided to skip index vacuuming, but not with INDEX_CLEANUP=OFF.
-	 *
-	 * (In practice most index AMs won't have accurate statistics from
-	 * cleanup, but the index AM API allows them to, so we must check.)
+	 * Note that updating the statistics does not take place with
+	 * INDEX_CLEANUP=OFF.
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
+	if (nindexes > 0 && params->index_cleanup != VACOPT_TERNARY_DISABLED)
 		update_index_statistics(Irel, indstats, nindexes);
 
 	/* If no indexes, make log report that two_pass_strategy() would've made */
@@ -1987,14 +1981,12 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 /*
  * Remove the collected garbage tuples from the table and its indexes.
  *
- * We may be able to skip index vacuuming (we may even be required to do so by
- * reloption)
+ * We may be required to skip index vacuuming by INDEX_CLEANUP reloption.
  */
 static void
 two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 				  Relation *Irel, IndexBulkDeleteResult **indstats, int nindexes,
-				  LVParallelState *lps, VacOptIndexCleanupValue index_cleanup,
-				  BlockNumber has_dead_items_pages, bool onecall)
+				  LVParallelState *lps, VacOptTernaryValue index_cleanup)
 {
 	bool		skipping;
 
@@ -2002,44 +1994,11 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 	Assert(nindexes > 0);
 	Assert(!IsParallelWorker());
 
-	/*
-	 * Check whether or not to do index vacuum and heap vacuum.
-	 *
-	 * We do both index vacuum and heap vacuum if more than
-	 * SKIP_VACUUM_PAGES_RATIO of all heap pages have at least one LP_DEAD
-	 * line pointer.  This is normally a case where dead tuples on the heap
-	 * are highly concentrated in relatively few heap blocks, where the
-	 * index's enhanced deletion mechanism that is clever about heap block
-	 * dead tuple concentrations including btree's bottom-up index deletion
-	 * works well.  Also, since we can clean only a few heap blocks, it would
-	 * be a less negative impact in terms of visibility map update.
-	 *
-	 * If we skip vacuum, we just ignore the collected dead tuples.  Note that
-	 * vacrelstats->dead_tuples could have tuples which became dead after
-	 * HOT-pruning but are not marked dead yet.  We do not process them
-	 * because it's a very rare condition, and the next vacuum will process
-	 * them anyway.
-	 */
-	if (index_cleanup == VACOPT_CLEANUP_DISABLED)
+	/* Check whether or not to do index vacuum and heap vacuum */
+	if (index_cleanup == VACOPT_TERNARY_DISABLED)
 		skipping = true;
-	else if (index_cleanup == VACOPT_CLEANUP_ENABLED)
-		skipping = false;
-	else if (!onecall)
-		skipping = false;
 	else
-	{
-		BlockNumber rel_pages_threshold;
-
-		Assert(onecall && index_cleanup == VACOPT_CLEANUP_AUTO);
-
-		rel_pages_threshold =
-			(double) vacrelstats->rel_pages * SKIP_VACUUM_PAGES_RATIO;
-
-		if (has_dead_items_pages < rel_pages_threshold)
-			skipping = true;
-		else
-			skipping = false;
-	}
+		skipping = false;
 
 	if (!skipping)
 	{
@@ -2064,18 +2023,10 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 		 * one or more LP_DEAD items (could be from us or from another
 		 * VACUUM), not # blocks scanned.
 		 */
-		if (index_cleanup == VACOPT_CLEANUP_AUTO)
-			ereport(elevel,
-					(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
-							vacrelstats->relname,
-							vacrelstats->dead_tuples->num_tuples,
-							has_dead_items_pages)));
-		else
-			ereport(elevel,
-					(errmsg("\"%s\": INDEX_CLEANUP off forced VACUUM to not totally remove %d pruned items in %u pages",
-							vacrelstats->relname,
-							vacrelstats->dead_tuples->num_tuples,
-							has_dead_items_pages)));
+		ereport(elevel,
+				(errmsg("\"%s\": INDEX_CLEANUP off forced VACUUM to not totally remove %d pruned items",
+						vacrelstats->relname,
+						vacrelstats->dead_tuples->num_tuples)));
 	}
 
 	/*
@@ -2086,9 +2037,9 @@ two_pass_strategy(Relation onerel, LVRelStats *vacrelstats,
 }
 
 /*
- *	lazy_vacuum_all_indexes() -- Main entry for index vacuuming
+ *	lazy_vacuum_all_indexes() -- vacuum all indexes of relation.
  *
- * Should only be called through two_pass_strategy()
+ * We process the indexes serially unless we are doing parallel vacuum.
  */
 static void
 lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
@@ -2098,6 +2049,9 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 {
 	Assert(!IsParallelWorker());
 	Assert(nindexes > 0);
+
+	/* Log cleanup info before we touch indexes */
+	vacuum_log_cleanup_info(onerel, vacrelstats);
 
 	/* Report that we are now vacuuming indexes */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -2134,14 +2088,17 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 								 vacrelstats->num_index_scans);
 }
 
+
 /*
- *	lazy_vacuum_heap() -- second pass over the heap for two pass strategy
+ *	lazy_vacuum_heap() -- second pass over the heap
  *
  *		This routine marks dead tuples as unused and compacts out free
  *		space on their pages.  Pages not having dead tuples recorded from
  *		lazy_scan_heap are not visited at all.
  *
- * Should only be called through two_pass_strategy()
+ * Note: the reason for doing this as a second pass is we cannot remove
+ * the tuples until we've removed their index entries, and we want to
+ * process index entry removal in batches as large as possible.
  */
 static void
 lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
@@ -2177,7 +2134,12 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 		vacrelstats->blkno = tblk;
 		buf = ReadBufferExtended(onerel, MAIN_FORKNUM, tblk, RBM_NORMAL,
 								 vac_strategy);
-		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
+		if (!ConditionalLockBufferForCleanup(buf))
+		{
+			ReleaseBuffer(buf);
+			++tupindex;
+			continue;
+		}
 		tupindex = lazy_vacuum_page(onerel, tblk, buf, tupindex, vacrelstats,
 									&vmbuffer);
 
@@ -2210,7 +2172,7 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 }
 
 /*
- *	lazy_vacuum_page() -- free LP_DEAD items on a page,
+ *	lazy_vacuum_page() -- free dead tuples on a page
  *					 and repair its fragmentation.
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
@@ -2218,16 +2180,6 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
  * tupindex is the index in vacrelstats->dead_tuples of the first dead
  * tuple for this page.  We assume the rest follow sequentially.
  * The return value is the first tupindex after the tuples of this page.
- *
- * Prior to PostgreSQL 14 there were rare cases where this routine had to set
- * tuples with storage to unused.  These days it is strictly responsible for
- * marking LP_DEAD stub line pointers from pruning that took place during
- * lazy_scan_heap() (or from existing LP_DEAD line pointers encountered
- * there).  Note that we only require an exclusive lock, not a super-exclusive
- * lock (both are acceptable).
- *
- * We cannot defragment the page here because that isn't safe while only
- * holding an exclusive lock.
  */
 static int
 lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
@@ -2260,15 +2212,11 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 			break;				/* past end of tuples for this block */
 		toff = ItemPointerGetOffsetNumber(&dead_tuples->itemptrs[tupindex]);
 		itemid = PageGetItemId(page, toff);
-
-		Assert(ItemIdIsDead(itemid));
 		ItemIdSetUnused(itemid);
 		unused[uncnt++] = toff;
 	}
 
-	Assert(uncnt > 0);
-
-	PageSetHasFreeLinePointers(page);
+	PageRepairFragmentation(page);
 
 	/*
 	 * Mark buffer dirty before we write WAL.
@@ -2278,19 +2226,12 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	/* XLOG stuff */
 	if (RelationNeedsWAL(onerel))
 	{
-		xl_heap_vacuum xlrec;
 		XLogRecPtr	recptr;
 
-		xlrec.nunused = uncnt;
-
-		XLogBeginInsert();
-		XLogRegisterData((char *) &xlrec, SizeOfHeapVacuum);
-
-		XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
-		XLogRegisterBufData(0, (char *) unused, uncnt * sizeof(OffsetNumber));
-
-		recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_VACUUM);
-
+		recptr = log_heap_clean(onerel, buffer,
+								NULL, 0, NULL, 0,
+								unused, uncnt,
+								vacrelstats->latestRemovedXid);
 		PageSetLSN(page, recptr);
 	}
 
@@ -2303,10 +2244,10 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	END_CRIT_SECTION();
 
 	/*
-	 * Now that we have removed the LD_DEAD items from the page, once again
+	 * Now that we have removed the dead tuples from the page, once again
 	 * check if the page has become all-visible.  The page is already marked
 	 * dirty, exclusively locked, and, if needed, a full page image has been
-	 * emitted.
+	 * emitted in the log_heap_clean() above.
 	 */
 	if (heap_page_is_all_visible(onerel, buffer, vacrelstats,
 								 &visibility_cutoff_xid,
