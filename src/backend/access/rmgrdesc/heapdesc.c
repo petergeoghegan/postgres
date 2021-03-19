@@ -121,13 +121,13 @@ heap2_desc(StringInfo buf, XLogReaderState *record)
 	uint8		info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
 
 	info &= XLOG_HEAP_OPMASK;
-	if (info == XLOG_HEAP2_CLEAN)
+	if (info == XLOG_HEAP2_PRUNE)
 	{
 		xl_heap_clean *xlrec = (xl_heap_clean *) rec;
 
 		appendStringInfo(buf, "latestRemovedXid %u", xlrec->latestRemovedXid);
 	}
-	else if (info == XLOG_HEAP2_UNUSED)
+	else if (info == XLOG_HEAP2_VACUUM)
 	{
 		xl_heap_clean *xlrec = (xl_heap_clean *) rec;
 
@@ -229,11 +229,11 @@ heap2_identify(uint8 info)
 
 	switch (info & ~XLR_INFO_MASK)
 	{
-		case XLOG_HEAP2_CLEAN:
-			id = "CLEAN";
+		case XLOG_HEAP2_PRUNE:
+			id = "PRUNE";
 			break;
-		case XLOG_HEAP2_UNUSED:
-			id = "UNUSED";
+		case XLOG_HEAP2_VACUUM:
+			id = "VACUUM";
 			break;
 		case XLOG_HEAP2_FREEZE_PAGE:
 			id = "FREEZE_PAGE";

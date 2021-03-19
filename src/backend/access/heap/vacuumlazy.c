@@ -2277,7 +2277,7 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	{
 		XLogRecPtr	recptr;
 
-		recptr = log_heap_unused(onerel, buffer, unused, uncnt);
+		recptr = log_heap_vacuum(onerel, buffer, unused, uncnt);
 
 		PageSetLSN(page, recptr);
 	}
@@ -2294,7 +2294,7 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	 * Now that we have removed the LD_DEAD items from the page, once again
 	 * check if the page has become all-visible.  The page is already marked
 	 * dirty, exclusively locked, and, if needed, a full page image has been
-	 * emitted in the log_heap_clean() above.
+	 * emitted in the log_heap_vacuum() above.
 	 */
 	if (heap_page_is_all_visible(onerel, buffer, vacrelstats,
 								 &visibility_cutoff_xid,

@@ -313,13 +313,13 @@ heap_page_prune(Relation relation, Buffer buffer,
 		MarkBufferDirty(buffer);
 
 		/*
-		 * Emit a WAL XLOG_HEAP2_CLEAN record showing what we did
+		 * Emit a WAL XLOG_HEAP2_PRUNE record showing what we did
 		 */
 		if (RelationNeedsWAL(relation))
 		{
 			XLogRecPtr	recptr;
 
-			recptr = log_heap_clean(relation, buffer,
+			recptr = log_heap_prune(relation, buffer,
 									prstate.redirected, prstate.nredirected,
 									prstate.nowdead, prstate.ndead,
 									prstate.nowunused, prstate.nunused,
@@ -807,7 +807,7 @@ heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum)
  *
  * This is split out because it is also used by heap_xlog_clean()
  * to replay the WAL record when needed after a crash.  Note that the
- * arguments are identical to those of log_heap_clean().
+ * arguments are almost identical to those of log_heap_prune().
  */
 void
 heap_page_prune_execute(Buffer buffer,

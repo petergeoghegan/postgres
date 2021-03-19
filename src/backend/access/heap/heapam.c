@@ -7528,7 +7528,7 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 			 * must have considered the original tuple header as part of
 			 * generating its own latestRemovedXid value.
 			 *
-			 * Relying on XLOG_HEAP2_CLEAN records like this is the same
+			 * Relying on XLOG_HEAP2_PRUNE records like this is the same
 			 * strategy that index vacuuming uses in all cases.  Index VACUUM
 			 * WAL records don't even have a latestRemovedXid field of their
 			 * own for this reason.
@@ -7948,19 +7948,17 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
 }
 
 /*
- * Perform XLogInsert for a heap-clean operation.  Caller must already
- * have modified the buffer and marked it dirty.
+ * Perform XLogInsert for a heap prune operation.  Caller must already have
+ * modified the buffer and marked it dirty.
  *
- * Note: prior to Postgres 8.3, the entries in the nowunused[] array were
- * zero-based tuple indexes.  Now they are one-based like other uses
- * of OffsetNumber.
+ * Requires a super-exclusive buffer lock.
  *
  * We also include latestRemovedXid, which is the greatest XID present in
  * the removed tuples. That allows recovery processing to cancel or wait
  * for long standby queries that can still see these tuples.
  */
 XLogRecPtr
-log_heap_clean(Relation reln, Buffer buffer,
+log_heap_prune(Relation reln, Buffer buffer,
 			   OffsetNumber *redirected, int nredirected,
 			   OffsetNumber *nowdead, int ndead,
 			   OffsetNumber *nowunused, int nunused,
@@ -8001,13 +7999,19 @@ log_heap_clean(Relation reln, Buffer buffer,
 		XLogRegisterBufData(0, (char *) nowunused,
 							nunused * sizeof(OffsetNumber));
 
-	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_CLEAN);
+	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_PRUNE);
 
 	return recptr;
 }
 
+/*
+ * Perform XLogInsert for a heap vacuum operation.  Caller must already have
+ * modified the buffer and marked it dirty.
+ *
+ * Requires an exclusive buffer lock only.
+ */
 XLogRecPtr
-log_heap_unused(Relation reln, Buffer buffer,
+log_heap_vacuum(Relation reln, Buffer buffer,
 				OffsetNumber *nowunused, int nunused)
 {
 	xl_heap_unused xlrec;
@@ -8027,7 +8031,7 @@ log_heap_unused(Relation reln, Buffer buffer,
 	XLogRegisterBufData(0, (char *) nowunused,
 						nunused * sizeof(OffsetNumber));
 
-	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_UNUSED);
+	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_VACUUM);
 
 	return recptr;
 }
@@ -8503,10 +8507,12 @@ ExtractReplicaIdentity(Relation relation, HeapTuple tp, bool key_changed,
 }
 
 /*
- * Handles XLOG_HEAP2_CLEAN record type
+ * Handles XLOG_HEAP2_PRUNE record type.
+ *
+ * Acquires a super-exclusive lock.
  */
 static void
-heap_xlog_clean(XLogReaderState *record)
+heap_xlog_prune(XLogReaderState *record)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_heap_clean *xlrec = (xl_heap_clean *) XLogRecGetData(record);
@@ -8521,8 +8527,8 @@ heap_xlog_clean(XLogReaderState *record)
 	 * We're about to remove tuples. In Hot Standby mode, ensure that there's
 	 * no queries running for which the removed tuples are still visible.
 	 *
-	 * Not all HEAP2_CLEAN records remove tuples with xids, so we only want to
-	 * conflict on the records that cause MVCC failures for user queries. If
+	 * Not all HEAP2_PRUNE records remove tuples with xids, so we only want to
+	 * conflict on the records that cause MVCC failures for user queries.  If
 	 * latestRemovedXid is invalid, skip conflict processing.
 	 */
 	if (InHotStandby && TransactionIdIsValid(xlrec->latestRemovedXid))
@@ -8590,8 +8596,13 @@ heap_xlog_clean(XLogReaderState *record)
 	}
 }
 
+/*
+ * Handles XLOG_HEAP2_VACUUM record type.
+ *
+ * Acquires an exclusive lock only.
+ */
 static void
-heap_xlog_unused(XLogReaderState *record)
+heap_xlog_vacuum(XLogReaderState *record)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_heap_unused *xlrec = (xl_heap_unused *) XLogRecGetData(record);
@@ -8617,11 +8628,6 @@ heap_xlog_unused(XLogReaderState *record)
 
 		nowunused = (OffsetNumber *) XLogRecGetBlockData(record, 0, &datalen);
 
-		/*
-		 * Mark with unused item pointers per the record
-		 */
-		heap_page_unused_execute(buffer, nowunused, xlrec->nunused);
-
 		/* Update all now-unused line pointers */
 		offnum = nowunused;
 		for (int i = 0; i < xlrec->nunused; i++)
@@ -8629,11 +8635,12 @@ heap_xlog_unused(XLogReaderState *record)
 			OffsetNumber off = *offnum++;
 			ItemId		lp = PageGetItemId(page, off);
 
+			Assert(ItemIdIsDead(lp));
 			ItemIdSetUnused(lp);
 		}
 
 		/*
-		 * Finally, update the page's hint bit about whether it has free pointers.
+		 * Update the page's hint bit about whether it has free pointers
 		 */
 		PageSetHasFreeLinePointers(page);
 
@@ -9764,11 +9771,11 @@ heap2_redo(XLogReaderState *record)
 
 	switch (info & XLOG_HEAP_OPMASK)
 	{
-		case XLOG_HEAP2_CLEAN:
-			heap_xlog_clean(record);
+		case XLOG_HEAP2_PRUNE:
+			heap_xlog_prune(record);
 			break;
-		case XLOG_HEAP2_UNUSED:
-			heap_xlog_unused(record);
+		case XLOG_HEAP2_VACUUM:
+			heap_xlog_vacuum(record);
 			break;
 		case XLOG_HEAP2_FREEZE_PAGE:
 			heap_xlog_freeze_page(record);

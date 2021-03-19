@@ -51,9 +51,9 @@
  * these, too.
  */
 #define XLOG_HEAP2_REWRITE		0x00
-#define XLOG_HEAP2_CLEAN		0x10
-#define XLOG_HEAP2_FREEZE_PAGE	0x20
-#define XLOG_HEAP2_UNUSED		0x30
+#define XLOG_HEAP2_PRUNE		0x10
+#define XLOG_HEAP2_VACUUM		0x20
+#define XLOG_HEAP2_FREEZE_PAGE	0x30
 #define XLOG_HEAP2_VISIBLE		0x40
 #define XLOG_HEAP2_MULTI_INSERT 0x50
 #define XLOG_HEAP2_LOCK_UPDATED 0x60
@@ -410,12 +410,12 @@ extern void heap2_desc(StringInfo buf, XLogReaderState *record);
 extern const char *heap2_identify(uint8 info);
 extern void heap_xlog_logical_rewrite(XLogReaderState *r);
 
-extern XLogRecPtr log_heap_clean(Relation reln, Buffer buffer,
+extern XLogRecPtr log_heap_prune(Relation reln, Buffer buffer,
 								 OffsetNumber *redirected, int nredirected,
 								 OffsetNumber *nowdead, int ndead,
 								 OffsetNumber *nowunused, int nunused,
 								 TransactionId latestRemovedXid);
-extern XLogRecPtr log_heap_unused(Relation reln, Buffer buffer,
+extern XLogRecPtr log_heap_vacuum(Relation reln, Buffer buffer,
 								  OffsetNumber *nowunused, int nunused);
 extern XLogRecPtr log_heap_freeze(Relation reln, Buffer buffer,
 								  TransactionId cutoff_xid, xl_heap_freeze_tuple *tuples,

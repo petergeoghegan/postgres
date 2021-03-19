@@ -1203,7 +1203,7 @@ backtrack:
 				 * as long as the callback function only considers whether the
 				 * index tuple refers to pre-cutoff heap tuples that were
 				 * certainly already pruned away during VACUUM's initial heap
-				 * scan by the time we get here. (heapam's XLOG_HEAP2_CLEAN
+				 * scan by the time we get here. (heapam's XLOG_HEAP2_PRUNE
 				 * records produce conflicts using a latestRemovedXid value
 				 * for the pointed-to heap tuples, so there is no need to
 				 * produce our own conflict now.)
