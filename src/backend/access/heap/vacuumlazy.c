@@ -901,22 +901,21 @@ scan_prune_page(Relation onerel, Buffer buf,
 				LVRelStats *vacrelstats,
 				GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
 				LVTempCounters *c, LVPrunePageState *ps,
-				LVVisMapPageState *vms)
+				LVVisMapPageState *vms,
+				VacOptTernaryValue index_cleanup)
 {
 	BlockNumber blkno;
 	Page		page;
 	OffsetNumber offnum,
 				maxoff;
-	HTSV_Result tuplestate;
 	int			nfrozen,
 				ndead;
 	LVTempCounters pc;
 	OffsetNumber deaditems[MaxHeapTuplesPerPage];
+	bool		tupgone;
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
-
-retry:
 
 	/* Initialize (or reset) page-level counters */
 	pc.num_tuples = 0;
@@ -939,9 +938,6 @@ retry:
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
 	 * requiring freezing.
-	 *
-	 * Note: If we retry having set vms.visibility_cutoff_xid it doesn't
-	 * matter -- the newest XMIN on page can't be missed this way.
 	 */
 	ps->hastup = false;
 	ps->has_dead_items = false;
@@ -951,14 +947,7 @@ retry:
 	ndead = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
 
-#ifdef DEBUG
-
-	/*
-	 * Enable this to debug the retry logic -- it's actually quite hard to hit
-	 * even with this artificial delay
-	 */
-	pg_usleep(10000);
-#endif
+	tupgone = false;
 
 	/*
 	 * Note: If you change anything in the loop below, also look at
@@ -970,7 +959,6 @@ retry:
 	{
 		ItemId		itemid;
 		HeapTupleData tuple;
-		bool		tuple_totally_frozen;
 
 		/*
 		 * Set the offset number so that we can display it along with any
@@ -1020,17 +1008,6 @@ retry:
 		tuple.t_tableOid = RelationGetRelid(onerel);
 
 		/*
-		 * DEAD tuples are almost always pruned into LP_DEAD line pointers by
-		 * heap_page_prune(), but it's possible that the tuple state changed
-		 * since heap_page_prune() looked.  Handle that here by restarting.
-		 * (See comments at the top of function for a full explanation.)
-		 */
-		tuplestate = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
-
-		if (unlikely(tuplestate == HEAPTUPLE_DEAD))
-			goto retry;
-
-		/*
 		 * The criteria for counting a tuple as live in this block need to
 		 * match what analyze.c's acquire_sample_rows() does, otherwise VACUUM
 		 * and ANALYZE may produce wildly different reltuples values, e.g.
@@ -1040,8 +1017,42 @@ retry:
 		 * VACUUM can't run inside a transaction block, which makes some cases
 		 * impossible (e.g. in-progress insert from the same transaction).
 		 */
-		switch (tuplestate)
+		switch (HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf))
 		{
+			case HEAPTUPLE_DEAD:
+
+				/*
+				 * Ordinarily, DEAD tuples would have been removed by
+				 * heap_page_prune(), but it's possible that the tuple state
+				 * changed since heap_page_prune() looked.  In particular an
+				 * INSERT_IN_PROGRESS tuple could have changed to DEAD if the
+				 * inserter aborted.  So this cannot be considered an error
+				 * condition.
+				 *
+				 * If the tuple is HOT-updated then it must only be removed by
+				 * a prune operation; so we keep it just as if it were
+				 * RECENTLY_DEAD.  Also, if it's a heap-only tuple, we choose
+				 * to keep it, because it'll be a lot cheaper to get rid of it
+				 * in the next pruning pass than to treat it like an indexed
+				 * tuple. Finally, if index cleanup is disabled, the second
+				 * heap pass will not execute, and the tuple will not get
+				 * removed, so we must treat it like any other dead tuple that
+				 * we choose to keep.
+				 *
+				 * If this were to happen for a tuple that actually needed to
+				 * be deleted, we'd be in trouble, because it'd possibly leave
+				 * a tuple below the relation's xmin horizon alive.
+				 * heap_prepare_freeze_tuple() is prepared to detect that case
+				 * and abort the transaction, preventing corruption.
+				 */
+				if (HeapTupleIsHotUpdated(&tuple) ||
+					HeapTupleIsHeapOnly(&tuple) ||
+					index_cleanup == VACOPT_TERNARY_DISABLED)
+					pc.nkeep += 1;
+				else
+					tupgone = true; /* we can delete the tuple */
+				ps->all_visible = false;
+				break;
 			case HEAPTUPLE_LIVE:
 
 				/*
@@ -1122,22 +1133,38 @@ retry:
 				break;
 		}
 
-		pc.num_tuples += 1;
-		ps->hastup = true;
+		if (tupgone)
+		{
+			deaditems[ndead++] = offnum;
+			HeapTupleHeaderAdvanceLatestRemovedXid(tuple.t_data,
+												   &vacrelstats->latestRemovedXid);
+			pc.tups_vacuumed += 1;
+			ps->has_dead_items = true;
+		}
+		else
+		{
+			bool		tuple_totally_frozen;
 
-		/*
-		 * Each non-removable tuple must be checked to see if it needs
-		 * freezing
-		 */
-		if (heap_prepare_freeze_tuple(tuple.t_data,
-									  RelFrozenXid, RelMinMxid,
-									  FreezeLimit, MultiXactCutoff,
-									  &frozen[nfrozen],
-									  &tuple_totally_frozen))
-			frozen[nfrozen++].offset = offnum;
+			pc.num_tuples += 1;
+			ps->hastup = true;
 
-		if (!tuple_totally_frozen)
-			ps->all_frozen = false;
+			/*
+			 * Each non-removable tuple must be checked to see if it needs
+			 * freezing
+			 */
+			if (heap_prepare_freeze_tuple(tuple.t_data,
+										  RelFrozenXid, RelMinMxid,
+										  FreezeLimit, MultiXactCutoff,
+										  &frozen[nfrozen],
+										  &tuple_totally_frozen))
+				frozen[nfrozen++].offset = offnum;
+
+			pc.num_tuples += 1;
+			ps->hastup = true;
+
+			if (!tuple_totally_frozen)
+				ps->all_frozen = false;
+		}
 	}
 
 	/*
@@ -1774,7 +1801,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		 * tuple headers left behind following pruning.
 		 */
 		scan_prune_page(onerel, buf, vacrelstats, vistest, frozen,
-						&c, &ps, &vms);
+						&c, &ps, &vms, params->index_cleanup);
 
 		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
