@@ -676,7 +676,9 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  *
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
  *
- * As a side effect, the page's PD_HAS_FREE_LINES hint bit is updated.
+ * Caller had better have a super-exclusive lock on page's buffer.  As a side
+ * effect, the page's PD_HAS_FREE_LINES hint bit is updated in cases where our
+ * caller (the heap prune code) sets one or more line pointers unused.
  */
 void
 PageRepairFragmentation(Page page)
@@ -771,7 +773,7 @@ PageRepairFragmentation(Page page)
 		compactify_tuples(itemidbase, nstorage, page, presorted);
 	}
 
-	/* Set hint bit for PageAddItem */
+	/* Set hint bit for PageAddItemExtended */
 	if (nunused > 0)
 		PageSetHasFreeLinePointers(page);
 	else
