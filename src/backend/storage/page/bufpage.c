@@ -250,15 +250,16 @@ PageAddItemExtended(Page page,
 		/* if no free slot, we'll put it at limit (1st open slot) */
 		if (PageHasFreeLinePointers(phdr))
 		{
-			/*
-			 * Look for "recyclable" (unused) ItemId.  We check for no storage
-			 * as well, just to be paranoid --- unused items should never have
-			 * storage.
-			 */
+			/* Look for "recyclable" (unused) ItemId */
 			for (offsetNumber = 1; offsetNumber < limit; offsetNumber++)
 			{
 				itemId = PageGetItemId(phdr, offsetNumber);
 
+				/*
+				 * We check for no storage as well, just to be paranoid;
+				 * unused items should never have storage.  Assert() that the
+				 * invariant is respected.
+				 */
 				Assert(ItemIdIsUsed(itemId) || !ItemIdHasStorage(itemId));
 
 				if (!ItemIdIsUsed(itemId) && !ItemIdHasStorage(itemId))
