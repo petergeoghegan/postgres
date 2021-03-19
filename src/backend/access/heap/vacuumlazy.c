@@ -2223,10 +2223,8 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
  * tuples with storage to unused.  These days it is strictly responsible for
  * marking LP_DEAD stub line pointers from pruning that took place during
  * lazy_scan_heap() (or from existing LP_DEAD line pointers encountered
- * there).  However, we still share infrastructure with heap pruning, and
- * still require a super-exclusive lock -- this should now be unnecessary.  In
- * the future we should be able to optimize this -- it can work with only an
- * exclusive lock.
+ * there).  Note that we only require an exclusive lock, not a super-exclusive
+ * lock.  Note also that we cannot defragment the page.
  */
 static int
 lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
