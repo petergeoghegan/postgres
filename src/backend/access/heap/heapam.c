@@ -7964,7 +7964,7 @@ log_heap_prune(Relation reln, Buffer buffer,
 			   OffsetNumber *nowunused, int nunused,
 			   TransactionId latestRemovedXid)
 {
-	xl_heap_clean xlrec;
+	xl_heap_prune xlrec;
 	XLogRecPtr	recptr;
 
 	/* Caller should not call me on a non-WAL-logged relation */
@@ -7975,7 +7975,7 @@ log_heap_prune(Relation reln, Buffer buffer,
 	xlrec.ndead = ndead;
 
 	XLogBeginInsert();
-	XLogRegisterData((char *) &xlrec, SizeOfHeapClean);
+	XLogRegisterData((char *) &xlrec, SizeOfHeapPrune);
 
 	XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
 
@@ -8014,7 +8014,7 @@ XLogRecPtr
 log_heap_vacuum(Relation reln, Buffer buffer,
 				OffsetNumber *nowunused, int nunused)
 {
-	xl_heap_unused xlrec;
+	xl_heap_vacuum xlrec;
 	XLogRecPtr	recptr;
 
 	/* Caller should not call me on a non-WAL-logged relation */
@@ -8024,7 +8024,7 @@ log_heap_vacuum(Relation reln, Buffer buffer,
 	xlrec.nunused = nunused;
 
 	XLogBeginInsert();
-	XLogRegisterData((char *) &xlrec, SizeOfHeapUnused);
+	XLogRegisterData((char *) &xlrec, SizeOfHeapVacuum);
 
 	XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
 
@@ -8515,7 +8515,7 @@ static void
 heap_xlog_prune(XLogReaderState *record)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
-	xl_heap_clean *xlrec = (xl_heap_clean *) XLogRecGetData(record);
+	xl_heap_prune *xlrec = (xl_heap_prune *) XLogRecGetData(record);
 	Buffer		buffer;
 	RelFileNode rnode;
 	BlockNumber blkno;
@@ -8605,7 +8605,7 @@ static void
 heap_xlog_vacuum(XLogReaderState *record)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
-	xl_heap_unused *xlrec = (xl_heap_unused *) XLogRecGetData(record);
+	xl_heap_vacuum *xlrec = (xl_heap_vacuum *) XLogRecGetData(record);
 	Buffer		buffer;
 	RelFileNode rnode;
 	BlockNumber blkno;

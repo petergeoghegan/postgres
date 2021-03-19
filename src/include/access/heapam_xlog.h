@@ -237,41 +237,28 @@ typedef struct xl_heap_update
  * Note that nunused is not explicitly stored, but may be found by reference
  * to the total record length.
  */
-typedef struct xl_heap_clean
+typedef struct xl_heap_prune
 {
 	TransactionId latestRemovedXid;
 	uint16		nredirected;
 	uint16		ndead;
 	/* OFFSET NUMBERS are in the block reference 0 */
-} xl_heap_clean;
+} xl_heap_prune;
 
-#define SizeOfHeapClean (offsetof(xl_heap_clean, ndead) + sizeof(uint16))
+#define SizeOfHeapPrune (offsetof(xl_heap_prune, ndead) + sizeof(uint16))
 
 /*
  * The mark unused record is similar, but can only mark items unused
  *
  * Use by heap vacuuming, which does not need a super-exclusive lock
  */
-typedef struct xl_heap_unused
+typedef struct xl_heap_vacuum
 {
 	uint16		nunused ;
 	/* OFFSET NUMBERS are in the block reference 0 */
-} xl_heap_unused;
+} xl_heap_vacuum;
 
-#define SizeOfHeapUnused (offsetof(xl_heap_unused, nunused) + sizeof(uint16))
-
-/*
- * Cleanup_info is required in some cases during a lazy VACUUM.
- * Used for reporting the results of HeapTupleHeaderAdvanceLatestRemovedXid()
- * see vacuumlazy.c for full explanation
- */
-typedef struct xl_heap_cleanup_info
-{
-	RelFileNode node;
-	TransactionId latestRemovedXid;
-} xl_heap_cleanup_info;
-
-#define SizeOfHeapCleanupInfo (sizeof(xl_heap_cleanup_info))
+#define SizeOfHeapVacuum (offsetof(xl_heap_vacuum, nunused) + sizeof(uint16))
 
 /* flags for infobits_set */
 #define XLHL_XMAX_IS_MULTI		0x01
