@@ -258,7 +258,7 @@ PageAddItemExtended(Page page,
 				/*
 				 * We check for no storage as well, just to be paranoid;
 				 * unused items should never have storage.  Assert() that the
-				 * invariant is respected.
+				 * invariant is respected too.
 				 */
 				Assert(ItemIdIsUsed(itemId) || !ItemIdHasStorage(itemId));
 
