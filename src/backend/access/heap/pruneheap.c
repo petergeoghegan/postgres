@@ -827,7 +827,7 @@ heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum)
 /*
  * Perform the actual page changes needed by heap_page_prune.
  * It is expected that the caller has a super-exclusive lock on the
- * buffer, and is inside a critical section.
+ * buffer.
  */
 void
 heap_page_prune_execute(Buffer buffer,
