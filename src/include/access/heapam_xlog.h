@@ -245,7 +245,14 @@ typedef struct xl_heap_clean
 	/* OFFSET NUMBERS are in the block reference 0 */
 } xl_heap_clean;
 
+typedef struct xl_heap_unused
+{
+	uint16		nunused ;
+	/* OFFSET NUMBERS are in the block reference 0 */
+} xl_heap_unused;
+
 #define SizeOfHeapClean (offsetof(xl_heap_clean, ndead) + sizeof(uint16))
+#define SizeOfHeapUnused (offsetof(xl_heap_unused, nunused) + sizeof(uint16))
 
 /*
  * Cleanup_info is required in some cases during a lazy VACUUM.
@@ -397,11 +404,13 @@ extern void heap2_desc(StringInfo buf, XLogReaderState *record);
 extern const char *heap2_identify(uint8 info);
 extern void heap_xlog_logical_rewrite(XLogReaderState *r);
 
-extern XLogRecPtr log_heap_clean(Relation reln, Buffer buffer, bool unusedmark,
+extern XLogRecPtr log_heap_clean(Relation reln, Buffer buffer,
 								 OffsetNumber *redirected, int nredirected,
 								 OffsetNumber *nowdead, int ndead,
 								 OffsetNumber *nowunused, int nunused,
 								 TransactionId latestRemovedXid);
+extern XLogRecPtr log_heap_unused(Relation reln, Buffer buffer,
+								  OffsetNumber *nowunused, int nunused);
 extern XLogRecPtr log_heap_freeze(Relation reln, Buffer buffer,
 								  TransactionId cutoff_xid, xl_heap_freeze_tuple *tuples,
 								  int ntuples);

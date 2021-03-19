@@ -292,7 +292,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * Apply the planned item changes, then repair page fragmentation, and
 		 * update the page's hint bit about whether it has free line pointers.
 		 */
-		heap_page_prune_execute(buffer, false,
+		heap_page_prune_execute(buffer,
 								prstate.redirected, prstate.nredirected,
 								prstate.nowdead, prstate.ndead,
 								prstate.nowunused, prstate.nunused);
@@ -319,7 +319,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 		{
 			XLogRecPtr	recptr;
 
-			recptr = log_heap_clean(relation, buffer, false,
+			recptr = log_heap_clean(relation, buffer,
 									prstate.redirected, prstate.nredirected,
 									prstate.nowdead, prstate.ndead,
 									prstate.nowunused, prstate.nunused,
@@ -810,7 +810,7 @@ heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum)
  * arguments are identical to those of log_heap_clean().
  */
 void
-heap_page_prune_execute(Buffer buffer, bool unusedmark,
+heap_page_prune_execute(Buffer buffer,
 						OffsetNumber *redirected, int nredirected,
 						OffsetNumber *nowdead, int ndead,
 						OffsetNumber *nowunused, int nunused)
@@ -854,16 +854,30 @@ heap_page_prune_execute(Buffer buffer, bool unusedmark,
 	 * Finally, repair any fragmentation, and update the page's hint bit about
 	 * whether it has free pointers.
 	 */
-	if (!unusedmark)
-		PageRepairFragmentation(page);
-	else
-	{
-		Assert(nunused > 0);
-		Assert(ndead == 0 && nredirected == 0);
-		PageSetHasFreeLinePointers(page);
-	}
+	PageRepairFragmentation(page);
 }
 
+void
+heap_page_unused_execute(Buffer buffer, OffsetNumber *nowunused, int nunused)
+{
+	Page		page = (Page) BufferGetPage(buffer);
+	OffsetNumber *offnum;
+
+	/* Update all now-unused line pointers */
+	offnum = nowunused;
+	for (int i = 0; i < nunused; i++)
+	{
+		OffsetNumber off = *offnum++;
+		ItemId		lp = PageGetItemId(page, off);
+
+		ItemIdSetUnused(lp);
+	}
+
+	/*
+	 * Finally, update the page's hint bit about whether it has free pointers.
+	 */
+	PageSetHasFreeLinePointers(page);
+}
 
 /*
  * For all items in this page, find their respective root line pointers.

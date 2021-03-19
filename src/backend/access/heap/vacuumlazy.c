@@ -2277,10 +2277,8 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	{
 		XLogRecPtr	recptr;
 
-		recptr = log_heap_clean(onerel, buffer, true,
-								NULL, 0, NULL, 0,
-								unused, uncnt,
-								InvalidTransactionId);
+		recptr = log_heap_unused(onerel, buffer, unused, uncnt);
+
 		PageSetLSN(page, recptr);
 	}
 

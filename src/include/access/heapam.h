@@ -182,10 +182,12 @@ extern int	heap_page_prune(Relation relation, Buffer buffer,
 							TimestampTz old_snap_ts_ts,
 							bool report_stats,
 							OffsetNumber *off_loc);
-extern void heap_page_prune_execute(Buffer buffer, bool unusedmark,
+extern void heap_page_prune_execute(Buffer buffer,
 									OffsetNumber *redirected, int nredirected,
 									OffsetNumber *nowdead, int ndead,
 									OffsetNumber *nowunused, int nunused);
+extern void heap_page_unused_execute(Buffer buffer, OffsetNumber *nowunused,
+									 int nunused);
 extern void heap_get_root_tuples(Page page, OffsetNumber *root_offsets);
 
 /* in heap/vacuumlazy.c */

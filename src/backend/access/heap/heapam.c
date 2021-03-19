@@ -7960,7 +7960,7 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
  * for long standby queries that can still see these tuples.
  */
 XLogRecPtr
-log_heap_clean(Relation reln, Buffer buffer, bool unusedmark,
+log_heap_clean(Relation reln, Buffer buffer,
 			   OffsetNumber *redirected, int nredirected,
 			   OffsetNumber *nowdead, int ndead,
 			   OffsetNumber *nowunused, int nunused,
@@ -7968,11 +7968,9 @@ log_heap_clean(Relation reln, Buffer buffer, bool unusedmark,
 {
 	xl_heap_clean xlrec;
 	XLogRecPtr	recptr;
-	uint8		info;
 
 	/* Caller should not call me on a non-WAL-logged relation */
 	Assert(RelationNeedsWAL(reln));
-	Assert(!unusedmark || (ndead == 0 && nredirected == 0));
 
 	xlrec.latestRemovedXid = latestRemovedXid;
 	xlrec.nredirected = nredirected;
@@ -8003,8 +8001,33 @@ log_heap_clean(Relation reln, Buffer buffer, bool unusedmark,
 		XLogRegisterBufData(0, (char *) nowunused,
 							nunused * sizeof(OffsetNumber));
 
-	info = unusedmark ? XLOG_HEAP2_UNUSED : XLOG_HEAP2_CLEAN;
-	recptr = XLogInsert(RM_HEAP2_ID, info);
+	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_CLEAN);
+
+	return recptr;
+}
+
+XLogRecPtr
+log_heap_unused(Relation reln, Buffer buffer,
+				OffsetNumber *nowunused, int nunused)
+{
+	xl_heap_unused xlrec;
+	XLogRecPtr	recptr;
+
+	/* Caller should not call me on a non-WAL-logged relation */
+	Assert(RelationNeedsWAL(reln));
+	Assert(nunused > 0);
+
+	xlrec.nunused = nunused;
+
+	XLogBeginInsert();
+	XLogRegisterData((char *) &xlrec, SizeOfHeapUnused);
+
+	XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
+
+	XLogRegisterBufData(0, (char *) nowunused,
+						nunused * sizeof(OffsetNumber));
+
+	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_UNUSED);
 
 	return recptr;
 }
@@ -8483,7 +8506,7 @@ ExtractReplicaIdentity(Relation relation, HeapTuple tp, bool key_changed,
  * Handles XLOG_HEAP2_CLEAN record type
  */
 static void
-heap_xlog_clean(XLogReaderState *record, bool unusedmark)
+heap_xlog_clean(XLogReaderState *record)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_heap_clean *xlrec = (xl_heap_clean *) XLogRecGetData(record);
@@ -8497,18 +8520,19 @@ heap_xlog_clean(XLogReaderState *record, bool unusedmark)
 	/*
 	 * We're about to remove tuples. In Hot Standby mode, ensure that there's
 	 * no queries running for which the removed tuples are still visible.
+	 *
+	 * Not all HEAP2_CLEAN records remove tuples with xids, so we only want to
+	 * conflict on the records that cause MVCC failures for user queries. If
+	 * latestRemovedXid is invalid, skip conflict processing.
 	 */
 	if (InHotStandby && TransactionIdIsValid(xlrec->latestRemovedXid))
-	{
-		Assert(!unusedmark);
 		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, rnode);
-	}
 
 	/*
-	 * If we have a full-page image, restore it (using a cleanup lock when
-	 * we're pruning rather than just LP_UNUSED marking) and we're done.
+	 * If we have a full-page image, restore it (using a cleanup lock) and
+	 * we're done.
 	 */
-	action = XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, !unusedmark,
+	action = XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, true,
 										   &buffer);
 	if (action == BLK_NEEDS_REDO)
 	{
@@ -8533,7 +8557,7 @@ heap_xlog_clean(XLogReaderState *record, bool unusedmark)
 		Assert(nunused >= 0);
 
 		/* Update all line pointers per the record, and repair fragmentation */
-		heap_page_prune_execute(buffer, unusedmark,
+		heap_page_prune_execute(buffer,
 								redirected, nredirected,
 								nowdead, ndead,
 								nowunused, nunused);
@@ -8542,6 +8566,60 @@ heap_xlog_clean(XLogReaderState *record, bool unusedmark)
 		 * Note: we don't worry about updating the page's prunability hints.
 		 * At worst this will cause an extra prune cycle to occur soon.
 		 */
+
+		PageSetLSN(page, lsn);
+		MarkBufferDirty(buffer);
+	}
+
+	if (BufferIsValid(buffer))
+	{
+		Size		freespace = PageGetHeapFreeSpace(BufferGetPage(buffer));
+
+		UnlockReleaseBuffer(buffer);
+
+		/*
+		 * After cleaning records from a page, it's useful to update the FSM
+		 * about it, as it may cause the page become target for insertions
+		 * later even if vacuum decides not to visit it (which is possible if
+		 * gets marked all-visible.)
+		 *
+		 * Do this regardless of a full-page image being applied, since the
+		 * FSM data is not in the page anyway.
+		 */
+		XLogRecordPageWithFreeSpace(rnode, blkno, freespace);
+	}
+}
+
+static void
+heap_xlog_unused(XLogReaderState *record)
+{
+	XLogRecPtr	lsn = record->EndRecPtr;
+	xl_heap_unused *xlrec = (xl_heap_unused *) XLogRecGetData(record);
+	Buffer		buffer;
+	RelFileNode rnode;
+	BlockNumber blkno;
+	XLogRedoAction action;
+
+	XLogRecGetBlockTag(record, 0, &rnode, NULL, &blkno);
+
+	/*
+	 * If we have a full-page image, restore it	(without using a cleanup lock)
+	 * and we're done.
+	 */
+	action = XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, false,
+										   &buffer);
+	if (action == BLK_NEEDS_REDO)
+	{
+		Page		page = (Page) BufferGetPage(buffer);
+		OffsetNumber *nowunused;
+		Size		datalen;
+
+		nowunused = (OffsetNumber *) XLogRecGetBlockData(record, 0, &datalen);
+
+		/*
+		 * Mark with unused item pointers per the record
+		 */
+		heap_page_unused_execute(buffer, nowunused, xlrec->nunused);
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(buffer);
@@ -9671,10 +9749,10 @@ heap2_redo(XLogReaderState *record)
 	switch (info & XLOG_HEAP_OPMASK)
 	{
 		case XLOG_HEAP2_CLEAN:
-			heap_xlog_clean(record, false);
+			heap_xlog_clean(record);
 			break;
 		case XLOG_HEAP2_UNUSED:
-			heap_xlog_clean(record, true);
+			heap_xlog_unused(record);
 			break;
 		case XLOG_HEAP2_FREEZE_PAGE:
 			heap_xlog_freeze_page(record);
