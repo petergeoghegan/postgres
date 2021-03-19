@@ -857,28 +857,6 @@ heap_page_prune_execute(Buffer buffer,
 	PageRepairFragmentation(page);
 }
 
-void
-heap_page_unused_execute(Buffer buffer, OffsetNumber *nowunused, int nunused)
-{
-	Page		page = (Page) BufferGetPage(buffer);
-	OffsetNumber *offnum;
-
-	/* Update all now-unused line pointers */
-	offnum = nowunused;
-	for (int i = 0; i < nunused; i++)
-	{
-		OffsetNumber off = *offnum++;
-		ItemId		lp = PageGetItemId(page, off);
-
-		ItemIdSetUnused(lp);
-	}
-
-	/*
-	 * Finally, update the page's hint bit about whether it has free pointers.
-	 */
-	PageSetHasFreeLinePointers(page);
-}
-
 /*
  * For all items in this page, find their respective root line pointers.
  * If item k is part of a HOT-chain with root at item j, then we set

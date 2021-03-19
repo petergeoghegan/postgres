@@ -8613,6 +8613,7 @@ heap_xlog_unused(XLogReaderState *record)
 		Page		page = (Page) BufferGetPage(buffer);
 		OffsetNumber *nowunused;
 		Size		datalen;
+		OffsetNumber *offnum;
 
 		nowunused = (OffsetNumber *) XLogRecGetBlockData(record, 0, &datalen);
 
@@ -8620,6 +8621,21 @@ heap_xlog_unused(XLogReaderState *record)
 		 * Mark with unused item pointers per the record
 		 */
 		heap_page_unused_execute(buffer, nowunused, xlrec->nunused);
+
+		/* Update all now-unused line pointers */
+		offnum = nowunused;
+		for (int i = 0; i < xlrec->nunused; i++)
+		{
+			OffsetNumber off = *offnum++;
+			ItemId		lp = PageGetItemId(page, off);
+
+			ItemIdSetUnused(lp);
+		}
+
+		/*
+		 * Finally, update the page's hint bit about whether it has free pointers.
+		 */
+		PageSetHasFreeLinePointers(page);
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(buffer);

@@ -186,8 +186,6 @@ extern void heap_page_prune_execute(Buffer buffer,
 									OffsetNumber *redirected, int nredirected,
 									OffsetNumber *nowdead, int ndead,
 									OffsetNumber *nowunused, int nunused);
-extern void heap_page_unused_execute(Buffer buffer, OffsetNumber *nowunused,
-									 int nunused);
 extern void heap_get_root_tuples(Page page, OffsetNumber *root_offsets);
 
 /* in heap/vacuumlazy.c */
