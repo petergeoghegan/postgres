@@ -258,6 +258,9 @@ PageAddItemExtended(Page page,
 			for (offsetNumber = 1; offsetNumber < limit; offsetNumber++)
 			{
 				itemId = PageGetItemId(phdr, offsetNumber);
+
+				Assert(ItemIdIsUsed(itemId) || !ItemIdHasStorage(itemId));
+
 				if (!ItemIdIsUsed(itemId) && !ItemIdHasStorage(itemId))
 					break;
 			}
