@@ -8438,7 +8438,7 @@ heap_xlog_prune(XLogReaderState *record)
 	 * We're about to remove tuples. In Hot Standby mode, ensure that there's
 	 * no queries running for which the removed tuples are still visible.
 	 */
-	if (InHotStandby && TransactionIdIsValid(xlrec->latestRemovedXid))
+	if (InHotStandby)
 		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, rnode);
 
 	/*
