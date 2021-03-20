@@ -2913,7 +2913,7 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate)
  * Called at the end of a btvacuumscan(), just before free space map vacuuming
  * takes place.
  *
- * Frees memory allocated by _bt_pendingfsm_init().
+ * Frees memory allocated by _bt_pendingfsm_init(), if any.
  */
 void
 _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
