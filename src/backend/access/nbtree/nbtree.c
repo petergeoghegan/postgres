@@ -942,8 +942,8 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  "_bt_pagedel",
 												  ALLOCSET_DEFAULT_SIZES);
 
-	/* Set up remaining vstate fields used by _bt_pendingfsm_finalize */
-	vstate.grow = true;
+	/* Initialize vstate fields used by _bt_pendingfsm_finalize */
+	vstate.grow = false;
 	vstate.full = false;
 	vstate.npendingpagesspace = 0;
 	vstate.npendingpages = 0;
@@ -951,6 +951,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	vstate.maxnpendingpages = 0;
 	vstate.maxnpendingpages = 0;
 	vstate.pendingpages = NULL;
+	/* Consider applying _bt_pendingfsm_finalize optimization */
 	_bt_pendingfsm_init(rel, &vstate);
 
 	/*

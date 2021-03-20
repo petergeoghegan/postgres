@@ -29,6 +29,7 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
+#include "postmaster/autovacuum.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -2890,8 +2891,12 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate)
 {
+	if (!IsAutoVacuumWorkerProcess())
+		return;
+
 	vstate->grow = true;
 	vstate->full = false;
+
 	vstate->npendingpagesspace = 512;
 	vstate->npendingpages = 0;
 	vstate->maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
@@ -2920,7 +2925,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 	if (vstate->npendingpages == 0)
 	{
 		/* Just free memory when nothing to do */
-		pfree(vstate->pendingpages);
+		if (vstate->pendingpages)
+			pfree(vstate->pendingpages);
 		return;
 	}
 
