@@ -2915,6 +2915,13 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 
 	Assert(stats->pages_newly_deleted >= vstate->npendingpages);
 
+	if (vstate->npendingpages == 0)
+	{
+		/* Just free memory when nothing to do */
+		pfree(vstate->pendingpages);
+		return;
+	}
+
 	/*
 	 * Recompute VACUUM XID boundaries.
 	 *
