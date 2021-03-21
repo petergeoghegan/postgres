@@ -2905,7 +2905,7 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	 * matters because faster vacuuming makes this optimization less likely to
 	 * work out.  In general it can only work out when other backends that
 	 * would otherwise be at risk of observing inconsistencies go away
-	 * naturally.
+	 * naturally before we reach _bt_pendingfsm_finalize().
 	 *
 	 * There is another reason why the optimization is restricted to
 	 * autovacuum worker processes; see comments in _bt_pendingfsm_finalize()
@@ -2936,9 +2936,8 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 
 /*
  * Place any newly deleted pages (i.e. pages that _bt_pagedel() deleted during
- * the ongoing VACUUM operation) into the free space map -- provided it is
- * actually safe to do so by now.  Without this optimization we'd always have
- * to wait until the next VACUUM operation to place these pages in the FSM.
+ * the ongoing VACUUM operation) into the free space map -- though only when
+ * it is actually safe to do so by now.
  *
  * Called at the end of a btvacuumscan(), just before free space map vacuuming
  * takes place.
@@ -2970,6 +2969,12 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 	 * make here to notice if and when safexid values from pages this same
 	 * VACUUM operation deleted are sufficiently old to allow recycling to
 	 * take place safely.
+	 *
+	 * Note that we may effectively exclude the current backend from
+	 * consideration here, because it is running VACUUM.  This is another
+	 * reason why we only perform the optimization inside an autovacuum
+	 * worker.  We are not actually concerned about pruning safety here,
+	 * though.
 	 */
 	GetOldestNonRemovableTransactionId(NULL);
 
