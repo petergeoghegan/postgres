@@ -936,6 +936,11 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	vstate.callback_state = callback_state;
 	vstate.cycleid = cycleid;
 
+	/* Create a temporary memory context to run _bt_pagedel in */
+	vstate.pagedelcontext = AllocSetContextCreate(CurrentMemoryContext,
+												  "_bt_pagedel",
+												  ALLOCSET_DEFAULT_SIZES);
+
 	/* Initialize vstate fields used by _bt_pendingfsm_finalize */
 	vstate.bufsize = 0;
 	vstate.maxbufsize = 0;
@@ -943,11 +948,6 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	vstate.npendingpages = 0;
 	/* Consider applying _bt_pendingfsm_finalize optimization */
 	_bt_pendingfsm_init(rel, &vstate, (callback == NULL));
-
-	/* Create a temporary memory context to run _bt_pagedel in */
-	vstate.pagedelcontext = AllocSetContextCreate(CurrentMemoryContext,
-												  "_bt_pagedel",
-												  ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in

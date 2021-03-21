@@ -2955,8 +2955,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		return;
 	}
 
-	elog(WARNING, "bufsize: %d maxbufsize %d, npendingpages %d", vstate->bufsize, vstate->maxbufsize, vstate->npendingpages);
-	//MemoryContextStats(CurrentMemoryContext);
+	elog(WARNING, "bufsize: %d maxbufsize %d, npendingpages %d",
+		 vstate->bufsize, vstate->maxbufsize, vstate->npendingpages);
 
 	/* Sleep for 5 seconds */
 	pg_usleep(5000000L);
@@ -2988,7 +2988,10 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		 * to the array in safexid order.
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
+		{
+			elog(WARNING, "i: %d", i);
 			break;
+		}
 
 		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
