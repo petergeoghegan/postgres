@@ -280,7 +280,7 @@ BTPageGetDeleteXid(Page page)
  *
  * This exists to centralize the policy on which deleted pages are now safe to
  * re-use.  However, _bt_pendingfsm_finalize() duplicates some of the same
- * logic because it doesn't work with pages -- keep the two in sync.
+ * logic because it doesn't work directly with pages -- keep the two in sync.
  *
  * Note: PageIsNew() pages are always safe to recycle, but we can't deal with
  * them here (caller is responsible for that case themselves).  Caller might
@@ -314,11 +314,9 @@ BTPageIsRecyclable(Page page)
 }
 
 /*
- * BTVacState is private nbtree.c state used during VACUUM.  It is exported
- * for use by page deletion related code in nbtpage.c.  This includes state
- * managed by _bt_pendingfsm_init() which is used to figure out if it's safe
- * to place newly deleted pages into the FSM without waiting for the next
- * VACUUM to get to them.
+ * BTVacState and BTPendingFSMPageInfo are private nbtree.c state used during
+ * VACUUM.  They are exported for use by page deletion related code in
+ * nbtpage.c.
  */
 typedef struct BTPendingFSMPageInfo
 {
@@ -328,9 +326,6 @@ typedef struct BTPendingFSMPageInfo
 
 typedef struct BTVacState
 {
-	/*
-	 * State managed by btvacuumscan()
-	 */
 	IndexVacuumInfo *info;
 	IndexBulkDeleteResult *stats;
 	IndexBulkDeleteCallback callback;
@@ -339,14 +334,12 @@ typedef struct BTVacState
 	MemoryContext pagedelcontext;
 
 	/*
-	 * State manages by _bt_pendingfsm_init() and _bt_pendingfsm_finalize()
+	 * _bt_pendingfsm_finalize() state
 	 */
-	bool		bufgrowing;		/* Still willing to enlarge buffer? */
-	bool		buffull;		/* No more space? */
-	int			bufsize;		/* current space in # elements */
+	int			bufsize;		/* pendingpages space (in # elements) */
+	int			maxbufsize;		/* max bufsize that respects work_mem */
 	BTPendingFSMPageInfo *pendingpages; /* One entry per newly deleted page */
 	int			npendingpages;	/* current # valid pendingpages */
-	int			maxnpendingpages;	/* max # that respects work_mem */
 } BTVacState;
 
 /*

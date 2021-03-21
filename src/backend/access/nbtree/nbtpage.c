@@ -29,7 +29,6 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
-#include "postmaster/autovacuum.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -2888,7 +2887,11 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  * optimization.
  *
  * Called at the start of a btvacuumscan().  We expect to allocate memory
- * inside VACUUM's top-level memory context here.
+ * inside VACUUM's top-level memory context here.  The working buffer is
+ * subject to a limit based on work_mem.  Our strategy when the array can no
+ * longer grow within the bounds of that limit is to stop saving additional
+ * newly deleted pages, while proceeding as usual with the pages that we can
+ * fit.
  *
  * Caller's cleanuponly argument indicates if ongoing VACUUM is one where the
  * core system called btvacuumcleanup() without first calling btbulkdelete()
@@ -2897,7 +2900,7 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 {
-	int64		maxnpendingpages;
+	int64		maxbufsize;
 
 	/*
 	 * Don't bother with optimization in cleanup-only case -- it's all but
@@ -2908,22 +2911,22 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	if (cleanuponly)
 		return;
 
-	vstate->bufgrowing = true;
-	vstate->buffull = false;
+	/*
+	 * Initial array size is 256.  Also cap maximum size of array so that we
+	 * always respect work_mem.
+	 */
 	vstate->bufsize = 256;
-	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * 256);
-	vstate->npendingpages = 0;
-
-	/* Cap maximum size of array so that we respect work_mem */
-	maxnpendingpages = work_mem * 1024L / sizeof(BTPendingFSMPageInfo);
-	maxnpendingpages = Min(maxnpendingpages, INT_MAX);
-	maxnpendingpages = Min(maxnpendingpages,
+	maxbufsize = work_mem * 1024L / sizeof(BTPendingFSMPageInfo);
+	maxbufsize = Min(maxbufsize, INT_MAX);
+	maxbufsize = Min(maxbufsize,
 						   MaxAllocSize / sizeof(BTPendingFSMPageInfo));
 	/* But stay sane with small work_mem */
-	maxnpendingpages = Max(maxnpendingpages, 512);
+	maxbufsize = Max(maxbufsize, vstate->bufsize);
+	vstate->maxbufsize = maxbufsize;
 
-	/* Okay, we have a final maximum size for array */
-	vstate->maxnpendingpages = maxnpendingpages;
+	vstate->pendingpages =
+			palloc(sizeof(BTPendingFSMPageInfo) * vstate->bufsize);
+	vstate->npendingpages = 0;
 }
 
 /*
@@ -2962,12 +2965,6 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 	 * make here to notice if and when safexid values from pages this same
 	 * VACUUM operation deleted are sufficiently old to allow recycling to
 	 * take place safely.
-	 *
-	 * Note that we may effectively exclude the current backend from
-	 * consideration here, because it is running VACUUM.  This is another
-	 * reason why we only perform the optimization inside an autovacuum
-	 * worker.  We are not actually concerned about pruning safety here,
-	 * though.
 	 */
 	GetOldestNonRemovableTransactionId(NULL);
 
@@ -2996,18 +2993,16 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 
 /*
  * Maintain array of pages that were deleted during current btvacuumscan()
- * call, for use in _bt_pendingfsm_finalize().
- *
- * Need to respect work_mem/maxndeletedspace limitation on size of deleted
- * array.  Our strategy when the array can no longer grow within the bounds of
- * work_mem is simple: keep earlier entries (which are likelier to be
- * recyclable in the end), but stop saving new entries.
+ * call, for use in _bt_pendingfsm_finalize()
  */
 static void
 _bt_pendingfsm_add(BTVacState *vstate,
 				   BlockNumber target,
 				   FullTransactionId safexid)
 {
+	Assert(vstate->npendingpages <= vstate->bufsize);
+	Assert(vstate->bufsize <= vstate->maxbufsize);
+
 #ifdef USE_ASSERT_CHECKING
 	/*
 	 * Verify an assumption made by _bt_pendingfsm_finalize(): pages from the
@@ -3024,33 +3019,23 @@ _bt_pendingfsm_add(BTVacState *vstate,
 #endif
 
 	/*
-	 * If the space is full it either filled to work_mem capacity, or the
-	 * optimization was not chosen.  Either way we cannot remember the details
-	 * of this page.
+	 * If temp buffer reaches maxbufsize/work_mem capacity then we discard
+	 * information about this page.
+	 *
+	 * Note that this also covers the case where we opted to not use the
+	 * optimization in _bt_pendingfsm_init().
 	 */
-	if (vstate->buffull)
+	if (vstate->npendingpages == vstate->maxbufsize)
 		return;
 
-	if (vstate->npendingpages >= vstate->bufsize)
+	/* Consider enlarging buffer */
+	if (vstate->npendingpages == vstate->bufsize)
 	{
 		int			newbufsize = vstate->bufsize * 2;
 
-		if (!vstate->bufgrowing)
-		{
-			/*
-			 * We have completely run out of space -- drop this page, as well
-			 * as any others that get deleted later
-			 */
-			vstate->buffull = true;
-			return;
-		}
-
-		if (newbufsize >= vstate->bufsize)
-		{
-			/* We can only grow array once more */
-			newbufsize = vstate->bufsize;
-			vstate->bufgrowing = false;
-		}
+		/* Respect work_mem */
+		if (newbufsize > vstate->maxbufsize)
+			newbufsize = vstate->maxbufsize;
 
 		vstate->bufsize = newbufsize;
 		vstate->pendingpages =
@@ -3058,6 +3043,7 @@ _bt_pendingfsm_add(BTVacState *vstate,
 					 sizeof(BTPendingFSMPageInfo) * vstate->bufsize);
 	}
 
+	/* Save metadata for newly deleted page */
 	vstate->pendingpages[vstate->npendingpages].target = target;
 	vstate->pendingpages[vstate->npendingpages].safexid = safexid;
 	vstate->npendingpages++;

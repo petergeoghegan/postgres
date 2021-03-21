@@ -942,12 +942,10 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 												  ALLOCSET_DEFAULT_SIZES);
 
 	/* Initialize vstate fields used by _bt_pendingfsm_finalize */
-	vstate.bufgrowing = false;
-	vstate.buffull = true;
 	vstate.bufsize = 0;
+	vstate.maxbufsize = 0;
 	vstate.pendingpages = NULL;
 	vstate.npendingpages = 0;
-	vstate.maxnpendingpages = 0;
 	/* Consider applying _bt_pendingfsm_finalize optimization */
 	_bt_pendingfsm_init(rel, &vstate, (callback == NULL));
 
