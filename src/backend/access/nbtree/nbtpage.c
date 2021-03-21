@@ -2989,10 +2989,13 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
 		{
-			elog(WARNING, "i: %d", i);
+			elog(WARNING, "failed with i %d blkno %u of rel %s",
+				 i, target, RelationGetRelationName(rel));
 			break;
 		}
 
+		elog(WARNING, "successful with i %d blkno %u of rel %s",
+			 i, target, RelationGetRelationName(rel));
 		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
 	}
