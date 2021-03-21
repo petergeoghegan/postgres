@@ -35,6 +35,7 @@
 #include "storage/predicate.h"
 #include "storage/procarray.h"
 #include "utils/memdebug.h"
+#include "utils/memutils.h"
 #include "utils/snapmgr.h"
 
 static BTMetaPageData *_bt_getmeta(Relation rel, Buffer metabuf);
@@ -2897,6 +2898,8 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 {
+	int64		maxnpendingpages;
+
 	/*
 	 * The optimization is only used inside autovacuum worker processes. There
 	 * are a couple of reasons for this.  Manual VACUUMs tend to finish far
@@ -2931,12 +2934,15 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	vstate->npendingpages = 0;
 
 	/* Cap maximum size of array so that we respect work_mem */
-	vstate->maxnpendingpages =
-		((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
-	vstate->maxnpendingpages =
-		Min(vstate->maxnpendingpages, MaxBlockNumber);
-	vstate->maxnpendingpages =
-		Max(vstate->maxnpendingpages, vstate->npendingpagesspace);
+	maxnpendingpages = work_mem * 1024L / sizeof(BTPendingFSMPageInfo);
+	maxnpendingpages = Min(maxnpendingpages, INT_MAX);
+	maxnpendingpages = Min(maxnpendingpages,
+						   MaxAllocSize / sizeof(BTPendingFSMPageInfo));
+	/* But stay sane with small work_mem */
+	maxnpendingpages = Max(maxnpendingpages, vstate->npendingpagesspace);
+
+	/* Okay, we have a final maximum size for array */
+	vstate->maxnpendingpages = maxnpendingpages;
 }
 
 /*
@@ -3037,7 +3043,7 @@ _bt_pendingfsm_add(BTVacState *vstate,
 
 	if (vstate->npendingpages >= vstate->npendingpagesspace)
 	{
-		uint64		newnpendingpagesspace;
+		int		newnpendingpagesspace;
 
 		if (!vstate->growing)
 			return;

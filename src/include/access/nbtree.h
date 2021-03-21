@@ -342,10 +342,10 @@ typedef struct BTVacState
 	 * State manages by _bt_pendingfsm_init() and _bt_pendingfsm_finalize()
 	 */
 	bool		growing;		/* Still growing? */
-	uint32		npendingpagesspace; /* current space in # elements */
+	int		npendingpagesspace; /* current space in # elements */
 	BTPendingFSMPageInfo *pendingpages; /* One entry per newly deleted page */
-	uint32		npendingpages;	/* current # valid pendingpages */
-	uint64		maxnpendingpages;	/* max # that respects work_mem */
+	int		npendingpages;	/* current # valid pendingpages */
+	int		maxnpendingpages;	/* max # that respects work_mem */
 } BTVacState;
 
 /*
