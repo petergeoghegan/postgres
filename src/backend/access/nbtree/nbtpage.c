@@ -3017,7 +3017,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
  * recyclable in the end), but stop saving new entries.
  */
 static void
-_bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+_bt_pendingfsm_add(BTVacState *vstate,
+				   BlockNumber target,
 				   FullTransactionId safexid)
 {
 #ifdef USE_ASSERT_CHECKING
