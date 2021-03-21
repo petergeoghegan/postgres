@@ -2968,6 +2968,7 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		/* Just free memory when nothing to do */
 		if (vstate->pendingpages)
 			pfree(vstate->pendingpages);
+
 		return;
 	}
 
