@@ -2929,6 +2929,7 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 		return;
 
 	vstate->growing = true;
+	vstate->full = false;
 	vstate->npendingpagesspace = 512;
 	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * 512);
 	vstate->npendingpages = 0;
@@ -3041,16 +3042,31 @@ _bt_pendingfsm_add(BTVacState *vstate,
 	}
 #endif
 
+	/*
+	 * If the space is full it either filled to work_mem capacity, or the
+	 * optimization was not chosen.  Either way we cannot remember the details
+	 * of this page.
+	 */
+	if (vstate->full)
+		return;
+
 	if (vstate->npendingpages >= vstate->npendingpagesspace)
 	{
-		int		newnpendingpagesspace;
+		int		newnpendingpagesspace = vstate->npendingpagesspace * 2;
 
 		if (!vstate->growing)
-			return;
-
-		newnpendingpagesspace = vstate->npendingpagesspace * 2;
-		if (newnpendingpagesspace > vstate->maxnpendingpages)
 		{
+			/*
+			 * We have completely run out of space -- drop this page, as well
+			 * as any others that get deleted later
+			 */
+			vstate->full = true;
+			return;
+		}
+
+		if (newnpendingpagesspace >= vstate->maxnpendingpages)
+		{
+			/* We can only grow array once more */
 			newnpendingpagesspace = vstate->maxnpendingpages;
 			vstate->growing = false;
 		}
