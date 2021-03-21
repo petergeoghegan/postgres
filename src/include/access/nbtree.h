@@ -306,6 +306,10 @@ BTPageIsRecyclable(Page page)
 		 * For that check if the deletion XID could still be visible to
 		 * anyone. If not, then no scan that's still in progress could have
 		 * seen its downlink, and we can recycle it.
+		 *
+		 * XXX: If we had the heap relation we could be more aggressive about
+		 * vacuuming non-catalog relations by passing the table to
+		 * GlobalVisCheckRemovableFullXid().
 		 */
 		return GlobalVisCheckRemovableFullXid(NULL, BTPageGetDeleteXid(page));
 	}
