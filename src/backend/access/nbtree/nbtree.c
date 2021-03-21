@@ -1011,9 +1011,9 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * see if any of the resulting pages can be placed in the FSM now.  When
 	 * it's not safe we'll have to leave it up to a future VACUUM operation.
 	 *
-	 * Finally, if we placed any pages in the FSM (either just now or
-	 * earlier), forcibly update the upper-level FSM pages to ensure that
-	 * searchers can find them.
+	 * Finally, if we placed any pages in the FSM (either now or earlier),
+	 * forcibly update the upper-level FSM pages to ensure that searchers can
+	 * find them.
 	 */
 	_bt_pendingfsm_finalize(rel, &vstate);
 	if (stats->pages_free > 0)
