@@ -2930,10 +2930,14 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 
 	vstate->npendingpagesspace = 512;
 	vstate->npendingpages = 0;
-	vstate->maxnpendingpages = ((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
-	vstate->maxnpendingpages = Min(vstate->maxnpendingpages, MaxBlockNumber);
-	vstate->maxnpendingpages = Max(vstate->maxnpendingpages, vstate->npendingpagesspace);
-	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * vstate->npendingpagesspace);
+	vstate->maxnpendingpages =
+			((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
+	vstate->maxnpendingpages =
+		Min(vstate->maxnpendingpages, MaxBlockNumber);
+	vstate->maxnpendingpages =
+		Max(vstate->maxnpendingpages, vstate->npendingpagesspace);
+	vstate->pendingpages =
+		palloc(sizeof(BTPendingFSMPageInfo) * vstate->npendingpagesspace);
 }
 
 /*
