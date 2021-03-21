@@ -344,10 +344,10 @@ typedef struct BTVacState
 	bool		grow;
 	bool		full;
 	BTPendingFSMPageInfo *pendingpages;
-	uint32		npendingpages;		/* array size */
+	uint32		npendingpages;	/* array size */
 	uint64		maxnpendingpages;	/* max # array elements */
 
-	uint32		npendingpagesspace;	/* current space in # elements */
+	uint32		npendingpagesspace; /* current space in # elements */
 } BTVacState;
 
 /*

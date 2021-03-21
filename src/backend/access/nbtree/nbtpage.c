@@ -2898,10 +2898,10 @@ void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 {
 	/*
-	 * The optimization is only used inside autovacuum worker processes.
-	 * There are a couple of reasons for this.  Manual VACUUMs tend to finish
-	 * far faster than equivalent autovacuum-run VACUUMs due to differences in
-	 * how cost delay are applied (at least by default).  Cases where index
+	 * The optimization is only used inside autovacuum worker processes. There
+	 * are a couple of reasons for this.  Manual VACUUMs tend to finish far
+	 * faster than equivalent autovacuum-run VACUUMs due to differences in how
+	 * cost delay are applied (at least by default).  Cases where index
 	 * vacuuming naturally finishes quickly are less effective targets.
 	 *
 	 * In general the optimization can only work out when other backends (that
@@ -2931,7 +2931,7 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	vstate->npendingpagesspace = 512;
 	vstate->npendingpages = 0;
 	vstate->maxnpendingpages =
-			((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
+		((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
 	vstate->maxnpendingpages =
 		Min(vstate->maxnpendingpages, MaxBlockNumber);
 	vstate->maxnpendingpages =
@@ -3029,7 +3029,7 @@ _bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
 	if (vstate->npendingpages > 0)
 	{
 		FullTransactionId lastsafexid =
-				vstate->pendingpages[vstate->npendingpages - 1].safexid;
+		vstate->pendingpages[vstate->npendingpages - 1].safexid;
 
 		Assert(FullTransactionIdFollowsOrEquals(safexid, lastsafexid));
 	}
@@ -3040,7 +3040,7 @@ _bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
 
 	if (vstate->npendingpages >= vstate->npendingpagesspace)
 	{
-		uint64 newnpendingpagesspace;
+		uint64		newnpendingpagesspace;
 
 		if (!vstate->grow)
 		{
