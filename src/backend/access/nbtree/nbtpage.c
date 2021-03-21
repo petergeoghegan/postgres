@@ -2912,15 +2912,14 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 		return;
 
 	/*
-	 * Initial array size is 256.  Also cap maximum size of array so that we
-	 * always respect work_mem.
+	 * Cap maximum size of array so that we always respect work_mem.  Avoid
+	 * int overflow here.
 	 */
 	vstate->bufsize = 256;
 	maxbufsize = work_mem * 1024L / sizeof(BTPendingFSMPageInfo);
 	maxbufsize = Min(maxbufsize, INT_MAX);
-	maxbufsize = Min(maxbufsize,
-						   MaxAllocSize / sizeof(BTPendingFSMPageInfo));
-	/* But stay sane with small work_mem */
+	maxbufsize = Min(maxbufsize, MaxAllocSize / sizeof(BTPendingFSMPageInfo));
+	/* Stay sane with small work_mem */
 	maxbufsize = Max(maxbufsize, vstate->bufsize);
 	vstate->maxbufsize = maxbufsize;
 
