@@ -2916,7 +2916,7 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	 * int overflow here.
 	 */
 	vstate->bufsize = 256;
-	maxbufsize = work_mem * 1024L / sizeof(BTPendingFSMPageInfo);
+	maxbufsize = (work_mem * 1024L) / sizeof(BTPendingFSMPageInfo);
 	maxbufsize = Min(maxbufsize, INT_MAX);
 	maxbufsize = Min(maxbufsize, MaxAllocSize / sizeof(BTPendingFSMPageInfo));
 	/* Stay sane with small work_mem */
@@ -2954,6 +2954,9 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 
 		return;
 	}
+
+	elog(WARNING, "bufsize: %d maxbufsize %d, npendingpages %d", vstate->bufsize, vstate->maxbufsize, vstate->npendingpages);
+	//MemoryContextStats(CurrentMemoryContext);
 
 	/* Sleep for 5 seconds */
 	pg_usleep(5000000L);
