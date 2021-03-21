@@ -308,8 +308,8 @@ BTPageIsRecyclable(Page page)
 		 * seen its downlink, and we can recycle it.
 		 *
 		 * XXX: If we had the heap relation we could be more aggressive about
-		 * vacuuming non-catalog relations by passing the table to
-		 * GlobalVisCheckRemovableFullXid().
+		 * recycling deleted pages in non-catalog relations.  For now we just
+		 * pass NULL.  That is at least simple and consistent.
 		 */
 		return GlobalVisCheckRemovableFullXid(NULL, BTPageGetDeleteXid(page));
 	}
