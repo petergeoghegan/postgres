@@ -866,7 +866,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * FSM just moments ago -- though that should be rare with larger indexes.
 	 * (Actually, there are edge cases where recycling of the current VACUUM's
 	 * newly deleted pages does not even become safe by the time the next
-	 * VACUUM come around.  See nbtree/README.)
+	 * VACUUM comes around.  See nbtree/README.)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
