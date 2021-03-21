@@ -2886,16 +2886,14 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  * Initialize local memory state used by VACUUM for _bt_pendingfsm_finalize
  * optimization.
  *
- * Called at the start of a btvacuumscan().  We expect to allocate memory
- * inside VACUUM's top-level memory context here.  The working buffer is
- * subject to a limit based on work_mem.  Our strategy when the array can no
- * longer grow within the bounds of that limit is to stop saving additional
- * newly deleted pages, while proceeding as usual with the pages that we can
- * fit.
+ * Called at the start of a btvacuumscan().  Caller's cleanuponly argument
+ * indicates if ongoing VACUUM has not (and will not) call btbulkdelete().
  *
- * Caller's cleanuponly argument indicates if ongoing VACUUM is one where the
- * core system called btvacuumcleanup() without first calling btbulkdelete()
- * to delete at least a few index tuples.
+ * We expect to allocate memory inside VACUUM's top-level memory context here.
+ * The working buffer is subject to a limit based on work_mem.  Our strategy
+ * when the array can no longer grow within the bounds of that limit is to
+ * stop saving additional newly deleted pages, while proceeding as usual with
+ * the pages that we can fit.
  */
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
