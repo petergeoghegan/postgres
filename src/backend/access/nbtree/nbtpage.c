@@ -59,8 +59,8 @@ static bool _bt_lock_subtree_parent(Relation rel, BlockNumber child,
 									OffsetNumber *poffset,
 									BlockNumber *topparent,
 									BlockNumber *topparentrightsib);
-static void bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
-							  FullTransactionId safexid);
+static void _bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+							   FullTransactionId safexid);
 
 /*
  *	_bt_initmetapage() -- Fill a page buffer with a correct metapage image
@@ -2735,7 +2735,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * candidate to place in the FSM at the end of the current btvacuumscan()
 	 * call.
 	 */
-	bt_pendingfsm_add(vstate, target, safexid);
+	_bt_pendingfsm_add(vstate, target, safexid);
 
 	return true;
 }
@@ -2901,11 +2901,13 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	 * The optimization is only used inside autovacuum worker processes.
 	 * There are a couple of reasons for this.  Manual VACUUMs tend to finish
 	 * far faster than equivalent autovacuum-run VACUUMs due to differences in
-	 * how a cost delay is applied (at least by default).  The difference
-	 * matters because faster vacuuming makes this optimization less likely to
-	 * work out.  In general it can only work out when other backends that
-	 * would otherwise be at risk of observing inconsistencies go away
-	 * naturally before we reach _bt_pendingfsm_finalize().
+	 * how a cost delay is applied (at least by default).  Cases where index
+	 * vacuuming naturally finishes quickly are less effective targets.
+	 *
+	 * In general the optimization can only work out when other backends (that
+	 * might observe inconsistencies if unsafe recycling were actually allowed
+	 * to go ahead) naturally commit and release snapshots that block
+	 * recycling.
 	 *
 	 * There is another reason why the optimization is restricted to
 	 * autovacuum worker processes; see comments in _bt_pendingfsm_finalize()
@@ -2988,8 +2990,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		 * accessing the page again a second time.
 		 *
 		 * Give up on finding the first non-recyclable page -- all other pages
-		 * must be non-recyclable too, since bt_pendingfsm_add() adds pages to
-		 * the array in safexid order.
+		 * must be non-recyclable too, since _bt_pendingfsm_add() adds pages
+		 * to the array in safexid order.
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
 			break;
@@ -3011,8 +3013,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
  * recyclable in the end), but stop saving new entries.
  */
 static void
-bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
-				  FullTransactionId safexid)
+_bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+				   FullTransactionId safexid)
 {
 #ifdef USE_ASSERT_CHECKING
 	/*
