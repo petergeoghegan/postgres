@@ -2888,8 +2888,7 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  * optimization.
  *
  * Called at the start of a btvacuumscan().  We expect to allocate memory
- * inside VACUUM's top-level memory context here.  Note that the optimization
- * only gets applied inside autovacuum worker processes.
+ * inside VACUUM's top-level memory context here.
  *
  * Caller's cleanuponly argument indicates if ongoing VACUUM is one where the
  * core system called btvacuumcleanup() without first calling btbulkdelete()
@@ -2901,25 +2900,6 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	int64		maxnpendingpages;
 
 	/*
-	 * The optimization is only used inside autovacuum worker processes. There
-	 * are a couple of reasons for this.  Manual VACUUMs tend to finish far
-	 * faster than equivalent autovacuum-run VACUUMs due to differences in how
-	 * cost delay are applied (at least by default).  Cases where index
-	 * vacuuming naturally finishes quickly are less effective targets.
-	 *
-	 * In general the optimization can only work out when other backends (that
-	 * might observe inconsistencies if unsafe recycling were actually allowed
-	 * to go ahead) naturally commit and release snapshots that block
-	 * recycling.
-	 *
-	 * There is another reason why the optimization is restricted to
-	 * autovacuum worker processes; see comments in _bt_pendingfsm_finalize()
-	 * for details.
-	 */
-	if (!IsAutoVacuumWorkerProcess())
-		return;
-
-	/*
 	 * Don't bother with optimization in cleanup-only case -- it's all but
 	 * impossible that there will be any newly deleted pages.  (Besides,
 	 * cleanup-only calls to btvacuumscan() can only take place because this
@@ -2928,9 +2908,9 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	if (cleanuponly)
 		return;
 
-	vstate->growing = true;
-	vstate->full = false;
-	vstate->npendingpagesspace = 256;
+	vstate->bufgrowing = true;
+	vstate->buffull = false;
+	vstate->bufsize = 256;
 	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * 256);
 	vstate->npendingpages = 0;
 
@@ -3048,35 +3028,34 @@ _bt_pendingfsm_add(BTVacState *vstate,
 	 * optimization was not chosen.  Either way we cannot remember the details
 	 * of this page.
 	 */
-	if (vstate->full)
+	if (vstate->buffull)
 		return;
 
-	if (vstate->npendingpages >= vstate->npendingpagesspace)
+	if (vstate->npendingpages >= vstate->bufsize)
 	{
-		int			newnpendingpagesspace = vstate->npendingpagesspace * 2;
+		int			newbufsize = vstate->bufsize * 2;
 
-		if (!vstate->growing)
+		if (!vstate->bufgrowing)
 		{
 			/*
 			 * We have completely run out of space -- drop this page, as well
 			 * as any others that get deleted later
 			 */
-			vstate->full = true;
+			vstate->buffull = true;
 			return;
 		}
 
-		if (newnpendingpagesspace >= vstate->maxnpendingpages)
+		if (newbufsize >= vstate->bufsize)
 		{
 			/* We can only grow array once more */
-			newnpendingpagesspace = vstate->maxnpendingpages;
-			vstate->growing = false;
+			newbufsize = vstate->bufsize;
+			vstate->bufgrowing = false;
 		}
 
-		vstate->npendingpagesspace = newnpendingpagesspace;
+		vstate->bufsize = newbufsize;
 		vstate->pendingpages =
 			repalloc(vstate->pendingpages,
-					 sizeof(BTPendingFSMPageInfo) *
-					 vstate->npendingpagesspace);
+					 sizeof(BTPendingFSMPageInfo) * vstate->bufsize);
 	}
 
 	vstate->pendingpages[vstate->npendingpages].target = target;
