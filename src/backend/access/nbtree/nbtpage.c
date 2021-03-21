@@ -2930,8 +2930,8 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 
 	vstate->growing = true;
 	vstate->full = false;
-	vstate->npendingpagesspace = 512;
-	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * 512);
+	vstate->npendingpagesspace = 256;
+	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * 256);
 	vstate->npendingpages = 0;
 
 	/* Cap maximum size of array so that we respect work_mem */
@@ -2940,7 +2940,7 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	maxnpendingpages = Min(maxnpendingpages,
 						   MaxAllocSize / sizeof(BTPendingFSMPageInfo));
 	/* But stay sane with small work_mem */
-	maxnpendingpages = Max(maxnpendingpages, vstate->npendingpagesspace);
+	maxnpendingpages = Max(maxnpendingpages, 512);
 
 	/* Okay, we have a final maximum size for array */
 	vstate->maxnpendingpages = maxnpendingpages;
