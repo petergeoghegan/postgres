@@ -2892,7 +2892,7 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  *
  * Caller's cleanuponly argument indicates if ongoing VACUUM is one where the
  * core system called btvacuumcleanup() without first calling btbulkdelete()
- * to delete index tuples even once.
+ * to delete at least a few index tuples.
  */
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
