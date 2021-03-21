@@ -862,11 +862,10 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * not safe to place in the FSM to be recycled just yet.  num_delpages is
 	 * greater than 0 only when _bt_pagedel() actually deleted pages during
 	 * our call to btvacuumscan().  Even then, _bt_pendingfsm_finalize() must
-	 * have failed to place some of the resulting newly deleted pages in the
-	 * FSM just moments ago -- though that should be rare with larger indexes.
-	 * (Actually, there are edge cases where recycling of the current VACUUM's
-	 * newly deleted pages does not even become safe by the time the next
-	 * VACUUM comes around.  See nbtree/README.)
+	 * have failed to place any newly deleted pages in the FSM just moments
+	 * ago.  (Actually, there are edge cases where recycling of the current
+	 * VACUUM's newly deleted pages does not even become safe by the time the
+	 * next VACUUM comes around.  See nbtree/README.)
 	 */
 	Assert(stats->pages_deleted >= stats->pages_free);
 	num_delpages = stats->pages_deleted - stats->pages_free;
