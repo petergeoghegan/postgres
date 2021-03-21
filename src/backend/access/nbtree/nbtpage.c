@@ -2916,16 +2916,15 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	 * int overflow here.
 	 */
 	vstate->bufsize = 256;
-	maxbufsize = (work_mem * 1024L) / sizeof(BTPendingFSMPageInfo);
+	maxbufsize = (work_mem * 1024L) / sizeof(BTPendingFSM);
 	maxbufsize = Min(maxbufsize, INT_MAX);
-	maxbufsize = Min(maxbufsize, MaxAllocSize / sizeof(BTPendingFSMPageInfo));
+	maxbufsize = Min(maxbufsize, MaxAllocSize / sizeof(BTPendingFSM));
 	/* Stay sane with small work_mem */
 	maxbufsize = Max(maxbufsize, vstate->bufsize);
 	vstate->maxbufsize = maxbufsize;
 
 	/* Allocate buffer, indicate that there are currently 0 pending pages */
-	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) *
-								  vstate->bufsize);
+	vstate->pendingpages = palloc(sizeof(BTPendingFSM) * vstate->bufsize);
 	vstate->npendingpages = 0;
 }
 
@@ -3052,7 +3051,7 @@ _bt_pendingfsm_add(BTVacState *vstate,
 		vstate->bufsize = newbufsize;
 		vstate->pendingpages =
 			repalloc(vstate->pendingpages,
-					 sizeof(BTPendingFSMPageInfo) * vstate->bufsize);
+					 sizeof(BTPendingFSM) * vstate->bufsize);
 	}
 
 	/* Save metadata for newly deleted page */

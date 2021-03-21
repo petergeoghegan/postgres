@@ -314,15 +314,14 @@ BTPageIsRecyclable(Page page)
 }
 
 /*
- * BTVacState and BTPendingFSMPageInfo are private nbtree.c state used during
- * VACUUM.  They are exported for use by page deletion related code in
- * nbtpage.c.
+ * BTVacState and BTPendingFSM are private nbtree.c state used during VACUUM.
+ * They are exported for use by page deletion related code in nbtpage.c.
  */
-typedef struct BTPendingFSMPageInfo
+typedef struct BTPendingFSM
 {
 	BlockNumber target;			/* Page deleted by current VACUUM */
 	FullTransactionId safexid;	/* Page's BTDeletedPageData.safexid */
-} BTPendingFSMPageInfo;
+} BTPendingFSM;
 
 typedef struct BTVacState
 {
@@ -338,7 +337,7 @@ typedef struct BTVacState
 	 */
 	int			bufsize;		/* pendingpages space (in # elements) */
 	int			maxbufsize;		/* max bufsize that respects work_mem */
-	BTPendingFSMPageInfo *pendingpages; /* One entry per newly deleted page */
+	BTPendingFSM *pendingpages; /* One entry per newly deleted page */
 	int			npendingpages;	/* current # valid pendingpages */
 } BTVacState;
 
