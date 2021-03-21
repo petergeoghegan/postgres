@@ -2955,6 +2955,9 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		return;
 	}
 
+	/* Sleep for 5 seconds */
+	pg_usleep(5000000L);
+
 	/*
 	 * Recompute VACUUM XID boundaries.
 	 *
