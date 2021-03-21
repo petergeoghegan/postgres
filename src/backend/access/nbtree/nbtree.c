@@ -1010,8 +1010,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * If there were any calls to _bt_pagedel() during scan of the index then
 	 * see if any of the resulting pages can be placed in the FSM now.  When
 	 * it's not safe we'll have to rely on a future VACUUM operation to take
-	 * care of it.  Note that _bt_pendingfsm_finalize() frees memory allocated
-	 * inside _bt_pendingfsm_init().
+	 * care of it.
 	 *
 	 * Finally, if we placed any pages in the FSM (either now or earlier),
 	 * forcibly update the upper-level FSM pages to ensure that searchers can
