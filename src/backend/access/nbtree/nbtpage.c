@@ -2925,19 +2925,18 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	if (cleanuponly)
 		return;
 
-	vstate->grow = true;
-	vstate->full = false;
-
+	vstate->growing = true;
 	vstate->npendingpagesspace = 512;
+	vstate->pendingpages = palloc(sizeof(BTPendingFSMPageInfo) * 512);
 	vstate->npendingpages = 0;
+
+	/* Cap maximum size of array so that we respect work_mem */
 	vstate->maxnpendingpages =
 		((work_mem * 1024L) / sizeof(BTPendingFSMPageInfo));
 	vstate->maxnpendingpages =
 		Min(vstate->maxnpendingpages, MaxBlockNumber);
 	vstate->maxnpendingpages =
 		Max(vstate->maxnpendingpages, vstate->npendingpagesspace);
-	vstate->pendingpages =
-		palloc(sizeof(BTPendingFSMPageInfo) * vstate->npendingpagesspace);
 }
 
 /*
@@ -3036,24 +3035,18 @@ _bt_pendingfsm_add(BTVacState *vstate,
 	}
 #endif
 
-	if (vstate->full)
-		return;
-
 	if (vstate->npendingpages >= vstate->npendingpagesspace)
 	{
 		uint64		newnpendingpagesspace;
 
-		if (!vstate->grow)
-		{
-			vstate->full = true;
+		if (!vstate->growing)
 			return;
-		}
 
 		newnpendingpagesspace = vstate->npendingpagesspace * 2;
 		if (newnpendingpagesspace > vstate->maxnpendingpages)
 		{
 			newnpendingpagesspace = vstate->maxnpendingpages;
-			vstate->grow = false;
+			vstate->growing = false;
 		}
 
 		vstate->npendingpagesspace = newnpendingpagesspace;
