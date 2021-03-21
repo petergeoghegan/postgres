@@ -343,10 +343,10 @@ typedef struct BTVacState
 	 */
 	bool		growing;		/* Still willing to enlarge space? */
 	bool		full;			/* No more capacity (dropping new pages)? */
-	int		npendingpagesspace; /* current space in # elements */
+	int			npendingpagesspace; /* current space in # elements */
 	BTPendingFSMPageInfo *pendingpages; /* One entry per newly deleted page */
-	int		npendingpages;	/* current # valid pendingpages */
-	int		maxnpendingpages;	/* max # that respects work_mem */
+	int			npendingpages;	/* current # valid pendingpages */
+	int			maxnpendingpages;	/* max # that respects work_mem */
 } BTVacState;
 
 /*

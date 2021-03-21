@@ -3052,7 +3052,7 @@ _bt_pendingfsm_add(BTVacState *vstate,
 
 	if (vstate->npendingpages >= vstate->npendingpagesspace)
 	{
-		int		newnpendingpagesspace = vstate->npendingpagesspace * 2;
+		int			newnpendingpagesspace = vstate->npendingpagesspace * 2;
 
 		if (!vstate->growing)
 		{
