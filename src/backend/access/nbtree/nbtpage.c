@@ -2902,9 +2902,12 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  * details.
  */
 void
-_bt_pendingfsm_init(Relation rel, BTVacState *vstate)
+_bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 {
 	if (!IsAutoVacuumWorkerProcess())
+		return;
+
+	if (cleanuponly)
 		return;
 
 	vstate->grow = true;

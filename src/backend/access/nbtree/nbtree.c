@@ -952,7 +952,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	vstate.maxnpendingpages = 0;
 	vstate.pendingpages = NULL;
 	/* Consider applying _bt_pendingfsm_finalize optimization */
-	_bt_pendingfsm_init(rel, &vstate);
+	_bt_pendingfsm_init(rel, &vstate, (callback == NULL));
 
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in
