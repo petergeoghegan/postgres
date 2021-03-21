@@ -2903,10 +2903,10 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	int64		maxbufsize;
 
 	/*
-	 * Don't bother with optimization in cleanup-only case -- it's all but
-	 * impossible that there will be any newly deleted pages.  (Besides,
-	 * cleanup-only calls to btvacuumscan() can only take place because this
-	 * optimization didn't work out during the last VACUUM.)
+	 * Don't bother with optimization in cleanup-only case -- we don't expect
+	 * any newly deleted pages.  Besides, cleanup-only calls to btvacuumscan()
+	 * can only take place because this optimization didn't work out during
+	 * the last VACUUM.
 	 */
 	if (cleanuponly)
 		return;
