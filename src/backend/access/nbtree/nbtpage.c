@@ -2955,11 +2955,15 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		return;
 	}
 
-	elog(WARNING, "bufsize: %d maxbufsize %d, npendingpages %d",
-		 vstate->bufsize, vstate->maxbufsize, vstate->npendingpages);
-
-	/* Sleep for 5 seconds */
+#ifdef DEBUG_BTREE_PENDING_FSM
+	/*
+	 * Debugging aid: Sleep for 5 seconds to greatly increase the chances of
+	 * placing pending pages in the FSM.  Note that the optimization will
+	 * never be effective without some other backend concurrently consuming an
+	 * XID.
+	 */
 	pg_usleep(5000000L);
+#endif
 
 	/*
 	 * Recompute VACUUM XID boundaries.
@@ -2988,14 +2992,8 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		 * to the array in safexid order.
 		 */
 		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
-		{
-			elog(WARNING, "failed with i %d blkno %u of rel %s",
-				 i, target, RelationGetRelationName(rel));
 			break;
-		}
 
-		elog(WARNING, "successful with i %d blkno %u of rel %s",
-			 i, target, RelationGetRelationName(rel));
 		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
 	}
