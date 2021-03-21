@@ -2887,26 +2887,39 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
  * optimization.
  *
  * Called at the start of a btvacuumscan().  We expect to allocate memory
- * inside VACUUM's top-level memory context here.
+ * inside VACUUM's top-level memory context here.  Note that the optimization
+ * only gets applied inside autovacuum worker processes.
  *
- * The optimization is only used inside autovacuum worker processes.  There
- * are a couple of reasons for this.  Manual VACUUMs tend to finish far faster
- * than equivalent autovacuum-run VACUUMs due to differences in how a cost
- * delay is applied (at least by default).  The difference matters because
- * faster vacuuming makes this optimization less likely to work out.  In
- * general it can only work out when other backends that would otherwise be at
- * risk of observing inconsistencies go away naturally.
- *
- * There is one other reason why the optimization is restricted to autovacuum
- * worker processes; see comments inside _bt_pendingfsm_finalize() for the
- * details.
+ * Caller's cleanuponly argument indicates if ongoing VACUUM is one where the
+ * core system called btvacuumcleanup() without first calling btbulkdelete()
+ * to delete index tuples even once.
  */
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 {
+	/*
+	 * The optimization is only used inside autovacuum worker processes.
+	 * There are a couple of reasons for this.  Manual VACUUMs tend to finish
+	 * far faster than equivalent autovacuum-run VACUUMs due to differences in
+	 * how a cost delay is applied (at least by default).  The difference
+	 * matters because faster vacuuming makes this optimization less likely to
+	 * work out.  In general it can only work out when other backends that
+	 * would otherwise be at risk of observing inconsistencies go away
+	 * naturally.
+	 *
+	 * There is another reason why the optimization is restricted to
+	 * autovacuum worker processes; see comments in _bt_pendingfsm_finalize()
+	 * for details.
+	 */
 	if (!IsAutoVacuumWorkerProcess())
 		return;
 
+	/*
+	 * Don't bother with optimization in cleanup-only case -- it's all but
+	 * impossible that there will be any newly deleted pages.  (Besides,
+	 * cleanup-only calls to btvacuumscan() can only take place because this
+	 * optimization didn't work out during the last VACUUM.)
+	 */
 	if (cleanuponly)
 		return;
 
