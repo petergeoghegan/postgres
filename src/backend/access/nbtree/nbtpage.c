@@ -2967,12 +2967,10 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 	 * Recompute VACUUM XID boundaries.
 	 *
 	 * We don't actually care about the oldest non-removable XID.  Computing
-	 * the oldest such XID has a useful side-effect: It updates the procarray
-	 * state that tracks XID horizon.  This is not just an optimization; it's
-	 * essential.  It allows the GlobalVisCheckRemovableFullXid() calls we
-	 * make here to notice if and when safexid values from pages this same
-	 * VACUUM operation deleted are sufficiently old to allow recycling to
-	 * take place safely.
+	 * the oldest such XID has a useful side-effect that we rely on: it
+	 * forcibly updates the XID horizon state for this backend.  This step is
+	 * essential; GlobalVisCheckRemovableFullXid() will not reliably recognize
+	 * that it is now safe to recycle newly deleted pages without this step.
 	 */
 	GetOldestNonRemovableTransactionId(NULL);
 
@@ -2985,7 +2983,7 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		 * Do the equivalent of checking BTPageIsRecyclable(), but without
 		 * accessing the page again a second time.
 		 *
-		 * Give up on finding the first non-recyclable page -- all other pages
+		 * Give up on finding the first non-recyclable page -- all later pages
 		 * must be non-recyclable too, since _bt_pendingfsm_add() adds pages
 		 * to the array in safexid order.
 		 */
