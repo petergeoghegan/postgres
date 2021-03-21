@@ -2901,7 +2901,7 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
 	 * The optimization is only used inside autovacuum worker processes.
 	 * There are a couple of reasons for this.  Manual VACUUMs tend to finish
 	 * far faster than equivalent autovacuum-run VACUUMs due to differences in
-	 * how a cost delay is applied (at least by default).  Cases where index
+	 * how cost delay are applied (at least by default).  Cases where index
 	 * vacuuming naturally finishes quickly are less effective targets.
 	 *
 	 * In general the optimization can only work out when other backends (that
