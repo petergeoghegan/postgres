@@ -2883,10 +2883,23 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 }
 
 /*
- * Initialize local memory state used by VACUUM inside .
+ * Initialize local memory state used by VACUUM for _bt_pendingfsm_finalize
+ * optimization.
  *
  * Called at the start of a btvacuumscan().  We expect to allocate memory
- * inside VACUUM's top-level memory context.
+ * inside VACUUM's top-level memory context here.
+ *
+ * The optimization is only used inside autovacuum worker processes.  There
+ * are a couple of reasons for this.  Manual VACUUMs tend to finish far faster
+ * than equivalent autovacuum-run VACUUMs due to differences in how a cost
+ * delay is applied (at least by default).  The difference matters because
+ * faster vacuuming makes this optimization less likely to work out.  In
+ * general it can only work out when other backends that would otherwise be at
+ * risk of observing inconsistencies go away naturally.
+ *
+ * There is one other reason why the optimization is restricted to autovacuum
+ * worker processes; see comments inside _bt_pendingfsm_finalize() for the
+ * details.
  */
 void
 _bt_pendingfsm_init(Relation rel, BTVacState *vstate)
@@ -2907,8 +2920,9 @@ _bt_pendingfsm_init(Relation rel, BTVacState *vstate)
 
 /*
  * Place any newly deleted pages (i.e. pages that _bt_pagedel() deleted during
- * the ongoing VACUUM operation) into the free space map when it happens to be
- * safe to do so by now.
+ * the ongoing VACUUM operation) into the free space map -- provided it is
+ * actually safe to do so by now.  Without this optimization we'd always have
+ * to wait until the next VACUUM operation to place these pages in the FSM.
  *
  * Called at the end of a btvacuumscan(), just before free space map vacuuming
  * takes place.
