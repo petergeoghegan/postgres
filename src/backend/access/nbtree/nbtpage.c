@@ -3004,6 +3004,7 @@ _bt_pendingfsm_add(BTVacState *vstate,
 	Assert(vstate->bufsize <= vstate->maxbufsize);
 
 #ifdef USE_ASSERT_CHECKING
+
 	/*
 	 * Verify an assumption made by _bt_pendingfsm_finalize(): pages from the
 	 * array will always be in safexid order (since that is the order that we
