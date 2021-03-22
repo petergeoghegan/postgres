@@ -124,8 +124,17 @@ heap2_desc(StringInfo buf, XLogReaderState *record)
 	if (info == XLOG_HEAP2_PRUNE)
 	{
 		xl_heap_prune *xlrec = (xl_heap_prune *) rec;
+		int			nunused;
 
-		appendStringInfo(buf, "latestRemovedXid %u", xlrec->latestRemovedXid);
+		nunused = ((XLogRecGetDataLen(record) - SizeOfHeapPrune) /
+				   sizeof(OffsetNumber));
+		Assert(nunused >= 0);
+
+		appendStringInfo(buf, "latestRemovedXid %u nredirected %u ndead %u nunused %d",
+						 xlrec->latestRemovedXid,
+						 xlrec->nredirected,
+						 xlrec->ndead,
+						 nunused);
 	}
 	else if (info == XLOG_HEAP2_VACUUM)
 	{
