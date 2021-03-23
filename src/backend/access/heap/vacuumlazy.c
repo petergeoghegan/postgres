@@ -886,6 +886,27 @@ scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
  *	scan_prune_page() -- lazy_scan_heap() pruning and freezing.
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
+ *
+ * Prior to PostgreSQL 14 there were very rare cases where lazy_scan_heap()
+ * treated tuples that still had storage after pruning as DEAD.  That happened
+ * when heap_page_prune() could not prune tuples that were nevertheless deemed
+ * DEAD by its own HeapTupleSatisfiesVacuum() call.  This created rare hard to
+ * test cases.  It meant that there was no very sharp distinction between DEAD
+ * tuples and tuples that are to be kept and be considered for freezing inside
+ * heap_prepare_freeze_tuple().  It also meant that lazy_vacuum_page() had to
+ * be prepared to remove items with storage (tuples with tuple headers) that
+ * didn't get pruned, which created a special case to handle recovery
+ * conflicts.
+ *
+ * The approach we take here now (to eliminate all of this complexity) is to
+ * simply restart pruning in these very rare cases -- cases where a concurrent
+ * abort of an xact makes our HeapTupleSatisfiesVacuum() call disagrees with
+ * what heap_page_prune() thought about the tuple only microseconds earlier.
+ *
+ * Since we might have to prune a second time here, the code is structured to
+ * use a local per-page copy of the counters that caller accumulates.  We add
+ * our per-page counters to the per-VACUUM totals from caller last of all, to
+ * avoid double counting.
  */
 static void
 scan_prune_page(Relation onerel, Buffer buf,
