@@ -124,17 +124,29 @@ heap2_desc(StringInfo buf, XLogReaderState *record)
 	if (info == XLOG_HEAP2_PRUNE)
 	{
 		xl_heap_prune *xlrec = (xl_heap_prune *) rec;
+		int			size_less_nunused,
+					size_nunused;
 		int			nunused;
+		int			noffsetnumbers;
 
-		nunused = ((XLogRecGetDataLen(record) - SizeOfHeapPrune) /
-				   sizeof(OffsetNumber));
-		Assert(nunused >= 0);
+		noffsetnumbers = ((XLogRecGetDataLen(record)) /
+						  sizeof(OffsetNumber));
 
-		appendStringInfo(buf, "latestRemovedXid %u nredirected %u ndead %u nunused %d",
+		size_less_nunused = (((2 * xlrec->nredirected) + xlrec->ndead) *
+											   sizeof(OffsetNumber));
+		size_nunused = (size_less_nunused - XLogRecGetDataLen(record) );
+		nunused = size_nunused / sizeof(OffsetNumber);
+
+		//Assert(nunused >= 0);
+
+		// The total number of OffsetNumbers is therefore 2*nredirected+ndead+nunused.
+		appendStringInfo(buf, "%u latestRemovedXid %u noffsetnumbers %d nredirected %u ndead %u nunused %d",
+						 XLogRecGetTotalLen(record),
 						 xlrec->latestRemovedXid,
+						 noffsetnumbers,
 						 xlrec->nredirected,
 						 xlrec->ndead,
-						 nunused);
+						 size_nunused);
 	}
 	else if (info == XLOG_HEAP2_VACUUM)
 	{
