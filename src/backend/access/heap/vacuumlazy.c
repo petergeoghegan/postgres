@@ -431,8 +431,8 @@ static int	lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 static bool should_attempt_truncation(VacuumParams *params,
 									  LVRelStats *vacrelstats);
 static void lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats);
-static BlockNumber count_nondeletable_pages(Relation onerel,
-											LVRelStats *vacrelstats);
+static BlockNumber lazy_truncate_count_nondeletable(Relation onerel,
+													LVRelStats *vacrelstats);
 static void lazy_space_alloc(LVRelStats *vacrelstats, BlockNumber relblocks,
 							 bool hasindex);
 static void lazy_record_dead_tuple(LVDeadTuples *dead_tuples,
@@ -442,8 +442,9 @@ static int	vac_cmp_itemptr(const void *left, const void *right);
 static bool heap_page_is_all_visible(Relation rel, Buffer buf,
 									 LVRelStats *vacrelstats,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
-static void lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
-										 LVParallelState *lps);
+static void do_parallel_vacuum_or_cleanup(Relation *Irel,
+										  LVRelStats *vacrelstats,
+										  LVParallelState *lps);
 static void do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
 								   LVShared *lvshared);
 static void do_serial_processing_for_unsafe_indexes(Relation *Irel,
@@ -1566,7 +1567,9 @@ lazy_scan_needs_freeze(Buffer buf, bool *hastup, LVRelStats *vacrelstats)
 		vacrelstats->offnum = offnum;
 		itemid = PageGetItemId(page, offnum);
 
-		/* this should match hastup test in count_nondeletable_pages() */
+		/*
+		 * This should match hastup test in lazy_truncate_count_nondeletable()
+		 */
 		if (ItemIdIsUsed(itemid))
 			*hastup = true;
 
@@ -2254,7 +2257,7 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 		lps->lvshared->reltuples = vacrelstats->old_live_tuples;
 		lps->lvshared->estimated_count = true;
 
-		lazy_parallel_vacuum_indexes(Irel, vacrelstats, lps);
+		do_parallel_vacuum_or_cleanup(Irel, vacrelstats, lps);
 	}
 
 	/* Increase and report the number of index scans */
@@ -2317,7 +2320,7 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 		lps->lvshared->estimated_count =
 			(vacrelstats->tupcount_pages < vacrelstats->rel_pages);
 
-		lazy_parallel_vacuum_indexes(Irel, vacrelstats, lps);
+		do_parallel_vacuum_or_cleanup(Irel, vacrelstats, lps);
 	}
 }
 
@@ -2571,8 +2574,8 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
  * cleanup.
  */
 static void
-lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
-							 LVParallelState *lps)
+do_parallel_vacuum_or_cleanup(Relation *Irel, LVRelStats *vacrelstats,
+							  LVParallelState *lps)
 {
 	int			nworkers;
 
@@ -3120,7 +3123,7 @@ lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats)
 		 * other backends could have added tuples to these pages whilst we
 		 * were vacuuming.
 		 */
-		new_rel_pages = count_nondeletable_pages(onerel, vacrelstats);
+		new_rel_pages = lazy_truncate_count_nondeletable(onerel, vacrelstats);
 		vacrelstats->blkno = new_rel_pages;
 
 		if (new_rel_pages >= old_rel_pages)
@@ -3169,7 +3172,7 @@ lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats)
  * Returns number of nondeletable pages (last nonempty page + 1).
  */
 static BlockNumber
-count_nondeletable_pages(Relation onerel, LVRelStats *vacrelstats)
+lazy_truncate_count_nondeletable(Relation onerel, LVRelStats *vacrelstats)
 {
 	BlockNumber blkno;
 	BlockNumber prefetchedUntil;
