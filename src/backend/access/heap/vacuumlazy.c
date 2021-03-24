@@ -197,7 +197,7 @@ typedef struct LVShared
 	 * Target table relid and log level.  These fields are not modified during
 	 * the lazy vacuum.
 	 */
-	Oid			relid;
+	Oid			onereloid;
 	int			elevel;
 
 	/*
@@ -455,7 +455,7 @@ static int	compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nre
 static void prepare_index_statistics(LVShared *lvshared, bool *can_parallel_vacuum,
 									 int nindexes);
 static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
-static LVParallelState *begin_parallel_vacuum(Oid relid, Relation *Irel,
+static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *Irel,
 											  LVRelStats *vacrelstats, BlockNumber nblocks,
 											  int nrequested);
 static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
@@ -924,8 +924,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 								vacrelstats->relname)));
 		}
 		else
-			lps = begin_parallel_vacuum(RelationGetRelid(onerel), Irel,
-										vacrelstats, nblocks,
+			lps = begin_parallel_vacuum(onerel, Irel, vacrelstats, nblocks,
 										params->nworkers);
 	}
 
@@ -3611,7 +3610,7 @@ update_index_statistics(Relation *Irel, LVRelStats *vacrelstats)
  * create a parallel context, and then initialize the DSM segment.
  */
 static LVParallelState *
-begin_parallel_vacuum(Oid relid, Relation *Irel, LVRelStats *vacrelstats,
+begin_parallel_vacuum(Relation onerel, Relation *Irel, LVRelStats *vacrelstats,
 					  BlockNumber nblocks, int nrequested)
 {
 	LVParallelState *lps = NULL;
@@ -3733,7 +3732,7 @@ begin_parallel_vacuum(Oid relid, Relation *Irel, LVRelStats *vacrelstats,
 	/* Prepare shared information */
 	shared = (LVShared *) shm_toc_allocate(pcxt->toc, est_shared);
 	MemSet(shared, 0, est_shared);
-	shared->relid = relid;
+	shared->onereloid = RelationGetRelid(onerel);
 	shared->elevel = elevel;
 	shared->maintenance_work_mem_worker =
 		(nindexes_mwm > 0) ?
@@ -3929,7 +3928,7 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 	 * okay because the lock mode does not conflict among the parallel
 	 * workers.
 	 */
-	onerel = table_open(lvshared->relid, ShareUpdateExclusiveLock);
+	onerel = table_open(lvshared->onereloid, ShareUpdateExclusiveLock);
 
 	/*
 	 * Open all indexes. indrels are sorted in order by OID, which should be
