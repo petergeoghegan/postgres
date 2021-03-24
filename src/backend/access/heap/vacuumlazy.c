@@ -2094,10 +2094,10 @@ lazy_vacuum_pruned_items(Relation onerel, LVRelStats *vacrelstats,
 		 * Don't report tups_vacuumed here because it will be zero here in
 		 * common case where there are no newly pruned LP_DEAD items for this
 		 * VACUUM.  This is roughly consistent with lazy_vacuum_heap(), and
-		 * the similar !useindex ereport() at the end of lazy_scan_heap().
-		 * Note, however, that has_dead_items_pages is # of heap pages with
-		 * one or more LP_DEAD items (could be from us or from another
-		 * VACUUM), not # blocks scanned.
+		 * the similar "nindexes  == 0" specific ereport() at the end of
+		 * lazy_scan_heap().  Note, however, that has_dead_items_pages is # of
+		 * heap pages with one or more LP_DEAD items (could be from us or from
+		 * another VACUUM), not # blocks scanned.
 		 */
 		if (index_cleanup == VACOPT_CLEANUP_AUTO)
 			ereport(elevel,
