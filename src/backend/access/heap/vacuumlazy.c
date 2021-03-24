@@ -364,7 +364,7 @@ typedef struct LVPrunePageState
  * State set up and maintained in lazy_scan_heap() (also maintained in
  * lazy_prune_page_items()) that represents VM bit status.
  *
- * Used by lazy_setvmbit_page() when we're done pruning.
+ * Used by lazy_scan_setvmbit_page() when we're done pruning.
  */
 typedef struct LVVisMapPageState
 {
@@ -389,11 +389,12 @@ static BufferAccessStrategy vac_strategy;
 static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 						   LVRelStats *vacrelstats, Relation *Irel, int nindexes,
 						   bool aggressive);
-static void lazy_new_page(Relation onerel, Buffer buf);
-static void lazy_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-							LVRelStats *vacrelstats);
-static void lazy_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-							   LVPrunePageState *ps, LVVisMapPageState *vms);
+static void lazy_scan_new_page(Relation onerel, Buffer buf);
+static void lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+								 LVRelStats *vacrelstats);
+static void lazy_scan_setvmbit_page(Relation onerel, Buffer buf,
+									Buffer vmbuffer, LVPrunePageState *ps,
+									LVVisMapPageState *vms);
 static void lazy_prune_page_items(Relation onerel, Buffer buf,
 								  LVRelStats *vacrelstats,
 								  GlobalVisState *vistest,
@@ -1260,14 +1261,14 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		{
 			empty_pages++;
 			/* Releases lock on buf for us: */
-			lazy_new_page(onerel, buf);
+			lazy_scan_new_page(onerel, buf);
 			continue;
 		}
 		else if (PageIsEmpty(page))
 		{
 			empty_pages++;
 			/* Releases lock on buf for us (though keeps vmbuffer pin): */
-			lazy_empty_page(onerel, buf, vmbuffer, vacrelstats);
+			lazy_scan_empty_page(onerel, buf, vmbuffer, vacrelstats);
 			continue;
 		}
 
@@ -1350,8 +1351,8 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
 
 			/*
-			 * Make sure lazy_setvmbit_page() won't stop setting VM due to
-			 * now-vacuumed LP_DEAD items:
+			 * Make sure lazy_scan_setvmbit_page() won't stop setting VM due
+			 * to now-vacuumed LP_DEAD items:
 			 */
 			ps.has_dead_items = false;
 
@@ -1378,7 +1379,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		lazy_setvmbit_page(onerel, buf, vmbuffer, &ps, &vms);
+		lazy_scan_setvmbit_page(onerel, buf, vmbuffer, &ps, &vms);
 
 		/*
 		 * Step 9 for block: drop super-exclusive lock, finalize page by
@@ -1539,7 +1540,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
  * after all.
  */
 static void
-lazy_new_page(Relation onerel, Buffer buf)
+lazy_scan_new_page(Relation onerel, Buffer buf)
 {
 	BlockNumber blkno = BufferGetBlockNumber(buf);
 
@@ -1562,8 +1563,8 @@ lazy_new_page(Relation onerel, Buffer buf)
  * not a lock) on vmbuffer.
  */
 static void
-lazy_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				LVRelStats *vacrelstats)
+lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+					 LVRelStats *vacrelstats)
 {
 	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -1571,7 +1572,7 @@ lazy_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 
 	/*
 	 * Empty pages are always all-visible and all-frozen (note that the same
-	 * is currently not true for new pages, see lazy_new_page()).
+	 * is currently not true for new pages, see lazy_scan_new_page()).
 	 */
 	if (!PageIsAllVisible(page))
 	{
@@ -1608,8 +1609,8 @@ lazy_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
  * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
  */
 static void
-lazy_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				   LVPrunePageState *ps, LVVisMapPageState *vms)
+lazy_scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+						LVPrunePageState *ps, LVVisMapPageState *vms)
 {
 	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
@@ -3376,7 +3377,8 @@ heap_page_is_all_visible(Relation rel, Buffer buf,
 
 	/*
 	 * This is a stripped down version of the line pointer scan in
-	 * lazy_new_page. So if you change anything here, also check that code.
+	 * lazy_scan_new_page. So if you change anything here, also check that
+	 * code.
 	 */
 	maxoff = PageGetMaxOffsetNumber(page);
 	for (offnum = FirstOffsetNumber;
@@ -3422,7 +3424,7 @@ heap_page_is_all_visible(Relation rel, Buffer buf,
 				{
 					TransactionId xmin;
 
-					/* Check comments in lazy_new_page() */
+					/* Check comments in lazy_scan_new_page() */
 					if (!HeapTupleHeaderXminCommitted(tuple.t_data))
 					{
 						all_visible = false;
