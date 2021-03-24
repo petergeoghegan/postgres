@@ -453,10 +453,10 @@ static IndexBulkDeleteResult *parallel_process_one_index(Relation indrel,
 														 LVRelStats *vacrelstats);
 static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 									 LVParallelState *lps);
+static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static int	compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 											bool *can_parallel_vacuum);
-static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *Irel,
 											  LVRelStats *vacrelstats, BlockNumber nblocks,
 											  int nrequested);
@@ -2842,6 +2842,37 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 }
 
 /*
+ * Update index statistics in pg_class if the statistics are accurate.
+ */
+static void
+update_index_statistics(Relation *Irel, LVRelStats *vacrelstats)
+{
+	int						nindexes = vacrelstats->nindexes;
+	IndexBulkDeleteResult **indstats = vacrelstats->indstats;
+
+	Assert(!IsInParallelMode());
+
+	for (int idx = 0; idx < nindexes; idx++)
+	{
+		Relation			   indrel = Irel[idx];
+		IndexBulkDeleteResult *istat = indstats[idx];
+
+		if (istat == NULL || istat->estimated_count)
+			continue;
+
+		/* Update index statistics */
+		vac_update_relstats(indrel,
+							istat->num_pages,
+							istat->num_index_tuples,
+							0,
+							false,
+							InvalidTransactionId,
+							InvalidMultiXactId,
+							false);
+	}
+}
+
+/*
  *	lazy_vacuum_one_index() -- vacuum index relation.
  *
  *		Delete all the index entries pointing to tuples listed in
@@ -3601,37 +3632,6 @@ compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 	parallel_workers = Min(parallel_workers, max_parallel_maintenance_workers);
 
 	return parallel_workers;
-}
-
-/*
- * Update index statistics in pg_class if the statistics are accurate.
- */
-static void
-update_index_statistics(Relation *Irel, LVRelStats *vacrelstats)
-{
-	int						nindexes = vacrelstats->nindexes;
-	IndexBulkDeleteResult **indstats = vacrelstats->indstats;
-
-	Assert(!IsInParallelMode());
-
-	for (int idx = 0; idx < nindexes; idx++)
-	{
-		Relation			   indrel = Irel[idx];
-		IndexBulkDeleteResult *istat = indstats[idx];
-
-		if (istat == NULL || istat->estimated_count)
-			continue;
-
-		/* Update index statistics */
-		vac_update_relstats(indrel,
-							istat->num_pages,
-							istat->num_index_tuples,
-							0,
-							false,
-							InvalidTransactionId,
-							InvalidMultiXactId,
-							false);
-	}
 }
 
 /*
