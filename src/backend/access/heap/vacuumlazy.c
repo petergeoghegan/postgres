@@ -450,6 +450,13 @@ static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *Irel,
 											  int nrequested);
 static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
 								LVParallelState *lps, int nindexes);
+static void do_parallel_lazy_vacuum_all_indexes(Relation onerel,
+												Relation *Irel,
+												LVRelStats *vacrelstats,
+												LVParallelState *lps);
+static void do_parallel_lazy_cleanup_all_indexes(Relation *Irel,
+												 LVRelStats *vacrelstats,
+												 LVParallelState *lps);
 static void do_parallel_vacuum_or_cleanup(Relation *Irel,
 										  LVRelStats *vacrelstats,
 										  LVParallelState *lps);
@@ -2246,18 +2253,8 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 	}
 	else
 	{
-		/* Tell parallel workers to do index vacuuming */
-		lps->lvshared->for_cleanup = false;
-		lps->lvshared->first_time = false;
-
-		/*
-		 * We can only provide an approximate value of num_heap_tuples in
-		 * vacuum cases.
-		 */
-		lps->lvshared->reltuples = vacrelstats->old_live_tuples;
-		lps->lvshared->estimated_count = true;
-
-		do_parallel_vacuum_or_cleanup(Irel, vacrelstats, lps);
+		/* Outsource everything to parallel variant */
+		do_parallel_lazy_vacuum_all_indexes(onerel, Irel, vacrelstats, lps);
 	}
 
 	/* Increase and report the number of index scans */
@@ -2360,26 +2357,8 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 	}
 	else
 	{
-		/*
-		 * If parallel vacuum is active we perform index cleanup with parallel
-		 * workers.
-		 *
-		 * Tell parallel workers to do index cleanup.
-		 */
-		lps->lvshared->for_cleanup = true;
-		lps->lvshared->first_time =
-			(vacrelstats->num_index_scans == 0);
-
-		/*
-		 * Now we can provide a better estimate of total number of surviving
-		 * tuples (we assume indexes are more interested in that than in the
-		 * number of nominally live tuples).
-		 */
-		lps->lvshared->reltuples = vacrelstats->new_rel_tuples;
-		lps->lvshared->estimated_count =
-			(vacrelstats->tupcount_pages < vacrelstats->rel_pages);
-
-		do_parallel_vacuum_or_cleanup(Irel, vacrelstats, lps);
+		/* Outsource everything to parallel variant */
+		do_parallel_lazy_cleanup_all_indexes(Irel, vacrelstats, lps);
 	}
 }
 
@@ -3569,6 +3548,51 @@ end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 	/* Deactivate parallel vacuum */
 	pfree(lps);
 	lps = NULL;
+}
+
+static void
+do_parallel_lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
+									LVRelStats *vacrelstats,
+									LVParallelState *lps)
+{
+	/* Tell parallel workers to do index vacuuming */
+	lps->lvshared->for_cleanup = false;
+	lps->lvshared->first_time = false;
+
+	/*
+	 * We can only provide an approximate value of num_heap_tuples in
+	 * vacuum cases.
+	 */
+	lps->lvshared->reltuples = vacrelstats->old_live_tuples;
+	lps->lvshared->estimated_count = true;
+
+	do_parallel_vacuum_or_cleanup(Irel, vacrelstats, lps);
+}
+
+static void
+do_parallel_lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
+									 LVParallelState *lps)
+{
+	/*
+	 * If parallel vacuum is active we perform index cleanup with parallel
+	 * workers.
+	 *
+	 * Tell parallel workers to do index cleanup.
+	 */
+	lps->lvshared->for_cleanup = true;
+	lps->lvshared->first_time =
+		(vacrelstats->num_index_scans == 0);
+
+	/*
+	 * Now we can provide a better estimate of total number of surviving
+	 * tuples (we assume indexes are more interested in that than in the
+	 * number of nominally live tuples).
+	 */
+	lps->lvshared->reltuples = vacrelstats->new_rel_tuples;
+	lps->lvshared->estimated_count =
+		(vacrelstats->tupcount_pages < vacrelstats->rel_pages);
+
+	do_parallel_vacuum_or_cleanup(Irel, vacrelstats, lps);
 }
 
 /*
