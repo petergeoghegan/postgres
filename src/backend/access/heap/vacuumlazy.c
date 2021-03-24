@@ -3657,7 +3657,6 @@ begin_parallel_vacuum(Relation onerel, Relation *Irel, LVRelStats *vacrelstats,
 	int			nindexes_mwm = 0;
 	int			parallel_workers = 0;
 	int			querylen;
-	int			i;
 
 	/*
 	 * A parallel vacuum must be requested and there must be indexes on the
@@ -3691,7 +3690,7 @@ begin_parallel_vacuum(Relation onerel, Relation *Irel, LVRelStats *vacrelstats,
 
 	/* Estimate size for shared information -- PARALLEL_VACUUM_KEY_SHARED */
 	est_shared = MAXALIGN(add_size(SizeOfLVShared, BITMAPLEN(nindexes)));
-	for (i = 0; i < nindexes; i++)
+	for (int i = 0; i < nindexes; i++)
 	{
 		uint8		vacoptions = Irel[i]->rd_indam->amparallelvacuumoptions;
 
@@ -3785,7 +3784,7 @@ begin_parallel_vacuum(Relation onerel, Relation *Irel, LVRelStats *vacrelstats,
 			continue;
 
 		/* Set NOT NULL as this index does support parallelism */
-		shared->bitmap[i >> 3] |= 1 << (i & 0x07);
+		shared->bitmap[idx >> 3] |= 1 << (idx & 0x07);
 	}
 
 	shm_toc_insert(pcxt->toc, PARALLEL_VACUUM_KEY_SHARED, shared);
