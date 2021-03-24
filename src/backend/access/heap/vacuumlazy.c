@@ -446,11 +446,11 @@ static void do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
 static void do_serial_processing_for_unsafe_indexes(Relation *Irel,
 													LVRelStats *vacrelstats,
 													LVShared *lvshared);
-static void parallel_process_one_index(Relation indrel,
-									   IndexBulkDeleteResult **istat,
-									   LVShared *lvshared,
-									   LVSharedIndStats *shared_indstats,
-									   LVRelStats *vacrelstats);
+static IndexBulkDeleteResult *parallel_process_one_index(Relation indrel,
+														 IndexBulkDeleteResult *istat,
+														 LVShared *lvshared,
+														 LVSharedIndStats *shared_indstats,
+														 LVRelStats *vacrelstats);
 static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 									 LVParallelState *lps);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
@@ -2627,6 +2627,8 @@ do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
 	{
 		int			idx;
 		LVSharedIndStats *shared_istat;
+		Relation				indrel;
+		IndexBulkDeleteResult *istat;
 
 		/* Get an index number to process */
 		idx = pg_atomic_fetch_add_u32(&(lvshared->idx), 1);
@@ -2642,16 +2644,21 @@ do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
 		if (shared_istat != NULL)
 			continue;
 
+		indrel = Irel[idx];
+
 		/*
 		 * Skip processing indexes that are unsafe for workers (these are
 		 * processed in do_serial_processing_for_unsafe_indexes() by leader)
 		 */
-		if (!parallel_processing_is_safe(Irel[idx], lvshared))
+		if (!parallel_processing_is_safe(indrel, lvshared))
 			continue;
 
 		/* Do vacuum or cleanup of the index */
-		parallel_process_one_index(Irel[idx], &(vacrelstats->indstats[idx]),
-								   lvshared, shared_istat, vacrelstats);
+		istat = (vacrelstats->indstats[idx]);
+		vacrelstats->indstats[idx] = parallel_process_one_index(indrel, istat,
+																lvshared,
+																shared_istat,
+																vacrelstats);
 	}
 
 	/*
@@ -2682,6 +2689,8 @@ do_serial_processing_for_unsafe_indexes(Relation *Irel,
 	for (int idx = 0; idx < vacrelstats->nindexes; idx++)
 	{
 		LVSharedIndStats *shared_istat;
+		Relation				indrel;
+		IndexBulkDeleteResult *istat;
 
 		shared_istat = get_indstats(lvshared, idx);
 
@@ -2689,15 +2698,20 @@ do_serial_processing_for_unsafe_indexes(Relation *Irel,
 		if (shared_istat != NULL)
 			continue;
 
+		indrel = Irel[idx];
+
 		/*
 		 * We're only here for the unsafe indexes
 		 */
-		if (parallel_processing_is_safe(Irel[idx], lvshared))
+		if (parallel_processing_is_safe(indrel, lvshared))
 			continue;
 
 		/* Do vacuum or cleanup of the index */
-		parallel_process_one_index(Irel[idx], &(vacrelstats->indstats[idx]),
-								   lvshared, shared_istat, vacrelstats);
+		istat = (vacrelstats->indstats[idx]);
+		vacrelstats->indstats[idx] = parallel_process_one_index(indrel, istat,
+																lvshared,
+																shared_istat,
+																vacrelstats);
 	}
 
 	/*
@@ -2714,9 +2728,9 @@ do_serial_processing_for_unsafe_indexes(Relation *Irel,
  * statistics returned from ambulkdelete and amvacuumcleanup to the DSM
  * segment.
  */
-static void
+static IndexBulkDeleteResult *
 parallel_process_one_index(Relation indrel,
-						   IndexBulkDeleteResult **istat,
+						   IndexBulkDeleteResult *istat,
 						   LVShared *lvshared,
 						   LVSharedIndStats *shared_istat,
 						   LVRelStats *vacrelstats)
@@ -2732,18 +2746,17 @@ parallel_process_one_index(Relation indrel,
 		 * Update the pointer to the corresponding bulk-deletion result if
 		 * someone has already updated it.
 		 */
-		if (shared_istat->updated && *istat == NULL)
-			*istat = bulkdelete_res;
+		if (shared_istat->updated && istat == NULL)
+			istat = bulkdelete_res;
 	}
 
 	/* Do vacuum or cleanup of the index */
 	if (lvshared->for_cleanup)
-		*istat = lazy_cleanup_one_index(indrel, *istat, lvshared->reltuples,
-										lvshared->estimated_count,
-										vacrelstats);
+		istat = lazy_cleanup_one_index(indrel, istat, lvshared->reltuples,
+									   lvshared->estimated_count, vacrelstats);
 	else
-		*istat = lazy_vacuum_one_index(indrel, *istat, lvshared->reltuples,
-									   vacrelstats);
+		istat = lazy_vacuum_one_index(indrel, istat, lvshared->reltuples,
+									  vacrelstats);
 
 	/*
 	 * Copy the index bulk-deletion result returned from ambulkdelete and
@@ -2757,18 +2770,20 @@ parallel_process_one_index(Relation indrel,
 	 * Since all vacuum workers write the bulk-deletion result at different
 	 * slots we can write them without locking.
 	 */
-	if (shared_istat && !shared_istat->updated && *istat != NULL)
+	if (shared_istat && !shared_istat->updated && istat != NULL)
 	{
-		memcpy(bulkdelete_res, *istat, sizeof(IndexBulkDeleteResult));
+		memcpy(bulkdelete_res, istat, sizeof(IndexBulkDeleteResult));
 		shared_istat->updated = true;
 
 		/*
 		 * Now that top-level indstats[idx] points to the DSM segment, we
 		 * don't need the locally allocated results.
 		 */
-		pfree(*istat);
-		*istat = bulkdelete_res;
+		pfree(istat);
+		istat = bulkdelete_res;
 	}
+
+	return istat;
 }
 
 /*
