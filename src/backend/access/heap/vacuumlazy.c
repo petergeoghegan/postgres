@@ -3614,10 +3614,10 @@ update_index_statistics(Relation *Irel, LVRelStats *vacrelstats)
 
 	Assert(!IsInParallelMode());
 
-	for (int i = 0; i < nindexes; i++)
+	for (int idx = 0; idx < nindexes; idx++)
 	{
-		Relation			   indrel = Irel[i];
-		IndexBulkDeleteResult *istat = indstats[i];
+		Relation			   indrel = Irel[idx];
+		IndexBulkDeleteResult *istat = indstats[idx];
 
 		if (istat == NULL || istat->estimated_count)
 			continue;
