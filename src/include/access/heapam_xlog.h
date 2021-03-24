@@ -254,7 +254,7 @@ typedef struct xl_heap_prune
  * The vacuum page record is similar to the prune record, but can only mark
  * already dead items as unused
  *
- * Use by heap vacuuming only.  Does not require a super-exclusive lock.
+ * Used by heap vacuuming only.  Does not require a super-exclusive lock.
  */
 typedef struct xl_heap_vacuum
 {
