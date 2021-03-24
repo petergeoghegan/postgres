@@ -417,6 +417,7 @@ static void lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 									LVRelStats *vacrelstats, LVParallelState *lps);
 static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 									 LVParallelState *lps);
+static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
 													IndexBulkDeleteResult *istat, double reltuples,
 													LVRelStats *vacrelstats);
@@ -453,7 +454,6 @@ static IndexBulkDeleteResult *parallel_process_one_index(Relation indrel,
 														 LVShared *lvshared,
 														 LVSharedIndStats *shared_indstats,
 														 LVRelStats *vacrelstats);
-static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static int	compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 											bool *can_parallel_vacuum);
@@ -2261,6 +2261,37 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 }
 
 /*
+ * Update index statistics in pg_class if the statistics are accurate.
+ */
+static void
+update_index_statistics(Relation *Irel, LVRelStats *vacrelstats)
+{
+	int						nindexes = vacrelstats->nindexes;
+	IndexBulkDeleteResult **indstats = vacrelstats->indstats;
+
+	Assert(!IsInParallelMode());
+
+	for (int idx = 0; idx < nindexes; idx++)
+	{
+		Relation			   indrel = Irel[idx];
+		IndexBulkDeleteResult *istat = indstats[idx];
+
+		if (istat == NULL || istat->estimated_count)
+			continue;
+
+		/* Update index statistics */
+		vac_update_relstats(indrel,
+							istat->num_pages,
+							istat->num_index_tuples,
+							0,
+							false,
+							InvalidTransactionId,
+							InvalidMultiXactId,
+							false);
+	}
+}
+
+/*
  *	lazy_vacuum_heap() -- second pass over the heap for two pass strategy
  *
  *		This routine marks dead tuples as unused and compacts out free
@@ -2839,37 +2870,6 @@ parallel_process_one_index(Relation indrel,
 	}
 
 	return istat;
-}
-
-/*
- * Update index statistics in pg_class if the statistics are accurate.
- */
-static void
-update_index_statistics(Relation *Irel, LVRelStats *vacrelstats)
-{
-	int						nindexes = vacrelstats->nindexes;
-	IndexBulkDeleteResult **indstats = vacrelstats->indstats;
-
-	Assert(!IsInParallelMode());
-
-	for (int idx = 0; idx < nindexes; idx++)
-	{
-		Relation			   indrel = Irel[idx];
-		IndexBulkDeleteResult *istat = indstats[idx];
-
-		if (istat == NULL || istat->estimated_count)
-			continue;
-
-		/* Update index statistics */
-		vac_update_relstats(indrel,
-							istat->num_pages,
-							istat->num_index_tuples,
-							0,
-							false,
-							InvalidTransactionId,
-							InvalidMultiXactId,
-							false);
-	}
 }
 
 /*
