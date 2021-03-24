@@ -431,10 +431,6 @@ static int	lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 static bool should_attempt_truncation(VacuumParams *params,
 									  LVRelStats *vacrelstats);
 static void lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats);
-static BlockNumber lazy_truncate_count_nondeletable(Relation onerel,
-													LVRelStats *vacrelstats);
-static void lazy_space_alloc(LVRelStats *vacrelstats, BlockNumber relblocks,
-							 bool hasindex);
 static void lazy_record_dead_tuple(LVDeadTuples *dead_tuples,
 								   ItemPointer itemptr);
 static bool lazy_tid_reaped(ItemPointer itemptr, void *state);
@@ -442,6 +438,18 @@ static int	vac_cmp_itemptr(const void *left, const void *right);
 static bool heap_page_is_all_visible(Relation rel, Buffer buf,
 									 LVRelStats *vacrelstats,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
+static BlockNumber lazy_truncate_count_nondeletable(Relation onerel,
+													LVRelStats *vacrelstats);
+static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
+static void lazy_space_alloc(LVRelStats *vacrelstats, BlockNumber relblocks,
+							 bool hasindex);
+static int compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
+										   bool *can_parallel_vacuum);
+static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *Irel,
+											  LVRelStats *vacrelstats, BlockNumber nblocks,
+											  int nrequested);
+static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
+								LVParallelState *lps, int nindexes);
 static void do_parallel_vacuum_or_cleanup(Relation *Irel,
 										  LVRelStats *vacrelstats,
 										  LVParallelState *lps);
@@ -455,14 +463,6 @@ static IndexBulkDeleteResult *parallel_process_one_index(Relation indrel,
 														 LVShared *lvshared,
 														 LVSharedIndStats *shared_indstats,
 														 LVRelStats *vacrelstats);
-static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
-static int	compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
-											bool *can_parallel_vacuum);
-static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *Irel,
-											  LVRelStats *vacrelstats, BlockNumber nblocks,
-											  int nrequested);
-static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
-								LVParallelState *lps, int nindexes);
 static LVSharedIndStats *get_indstats(LVShared *lvshared, int n);
 static bool parallel_processing_is_safe(Relation indrel, LVShared *lvshared);
 static void vacuum_error_callback(void *arg);
@@ -2568,314 +2568,6 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 }
 
 /*
- * Perform index vacuum or index cleanup with parallel workers.  This function
- * must be used by the parallel vacuum leader process.  The caller must set
- * lps->lvshared->for_cleanup to indicate whether to perform vacuum or
- * cleanup.
- */
-static void
-do_parallel_vacuum_or_cleanup(Relation *Irel, LVRelStats *vacrelstats,
-							  LVParallelState *lps)
-{
-	int			nworkers;
-
-	Assert(!IsParallelWorker());
-	Assert(ParallelVacuumIsActive(lps));
-	Assert(vacrelstats->nindexes > 0);
-
-	/* Determine the number of parallel workers to launch */
-	if (lps->lvshared->for_cleanup)
-	{
-		if (lps->lvshared->first_time)
-			nworkers = lps->nindexes_parallel_cleanup +
-				lps->nindexes_parallel_condcleanup;
-		else
-			nworkers = lps->nindexes_parallel_cleanup;
-	}
-	else
-		nworkers = lps->nindexes_parallel_bulkdel;
-
-	/* The leader process will participate */
-	nworkers--;
-
-	/*
-	 * It is possible that parallel context is initialized with fewer workers
-	 * than the number of indexes that need a separate worker in the current
-	 * phase, so we need to consider it.  See compute_parallel_vacuum_workers.
-	 */
-	nworkers = Min(nworkers, lps->pcxt->nworkers);
-
-	/* Setup the shared cost-based vacuum delay and launch workers */
-	if (nworkers > 0)
-	{
-		if (vacrelstats->num_index_scans > 0)
-		{
-			/* Reset the parallel index processing counter */
-			pg_atomic_write_u32(&(lps->lvshared->idx), 0);
-
-			/* Reinitialize the parallel context to relaunch parallel workers */
-			ReinitializeParallelDSM(lps->pcxt);
-		}
-
-		/*
-		 * Set up shared cost balance and the number of active workers for
-		 * vacuum delay.  We need to do this before launching workers as
-		 * otherwise, they might not see the updated values for these
-		 * parameters.
-		 */
-		pg_atomic_write_u32(&(lps->lvshared->cost_balance), VacuumCostBalance);
-		pg_atomic_write_u32(&(lps->lvshared->active_nworkers), 0);
-
-		/*
-		 * The number of workers can vary between bulkdelete and cleanup
-		 * phase.
-		 */
-		ReinitializeParallelWorkers(lps->pcxt, nworkers);
-
-		LaunchParallelWorkers(lps->pcxt);
-
-		if (lps->pcxt->nworkers_launched > 0)
-		{
-			/*
-			 * Reset the local cost values for leader backend as we have
-			 * already accumulated the remaining balance of heap.
-			 */
-			VacuumCostBalance = 0;
-			VacuumCostBalanceLocal = 0;
-
-			/* Enable shared cost balance for leader backend */
-			VacuumSharedCostBalance = &(lps->lvshared->cost_balance);
-			VacuumActiveNWorkers = &(lps->lvshared->active_nworkers);
-		}
-
-		if (lps->lvshared->for_cleanup)
-			ereport(elevel,
-					(errmsg(ngettext("launched %d parallel vacuum worker for index cleanup (planned: %d)",
-									 "launched %d parallel vacuum workers for index cleanup (planned: %d)",
-									 lps->pcxt->nworkers_launched),
-							lps->pcxt->nworkers_launched, nworkers)));
-		else
-			ereport(elevel,
-					(errmsg(ngettext("launched %d parallel vacuum worker for index vacuuming (planned: %d)",
-									 "launched %d parallel vacuum workers for index vacuuming (planned: %d)",
-									 lps->pcxt->nworkers_launched),
-							lps->pcxt->nworkers_launched, nworkers)));
-	}
-
-	/* Process the indexes that can be processed by only leader process */
-	do_serial_processing_for_unsafe_indexes(Irel, vacrelstats, lps->lvshared);
-
-	/*
-	 * Join as a parallel worker.  The leader process alone processes all the
-	 * indexes in the case where no workers are launched.
-	 */
-	do_parallel_processing(Irel, vacrelstats, lps->lvshared);
-
-	/*
-	 * Next, accumulate buffer and WAL usage.  (This must wait for the workers
-	 * to finish, or we might get incomplete data.)
-	 */
-	if (nworkers > 0)
-	{
-		int			i;
-
-		/* Wait for all vacuum workers to finish */
-		WaitForParallelWorkersToFinish(lps->pcxt);
-
-		for (i = 0; i < lps->pcxt->nworkers_launched; i++)
-			InstrAccumParallelQuery(&lps->buffer_usage[i], &lps->wal_usage[i]);
-	}
-
-	/*
-	 * Carry the shared balance value to heap scan and disable shared costing
-	 */
-	if (VacuumSharedCostBalance)
-	{
-		VacuumCostBalance = pg_atomic_read_u32(VacuumSharedCostBalance);
-		VacuumSharedCostBalance = NULL;
-		VacuumActiveNWorkers = NULL;
-	}
-}
-
-/*
- * Index vacuum/cleanup routine used by the leader process and parallel
- * vacuum worker processes to process the indexes in parallel.
- */
-static void
-do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
-					   LVShared *lvshared)
-{
-	/*
-	 * Increment the active worker count if we are able to launch any worker.
-	 */
-	if (VacuumActiveNWorkers)
-		pg_atomic_add_fetch_u32(VacuumActiveNWorkers, 1);
-
-	/* Loop until all indexes are vacuumed */
-	for (;;)
-	{
-		int			idx;
-		LVSharedIndStats *shared_istat;
-		Relation				indrel;
-		IndexBulkDeleteResult *istat;
-
-		/* Get an index number to process */
-		idx = pg_atomic_fetch_add_u32(&(lvshared->idx), 1);
-
-		/* Done for all indexes? */
-		if (idx >= vacrelstats->nindexes)
-			break;
-
-		/* Get the index statistics of this index from DSM */
-		shared_istat = get_indstats(lvshared, idx);
-
-		/* Skip indexes not participating in parallelism */
-		if (shared_istat == NULL)
-			continue;
-
-		indrel = Irel[idx];
-
-		/*
-		 * Skip processing indexes that are unsafe for workers (these are
-		 * processed in do_serial_processing_for_unsafe_indexes() by leader)
-		 */
-		if (!parallel_processing_is_safe(indrel, lvshared))
-			continue;
-
-		/* Do vacuum or cleanup of the index */
-		istat = (vacrelstats->indstats[idx]);
-		vacrelstats->indstats[idx] = parallel_process_one_index(indrel, istat,
-																lvshared,
-																shared_istat,
-																vacrelstats);
-	}
-
-	/*
-	 * We have completed the index vacuum so decrement the active worker
-	 * count.
-	 */
-	if (VacuumActiveNWorkers)
-		pg_atomic_sub_fetch_u32(VacuumActiveNWorkers, 1);
-}
-
-/*
- * Vacuum or cleanup indexes that can be processed by only the leader process
- * because these indexes don't support parallel operation at that phase.
- */
-static void
-do_serial_processing_for_unsafe_indexes(Relation *Irel,
-										LVRelStats *vacrelstats,
-										LVShared *lvshared)
-{
-	Assert(!IsParallelWorker());
-
-	/*
-	 * Increment the active worker count if we are able to launch any worker.
-	 */
-	if (VacuumActiveNWorkers)
-		pg_atomic_add_fetch_u32(VacuumActiveNWorkers, 1);
-
-	for (int idx = 0; idx < vacrelstats->nindexes; idx++)
-	{
-		LVSharedIndStats *shared_istat;
-		Relation				indrel;
-		IndexBulkDeleteResult *istat;
-
-		shared_istat = get_indstats(lvshared, idx);
-
-		/* Skip already-complete indexes */
-		if (shared_istat != NULL)
-			continue;
-
-		indrel = Irel[idx];
-
-		/*
-		 * We're only here for the unsafe indexes
-		 */
-		if (parallel_processing_is_safe(indrel, lvshared))
-			continue;
-
-		/* Do vacuum or cleanup of the index */
-		istat = (vacrelstats->indstats[idx]);
-		vacrelstats->indstats[idx] = parallel_process_one_index(indrel, istat,
-																lvshared,
-																shared_istat,
-																vacrelstats);
-	}
-
-	/*
-	 * We have completed the index vacuum so decrement the active worker
-	 * count.
-	 */
-	if (VacuumActiveNWorkers)
-		pg_atomic_sub_fetch_u32(VacuumActiveNWorkers, 1);
-}
-
-/*
- * Vacuum or cleanup index either by leader process or by one of the worker
- * process.  After processing the index this function copies the index
- * statistics returned from ambulkdelete and amvacuumcleanup to the DSM
- * segment.
- */
-static IndexBulkDeleteResult *
-parallel_process_one_index(Relation indrel,
-						   IndexBulkDeleteResult *istat,
-						   LVShared *lvshared,
-						   LVSharedIndStats *shared_istat,
-						   LVRelStats *vacrelstats)
-{
-	IndexBulkDeleteResult *bulkdelete_res = NULL;
-
-	if (shared_istat)
-	{
-		/* Get the space for IndexBulkDeleteResult */
-		bulkdelete_res = &(shared_istat->istat);
-
-		/*
-		 * Update the pointer to the corresponding bulk-deletion result if
-		 * someone has already updated it.
-		 */
-		if (shared_istat->updated && istat == NULL)
-			istat = bulkdelete_res;
-	}
-
-	/* Do vacuum or cleanup of the index */
-	if (lvshared->for_cleanup)
-		istat = lazy_cleanup_one_index(indrel, istat, lvshared->reltuples,
-									   lvshared->estimated_count, vacrelstats);
-	else
-		istat = lazy_vacuum_one_index(indrel, istat, lvshared->reltuples,
-									  vacrelstats);
-
-	/*
-	 * Copy the index bulk-deletion result returned from ambulkdelete and
-	 * amvacuumcleanup to the DSM segment if it's the first cycle because they
-	 * allocate locally and it's possible that an index will be vacuumed by a
-	 * different vacuum process the next cycle.  Copying the result normally
-	 * happens only the first time an index is vacuumed.  For any additional
-	 * vacuum pass, we directly point to the result on the DSM segment and
-	 * pass it to vacuum index APIs so that workers can update it directly.
-	 *
-	 * Since all vacuum workers write the bulk-deletion result at different
-	 * slots we can write them without locking.
-	 */
-	if (shared_istat && !shared_istat->updated && istat != NULL)
-	{
-		memcpy(bulkdelete_res, istat, sizeof(IndexBulkDeleteResult));
-		shared_istat->updated = true;
-
-		/*
-		 * Now that top-level indstats[idx] points to the DSM segment, we
-		 * don't need the locally allocated results.
-		 */
-		pfree(istat);
-		istat = bulkdelete_res;
-	}
-
-	return istat;
-}
-
-/*
  *	lazy_vacuum_one_index() -- vacuum index relation.
  *
  *		Delete all the index entries pointing to tuples listed in
@@ -3599,16 +3291,16 @@ compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 	/*
 	 * Compute the number of indexes that can participate in parallel vacuum.
 	 */
-	for (int i = 0; i < nindexes; i++)
+	for (int idx = 0; idx < nindexes; idx++)
 	{
-		Relation indrel = Irel[i];
+		Relation indrel = Irel[idx];
 		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		if (vacoptions == VACUUM_OPTION_NO_PARALLEL ||
 			RelationGetNumberOfBlocks(indrel) < min_parallel_index_scan_size)
 			continue;
 
-		can_parallel_vacuum[i] = true;
+		can_parallel_vacuum[idx] = true;
 
 		if ((vacoptions & VACUUM_OPTION_PARALLEL_BULKDEL) != 0)
 			nindexes_parallel_bulkdel++;
@@ -3693,9 +3385,10 @@ begin_parallel_vacuum(Relation onerel, Relation *Irel, LVRelStats *vacrelstats,
 
 	/* Estimate size for shared information -- PARALLEL_VACUUM_KEY_SHARED */
 	est_shared = MAXALIGN(add_size(SizeOfLVShared, BITMAPLEN(nindexes)));
-	for (int i = 0; i < nindexes; i++)
+	for (int idx = 0; idx < nindexes; idx++)
 	{
-		uint8		vacoptions = Irel[i]->rd_indam->amparallelvacuumoptions;
+		Relation indrel = Irel[idx];
+		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		/*
 		 * Cleanup option should be either disabled, always performing in
@@ -3706,10 +3399,10 @@ begin_parallel_vacuum(Relation onerel, Relation *Irel, LVRelStats *vacrelstats,
 		Assert(vacoptions <= VACUUM_OPTION_MAX_VALID_VALUE);
 
 		/* Skip indexes that don't participate in parallel vacuum */
-		if (!can_parallel_vacuum[i])
+		if (!can_parallel_vacuum[idx])
 			continue;
 
-		if (Irel[i]->rd_indam->amusemaintenanceworkmem)
+		if (indrel->rd_indam->amusemaintenanceworkmem)
 			nindexes_mwm++;
 
 		est_shared = add_size(est_shared, sizeof(LVSharedIndStats));
@@ -3876,6 +3569,314 @@ end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 	/* Deactivate parallel vacuum */
 	pfree(lps);
 	lps = NULL;
+}
+
+/*
+ * Perform index vacuum or index cleanup with parallel workers.  This function
+ * must be used by the parallel vacuum leader process.  The caller must set
+ * lps->lvshared->for_cleanup to indicate whether to perform vacuum or
+ * cleanup.
+ */
+static void
+do_parallel_vacuum_or_cleanup(Relation *Irel, LVRelStats *vacrelstats,
+							  LVParallelState *lps)
+{
+	int			nworkers;
+
+	Assert(!IsParallelWorker());
+	Assert(ParallelVacuumIsActive(lps));
+	Assert(vacrelstats->nindexes > 0);
+
+	/* Determine the number of parallel workers to launch */
+	if (lps->lvshared->for_cleanup)
+	{
+		if (lps->lvshared->first_time)
+			nworkers = lps->nindexes_parallel_cleanup +
+				lps->nindexes_parallel_condcleanup;
+		else
+			nworkers = lps->nindexes_parallel_cleanup;
+	}
+	else
+		nworkers = lps->nindexes_parallel_bulkdel;
+
+	/* The leader process will participate */
+	nworkers--;
+
+	/*
+	 * It is possible that parallel context is initialized with fewer workers
+	 * than the number of indexes that need a separate worker in the current
+	 * phase, so we need to consider it.  See compute_parallel_vacuum_workers.
+	 */
+	nworkers = Min(nworkers, lps->pcxt->nworkers);
+
+	/* Setup the shared cost-based vacuum delay and launch workers */
+	if (nworkers > 0)
+	{
+		if (vacrelstats->num_index_scans > 0)
+		{
+			/* Reset the parallel index processing counter */
+			pg_atomic_write_u32(&(lps->lvshared->idx), 0);
+
+			/* Reinitialize the parallel context to relaunch parallel workers */
+			ReinitializeParallelDSM(lps->pcxt);
+		}
+
+		/*
+		 * Set up shared cost balance and the number of active workers for
+		 * vacuum delay.  We need to do this before launching workers as
+		 * otherwise, they might not see the updated values for these
+		 * parameters.
+		 */
+		pg_atomic_write_u32(&(lps->lvshared->cost_balance), VacuumCostBalance);
+		pg_atomic_write_u32(&(lps->lvshared->active_nworkers), 0);
+
+		/*
+		 * The number of workers can vary between bulkdelete and cleanup
+		 * phase.
+		 */
+		ReinitializeParallelWorkers(lps->pcxt, nworkers);
+
+		LaunchParallelWorkers(lps->pcxt);
+
+		if (lps->pcxt->nworkers_launched > 0)
+		{
+			/*
+			 * Reset the local cost values for leader backend as we have
+			 * already accumulated the remaining balance of heap.
+			 */
+			VacuumCostBalance = 0;
+			VacuumCostBalanceLocal = 0;
+
+			/* Enable shared cost balance for leader backend */
+			VacuumSharedCostBalance = &(lps->lvshared->cost_balance);
+			VacuumActiveNWorkers = &(lps->lvshared->active_nworkers);
+		}
+
+		if (lps->lvshared->for_cleanup)
+			ereport(elevel,
+					(errmsg(ngettext("launched %d parallel vacuum worker for index cleanup (planned: %d)",
+									 "launched %d parallel vacuum workers for index cleanup (planned: %d)",
+									 lps->pcxt->nworkers_launched),
+							lps->pcxt->nworkers_launched, nworkers)));
+		else
+			ereport(elevel,
+					(errmsg(ngettext("launched %d parallel vacuum worker for index vacuuming (planned: %d)",
+									 "launched %d parallel vacuum workers for index vacuuming (planned: %d)",
+									 lps->pcxt->nworkers_launched),
+							lps->pcxt->nworkers_launched, nworkers)));
+	}
+
+	/* Process the indexes that can be processed by only leader process */
+	do_serial_processing_for_unsafe_indexes(Irel, vacrelstats, lps->lvshared);
+
+	/*
+	 * Join as a parallel worker.  The leader process alone processes all the
+	 * indexes in the case where no workers are launched.
+	 */
+	do_parallel_processing(Irel, vacrelstats, lps->lvshared);
+
+	/*
+	 * Next, accumulate buffer and WAL usage.  (This must wait for the workers
+	 * to finish, or we might get incomplete data.)
+	 */
+	if (nworkers > 0)
+	{
+		int			i;
+
+		/* Wait for all vacuum workers to finish */
+		WaitForParallelWorkersToFinish(lps->pcxt);
+
+		for (i = 0; i < lps->pcxt->nworkers_launched; i++)
+			InstrAccumParallelQuery(&lps->buffer_usage[i], &lps->wal_usage[i]);
+	}
+
+	/*
+	 * Carry the shared balance value to heap scan and disable shared costing
+	 */
+	if (VacuumSharedCostBalance)
+	{
+		VacuumCostBalance = pg_atomic_read_u32(VacuumSharedCostBalance);
+		VacuumSharedCostBalance = NULL;
+		VacuumActiveNWorkers = NULL;
+	}
+}
+
+/*
+ * Index vacuum/cleanup routine used by the leader process and parallel
+ * vacuum worker processes to process the indexes in parallel.
+ */
+static void
+do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
+					   LVShared *lvshared)
+{
+	/*
+	 * Increment the active worker count if we are able to launch any worker.
+	 */
+	if (VacuumActiveNWorkers)
+		pg_atomic_add_fetch_u32(VacuumActiveNWorkers, 1);
+
+	/* Loop until all indexes are vacuumed */
+	for (;;)
+	{
+		int			idx;
+		LVSharedIndStats *shared_istat;
+		Relation				indrel;
+		IndexBulkDeleteResult *istat;
+
+		/* Get an index number to process */
+		idx = pg_atomic_fetch_add_u32(&(lvshared->idx), 1);
+
+		/* Done for all indexes? */
+		if (idx >= vacrelstats->nindexes)
+			break;
+
+		/* Get the index statistics of this index from DSM */
+		shared_istat = get_indstats(lvshared, idx);
+
+		/* Skip indexes not participating in parallelism */
+		if (shared_istat == NULL)
+			continue;
+
+		indrel = Irel[idx];
+
+		/*
+		 * Skip processing indexes that are unsafe for workers (these are
+		 * processed in do_serial_processing_for_unsafe_indexes() by leader)
+		 */
+		if (!parallel_processing_is_safe(indrel, lvshared))
+			continue;
+
+		/* Do vacuum or cleanup of the index */
+		istat = (vacrelstats->indstats[idx]);
+		vacrelstats->indstats[idx] = parallel_process_one_index(indrel, istat,
+																lvshared,
+																shared_istat,
+																vacrelstats);
+	}
+
+	/*
+	 * We have completed the index vacuum so decrement the active worker
+	 * count.
+	 */
+	if (VacuumActiveNWorkers)
+		pg_atomic_sub_fetch_u32(VacuumActiveNWorkers, 1);
+}
+
+/*
+ * Vacuum or cleanup indexes that can be processed by only the leader process
+ * because these indexes don't support parallel operation at that phase.
+ */
+static void
+do_serial_processing_for_unsafe_indexes(Relation *Irel,
+										LVRelStats *vacrelstats,
+										LVShared *lvshared)
+{
+	Assert(!IsParallelWorker());
+
+	/*
+	 * Increment the active worker count if we are able to launch any worker.
+	 */
+	if (VacuumActiveNWorkers)
+		pg_atomic_add_fetch_u32(VacuumActiveNWorkers, 1);
+
+	for (int idx = 0; idx < vacrelstats->nindexes; idx++)
+	{
+		LVSharedIndStats *shared_istat;
+		Relation				indrel;
+		IndexBulkDeleteResult *istat;
+
+		shared_istat = get_indstats(lvshared, idx);
+
+		/* Skip already-complete indexes */
+		if (shared_istat != NULL)
+			continue;
+
+		indrel = Irel[idx];
+
+		/*
+		 * We're only here for the unsafe indexes
+		 */
+		if (parallel_processing_is_safe(indrel, lvshared))
+			continue;
+
+		/* Do vacuum or cleanup of the index */
+		istat = (vacrelstats->indstats[idx]);
+		vacrelstats->indstats[idx] = parallel_process_one_index(indrel, istat,
+																lvshared,
+																shared_istat,
+																vacrelstats);
+	}
+
+	/*
+	 * We have completed the index vacuum so decrement the active worker
+	 * count.
+	 */
+	if (VacuumActiveNWorkers)
+		pg_atomic_sub_fetch_u32(VacuumActiveNWorkers, 1);
+}
+
+/*
+ * Vacuum or cleanup index either by leader process or by one of the worker
+ * process.  After processing the index this function copies the index
+ * statistics returned from ambulkdelete and amvacuumcleanup to the DSM
+ * segment.
+ */
+static IndexBulkDeleteResult *
+parallel_process_one_index(Relation indrel,
+						   IndexBulkDeleteResult *istat,
+						   LVShared *lvshared,
+						   LVSharedIndStats *shared_istat,
+						   LVRelStats *vacrelstats)
+{
+	IndexBulkDeleteResult *bulkdelete_res = NULL;
+
+	if (shared_istat)
+	{
+		/* Get the space for IndexBulkDeleteResult */
+		bulkdelete_res = &(shared_istat->istat);
+
+		/*
+		 * Update the pointer to the corresponding bulk-deletion result if
+		 * someone has already updated it.
+		 */
+		if (shared_istat->updated && istat == NULL)
+			istat = bulkdelete_res;
+	}
+
+	/* Do vacuum or cleanup of the index */
+	if (lvshared->for_cleanup)
+		istat = lazy_cleanup_one_index(indrel, istat, lvshared->reltuples,
+									   lvshared->estimated_count, vacrelstats);
+	else
+		istat = lazy_vacuum_one_index(indrel, istat, lvshared->reltuples,
+									  vacrelstats);
+
+	/*
+	 * Copy the index bulk-deletion result returned from ambulkdelete and
+	 * amvacuumcleanup to the DSM segment if it's the first cycle because they
+	 * allocate locally and it's possible that an index will be vacuumed by a
+	 * different vacuum process the next cycle.  Copying the result normally
+	 * happens only the first time an index is vacuumed.  For any additional
+	 * vacuum pass, we directly point to the result on the DSM segment and
+	 * pass it to vacuum index APIs so that workers can update it directly.
+	 *
+	 * Since all vacuum workers write the bulk-deletion result at different
+	 * slots we can write them without locking.
+	 */
+	if (shared_istat && !shared_istat->updated && istat != NULL)
+	{
+		memcpy(bulkdelete_res, istat, sizeof(IndexBulkDeleteResult));
+		shared_istat->updated = true;
+
+		/*
+		 * Now that top-level indstats[idx] points to the DSM segment, we
+		 * don't need the locally allocated results.
+		 */
+		pfree(istat);
+		istat = bulkdelete_res;
+	}
+
+	return istat;
 }
 
 /* Return the Nth index statistics or NULL */
