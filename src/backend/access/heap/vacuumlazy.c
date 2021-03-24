@@ -416,7 +416,7 @@ static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 static void lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 									LVRelStats *vacrelstats, LVParallelState *lps);
 static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
-							  LVDeadTuples *dead_tuples, double reltuples, LVRelStats *vacrelstats);
+							  double reltuples, LVRelStats *vacrelstats);
 static void lazy_cleanup_index(Relation indrel,
 							   IndexBulkDeleteResult **stats,
 							   double reltuples, bool estimated_count, LVRelStats *vacrelstats);
@@ -445,7 +445,7 @@ static void vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
 								  LVParallelState *lps);
 static void vacuum_one_index(Relation indrel, IndexBulkDeleteResult **stats,
 							 LVShared *lvshared, LVSharedIndStats *shared_indstats,
-							 LVDeadTuples *dead_tuples, LVRelStats *vacrelstats);
+							 LVRelStats *vacrelstats);
 static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 									 LVParallelState *lps, int nindexes);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
@@ -2186,7 +2186,6 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 
 		for (idx = 0; idx < vacrelstats->nindexes; idx++)
 			lazy_vacuum_index(Irel[idx], &(vacrelstats->indstats[idx]),
-							  vacrelstats->dead_tuples,
 							  vacrelstats->old_live_tuples, vacrelstats);
 	}
 
@@ -2641,7 +2640,7 @@ parallel_vacuum_index(Relation *Irel, LVShared *lvshared,
 
 		/* Do vacuum or cleanup of the index */
 		vacuum_one_index(Irel[idx], &(vacrelstats->indstats[idx]), lvshared,
-						 shared_indstats, dead_tuples, vacrelstats);
+						 shared_indstats, vacrelstats);
 	}
 
 	/*
@@ -2677,9 +2676,8 @@ vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
 		/* Process the indexes skipped by parallel workers */
 		if (shared_indstats == NULL ||
 			skip_parallel_vacuum_index(Irel[i], lps->lvshared))
-			vacuum_one_index(Irel[i], &(vacrelstats->indstats[i]), lps->lvshared,
-							 shared_indstats, vacrelstats->dead_tuples,
-							 vacrelstats);
+			vacuum_one_index(Irel[i], &(vacrelstats->indstats[i]),
+							 lps->lvshared, shared_indstats, vacrelstats);
 	}
 
 	/*
@@ -2699,7 +2697,7 @@ vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
 static void
 vacuum_one_index(Relation indrel, IndexBulkDeleteResult **stats,
 				 LVShared *lvshared, LVSharedIndStats *shared_indstats,
-				 LVDeadTuples *dead_tuples, LVRelStats *vacrelstats)
+				 LVRelStats *vacrelstats)
 {
 	IndexBulkDeleteResult *bulkdelete_res = NULL;
 
@@ -2721,8 +2719,7 @@ vacuum_one_index(Relation indrel, IndexBulkDeleteResult **stats,
 		lazy_cleanup_index(indrel, stats, lvshared->reltuples,
 						   lvshared->estimated_count, vacrelstats);
 	else
-		lazy_vacuum_index(indrel, stats, dead_tuples,
-						  lvshared->reltuples, vacrelstats);
+		lazy_vacuum_index(indrel, stats, lvshared->reltuples, vacrelstats);
 
 	/*
 	 * Copy the index bulk-deletion result returned from ambulkdelete and
@@ -2812,7 +2809,7 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
  */
 static void
 lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
-				  LVDeadTuples *dead_tuples, double reltuples, LVRelStats *vacrelstats)
+				  double reltuples, LVRelStats *vacrelstats)
 {
 	IndexVacuumInfo ivinfo;
 	PGRUsage	ru0;
@@ -2841,13 +2838,13 @@ lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
 	/* Do bulk deletion */
-	*stats = index_bulk_delete(&ivinfo, *stats,
-							   lazy_tid_reaped, (void *) dead_tuples);
+	*stats = index_bulk_delete(&ivinfo, *stats, lazy_tid_reaped,
+							   (void *) vacrelstats->dead_tuples);
 
 	ereport(elevel,
 			(errmsg("scanned index \"%s\" to remove %d row versions",
 					vacrelstats->indname,
-					dead_tuples->num_tuples),
+					vacrelstats->dead_tuples->num_tuples),
 			 errdetail_internal("%s", pg_rusage_show(&ru0))));
 
 	/* Revert to the previous phase information for error traceback */
@@ -3973,6 +3970,7 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 	vacrelstats.indname = NULL;
 	vacrelstats.phase = VACUUM_ERRCB_PHASE_UNKNOWN; /* Not yet processing */
 	vacrelstats.nindexes = nindexes;
+	vacrelstats.dead_tuples = dead_tuples;
 
 	/* Setup error traceback support for ereport() */
 	errcallback.callback = vacuum_error_callback;
