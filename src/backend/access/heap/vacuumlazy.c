@@ -2640,8 +2640,8 @@ do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
 		/* Get the index statistics of this index from DSM */
 		shared_istat = get_indstats(lvshared, idx);
 
-		/* Skip already-complete indexes */
-		if (shared_istat != NULL)
+		/* Skip indexes not participating in parallelism */
+		if (shared_istat == NULL)
 			continue;
 
 		indrel = Irel[idx];
