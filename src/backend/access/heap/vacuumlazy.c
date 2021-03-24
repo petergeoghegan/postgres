@@ -438,16 +438,16 @@ static bool heap_page_is_all_visible(Relation rel, Buffer buf,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
 static void lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
 										 LVParallelState *lps);
-static void do_parallel_processing(Relation *Irel, LVShared *lvshared,
-								  LVRelStats *vacrelstats);
-static bool skip_parallel_processing(Relation indrel, LVShared *lvshared);
-static void vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
-								  LVParallelState *lps);
-static void lazy_vacuum_or_cleanup_one_index_in_parallel(Relation indrel,
-														 IndexBulkDeleteResult **istat,
-														 LVShared *lvshared,
-														 LVSharedIndStats *shared_indstats,
-														 LVRelStats *vacrelstats);
+static void do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
+								   LVShared *lvshared);
+static void do_serial_processing_for_unsafe_indexes(Relation *Irel,
+													LVRelStats *vacrelstats,
+													LVShared *lvshared);
+static void parallel_process_one_index(Relation indrel,
+									   IndexBulkDeleteResult **istat,
+									   LVShared *lvshared,
+									   LVSharedIndStats *shared_indstats,
+									   LVRelStats *vacrelstats);
 static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 									 LVParallelState *lps);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
@@ -462,6 +462,7 @@ static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *Irel,
 static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
 								LVParallelState *lps, int nindexes);
 static LVSharedIndStats *get_indstats(LVShared *lvshared, int n);
+static bool parallel_processing_is_safe(Relation indrel, LVShared *lvshared);
 static void vacuum_error_callback(void *arg);
 static void update_vacuum_error_info(LVRelStats *errinfo, LVSavedErrInfo *saved_err_info,
 									 int phase, BlockNumber blkno,
@@ -2563,13 +2564,13 @@ lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
 	}
 
 	/* Process the indexes that can be processed by only leader process */
-	vacuum_indexes_leader(Irel, vacrelstats, lps);
+	do_serial_processing_for_unsafe_indexes(Irel, vacrelstats, lps->lvshared);
 
 	/*
 	 * Join as a parallel worker.  The leader process alone processes all the
 	 * indexes in the case where no workers are launched.
 	 */
-	do_parallel_processing(Irel, lps->lvshared, vacrelstats);
+	do_parallel_processing(Irel, vacrelstats, lps->lvshared);
 
 	/*
 	 * Next, accumulate buffer and WAL usage.  (This must wait for the workers
@@ -2602,8 +2603,8 @@ lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
  * vacuum worker processes to process the indexes in parallel.
  */
 static void
-do_parallel_processing(Relation *Irel, LVShared *lvshared,
-					  LVRelStats *vacrelstats)
+do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
+					   LVShared *lvshared)
 {
 	/*
 	 * Increment the active worker count if we are able to launch any worker.
@@ -2615,7 +2616,7 @@ do_parallel_processing(Relation *Irel, LVShared *lvshared,
 	for (;;)
 	{
 		int			idx;
-		LVSharedIndStats *shared_indstats;
+		LVSharedIndStats *shared_istat;
 
 		/* Get an index number to process */
 		idx = pg_atomic_fetch_add_u32(&(lvshared->idx), 1);
@@ -2625,22 +2626,22 @@ do_parallel_processing(Relation *Irel, LVShared *lvshared,
 			break;
 
 		/* Get the index statistics of this index from DSM */
-		shared_indstats = get_indstats(lvshared, idx);
+		shared_istat = get_indstats(lvshared, idx);
+
+		/* Skip already-complete indexes */
+		if (shared_istat != NULL)
+			continue;
 
 		/*
-		 * Skip processing indexes that don't participate in parallel
-		 * operation
+		 * Skip processing indexes that are unsafe for workers (these are
+		 * processed in do_serial_processing_for_unsafe_indexes() by leader)
 		 */
-		if (shared_indstats == NULL ||
-			skip_parallel_processing(Irel[idx], lvshared))
+		if (!parallel_processing_is_safe(Irel[idx], lvshared))
 			continue;
 
 		/* Do vacuum or cleanup of the index */
-		lazy_vacuum_or_cleanup_one_index_in_parallel(Irel[idx],
-													 &(vacrelstats->indstats[idx]),
-													 lvshared,
-													 shared_indstats,
-													 vacrelstats);
+		parallel_process_one_index(Irel[idx], &(vacrelstats->indstats[idx]),
+								   lvshared, shared_istat, vacrelstats);
 	}
 
 	/*
@@ -2652,50 +2653,13 @@ do_parallel_processing(Relation *Irel, LVShared *lvshared,
 }
 
 /*
- * Returns true, if the given index can't participate in parallel index vacuum
- * or parallel index cleanup, false, otherwise.
- */
-static bool
-skip_parallel_processing(Relation indrel, LVShared *lvshared)
-{
-	uint8		vacoptions = indrel->rd_indam->amparallelvacuumoptions;
-
-	/* first_time must be true only if for_cleanup is true */
-	Assert(lvshared->for_cleanup || !lvshared->first_time);
-
-	if (lvshared->for_cleanup)
-	{
-		/* Skip, if the index does not support parallel cleanup */
-		if (((vacoptions & VACUUM_OPTION_PARALLEL_CLEANUP) == 0) &&
-			((vacoptions & VACUUM_OPTION_PARALLEL_COND_CLEANUP) == 0))
-			return true;
-
-		/*
-		 * Skip, if the index supports parallel cleanup conditionally, but we
-		 * have already processed the index (for bulkdelete).  See the
-		 * comments for option VACUUM_OPTION_PARALLEL_COND_CLEANUP to know
-		 * when indexes support parallel cleanup conditionally.
-		 */
-		if (!lvshared->first_time &&
-			((vacoptions & VACUUM_OPTION_PARALLEL_COND_CLEANUP) != 0))
-			return true;
-	}
-	else if ((vacoptions & VACUUM_OPTION_PARALLEL_BULKDEL) == 0)
-	{
-		/* Skip if the index does not support parallel bulk deletion */
-		return true;
-	}
-
-	return false;
-}
-
-/*
  * Vacuum or cleanup indexes that can be processed by only the leader process
  * because these indexes don't support parallel operation at that phase.
  */
 static void
-vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
-					  LVParallelState *lps)
+do_serial_processing_for_unsafe_indexes(Relation *Irel,
+										LVRelStats *vacrelstats,
+										LVShared *lvshared)
 {
 	Assert(!IsParallelWorker());
 
@@ -2705,20 +2669,25 @@ vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
 	if (VacuumActiveNWorkers)
 		pg_atomic_add_fetch_u32(VacuumActiveNWorkers, 1);
 
-	for (int i = 0; i < vacrelstats->nindexes; i++)
+	for (int idx = 0; idx < vacrelstats->nindexes; idx++)
 	{
 		LVSharedIndStats *shared_istat;
 
-		shared_istat = get_indstats(lps->lvshared, i);
+		shared_istat = get_indstats(lvshared, idx);
 
-		/* Process the indexes skipped by parallel workers */
-		if (shared_istat == NULL ||
-			skip_parallel_processing(Irel[i], lps->lvshared))
-			lazy_vacuum_or_cleanup_one_index_in_parallel(Irel[i],
-														 &(vacrelstats->indstats[i]),
-														 lps->lvshared,
-														 shared_istat,
-														 vacrelstats);
+		/* Skip already-complete indexes */
+		if (shared_istat != NULL)
+			continue;
+
+		/*
+		 * We're only here for the unsafe indexes
+		 */
+		if (parallel_processing_is_safe(Irel[idx], lvshared))
+			continue;
+
+		/* Do vacuum or cleanup of the index */
+		parallel_process_one_index(Irel[idx], &(vacrelstats->indstats[idx]),
+								   lvshared, shared_istat, vacrelstats);
 	}
 
 	/*
@@ -2736,11 +2705,11 @@ vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
  * segment.
  */
 static void
-lazy_vacuum_or_cleanup_one_index_in_parallel(Relation indrel,
-											 IndexBulkDeleteResult **istat,
-											 LVShared *lvshared,
-											 LVSharedIndStats *shared_istat,
-											 LVRelStats *vacrelstats)
+parallel_process_one_index(Relation indrel,
+						   IndexBulkDeleteResult **istat,
+						   LVShared *lvshared,
+						   LVSharedIndStats *shared_istat,
+						   LVRelStats *vacrelstats)
 {
 	IndexBulkDeleteResult *bulkdelete_res = NULL;
 
@@ -3850,12 +3819,16 @@ static void
 end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 					int nindexes)
 {
+	LVShared *lvshared = lps->lvshared;
+
 	Assert(!IsParallelWorker());
 
 	/* Copy the updated statistics */
-	for (int i = 0; i < nindexes; i++)
+	for (int idx = 0; idx < nindexes; idx++)
 	{
-		LVSharedIndStats	  *shared_istat = get_indstats(lps->lvshared, i);
+		LVSharedIndStats *shared_istat;
+
+		shared_istat = get_indstats(lvshared, idx);
 
 		/*
 		 * Skip unused slot.  The statistics of this index are already stored
@@ -3866,11 +3839,11 @@ end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 
 		if (shared_istat->updated)
 		{
-			indstats[i] = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
-			memcpy(indstats[i], &(shared_istat->istat), sizeof(IndexBulkDeleteResult));
+			indstats[idx] = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
+			memcpy(indstats[idx], &(shared_istat->istat), sizeof(IndexBulkDeleteResult));
 		}
 		else
-			indstats[i] = NULL;
+			indstats[idx] = NULL;
 	}
 
 	DestroyParallelContext(lps->pcxt);
@@ -3901,6 +3874,44 @@ get_indstats(LVShared *lvshared, int n)
 	}
 
 	return (LVSharedIndStats *) p;
+}
+
+/*
+ * Returns false, if the given index can't participate in parallel index
+ * vacuum or parallel index cleanup
+ */
+static bool
+parallel_processing_is_safe(Relation indrel, LVShared *lvshared)
+{
+	uint8		vacoptions = indrel->rd_indam->amparallelvacuumoptions;
+
+	/* first_time must be true only if for_cleanup is true */
+	Assert(lvshared->for_cleanup || !lvshared->first_time);
+
+	if (lvshared->for_cleanup)
+	{
+		/* Skip, if the index does not support parallel cleanup */
+		if (((vacoptions & VACUUM_OPTION_PARALLEL_CLEANUP) == 0) &&
+			((vacoptions & VACUUM_OPTION_PARALLEL_COND_CLEANUP) == 0))
+			return true;
+
+		/*
+		 * Skip, if the index supports parallel cleanup conditionally, but we
+		 * have already processed the index (for bulkdelete).  See the
+		 * comments for option VACUUM_OPTION_PARALLEL_COND_CLEANUP to know
+		 * when indexes support parallel cleanup conditionally.
+		 */
+		if (!lvshared->first_time &&
+			((vacoptions & VACUUM_OPTION_PARALLEL_COND_CLEANUP) != 0))
+			return false;
+	}
+	else if ((vacoptions & VACUUM_OPTION_PARALLEL_BULKDEL) == 0)
+	{
+		/* Skip if the index does not support parallel bulk deletion */
+		return false;
+	}
+
+	return true;
 }
 
 /*
@@ -3993,7 +4004,7 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 	InstrStartParallelQuery();
 
 	/* Process indexes to perform vacuum/cleanup */
-	do_parallel_processing(indrels, lvshared, &vacrelstats);
+	do_parallel_processing(indrels, &vacrelstats, lvshared);
 
 	/* Report buffer/WAL usage during parallel execution */
 	buffer_usage = shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_BUFFER_USAGE, false);
