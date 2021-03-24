@@ -389,6 +389,8 @@ static BufferAccessStrategy vac_strategy;
 static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 						   LVRelStats *vacrelstats, Relation *Irel,
 						   bool aggressive);
+static bool lazy_scan_needs_freeze(Buffer buf, bool *hastup,
+								   LVRelStats *vacrelstats);
 static void lazy_scan_new_page(Relation onerel, Buffer buf);
 static void lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
 								 LVRelStats *vacrelstats);
@@ -411,8 +413,6 @@ static void lazy_vacuum_all_pruned_items(Relation onerel,
 										 BlockNumber has_dead_items_pages,
 										 bool onecall);
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
-static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
-									LVRelStats *vacrelstats);
 static void lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 									LVRelStats *vacrelstats, LVParallelState *lps);
 static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
@@ -1228,7 +1228,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			 * to use lazy_check_needs_freeze() for both situations, though.
 			 */
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
-			if (!lazy_check_needs_freeze(buf, &hastup, vacrelstats))
+			if (!lazy_scan_needs_freeze(buf, &hastup, vacrelstats))
 			{
 				UnlockReleaseBuffer(buf);
 				vacrelstats->scanned_pages++;
@@ -1524,6 +1524,67 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					scancounts.num_tuples, vacrelstats->scanned_pages, nblocks),
 			 errdetail_internal("%s", buf.data)));
 	pfree(buf.data);
+}
+
+/*
+ *	lazy_scan_needs_freeze() -- see if any tuples need to be cleaned to avoid
+ *	wraparound
+ *
+ * Returns true if the page needs to be vacuumed using cleanup lock.
+ * Also returns a flag indicating whether page contains any tuples at all.
+ */
+static bool
+lazy_scan_needs_freeze(Buffer buf, bool *hastup, LVRelStats *vacrelstats)
+{
+	Page		page = BufferGetPage(buf);
+	OffsetNumber offnum,
+				maxoff;
+	HeapTupleHeader tupleheader;
+
+	*hastup = false;
+
+	/*
+	 * New and empty pages, obviously, don't contain tuples. We could make
+	 * sure that the page is registered in the FSM, but it doesn't seem worth
+	 * waiting for a cleanup lock just for that, especially because it's
+	 * likely that the pin holder will do so.
+	 */
+	if (PageIsNew(page) || PageIsEmpty(page))
+		return false;
+
+	maxoff = PageGetMaxOffsetNumber(page);
+	for (offnum = FirstOffsetNumber;
+		 offnum <= maxoff;
+		 offnum = OffsetNumberNext(offnum))
+	{
+		ItemId		itemid;
+
+		/*
+		 * Set the offset number so that we can display it along with any
+		 * error that occurred while processing this tuple.
+		 */
+		vacrelstats->offnum = offnum;
+		itemid = PageGetItemId(page, offnum);
+
+		/* this should match hastup test in count_nondeletable_pages() */
+		if (ItemIdIsUsed(itemid))
+			*hastup = true;
+
+		/* dead and redirect items never need freezing */
+		if (!ItemIdIsNormal(itemid))
+			continue;
+
+		tupleheader = (HeapTupleHeader) PageGetItem(page, itemid);
+
+		if (heap_tuple_needs_freeze(tupleheader, FreezeLimit,
+									MultiXactCutoff, buf))
+			break;
+	}							/* scan along page */
+
+	/* Clear the offset information once we have processed the given page. */
+	vacrelstats->offnum = InvalidOffsetNumber;
+
+	return (offnum <= maxoff);
 }
 
 /*
@@ -2501,67 +2562,6 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	/* Revert to the previous phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
 	return tupindex;
-}
-
-/*
- *	lazy_check_needs_freeze() -- scan page to see if any tuples
- *					 need to be cleaned to avoid wraparound
- *
- * Returns true if the page needs to be vacuumed using cleanup lock.
- * Also returns a flag indicating whether page contains any tuples at all.
- */
-static bool
-lazy_check_needs_freeze(Buffer buf, bool *hastup, LVRelStats *vacrelstats)
-{
-	Page		page = BufferGetPage(buf);
-	OffsetNumber offnum,
-				maxoff;
-	HeapTupleHeader tupleheader;
-
-	*hastup = false;
-
-	/*
-	 * New and empty pages, obviously, don't contain tuples. We could make
-	 * sure that the page is registered in the FSM, but it doesn't seem worth
-	 * waiting for a cleanup lock just for that, especially because it's
-	 * likely that the pin holder will do so.
-	 */
-	if (PageIsNew(page) || PageIsEmpty(page))
-		return false;
-
-	maxoff = PageGetMaxOffsetNumber(page);
-	for (offnum = FirstOffsetNumber;
-		 offnum <= maxoff;
-		 offnum = OffsetNumberNext(offnum))
-	{
-		ItemId		itemid;
-
-		/*
-		 * Set the offset number so that we can display it along with any
-		 * error that occurred while processing this tuple.
-		 */
-		vacrelstats->offnum = offnum;
-		itemid = PageGetItemId(page, offnum);
-
-		/* this should match hastup test in count_nondeletable_pages() */
-		if (ItemIdIsUsed(itemid))
-			*hastup = true;
-
-		/* dead and redirect items never need freezing */
-		if (!ItemIdIsNormal(itemid))
-			continue;
-
-		tupleheader = (HeapTupleHeader) PageGetItem(page, itemid);
-
-		if (heap_tuple_needs_freeze(tupleheader, FreezeLimit,
-									MultiXactCutoff, buf))
-			break;
-	}							/* scan along page */
-
-	/* Clear the offset information once we have processed the given page. */
-	vacrelstats->offnum = InvalidOffsetNumber;
-
-	return (offnum <= maxoff);
 }
 
 /*
