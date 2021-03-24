@@ -439,7 +439,6 @@ static bool heap_page_is_all_visible(Relation rel, Buffer buf,
 static void lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
 										 LVParallelState *lps);
 static void parallel_vacuum_index(Relation *Irel, LVShared *lvshared,
-								  LVDeadTuples *dead_tuples,
 								  LVRelStats *vacrelstats);
 static void vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
 								  LVParallelState *lps);
@@ -2570,8 +2569,7 @@ lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
 	 * Join as a parallel worker.  The leader process alone processes all the
 	 * indexes in the case where no workers are launched.
 	 */
-	parallel_vacuum_index(Irel, lps->lvshared, vacrelstats->dead_tuples,
-						  vacrelstats);
+	parallel_vacuum_index(Irel, lps->lvshared, vacrelstats);
 
 	/*
 	 * Next, accumulate buffer and WAL usage.  (This must wait for the workers
@@ -2605,7 +2603,6 @@ lazy_parallel_vacuum_indexes(Relation *Irel, LVRelStats *vacrelstats,
  */
 static void
 parallel_vacuum_index(Relation *Irel, LVShared *lvshared,
-					  LVDeadTuples *dead_tuples,
 					  LVRelStats *vacrelstats)
 {
 	/*
@@ -3982,7 +3979,7 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 	InstrStartParallelQuery();
 
 	/* Process indexes to perform vacuum/cleanup */
-	parallel_vacuum_index(indrels, lvshared, dead_tuples, &vacrelstats);
+	parallel_vacuum_index(indrels, lvshared, &vacrelstats);
 
 	/* Report buffer/WAL usage during parallel execution */
 	buffer_usage = shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_BUFFER_USAGE, false);
