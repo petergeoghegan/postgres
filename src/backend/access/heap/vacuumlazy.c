@@ -364,7 +364,7 @@ typedef struct LVPrunePageState
  * State set up and maintained in lazy_scan_heap() (also maintained in
  * lazy_prune_page()) that represents VM bit status.
  *
- * Used by scan_setvmbit_page() when we're done pruning.
+ * Used by lazy_setvmbit_page() when we're done pruning.
  */
 typedef struct LVVisMapPageState
 {
@@ -389,6 +389,15 @@ static BufferAccessStrategy vac_strategy;
 static void lazy_scan_heap(Relation onerel, VacuumParams *params,
 						   LVRelStats *vacrelstats, Relation *Irel, int nindexes,
 						   bool aggressive);
+static void lazy_new_page(Relation onerel, Buffer buf);
+static void lazy_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+							LVRelStats *vacrelstats);
+static void lazy_prune_page(Relation onerel, Buffer buf,
+							LVRelStats *vacrelstats, GlobalVisState *vistest,
+							xl_heap_freeze_tuple *frozen, LVTempCounters *c,
+							LVPrunePageState *ps, LVVisMapPageState *vms);
+static void lazy_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+							   LVPrunePageState *ps, LVVisMapPageState *vms);
 static void lazy_vacuum_pruned_items(Relation onerel, LVRelStats *vacrelstats,
 									 Relation *Irel, int nindexes,
 									 LVParallelState *lps,
@@ -792,527 +801,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 
 		if (indnames && indnames[i])
 			pfree(indnames[i]);
-	}
-}
-
-/*
- * Handle new page during lazy_scan_heap().
- *
- * Caller must hold pin and buffer cleanup lock on buf.
- *
- * All-zeroes pages can be left over if either a backend extends the relation
- * by a single page, but crashes before the newly initialized page has been
- * written out, or when bulk-extending the relation (which creates a number of
- * empty pages at the tail end of the relation, but enters them into the FSM).
- *
- * Note we do not enter the page into the visibilitymap. That has the downside
- * that we repeatedly visit this page in subsequent vacuums, but otherwise
- * we'll never not discover the space on a promoted standby. The harm of
- * repeated checking ought to normally not be too bad - the space usually
- * should be used at some point, otherwise there wouldn't be any regular
- * vacuums.
- *
- * Make sure these pages are in the FSM, to ensure they can be reused. Do that
- * by testing if there's any space recorded for the page. If not, enter it. We
- * do so after releasing the lock on the heap page, the FSM is approximate,
- * after all.
- */
-static void
-lazy_new_page(Relation onerel, Buffer buf)
-{
-	BlockNumber blkno = BufferGetBlockNumber(buf);
-
-	if (GetRecordedFreeSpace(onerel, blkno) == 0)
-	{
-		Size		freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
-
-		UnlockReleaseBuffer(buf);
-		RecordPageWithFreeSpace(onerel, blkno, freespace);
-		return;
-	}
-
-	UnlockReleaseBuffer(buf);
-}
-
-/*
- * Handle empty page during lazy_scan_heap().
- *
- * Caller must hold pin and buffer cleanup lock on buf, as well as a pin (but
- * not a lock) on vmbuffer.
- */
-static void
-lazy_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				LVRelStats *vacrelstats)
-{
-	Page		page = BufferGetPage(buf);
-	BlockNumber blkno = BufferGetBlockNumber(buf);
-	Size		freespace = PageGetHeapFreeSpace(page);
-
-	/*
-	 * Empty pages are always all-visible and all-frozen (note that the same
-	 * is currently not true for new pages, see lazy_new_page()).
-	 */
-	if (!PageIsAllVisible(page))
-	{
-		START_CRIT_SECTION();
-
-		/* mark buffer dirty before writing a WAL record */
-		MarkBufferDirty(buf);
-
-		/*
-		 * It's possible that another backend has extended the heap,
-		 * initialized the page, and then failed to WAL-log the page due to an
-		 * ERROR.  Since heap extension is not WAL-logged, recovery might try
-		 * to replay our record setting the page all-visible and find that the
-		 * page isn't initialized, which will cause a PANIC.  To prevent that,
-		 * check whether the page has been previously WAL-logged, and if not,
-		 * do that now.
-		 */
-		if (RelationNeedsWAL(onerel) &&
-			PageGetLSN(page) == InvalidXLogRecPtr)
-			log_newpage_buffer(buf, true);
-
-		PageSetAllVisible(page);
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, InvalidTransactionId,
-						  VISIBILITYMAP_ALL_VISIBLE | VISIBILITYMAP_ALL_FROZEN);
-		END_CRIT_SECTION();
-	}
-
-	UnlockReleaseBuffer(buf);
-	RecordPageWithFreeSpace(onerel, blkno, freespace);
-}
-
-/*
- *	lazy_prune_page() -- lazy_scan_heap() pruning and freezing.
- *
- * Caller must hold pin and buffer cleanup lock on the buffer.
- *
- * Prior to PostgreSQL 14 there were very rare cases where lazy_scan_heap()
- * treated tuples that still had storage after pruning as DEAD.  That happened
- * when heap_page_prune() could not prune tuples that were nevertheless deemed
- * DEAD by its own HeapTupleSatisfiesVacuum() call.  This created rare hard to
- * test cases.  It meant that there was no very sharp distinction between DEAD
- * tuples and tuples that are to be kept and be considered for freezing inside
- * heap_prepare_freeze_tuple().  It also meant that lazy_vacuum_page() had to
- * be prepared to remove items with storage (tuples with tuple headers) that
- * didn't get pruned, which created a special case to handle recovery
- * conflicts.
- *
- * The approach we take here now (to eliminate all of this complexity) is to
- * simply restart pruning in these very rare cases -- cases where a concurrent
- * abort of an xact makes our HeapTupleSatisfiesVacuum() call disagrees with
- * what heap_page_prune() thought about the tuple only microseconds earlier.
- *
- * Since we might have to prune a second time here, the code is structured to
- * use a local per-page copy of the counters that caller accumulates.  We add
- * our per-page counters to the per-VACUUM totals from caller last of all, to
- * avoid double counting.
- */
-static void
-lazy_prune_page(Relation onerel, Buffer buf,
-				LVRelStats *vacrelstats,
-				GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
-				LVTempCounters *c, LVPrunePageState *ps,
-				LVVisMapPageState *vms)
-{
-	BlockNumber blkno;
-	Page		page;
-	OffsetNumber offnum,
-				maxoff;
-	HTSV_Result tuplestate;
-	int			nfrozen,
-				ndead;
-	LVTempCounters pc;
-	OffsetNumber deaditems[MaxHeapTuplesPerPage];
-
-	blkno = BufferGetBlockNumber(buf);
-	page = BufferGetPage(buf);
-
-retry:
-
-	/* Initialize (or reset) page-level counters */
-	pc.num_tuples = 0;
-	pc.live_tuples = 0;
-	pc.tups_vacuumed = 0;
-	pc.nkeep = 0;
-	pc.nunused = 0;
-
-	/*
-	 * Prune all HOT-update chains in this page.
-	 *
-	 * We count tuples removed by the pruning step as removed by VACUUM
-	 * (existing LP_DEAD line pointers don't count).
-	 */
-	pc.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
-									   InvalidTransactionId, 0, false,
-									   &vacrelstats->offnum);
-
-	/*
-	 * Now scan the page to collect vacuumable items and check for tuples
-	 * requiring freezing.
-	 *
-	 * Note: If we retry having set vms.visibility_cutoff_xid it doesn't
-	 * matter -- the newest XMIN on page can't be missed this way.
-	 */
-	ps->hastup = false;
-	ps->has_dead_items = false;
-	ps->all_visible = true;
-	ps->all_frozen = true;
-	nfrozen = 0;
-	ndead = 0;
-	maxoff = PageGetMaxOffsetNumber(page);
-
-#ifdef DEBUG
-
-	/*
-	 * Enable this to debug the retry logic -- it's actually quite hard to hit
-	 * even with this artificial delay
-	 */
-	pg_usleep(10000);
-#endif
-
-	/*
-	 * Note: If you change anything in the loop below, also look at
-	 * heap_page_is_all_visible to see if that needs to be changed.
-	 */
-	for (offnum = FirstOffsetNumber;
-		 offnum <= maxoff;
-		 offnum = OffsetNumberNext(offnum))
-	{
-		ItemId		itemid;
-		HeapTupleData tuple;
-		bool		tuple_totally_frozen;
-
-		/*
-		 * Set the offset number so that we can display it along with any
-		 * error that occurred while processing this tuple.
-		 */
-		vacrelstats->offnum = offnum;
-		itemid = PageGetItemId(page, offnum);
-
-		/* Unused items require no processing, but we count 'em */
-		if (!ItemIdIsUsed(itemid))
-		{
-			pc.nunused += 1;
-			continue;
-		}
-
-		/* Redirect items mustn't be touched */
-		if (ItemIdIsRedirected(itemid))
-		{
-			ps->hastup = true;	/* this page won't be truncatable */
-			continue;
-		}
-
-		/*
-		 * LP_DEAD line pointers are to be vacuumed normally; but we don't
-		 * count them in tups_vacuumed, else we'd be double-counting (at least
-		 * in the common case where heap_page_prune() just freed up a non-HOT
-		 * tuple).
-		 *
-		 * Note also that the final tups_vacuumed value might be very low for
-		 * tables where opportunistic page pruning happens to occur very
-		 * frequently (via heap_page_prune_opt() calls that free up non-HOT
-		 * tuples).
-		 */
-		if (ItemIdIsDead(itemid))
-		{
-			deaditems[ndead++] = offnum;
-			ps->all_visible = false;
-			ps->has_dead_items = true;
-			continue;
-		}
-
-		Assert(ItemIdIsNormal(itemid));
-
-		ItemPointerSet(&(tuple.t_self), blkno, offnum);
-		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
-		tuple.t_len = ItemIdGetLength(itemid);
-		tuple.t_tableOid = RelationGetRelid(onerel);
-
-		/*
-		 * DEAD tuples are almost always pruned into LP_DEAD line pointers by
-		 * heap_page_prune(), but it's possible that the tuple state changed
-		 * since heap_page_prune() looked.  Handle that here by restarting.
-		 * (See comments at the top of function for a full explanation.)
-		 */
-		tuplestate = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
-
-		if (unlikely(tuplestate == HEAPTUPLE_DEAD))
-			goto retry;
-
-		/*
-		 * The criteria for counting a tuple as live in this block need to
-		 * match what analyze.c's acquire_sample_rows() does, otherwise VACUUM
-		 * and ANALYZE may produce wildly different reltuples values, e.g.
-		 * when there are many recently-dead tuples.
-		 *
-		 * The logic here is a bit simpler than acquire_sample_rows(), as
-		 * VACUUM can't run inside a transaction block, which makes some cases
-		 * impossible (e.g. in-progress insert from the same transaction).
-		 */
-		switch (tuplestate)
-		{
-			case HEAPTUPLE_LIVE:
-
-				/*
-				 * Count it as live.  Not only is this natural, but it's also
-				 * what acquire_sample_rows() does.
-				 */
-				pc.live_tuples += 1;
-
-				/*
-				 * Is the tuple definitely visible to all transactions?
-				 *
-				 * NB: Like with per-tuple hint bits, we can't set the
-				 * PD_ALL_VISIBLE flag if the inserter committed
-				 * asynchronously. See SetHintBits for more info. Check that
-				 * the tuple is hinted xmin-committed because of that.
-				 */
-				if (ps->all_visible)
-				{
-					TransactionId xmin;
-
-					if (!HeapTupleHeaderXminCommitted(tuple.t_data))
-					{
-						ps->all_visible = false;
-						break;
-					}
-
-					/*
-					 * The inserter definitely committed. But is it old enough
-					 * that everyone sees it as committed?
-					 */
-					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
-					if (!TransactionIdPrecedes(xmin, OldestXmin))
-					{
-						ps->all_visible = false;
-						break;
-					}
-
-					/* Track newest xmin on page. */
-					if (TransactionIdFollows(xmin, vms->visibility_cutoff_xid))
-						vms->visibility_cutoff_xid = xmin;
-				}
-				break;
-			case HEAPTUPLE_RECENTLY_DEAD:
-
-				/*
-				 * If tuple is recently deleted then we must not remove it
-				 * from relation.
-				 */
-				pc.nkeep += 1;
-				ps->all_visible = false;
-				break;
-			case HEAPTUPLE_INSERT_IN_PROGRESS:
-
-				/*
-				 * This is an expected case during concurrent vacuum.
-				 *
-				 * We do not count these rows as live, because we expect the
-				 * inserting transaction to update the counters at commit, and
-				 * we assume that will happen only after we report our
-				 * results.  This assumption is a bit shaky, but it is what
-				 * acquire_sample_rows() does, so be consistent.
-				 */
-				ps->all_visible = false;
-				break;
-			case HEAPTUPLE_DELETE_IN_PROGRESS:
-				/* This is an expected case during concurrent vacuum */
-				ps->all_visible = false;
-
-				/*
-				 * Count such rows as live.  As above, we assume the deleting
-				 * transaction will commit and update the counters after we
-				 * report.
-				 */
-				pc.live_tuples += 1;
-				break;
-			default:
-				elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
-				break;
-		}
-
-		/*
-		 * Each non-removable tuple must be checked to see if it needs
-		 * freezing
-		 */
-		if (heap_prepare_freeze_tuple(tuple.t_data,
-									  RelFrozenXid, RelMinMxid,
-									  FreezeLimit, MultiXactCutoff,
-									  &frozen[nfrozen],
-									  &tuple_totally_frozen))
-			frozen[nfrozen++].offset = offnum;
-
-		pc.num_tuples += 1;
-		ps->hastup = true;
-
-		if (!tuple_totally_frozen)
-			ps->all_frozen = false;
-	}
-
-	/*
-	 * Success -- we're done pruning, and have determined which tuples are to
-	 * be recorded as dead in local array.  We've also prepared the details of
-	 * which remaining tuples are to be frozen.
-	 *
-	 * First clear the offset information once we have processed all the
-	 * tuples on the page.
-	 */
-	vacrelstats->offnum = InvalidOffsetNumber;
-
-	/*
-	 * Next add page level counters to caller's counts
-	 */
-	c->num_tuples += pc.num_tuples;
-	c->live_tuples += pc.live_tuples;
-	c->tups_vacuumed += pc.tups_vacuumed;
-	c->nkeep += pc.nkeep;
-	c->nunused += pc.nunused;
-
-	/*
-	 * Now save the local dead items array to VACUUM's dead_tuples array.
-	 */
-	for (int i = 0; i < ndead; i++)
-	{
-		ItemPointerData itemptr;
-
-		ItemPointerSet(&itemptr, blkno, deaditems[i]);
-		lazy_record_dead_tuple(vacrelstats->dead_tuples, &itemptr);
-	}
-
-	/*
-	 * Finally, execute tuple freezing as planned.
-	 *
-	 * If we need to freeze any tuples we'll mark the buffer dirty, and write
-	 * a WAL record recording the changes.  We must log the changes to be
-	 * crash-safe against future truncation of CLOG.
-	 */
-	if (nfrozen > 0)
-	{
-		START_CRIT_SECTION();
-
-		MarkBufferDirty(buf);
-
-		/* execute collected freezes */
-		for (int i = 0; i < nfrozen; i++)
-		{
-			ItemId		itemid;
-			HeapTupleHeader htup;
-
-			itemid = PageGetItemId(page, frozen[i].offset);
-			htup = (HeapTupleHeader) PageGetItem(page, itemid);
-
-			heap_execute_freeze_tuple(htup, &frozen[i]);
-		}
-
-		/* Now WAL-log freezing if necessary */
-		if (RelationNeedsWAL(onerel))
-		{
-			XLogRecPtr	recptr;
-
-			recptr = log_heap_freeze(onerel, buf, FreezeLimit,
-									 frozen, nfrozen);
-			PageSetLSN(page, recptr);
-		}
-
-		END_CRIT_SECTION();
-	}
-}
-
-/*
- * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
- */
-static void
-scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-				   LVPrunePageState *ps, LVVisMapPageState *vms)
-{
-	Page		page = BufferGetPage(buf);
-	BlockNumber blkno = BufferGetBlockNumber(buf);
-
-	/* mark page all-visible, if appropriate */
-	if (ps->all_visible && !vms->all_visible_according_to_vm)
-	{
-		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
-
-		if (ps->all_frozen)
-			flags |= VISIBILITYMAP_ALL_FROZEN;
-
-		/*
-		 * It should never be the case that the visibility map page is set
-		 * while the page-level bit is clear, but the reverse is allowed (if
-		 * checksums are not enabled).  Regardless, set both bits so that we
-		 * get back in sync.
-		 *
-		 * NB: If the heap page is all-visible but the VM bit is not set, we
-		 * don't need to dirty the heap page.  However, if checksums are
-		 * enabled, we do need to make sure that the heap page is dirtied
-		 * before passing it to visibilitymap_set(), because it may be logged.
-		 * Given that this situation should only happen in rare cases after a
-		 * crash, it is not worth optimizing.
-		 */
-		PageSetAllVisible(page);
-		MarkBufferDirty(buf);
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, vms->visibility_cutoff_xid, flags);
-	}
-
-	/*
-	 * The visibility map bit should never be set if the page-level bit is
-	 * clear.  However, it's possible that the bit got cleared after we
-	 * checked it and before we took the buffer content lock, so we must
-	 * recheck before jumping to the conclusion that something bad has
-	 * happened.
-	 */
-	else if (vms->all_visible_according_to_vm && !PageIsAllVisible(page) &&
-			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
-	{
-		elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
-			 RelationGetRelationName(onerel), blkno);
-		visibilitymap_clear(onerel, blkno, vmbuffer,
-							VISIBILITYMAP_VALID_BITS);
-	}
-
-	/*
-	 * It's possible for the value returned by
-	 * GetOldestNonRemovableTransactionId() to move backwards, so it's not
-	 * wrong for us to see tuples that appear to not be visible to everyone
-	 * yet, while PD_ALL_VISIBLE is already set. The real safe xmin value
-	 * never moves backwards, but GetOldestNonRemovableTransactionId() is
-	 * conservative and sometimes returns a value that's unnecessarily small,
-	 * so if we see that contradiction it just means that the tuples that we
-	 * think are not visible to everyone yet actually are, and the
-	 * PD_ALL_VISIBLE flag is correct.
-	 *
-	 * There should never be dead tuples on a page with PD_ALL_VISIBLE set,
-	 * however.
-	 */
-	else if (PageIsAllVisible(page) && ps->has_dead_items)
-	{
-		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
-			 RelationGetRelationName(onerel), blkno);
-		PageClearAllVisible(page);
-		MarkBufferDirty(buf);
-		visibilitymap_clear(onerel, blkno, vmbuffer,
-							VISIBILITYMAP_VALID_BITS);
-	}
-
-	/*
-	 * If the all-visible page is all-frozen but not marked as such yet, mark
-	 * it as all-frozen.  Note that all_frozen is only valid if all_visible is
-	 * true, so we must check both.
-	 */
-	else if (vms->all_visible_according_to_vm && ps->all_visible &&
-			 ps->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
-	{
-		/*
-		 * We can pass InvalidTransactionId as the cutoff XID here, because
-		 * setting the all-frozen bit doesn't cause recovery conflicts.
-		 */
-		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, InvalidTransactionId,
-						  VISIBILITYMAP_ALL_FROZEN);
 	}
 }
 
@@ -1860,7 +1348,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
 
 			/*
-			 * Make sure scan_setvmbit_page() won't stop setting VM due to
+			 * Make sure lazy_setvmbit_page() won't stop setting VM due to
 			 * now-vacuumed LP_DEAD items:
 			 */
 			ps.has_dead_items = false;
@@ -1888,7 +1376,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		scan_setvmbit_page(onerel, buf, vmbuffer, &ps, &vms);
+		lazy_setvmbit_page(onerel, buf, vmbuffer, &ps, &vms);
 
 		/*
 		 * Step 9 for block: drop super-exclusive lock, finalize page by
@@ -2024,6 +1512,527 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 					vacrelstats->scanned_pages, nblocks),
 			 errdetail_internal("%s", buf.data)));
 	pfree(buf.data);
+}
+
+/*
+ * Handle new page during lazy_scan_heap().
+ *
+ * Caller must hold pin and buffer cleanup lock on buf.
+ *
+ * All-zeroes pages can be left over if either a backend extends the relation
+ * by a single page, but crashes before the newly initialized page has been
+ * written out, or when bulk-extending the relation (which creates a number of
+ * empty pages at the tail end of the relation, but enters them into the FSM).
+ *
+ * Note we do not enter the page into the visibilitymap. That has the downside
+ * that we repeatedly visit this page in subsequent vacuums, but otherwise
+ * we'll never not discover the space on a promoted standby. The harm of
+ * repeated checking ought to normally not be too bad - the space usually
+ * should be used at some point, otherwise there wouldn't be any regular
+ * vacuums.
+ *
+ * Make sure these pages are in the FSM, to ensure they can be reused. Do that
+ * by testing if there's any space recorded for the page. If not, enter it. We
+ * do so after releasing the lock on the heap page, the FSM is approximate,
+ * after all.
+ */
+static void
+lazy_new_page(Relation onerel, Buffer buf)
+{
+	BlockNumber blkno = BufferGetBlockNumber(buf);
+
+	if (GetRecordedFreeSpace(onerel, blkno) == 0)
+	{
+		Size		freespace = BufferGetPageSize(buf) - SizeOfPageHeaderData;
+
+		UnlockReleaseBuffer(buf);
+		RecordPageWithFreeSpace(onerel, blkno, freespace);
+		return;
+	}
+
+	UnlockReleaseBuffer(buf);
+}
+
+/*
+ * Handle empty page during lazy_scan_heap().
+ *
+ * Caller must hold pin and buffer cleanup lock on buf, as well as a pin (but
+ * not a lock) on vmbuffer.
+ */
+static void
+lazy_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+				LVRelStats *vacrelstats)
+{
+	Page		page = BufferGetPage(buf);
+	BlockNumber blkno = BufferGetBlockNumber(buf);
+	Size		freespace = PageGetHeapFreeSpace(page);
+
+	/*
+	 * Empty pages are always all-visible and all-frozen (note that the same
+	 * is currently not true for new pages, see lazy_new_page()).
+	 */
+	if (!PageIsAllVisible(page))
+	{
+		START_CRIT_SECTION();
+
+		/* mark buffer dirty before writing a WAL record */
+		MarkBufferDirty(buf);
+
+		/*
+		 * It's possible that another backend has extended the heap,
+		 * initialized the page, and then failed to WAL-log the page due to an
+		 * ERROR.  Since heap extension is not WAL-logged, recovery might try
+		 * to replay our record setting the page all-visible and find that the
+		 * page isn't initialized, which will cause a PANIC.  To prevent that,
+		 * check whether the page has been previously WAL-logged, and if not,
+		 * do that now.
+		 */
+		if (RelationNeedsWAL(onerel) &&
+			PageGetLSN(page) == InvalidXLogRecPtr)
+			log_newpage_buffer(buf, true);
+
+		PageSetAllVisible(page);
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, InvalidTransactionId,
+						  VISIBILITYMAP_ALL_VISIBLE | VISIBILITYMAP_ALL_FROZEN);
+		END_CRIT_SECTION();
+	}
+
+	UnlockReleaseBuffer(buf);
+	RecordPageWithFreeSpace(onerel, blkno, freespace);
+}
+
+/*
+ *	lazy_prune_page() -- lazy_scan_heap() pruning and freezing.
+ *
+ * Caller must hold pin and buffer cleanup lock on the buffer.
+ *
+ * Prior to PostgreSQL 14 there were very rare cases where lazy_scan_heap()
+ * treated tuples that still had storage after pruning as DEAD.  That happened
+ * when heap_page_prune() could not prune tuples that were nevertheless deemed
+ * DEAD by its own HeapTupleSatisfiesVacuum() call.  This created rare hard to
+ * test cases.  It meant that there was no very sharp distinction between DEAD
+ * tuples and tuples that are to be kept and be considered for freezing inside
+ * heap_prepare_freeze_tuple().  It also meant that lazy_vacuum_page() had to
+ * be prepared to remove items with storage (tuples with tuple headers) that
+ * didn't get pruned, which created a special case to handle recovery
+ * conflicts.
+ *
+ * The approach we take here now (to eliminate all of this complexity) is to
+ * simply restart pruning in these very rare cases -- cases where a concurrent
+ * abort of an xact makes our HeapTupleSatisfiesVacuum() call disagrees with
+ * what heap_page_prune() thought about the tuple only microseconds earlier.
+ *
+ * Since we might have to prune a second time here, the code is structured to
+ * use a local per-page copy of the counters that caller accumulates.  We add
+ * our per-page counters to the per-VACUUM totals from caller last of all, to
+ * avoid double counting.
+ */
+static void
+lazy_prune_page(Relation onerel, Buffer buf,
+				LVRelStats *vacrelstats,
+				GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
+				LVTempCounters *c, LVPrunePageState *ps,
+				LVVisMapPageState *vms)
+{
+	BlockNumber blkno;
+	Page		page;
+	OffsetNumber offnum,
+				maxoff;
+	HTSV_Result tuplestate;
+	int			nfrozen,
+				ndead;
+	LVTempCounters pc;
+	OffsetNumber deaditems[MaxHeapTuplesPerPage];
+
+	blkno = BufferGetBlockNumber(buf);
+	page = BufferGetPage(buf);
+
+retry:
+
+	/* Initialize (or reset) page-level counters */
+	pc.num_tuples = 0;
+	pc.live_tuples = 0;
+	pc.tups_vacuumed = 0;
+	pc.nkeep = 0;
+	pc.nunused = 0;
+
+	/*
+	 * Prune all HOT-update chains in this page.
+	 *
+	 * We count tuples removed by the pruning step as removed by VACUUM
+	 * (existing LP_DEAD line pointers don't count).
+	 */
+	pc.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
+									   InvalidTransactionId, 0, false,
+									   &vacrelstats->offnum);
+
+	/*
+	 * Now scan the page to collect vacuumable items and check for tuples
+	 * requiring freezing.
+	 *
+	 * Note: If we retry having set vms.visibility_cutoff_xid it doesn't
+	 * matter -- the newest XMIN on page can't be missed this way.
+	 */
+	ps->hastup = false;
+	ps->has_dead_items = false;
+	ps->all_visible = true;
+	ps->all_frozen = true;
+	nfrozen = 0;
+	ndead = 0;
+	maxoff = PageGetMaxOffsetNumber(page);
+
+#ifdef DEBUG
+
+	/*
+	 * Enable this to debug the retry logic -- it's actually quite hard to hit
+	 * even with this artificial delay
+	 */
+	pg_usleep(10000);
+#endif
+
+	/*
+	 * Note: If you change anything in the loop below, also look at
+	 * heap_page_is_all_visible to see if that needs to be changed.
+	 */
+	for (offnum = FirstOffsetNumber;
+		 offnum <= maxoff;
+		 offnum = OffsetNumberNext(offnum))
+	{
+		ItemId		itemid;
+		HeapTupleData tuple;
+		bool		tuple_totally_frozen;
+
+		/*
+		 * Set the offset number so that we can display it along with any
+		 * error that occurred while processing this tuple.
+		 */
+		vacrelstats->offnum = offnum;
+		itemid = PageGetItemId(page, offnum);
+
+		/* Unused items require no processing, but we count 'em */
+		if (!ItemIdIsUsed(itemid))
+		{
+			pc.nunused += 1;
+			continue;
+		}
+
+		/* Redirect items mustn't be touched */
+		if (ItemIdIsRedirected(itemid))
+		{
+			ps->hastup = true;	/* this page won't be truncatable */
+			continue;
+		}
+
+		/*
+		 * LP_DEAD line pointers are to be vacuumed normally; but we don't
+		 * count them in tups_vacuumed, else we'd be double-counting (at least
+		 * in the common case where heap_page_prune() just freed up a non-HOT
+		 * tuple).
+		 *
+		 * Note also that the final tups_vacuumed value might be very low for
+		 * tables where opportunistic page pruning happens to occur very
+		 * frequently (via heap_page_prune_opt() calls that free up non-HOT
+		 * tuples).
+		 */
+		if (ItemIdIsDead(itemid))
+		{
+			deaditems[ndead++] = offnum;
+			ps->all_visible = false;
+			ps->has_dead_items = true;
+			continue;
+		}
+
+		Assert(ItemIdIsNormal(itemid));
+
+		ItemPointerSet(&(tuple.t_self), blkno, offnum);
+		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
+		tuple.t_len = ItemIdGetLength(itemid);
+		tuple.t_tableOid = RelationGetRelid(onerel);
+
+		/*
+		 * DEAD tuples are almost always pruned into LP_DEAD line pointers by
+		 * heap_page_prune(), but it's possible that the tuple state changed
+		 * since heap_page_prune() looked.  Handle that here by restarting.
+		 * (See comments at the top of function for a full explanation.)
+		 */
+		tuplestate = HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf);
+
+		if (unlikely(tuplestate == HEAPTUPLE_DEAD))
+			goto retry;
+
+		/*
+		 * The criteria for counting a tuple as live in this block need to
+		 * match what analyze.c's acquire_sample_rows() does, otherwise VACUUM
+		 * and ANALYZE may produce wildly different reltuples values, e.g.
+		 * when there are many recently-dead tuples.
+		 *
+		 * The logic here is a bit simpler than acquire_sample_rows(), as
+		 * VACUUM can't run inside a transaction block, which makes some cases
+		 * impossible (e.g. in-progress insert from the same transaction).
+		 */
+		switch (tuplestate)
+		{
+			case HEAPTUPLE_LIVE:
+
+				/*
+				 * Count it as live.  Not only is this natural, but it's also
+				 * what acquire_sample_rows() does.
+				 */
+				pc.live_tuples += 1;
+
+				/*
+				 * Is the tuple definitely visible to all transactions?
+				 *
+				 * NB: Like with per-tuple hint bits, we can't set the
+				 * PD_ALL_VISIBLE flag if the inserter committed
+				 * asynchronously. See SetHintBits for more info. Check that
+				 * the tuple is hinted xmin-committed because of that.
+				 */
+				if (ps->all_visible)
+				{
+					TransactionId xmin;
+
+					if (!HeapTupleHeaderXminCommitted(tuple.t_data))
+					{
+						ps->all_visible = false;
+						break;
+					}
+
+					/*
+					 * The inserter definitely committed. But is it old enough
+					 * that everyone sees it as committed?
+					 */
+					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
+					if (!TransactionIdPrecedes(xmin, OldestXmin))
+					{
+						ps->all_visible = false;
+						break;
+					}
+
+					/* Track newest xmin on page. */
+					if (TransactionIdFollows(xmin, vms->visibility_cutoff_xid))
+						vms->visibility_cutoff_xid = xmin;
+				}
+				break;
+			case HEAPTUPLE_RECENTLY_DEAD:
+
+				/*
+				 * If tuple is recently deleted then we must not remove it
+				 * from relation.
+				 */
+				pc.nkeep += 1;
+				ps->all_visible = false;
+				break;
+			case HEAPTUPLE_INSERT_IN_PROGRESS:
+
+				/*
+				 * This is an expected case during concurrent vacuum.
+				 *
+				 * We do not count these rows as live, because we expect the
+				 * inserting transaction to update the counters at commit, and
+				 * we assume that will happen only after we report our
+				 * results.  This assumption is a bit shaky, but it is what
+				 * acquire_sample_rows() does, so be consistent.
+				 */
+				ps->all_visible = false;
+				break;
+			case HEAPTUPLE_DELETE_IN_PROGRESS:
+				/* This is an expected case during concurrent vacuum */
+				ps->all_visible = false;
+
+				/*
+				 * Count such rows as live.  As above, we assume the deleting
+				 * transaction will commit and update the counters after we
+				 * report.
+				 */
+				pc.live_tuples += 1;
+				break;
+			default:
+				elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
+				break;
+		}
+
+		/*
+		 * Each non-removable tuple must be checked to see if it needs
+		 * freezing
+		 */
+		if (heap_prepare_freeze_tuple(tuple.t_data,
+									  RelFrozenXid, RelMinMxid,
+									  FreezeLimit, MultiXactCutoff,
+									  &frozen[nfrozen],
+									  &tuple_totally_frozen))
+			frozen[nfrozen++].offset = offnum;
+
+		pc.num_tuples += 1;
+		ps->hastup = true;
+
+		if (!tuple_totally_frozen)
+			ps->all_frozen = false;
+	}
+
+	/*
+	 * Success -- we're done pruning, and have determined which tuples are to
+	 * be recorded as dead in local array.  We've also prepared the details of
+	 * which remaining tuples are to be frozen.
+	 *
+	 * First clear the offset information once we have processed all the
+	 * tuples on the page.
+	 */
+	vacrelstats->offnum = InvalidOffsetNumber;
+
+	/*
+	 * Next add page level counters to caller's counts
+	 */
+	c->num_tuples += pc.num_tuples;
+	c->live_tuples += pc.live_tuples;
+	c->tups_vacuumed += pc.tups_vacuumed;
+	c->nkeep += pc.nkeep;
+	c->nunused += pc.nunused;
+
+	/*
+	 * Now save the local dead items array to VACUUM's dead_tuples array.
+	 */
+	for (int i = 0; i < ndead; i++)
+	{
+		ItemPointerData itemptr;
+
+		ItemPointerSet(&itemptr, blkno, deaditems[i]);
+		lazy_record_dead_tuple(vacrelstats->dead_tuples, &itemptr);
+	}
+
+	/*
+	 * Finally, execute tuple freezing as planned.
+	 *
+	 * If we need to freeze any tuples we'll mark the buffer dirty, and write
+	 * a WAL record recording the changes.  We must log the changes to be
+	 * crash-safe against future truncation of CLOG.
+	 */
+	if (nfrozen > 0)
+	{
+		START_CRIT_SECTION();
+
+		MarkBufferDirty(buf);
+
+		/* execute collected freezes */
+		for (int i = 0; i < nfrozen; i++)
+		{
+			ItemId		itemid;
+			HeapTupleHeader htup;
+
+			itemid = PageGetItemId(page, frozen[i].offset);
+			htup = (HeapTupleHeader) PageGetItem(page, itemid);
+
+			heap_execute_freeze_tuple(htup, &frozen[i]);
+		}
+
+		/* Now WAL-log freezing if necessary */
+		if (RelationNeedsWAL(onerel))
+		{
+			XLogRecPtr	recptr;
+
+			recptr = log_heap_freeze(onerel, buf, FreezeLimit,
+									 frozen, nfrozen);
+			PageSetLSN(page, recptr);
+		}
+
+		END_CRIT_SECTION();
+	}
+}
+
+/*
+ * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
+ */
+static void
+lazy_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+				   LVPrunePageState *ps, LVVisMapPageState *vms)
+{
+	Page		page = BufferGetPage(buf);
+	BlockNumber blkno = BufferGetBlockNumber(buf);
+
+	/* mark page all-visible, if appropriate */
+	if (ps->all_visible && !vms->all_visible_according_to_vm)
+	{
+		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
+
+		if (ps->all_frozen)
+			flags |= VISIBILITYMAP_ALL_FROZEN;
+
+		/*
+		 * It should never be the case that the visibility map page is set
+		 * while the page-level bit is clear, but the reverse is allowed (if
+		 * checksums are not enabled).  Regardless, set both bits so that we
+		 * get back in sync.
+		 *
+		 * NB: If the heap page is all-visible but the VM bit is not set, we
+		 * don't need to dirty the heap page.  However, if checksums are
+		 * enabled, we do need to make sure that the heap page is dirtied
+		 * before passing it to visibilitymap_set(), because it may be logged.
+		 * Given that this situation should only happen in rare cases after a
+		 * crash, it is not worth optimizing.
+		 */
+		PageSetAllVisible(page);
+		MarkBufferDirty(buf);
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, vms->visibility_cutoff_xid, flags);
+	}
+
+	/*
+	 * The visibility map bit should never be set if the page-level bit is
+	 * clear.  However, it's possible that the bit got cleared after we
+	 * checked it and before we took the buffer content lock, so we must
+	 * recheck before jumping to the conclusion that something bad has
+	 * happened.
+	 */
+	else if (vms->all_visible_according_to_vm && !PageIsAllVisible(page) &&
+			 VM_ALL_VISIBLE(onerel, blkno, &vmbuffer))
+	{
+		elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
+			 RelationGetRelationName(onerel), blkno);
+		visibilitymap_clear(onerel, blkno, vmbuffer,
+							VISIBILITYMAP_VALID_BITS);
+	}
+
+	/*
+	 * It's possible for the value returned by
+	 * GetOldestNonRemovableTransactionId() to move backwards, so it's not
+	 * wrong for us to see tuples that appear to not be visible to everyone
+	 * yet, while PD_ALL_VISIBLE is already set. The real safe xmin value
+	 * never moves backwards, but GetOldestNonRemovableTransactionId() is
+	 * conservative and sometimes returns a value that's unnecessarily small,
+	 * so if we see that contradiction it just means that the tuples that we
+	 * think are not visible to everyone yet actually are, and the
+	 * PD_ALL_VISIBLE flag is correct.
+	 *
+	 * There should never be dead tuples on a page with PD_ALL_VISIBLE set,
+	 * however.
+	 */
+	else if (PageIsAllVisible(page) && ps->has_dead_items)
+	{
+		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
+			 RelationGetRelationName(onerel), blkno);
+		PageClearAllVisible(page);
+		MarkBufferDirty(buf);
+		visibilitymap_clear(onerel, blkno, vmbuffer,
+							VISIBILITYMAP_VALID_BITS);
+	}
+
+	/*
+	 * If the all-visible page is all-frozen but not marked as such yet, mark
+	 * it as all-frozen.  Note that all_frozen is only valid if all_visible is
+	 * true, so we must check both.
+	 */
+	else if (vms->all_visible_according_to_vm && ps->all_visible &&
+			 ps->all_frozen && !VM_ALL_FROZEN(onerel, blkno, &vmbuffer))
+	{
+		/*
+		 * We can pass InvalidTransactionId as the cutoff XID here, because
+		 * setting the all-frozen bit doesn't cause recovery conflicts.
+		 */
+		visibilitymap_set(onerel, blkno, buf, InvalidXLogRecPtr,
+						  vmbuffer, InvalidTransactionId,
+						  VISIBILITYMAP_ALL_FROZEN);
+	}
 }
 
 /*
