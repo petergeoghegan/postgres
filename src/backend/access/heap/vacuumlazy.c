@@ -269,8 +269,8 @@ typedef struct LVShared
  */
 typedef struct LVSharedIndStats
 {
-	bool		updated;		/* are the stats updated? */
-	IndexBulkDeleteResult stats;
+	bool					updated;		/* are the stats updated? */
+	IndexBulkDeleteResult	istat;
 } LVSharedIndStats;
 
 /* Struct for maintaining a parallel vacuum state. */
@@ -300,6 +300,7 @@ typedef struct LVRelStats
 {
 	char	   *relnamespace;
 	char	   *relname;
+	int			nindexes;
 	/* Overall statistics about rel */
 	BlockNumber old_rel_pages;	/* previous value of pg_class.relpages */
 	BlockNumber rel_pages;		/* total number of pages */
@@ -320,7 +321,6 @@ typedef struct LVRelStats
 
 	/* Statistics about indexes */
 	IndexBulkDeleteResult **indstats;
-	int			nindexes;
 
 	/* Used for error callback */
 	char	   *indname;
@@ -387,7 +387,7 @@ static BufferAccessStrategy vac_strategy;
 
 /* non-export function prototypes */
 static void lazy_scan_heap(Relation onerel, VacuumParams *params,
-						   LVRelStats *vacrelstats, Relation *Irel, int nindexes,
+						   LVRelStats *vacrelstats, Relation *Irel,
 						   bool aggressive);
 static void lazy_scan_new_page(Relation onerel, Buffer buf);
 static void lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
@@ -415,11 +415,11 @@ static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelStats *vacrelstats);
 static void lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 									LVRelStats *vacrelstats, LVParallelState *lps);
-static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
+static void lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **istat,
 							  double reltuples, LVRelStats *vacrelstats);
-static void lazy_cleanup_index(Relation indrel,
-							   IndexBulkDeleteResult **stats,
-							   double reltuples, bool estimated_count, LVRelStats *vacrelstats);
+static void lazy_cleanup_index(Relation indrel, IndexBulkDeleteResult **istat,
+							   double reltuples, bool estimated_count,
+							   LVRelStats *vacrelstats);
 static int	lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 							 int tupindex, LVRelStats *vacrelstats, Buffer *vmbuffer);
 static bool should_attempt_truncation(VacuumParams *params,
@@ -442,22 +442,23 @@ static void parallel_vacuum_index(Relation *Irel, LVShared *lvshared,
 								  LVRelStats *vacrelstats);
 static void vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
 								  LVParallelState *lps);
-static void vacuum_one_index(Relation indrel, IndexBulkDeleteResult **stats,
-							 LVShared *lvshared, LVSharedIndStats *shared_indstats,
-							 LVRelStats *vacrelstats);
+static void vacuum_one_index_in_parallel(Relation indrel,
+										 IndexBulkDeleteResult **istat,
+										 LVShared *lvshared,
+										 LVSharedIndStats *shared_indstats,
+										 LVRelStats *vacrelstats);
 static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
-									 LVParallelState *lps, int nindexes);
+									 LVParallelState *lps);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static int	compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 											bool *can_parallel_vacuum);
 static void prepare_index_statistics(LVShared *lvshared, bool *can_parallel_vacuum,
 									 int nindexes);
-static void update_index_statistics(Relation *Irel, IndexBulkDeleteResult **stats,
-									int nindexes);
+static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static LVParallelState *begin_parallel_vacuum(Oid relid, Relation *Irel,
 											  LVRelStats *vacrelstats, BlockNumber nblocks,
-											  int nindexes, int nrequested);
-static void end_parallel_vacuum(IndexBulkDeleteResult **stats,
+											  int nrequested);
+static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
 								LVParallelState *lps, int nindexes);
 static LVSharedIndStats *get_indstats(LVShared *lvshared, int n);
 static bool skip_parallel_vacuum_index(Relation indrel, LVShared *lvshared);
@@ -574,9 +575,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	/* Open all indexes of the relation */
 	vac_open_indexes(onerel, RowExclusiveLock, &nindexes, &Irel);
 
+	vacrelstats->nindexes = nindexes;
+
 	vacrelstats->indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
-	vacrelstats->nindexes = nindexes;
 
 	/* Save index names iff autovacuum logging requires it */
 	if (IsAutoVacuumWorkerProcess() &&
@@ -605,7 +607,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	error_context_stack = &errcallback;
 
 	/* Do the vacuuming */
-	lazy_scan_heap(onerel, params, vacrelstats, Irel, nindexes, aggressive);
+	lazy_scan_heap(onerel, params, vacrelstats, Irel, aggressive);
 
 	/* Done with indexes */
 	vac_close_indexes(nindexes, Irel, NoLock);
@@ -758,18 +760,18 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageDirty);
 			for (int i = 0; i < vacrelstats->nindexes; i++)
 			{
-				IndexBulkDeleteResult *stats = vacrelstats->indstats[i];
+				IndexBulkDeleteResult *istat = vacrelstats->indstats[i];
 
-				if (!stats)
+				if (!istat)
 					continue;
 
 				appendStringInfo(&buf,
 								 _("index \"%s\": pages: %u in total, %u newly deleted, %u currently deleted, %u reusable\n"),
 								 indnames[i],
-								 stats->num_pages,
-								 stats->pages_newly_deleted,
-								 stats->pages_deleted,
-								 stats->pages_free);
+								 istat->num_pages,
+								 istat->pages_newly_deleted,
+								 istat->pages_deleted,
+								 istat->pages_free);
 			}
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
@@ -838,7 +840,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
  */
 static void
 lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
-			   Relation *Irel, int nindexes, bool aggressive)
+			   Relation *Irel, bool aggressive)
 {
 	LVParallelState *lps = NULL;
 	LVDeadTuples *dead_tuples;
@@ -858,6 +860,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		PROGRESS_VACUUM_MAX_DEAD_TUPLES
 	};
 	int64		initprog_val[3];
+	int			nindexes = vacrelstats->nindexes;
 	GlobalVisState *vistest;
 	LVTempCounters scancounts;
 
@@ -922,7 +925,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 		}
 		else
 			lps = begin_parallel_vacuum(RelationGetRelid(onerel), Irel,
-										vacrelstats, nblocks, nindexes,
+										vacrelstats, nblocks,
 										params->nworkers);
 	}
 
@@ -1461,7 +1464,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * with INDEX_CLEANUP=OFF.
 	 */
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
-		lazy_cleanup_all_indexes(Irel, vacrelstats, lps, nindexes);
+		lazy_cleanup_all_indexes(Irel, vacrelstats, lps);
 
 	/*
 	 * End parallel mode before updating index statistics as we cannot write
@@ -1481,7 +1484,7 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	 * cleanup, but the index AM API allows them to, so we must check.)
 	 */
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
-		update_index_statistics(Irel, vacrelstats->indstats, nindexes);
+		update_index_statistics(Irel, vacrelstats);
 
 	/*
 	 * If no indexes, make log report that lazy_vacuum_all_pruned_items()
@@ -2181,9 +2184,7 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 	}
 	else
 	{
-		int			idx;
-
-		for (idx = 0; idx < vacrelstats->nindexes; idx++)
+		for (int idx = 0; idx < vacrelstats->nindexes; idx++)
 			lazy_vacuum_index(Irel[idx], &(vacrelstats->indstats[idx]),
 							  vacrelstats->old_live_tuples, vacrelstats);
 	}
@@ -2636,8 +2637,8 @@ parallel_vacuum_index(Relation *Irel, LVShared *lvshared,
 			continue;
 
 		/* Do vacuum or cleanup of the index */
-		vacuum_one_index(Irel[idx], &(vacrelstats->indstats[idx]), lvshared,
-						 shared_indstats, vacrelstats);
+		vacuum_one_index_in_parallel(Irel[idx], &(vacrelstats->indstats[idx]),
+									 lvshared, shared_indstats, vacrelstats);
 	}
 
 	/*
@@ -2673,8 +2674,9 @@ vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
 		/* Process the indexes skipped by parallel workers */
 		if (shared_indstats == NULL ||
 			skip_parallel_vacuum_index(Irel[i], lps->lvshared))
-			vacuum_one_index(Irel[i], &(vacrelstats->indstats[i]),
-							 lps->lvshared, shared_indstats, vacrelstats);
+			vacuum_one_index_in_parallel(Irel[i], &(vacrelstats->indstats[i]),
+										 lps->lvshared, shared_indstats,
+										 vacrelstats);
 	}
 
 	/*
@@ -2692,31 +2694,32 @@ vacuum_indexes_leader(Relation *Irel, LVRelStats *vacrelstats,
  * segment.
  */
 static void
-vacuum_one_index(Relation indrel, IndexBulkDeleteResult **stats,
-				 LVShared *lvshared, LVSharedIndStats *shared_indstats,
-				 LVRelStats *vacrelstats)
+vacuum_one_index_in_parallel(Relation indrel, IndexBulkDeleteResult **istat,
+							 LVShared *lvshared,
+							 LVSharedIndStats *shared_indstats,
+							 LVRelStats *vacrelstats)
 {
 	IndexBulkDeleteResult *bulkdelete_res = NULL;
 
 	if (shared_indstats)
 	{
 		/* Get the space for IndexBulkDeleteResult */
-		bulkdelete_res = &(shared_indstats->stats);
+		bulkdelete_res = &(shared_indstats->istat);
 
 		/*
 		 * Update the pointer to the corresponding bulk-deletion result if
 		 * someone has already updated it.
 		 */
-		if (shared_indstats->updated && *stats == NULL)
-			*stats = bulkdelete_res;
+		if (shared_indstats->updated && *istat == NULL)
+			*istat = bulkdelete_res;
 	}
 
 	/* Do vacuum or cleanup of the index */
 	if (lvshared->for_cleanup)
-		lazy_cleanup_index(indrel, stats, lvshared->reltuples,
+		lazy_cleanup_index(indrel, istat, lvshared->reltuples,
 						   lvshared->estimated_count, vacrelstats);
 	else
-		lazy_vacuum_index(indrel, stats, lvshared->reltuples, vacrelstats);
+		lazy_vacuum_index(indrel, istat, lvshared->reltuples, vacrelstats);
 
 	/*
 	 * Copy the index bulk-deletion result returned from ambulkdelete and
@@ -2730,17 +2733,17 @@ vacuum_one_index(Relation indrel, IndexBulkDeleteResult **stats,
 	 * Since all vacuum workers write the bulk-deletion result at different
 	 * slots we can write them without locking.
 	 */
-	if (shared_indstats && !shared_indstats->updated && *stats != NULL)
+	if (shared_indstats && !shared_indstats->updated && *istat != NULL)
 	{
-		memcpy(bulkdelete_res, *stats, sizeof(IndexBulkDeleteResult));
+		memcpy(bulkdelete_res, *istat, sizeof(IndexBulkDeleteResult));
 		shared_indstats->updated = true;
 
 		/*
 		 * Now that stats[idx] points to the DSM segment, we don't need the
 		 * locally allocated results.
 		 */
-		pfree(*stats);
-		*stats = bulkdelete_res;
+		pfree(*istat);
+		*istat = bulkdelete_res;
 	}
 }
 
@@ -2752,12 +2755,10 @@ vacuum_one_index(Relation indrel, IndexBulkDeleteResult **stats,
  */
 static void
 lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
-						 LVParallelState *lps, int nindexes)
+						 LVParallelState *lps)
 {
-	int			idx;
-
 	Assert(!IsParallelWorker());
-	Assert(nindexes > 0);
+	Assert(vacrelstats->nindexes > 0);
 
 	/* Report that we are now cleaning up indexes */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -2787,7 +2788,7 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 	}
 	else
 	{
-		for (idx = 0; idx < nindexes; idx++)
+		for (int idx = 0; idx < vacrelstats->nindexes; idx++)
 			lazy_cleanup_index(Irel[idx], &(vacrelstats->indstats[idx]),
 							   vacrelstats->new_rel_tuples,
 							   vacrelstats->tupcount_pages < vacrelstats->rel_pages,
@@ -2805,7 +2806,7 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
  *		bulkdelete callback.  It's always assumed to be estimated.
  */
 static void
-lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
+lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **istat,
 				  double reltuples, LVRelStats *vacrelstats)
 {
 	IndexVacuumInfo ivinfo;
@@ -2835,7 +2836,7 @@ lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
 	/* Do bulk deletion */
-	*stats = index_bulk_delete(&ivinfo, *stats, lazy_tid_reaped,
+	*istat = index_bulk_delete(&ivinfo, *istat, lazy_tid_reaped,
 							   (void *) vacrelstats->dead_tuples);
 
 	ereport(elevel,
@@ -2857,9 +2858,9 @@ lazy_vacuum_index(Relation indrel, IndexBulkDeleteResult **stats,
  *		if reltuples is an estimated value.
  */
 static void
-lazy_cleanup_index(Relation indrel,
-				   IndexBulkDeleteResult **stats,
-				   double reltuples, bool estimated_count, LVRelStats *vacrelstats)
+lazy_cleanup_index(Relation indrel, IndexBulkDeleteResult **istat,
+				   double reltuples, bool estimated_count,
+				   LVRelStats *vacrelstats)
 {
 	IndexVacuumInfo ivinfo;
 	PGRUsage	ru0;
@@ -2888,22 +2889,22 @@ lazy_cleanup_index(Relation indrel,
 							 VACUUM_ERRCB_PHASE_INDEX_CLEANUP,
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
-	*stats = index_vacuum_cleanup(&ivinfo, *stats);
+	*istat = index_vacuum_cleanup(&ivinfo, *istat);
 
-	if (*stats)
+	if (*istat)
 	{
 		ereport(elevel,
 				(errmsg("index \"%s\" now contains %.0f row versions in %u pages",
 						RelationGetRelationName(indrel),
-						(*stats)->num_index_tuples,
-						(*stats)->num_pages),
+						(*istat)->num_index_tuples,
+						(*istat)->num_pages),
 				 errdetail("%.0f index row versions were removed.\n"
 						   "%u index pages were newly deleted.\n"
 						   "%u index pages are currently deleted, of which %u are currently reusable.\n"
 						   "%s.",
-						   (*stats)->tuples_removed,
-						   (*stats)->pages_newly_deleted,
-						   (*stats)->pages_deleted, (*stats)->pages_free,
+						   (*istat)->tuples_removed,
+						   (*istat)->pages_newly_deleted,
+						   (*istat)->pages_deleted, (*istat)->pages_free,
 						   pg_rusage_show(&ru0))));
 	}
 
@@ -3500,7 +3501,6 @@ compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 	int			nindexes_parallel_bulkdel = 0;
 	int			nindexes_parallel_cleanup = 0;
 	int			parallel_workers;
-	int			i;
 
 	/*
 	 * We don't allow performing parallel operation in standalone backend or
@@ -3512,12 +3512,13 @@ compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 	/*
 	 * Compute the number of indexes that can participate in parallel vacuum.
 	 */
-	for (i = 0; i < nindexes; i++)
+	for (int i = 0; i < nindexes; i++)
 	{
-		uint8		vacoptions = Irel[i]->rd_indam->amparallelvacuumoptions;
+		Relation indrel = Irel[i];
+		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		if (vacoptions == VACUUM_OPTION_NO_PARALLEL ||
-			RelationGetNumberOfBlocks(Irel[i]) < min_parallel_index_scan_size)
+			RelationGetNumberOfBlocks(indrel) < min_parallel_index_scan_size)
 			continue;
 
 		can_parallel_vacuum[i] = true;
@@ -3557,15 +3558,13 @@ static void
 prepare_index_statistics(LVShared *lvshared, bool *can_parallel_vacuum,
 						 int nindexes)
 {
-	int			i;
-
 	/* Currently, we don't support parallel vacuum for autovacuum */
 	Assert(!IsAutoVacuumWorkerProcess());
 
 	/* Set NULL for all indexes */
 	memset(lvshared->bitmap, 0x00, BITMAPLEN(nindexes));
 
-	for (i = 0; i < nindexes; i++)
+	for (int i = 0; i < nindexes; i++)
 	{
 		if (!can_parallel_vacuum[i])
 			continue;
@@ -3579,22 +3578,25 @@ prepare_index_statistics(LVShared *lvshared, bool *can_parallel_vacuum,
  * Update index statistics in pg_class if the statistics are accurate.
  */
 static void
-update_index_statistics(Relation *Irel, IndexBulkDeleteResult **stats,
-						int nindexes)
+update_index_statistics(Relation *Irel, LVRelStats *vacrelstats)
 {
-	int			i;
+	int						nindexes = vacrelstats->nindexes;
+	IndexBulkDeleteResult **indstats = vacrelstats->indstats;
 
 	Assert(!IsInParallelMode());
 
-	for (i = 0; i < nindexes; i++)
+	for (int i = 0; i < nindexes; i++)
 	{
-		if (stats[i] == NULL || stats[i]->estimated_count)
+		Relation			   indrel = Irel[i];
+		IndexBulkDeleteResult *istat = indstats[i];
+
+		if (istat == NULL || istat->estimated_count)
 			continue;
 
 		/* Update index statistics */
-		vac_update_relstats(Irel[i],
-							stats[i]->num_pages,
-							stats[i]->num_index_tuples,
+		vac_update_relstats(indrel,
+							istat->num_pages,
+							istat->num_index_tuples,
 							0,
 							false,
 							InvalidTransactionId,
@@ -3610,9 +3612,10 @@ update_index_statistics(Relation *Irel, IndexBulkDeleteResult **stats,
  */
 static LVParallelState *
 begin_parallel_vacuum(Oid relid, Relation *Irel, LVRelStats *vacrelstats,
-					  BlockNumber nblocks, int nindexes, int nrequested)
+					  BlockNumber nblocks, int nrequested)
 {
 	LVParallelState *lps = NULL;
+	int				nindexes = vacrelstats->nindexes;
 	ParallelContext *pcxt;
 	LVShared   *shared;
 	LVDeadTuples *dead_tuples;
@@ -3793,32 +3796,30 @@ begin_parallel_vacuum(Oid relid, Relation *Irel, LVRelStats *vacrelstats,
  * context, but that won't be safe (see ExitParallelMode).
  */
 static void
-end_parallel_vacuum(IndexBulkDeleteResult **stats, LVParallelState *lps,
+end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 					int nindexes)
 {
-	int			i;
-
 	Assert(!IsParallelWorker());
 
 	/* Copy the updated statistics */
-	for (i = 0; i < nindexes; i++)
+	for (int i = 0; i < nindexes; i++)
 	{
-		LVSharedIndStats *indstats = get_indstats(lps->lvshared, i);
+		LVSharedIndStats	  *shared_istat = get_indstats(lps->lvshared, i);
 
 		/*
 		 * Skip unused slot.  The statistics of this index are already stored
 		 * in local memory.
 		 */
-		if (indstats == NULL)
+		if (shared_istat == NULL)
 			continue;
 
-		if (indstats->updated)
+		if (shared_istat->updated)
 		{
-			stats[i] = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
-			memcpy(stats[i], &(indstats->stats), sizeof(IndexBulkDeleteResult));
+			indstats[i] = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
+			memcpy(indstats[i], &(shared_istat->istat), sizeof(IndexBulkDeleteResult));
 		}
 		else
-			stats[i] = NULL;
+			indstats[i] = NULL;
 	}
 
 	DestroyParallelContext(lps->pcxt);
