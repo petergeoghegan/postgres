@@ -456,8 +456,6 @@ static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static int	compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 											bool *can_parallel_vacuum);
-static void prepare_index_statistics(LVShared *lvshared, bool *can_parallel_vacuum,
-									 int nindexes);
 static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *Irel,
 											  LVRelStats *vacrelstats, BlockNumber nblocks,
@@ -3606,30 +3604,6 @@ compute_parallel_vacuum_workers(Relation *Irel, int nindexes, int nrequested,
 }
 
 /*
- * Initialize variables for shared index statistics, set NULL bitmap and the
- * size of stats for each index.
- */
-static void
-prepare_index_statistics(LVShared *lvshared, bool *can_parallel_vacuum,
-						 int nindexes)
-{
-	/* Currently, we don't support parallel vacuum for autovacuum */
-	Assert(!IsAutoVacuumWorkerProcess());
-
-	/* Set NULL for all indexes */
-	memset(lvshared->bitmap, 0x00, BITMAPLEN(nindexes));
-
-	for (int i = 0; i < nindexes; i++)
-	{
-		if (!can_parallel_vacuum[i])
-			continue;
-
-		/* Set NOT NULL as this index does support parallelism */
-		lvshared->bitmap[i >> 3] |= 1 << (i & 0x07);
-	}
-}
-
-/*
  * Update index statistics in pg_class if the statistics are accurate.
  */
 static void
@@ -3799,7 +3773,20 @@ begin_parallel_vacuum(Relation onerel, Relation *Irel, LVRelStats *vacrelstats,
 	pg_atomic_init_u32(&(shared->active_nworkers), 0);
 	pg_atomic_init_u32(&(shared->idx), 0);
 	shared->offset = MAXALIGN(add_size(SizeOfLVShared, BITMAPLEN(nindexes)));
-	prepare_index_statistics(shared, can_parallel_vacuum, nindexes);
+
+	/*
+	 * Initialize variables for shared index statistics, set NULL bitmap and
+	 * the size of stats for each index.
+	 */
+	memset(shared->bitmap, 0x00, BITMAPLEN(nindexes));
+	for (int idx = 0; idx < nindexes; idx++)
+	{
+		if (!can_parallel_vacuum[idx])
+			continue;
+
+		/* Set NOT NULL as this index does support parallelism */
+		shared->bitmap[i >> 3] |= 1 << (i & 0x07);
+	}
 
 	shm_toc_insert(pcxt->toc, PARALLEL_VACUUM_KEY_SHARED, shared);
 	lps->lvshared = shared;
