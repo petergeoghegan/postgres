@@ -415,17 +415,17 @@ static void lazy_vacuum_all_pruned_items(Relation onerel,
 static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
 static void lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 									LVRelStats *vacrelstats, LVParallelState *lps);
-static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
-									 LVParallelState *lps);
-static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
 													IndexBulkDeleteResult *istat, double reltuples,
 													LVRelStats *vacrelstats);
+static void lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
+									 LVParallelState *lps);
 static IndexBulkDeleteResult *lazy_cleanup_one_index(Relation indrel,
 													 IndexBulkDeleteResult *istat,
 													 double reltuples,
 													 bool estimated_count,
 													 LVRelStats *vacrelstats);
+static void update_index_statistics(Relation *Irel, LVRelStats *vacrelstats);
 static int	lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 							 int tupindex, LVRelStats *vacrelstats, Buffer *vmbuffer);
 static bool should_attempt_truncation(VacuumParams *params,
@@ -463,7 +463,7 @@ static IndexBulkDeleteResult *parallel_process_one_index(Relation indrel,
 														 LVShared *lvshared,
 														 LVSharedIndStats *shared_indstats,
 														 LVRelStats *vacrelstats);
-static LVSharedIndStats *get_indstats(LVShared *lvshared, int n);
+static LVSharedIndStats *parallel_stats_for_idx(LVShared *lvshared, int getidx);
 static bool parallel_processing_is_safe(Relation indrel, LVShared *lvshared);
 static void vacuum_error_callback(void *arg);
 static void update_vacuum_error_info(LVRelStats *errinfo, LVSavedErrInfo *saved_err_info,
@@ -2267,6 +2267,65 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *Irel,
 }
 
 /*
+ *	lazy_vacuum_one_index() -- vacuum index relation.
+ *
+ *		Delete all the index entries pointing to tuples listed in
+ *		dead_tuples, and update running statistics.
+ *
+ *		reltuples is the number of heap tuples to be passed to the
+ *		bulkdelete callback.  It's always assumed to be estimated.
+ *
+ * Returns bulk delete stats derived from input stats
+ */
+static IndexBulkDeleteResult *
+lazy_vacuum_one_index(Relation indrel, IndexBulkDeleteResult *istat,
+					  double reltuples, LVRelStats *vacrelstats)
+{
+	IndexVacuumInfo ivinfo;
+	PGRUsage	ru0;
+	LVSavedErrInfo saved_err_info;
+
+	pg_rusage_init(&ru0);
+
+	ivinfo.index = indrel;
+	ivinfo.analyze_only = false;
+	ivinfo.report_progress = false;
+	ivinfo.estimated_count = true;
+	ivinfo.message_level = elevel;
+	ivinfo.num_heap_tuples = reltuples;
+	ivinfo.strategy = vac_strategy;
+
+	/*
+	 * Update error traceback information.
+	 *
+	 * The index name is saved during this phase and restored immediately
+	 * after this phase.  See vacuum_error_callback.
+	 */
+	Assert(vacrelstats->indname == NULL);
+	vacrelstats->indname = pstrdup(RelationGetRelationName(indrel));
+	update_vacuum_error_info(vacrelstats, &saved_err_info,
+							 VACUUM_ERRCB_PHASE_VACUUM_INDEX,
+							 InvalidBlockNumber, InvalidOffsetNumber);
+
+	/* Do bulk deletion */
+	istat = index_bulk_delete(&ivinfo, istat, lazy_tid_reaped,
+							   (void *) vacrelstats->dead_tuples);
+
+	ereport(elevel,
+			(errmsg("scanned index \"%s\" to remove %d row versions",
+					vacrelstats->indname,
+					vacrelstats->dead_tuples->num_tuples),
+			 errdetail_internal("%s", pg_rusage_show(&ru0))));
+
+	/* Revert to the previous phase information for error traceback */
+	restore_vacuum_error_info(vacrelstats, &saved_err_info);
+	pfree(vacrelstats->indname);
+	vacrelstats->indname = NULL;
+
+	return istat;
+}
+
+/*
  *	lazy_cleanup_all_indexes() -- cleanup all indexes of relation.
  *
  * Cleanup indexes.  We process the indexes serially unless we are doing
@@ -2322,6 +2381,73 @@ lazy_cleanup_all_indexes(Relation *Irel, LVRelStats *vacrelstats,
 
 		do_parallel_vacuum_or_cleanup(Irel, vacrelstats, lps);
 	}
+}
+
+/*
+ *	lazy_cleanup_one_index() -- do post-vacuum cleanup for index relation.
+ *
+ *		reltuples is the number of heap tuples and estimated_count is true
+ *		if reltuples is an estimated value.
+ *
+ * Returns bulk delete stats derived from input stats
+ */
+static IndexBulkDeleteResult *
+lazy_cleanup_one_index(Relation indrel, IndexBulkDeleteResult *istat,
+					   double reltuples, bool estimated_count,
+					   LVRelStats *vacrelstats)
+{
+	IndexVacuumInfo ivinfo;
+	PGRUsage	ru0;
+	LVSavedErrInfo saved_err_info;
+
+	pg_rusage_init(&ru0);
+
+	ivinfo.index = indrel;
+	ivinfo.analyze_only = false;
+	ivinfo.report_progress = false;
+	ivinfo.estimated_count = estimated_count;
+	ivinfo.message_level = elevel;
+
+	ivinfo.num_heap_tuples = reltuples;
+	ivinfo.strategy = vac_strategy;
+
+	/*
+	 * Update error traceback information.
+	 *
+	 * The index name is saved during this phase and restored immediately
+	 * after this phase.  See vacuum_error_callback.
+	 */
+	Assert(vacrelstats->indname == NULL);
+	vacrelstats->indname = pstrdup(RelationGetRelationName(indrel));
+	update_vacuum_error_info(vacrelstats, &saved_err_info,
+							 VACUUM_ERRCB_PHASE_INDEX_CLEANUP,
+							 InvalidBlockNumber, InvalidOffsetNumber);
+
+	istat = index_vacuum_cleanup(&ivinfo, istat);
+
+	if (istat)
+	{
+		ereport(elevel,
+				(errmsg("index \"%s\" now contains %.0f row versions in %u pages",
+						RelationGetRelationName(indrel),
+						(istat)->num_index_tuples,
+						(istat)->num_pages),
+				 errdetail("%.0f index row versions were removed.\n"
+						   "%u index pages were newly deleted.\n"
+						   "%u index pages are currently deleted, of which %u are currently reusable.\n"
+						   "%s.",
+						   (istat)->tuples_removed,
+						   (istat)->pages_newly_deleted,
+						   (istat)->pages_deleted, (istat)->pages_free,
+						   pg_rusage_show(&ru0))));
+	}
+
+	/* Revert to the previous phase information for error traceback */
+	restore_vacuum_error_info(vacrelstats, &saved_err_info);
+	pfree(vacrelstats->indname);
+	vacrelstats->indname = NULL;
+
+	return istat;
 }
 
 /*
@@ -2565,132 +2691,6 @@ lazy_vacuum_page(Relation onerel, BlockNumber blkno, Buffer buffer,
 	/* Revert to the previous phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
 	return tupindex;
-}
-
-/*
- *	lazy_vacuum_one_index() -- vacuum index relation.
- *
- *		Delete all the index entries pointing to tuples listed in
- *		dead_tuples, and update running statistics.
- *
- *		reltuples is the number of heap tuples to be passed to the
- *		bulkdelete callback.  It's always assumed to be estimated.
- *
- * Returns bulk delete stats derived from input stats
- */
-static IndexBulkDeleteResult *
-lazy_vacuum_one_index(Relation indrel, IndexBulkDeleteResult *istat,
-					  double reltuples, LVRelStats *vacrelstats)
-{
-	IndexVacuumInfo ivinfo;
-	PGRUsage	ru0;
-	LVSavedErrInfo saved_err_info;
-
-	pg_rusage_init(&ru0);
-
-	ivinfo.index = indrel;
-	ivinfo.analyze_only = false;
-	ivinfo.report_progress = false;
-	ivinfo.estimated_count = true;
-	ivinfo.message_level = elevel;
-	ivinfo.num_heap_tuples = reltuples;
-	ivinfo.strategy = vac_strategy;
-
-	/*
-	 * Update error traceback information.
-	 *
-	 * The index name is saved during this phase and restored immediately
-	 * after this phase.  See vacuum_error_callback.
-	 */
-	Assert(vacrelstats->indname == NULL);
-	vacrelstats->indname = pstrdup(RelationGetRelationName(indrel));
-	update_vacuum_error_info(vacrelstats, &saved_err_info,
-							 VACUUM_ERRCB_PHASE_VACUUM_INDEX,
-							 InvalidBlockNumber, InvalidOffsetNumber);
-
-	/* Do bulk deletion */
-	istat = index_bulk_delete(&ivinfo, istat, lazy_tid_reaped,
-							   (void *) vacrelstats->dead_tuples);
-
-	ereport(elevel,
-			(errmsg("scanned index \"%s\" to remove %d row versions",
-					vacrelstats->indname,
-					vacrelstats->dead_tuples->num_tuples),
-			 errdetail_internal("%s", pg_rusage_show(&ru0))));
-
-	/* Revert to the previous phase information for error traceback */
-	restore_vacuum_error_info(vacrelstats, &saved_err_info);
-	pfree(vacrelstats->indname);
-	vacrelstats->indname = NULL;
-
-	return istat;
-}
-
-/*
- *	lazy_cleanup_one_index() -- do post-vacuum cleanup for index relation.
- *
- *		reltuples is the number of heap tuples and estimated_count is true
- *		if reltuples is an estimated value.
- *
- * Returns bulk delete stats derived from input stats
- */
-static IndexBulkDeleteResult *
-lazy_cleanup_one_index(Relation indrel, IndexBulkDeleteResult *istat,
-					   double reltuples, bool estimated_count,
-					   LVRelStats *vacrelstats)
-{
-	IndexVacuumInfo ivinfo;
-	PGRUsage	ru0;
-	LVSavedErrInfo saved_err_info;
-
-	pg_rusage_init(&ru0);
-
-	ivinfo.index = indrel;
-	ivinfo.analyze_only = false;
-	ivinfo.report_progress = false;
-	ivinfo.estimated_count = estimated_count;
-	ivinfo.message_level = elevel;
-
-	ivinfo.num_heap_tuples = reltuples;
-	ivinfo.strategy = vac_strategy;
-
-	/*
-	 * Update error traceback information.
-	 *
-	 * The index name is saved during this phase and restored immediately
-	 * after this phase.  See vacuum_error_callback.
-	 */
-	Assert(vacrelstats->indname == NULL);
-	vacrelstats->indname = pstrdup(RelationGetRelationName(indrel));
-	update_vacuum_error_info(vacrelstats, &saved_err_info,
-							 VACUUM_ERRCB_PHASE_INDEX_CLEANUP,
-							 InvalidBlockNumber, InvalidOffsetNumber);
-
-	istat = index_vacuum_cleanup(&ivinfo, istat);
-
-	if (istat)
-	{
-		ereport(elevel,
-				(errmsg("index \"%s\" now contains %.0f row versions in %u pages",
-						RelationGetRelationName(indrel),
-						(istat)->num_index_tuples,
-						(istat)->num_pages),
-				 errdetail("%.0f index row versions were removed.\n"
-						   "%u index pages were newly deleted.\n"
-						   "%u index pages are currently deleted, of which %u are currently reusable.\n"
-						   "%s.",
-						   (istat)->tuples_removed,
-						   (istat)->pages_newly_deleted,
-						   (istat)->pages_deleted, (istat)->pages_free,
-						   pg_rusage_show(&ru0))));
-	}
-
-	/* Revert to the previous phase information for error traceback */
-	restore_vacuum_error_info(vacrelstats, &saved_err_info);
-	pfree(vacrelstats->indname);
-	vacrelstats->indname = NULL;
-
-	return istat;
 }
 
 /*
@@ -3545,7 +3545,7 @@ end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 	{
 		LVSharedIndStats *shared_istat;
 
-		shared_istat = get_indstats(lvshared, idx);
+		shared_istat = parallel_stats_for_idx(lvshared, idx);
 
 		/*
 		 * Skip unused slot.  The statistics of this index are already stored
@@ -3731,7 +3731,7 @@ do_parallel_processing(Relation *Irel, LVRelStats *vacrelstats,
 			break;
 
 		/* Get the index statistics of this index from DSM */
-		shared_istat = get_indstats(lvshared, idx);
+		shared_istat = parallel_stats_for_idx(lvshared, idx);
 
 		/* Skip indexes not participating in parallelism */
 		if (shared_istat == NULL)
@@ -3785,7 +3785,7 @@ do_serial_processing_for_unsafe_indexes(Relation *Irel,
 		Relation				indrel;
 		IndexBulkDeleteResult *istat;
 
-		shared_istat = get_indstats(lvshared, idx);
+		shared_istat = parallel_stats_for_idx(lvshared, idx);
 
 		/* Skip already-complete indexes */
 		if (shared_istat != NULL)
@@ -3879,20 +3879,21 @@ parallel_process_one_index(Relation indrel,
 	return istat;
 }
 
-/* Return the Nth index statistics or NULL */
+/*
+ * Return shared memory statistics for index at offset 'getidx', if any
+ */
 static LVSharedIndStats *
-get_indstats(LVShared *lvshared, int n)
+parallel_stats_for_idx(LVShared *lvshared, int getidx)
 {
-	int			i;
 	char	   *p;
 
-	if (IndStatsIsNull(lvshared, n))
+	if (IndStatsIsNull(lvshared, getidx))
 		return NULL;
 
 	p = (char *) GetSharedIndStats(lvshared);
-	for (i = 0; i < n; i++)
+	for (int idx = 0; idx < getidx; idx++)
 	{
-		if (IndStatsIsNull(lvshared, i))
+		if (IndStatsIsNull(lvshared, idx))
 			continue;
 
 		p += sizeof(LVSharedIndStats);
