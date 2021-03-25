@@ -2138,11 +2138,11 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	 * to items that are concentrated in relatively few heap pages.  These are
 	 * usually due to correlated non-HOT UPDATEs.
 	 *
-	 * The important thing for us to get right is avoiding putting off a
-	 * VACUUM that eventually dirties an excessive number of heap pages during
-	 * pruning.  Pruning can never be skipped -- even in an emergency.  It's
-	 * also important to avoid allowing relatively many heap pages that can
-	 * never have their visibility map bit set to stay that way indefinitely.
+	 * It's important that we avoid putting off a VACUUM that eventually
+	 * dirties index pages more often than would happen if we didn't skip.
+	 * It's also important to avoid allowing relatively many heap pages that
+	 * can never have their visibility map bit set to stay that way
+	 * indefinitely.
 	 *
 	 * In general the criteria that we apply here must not create distinct new
 	 * problems for the logic that schedules autovacuum workers.  For example,
