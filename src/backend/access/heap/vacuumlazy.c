@@ -2147,7 +2147,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	 * schedules autovacuum workers.  For example, an autovacuum worker that
 	 * was launched purely because the autovacuum_vacuum_insert_scale_factor
 	 * threshold was crossed had better not end up doing no useful work just
-	 * because of this optimization.
+	 * because the skip index vacuuming optimization is applied.
 	 */
 	applyskipoptimization = false;
 	if (onecall)
