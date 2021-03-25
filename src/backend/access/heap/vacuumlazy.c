@@ -415,7 +415,8 @@ static void lazy_vacuum_heap(LVRelStats *vacrelstats);
 static void lazy_vacuum_all_indexes(LVRelStats *vacrelstats,
 									LVParallelState *lps);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
-													IndexBulkDeleteResult *istat, double reltuples,
+													IndexBulkDeleteResult *istat,
+													double reltuples,
 													LVRelStats *vacrelstats);
 static void lazy_cleanup_all_indexes(LVRelStats *vacrelstats,
 									 LVParallelState *lps);
@@ -440,7 +441,7 @@ static BlockNumber lazy_truncate_count_nondeletable(LVRelStats *vacrelstats);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static void lazy_space_alloc(LVRelStats *vacrelstats, BlockNumber relblocks,
 							 bool hasindex);
-static int compute_parallel_vacuum_workers(Relation *indrels, int nindexes, int nrequested,
+static int compute_parallel_vacuum_workers(LVRelStats *vacrelstats, int nrequested,
 										   bool *can_parallel_vacuum);
 static LVParallelState *begin_parallel_vacuum(LVRelStats *vacrelstats,
 											  BlockNumber nblocks,
@@ -453,10 +454,9 @@ static void do_parallel_lazy_cleanup_all_indexes(LVRelStats *vacrelstats,
 												 LVParallelState *lps);
 static void do_parallel_vacuum_or_cleanup(LVRelStats *vacrelstats,
 										  LVParallelState *lps, int nworkers);
-static void do_parallel_processing(Relation *indrels, LVRelStats *vacrelstats,
+static void do_parallel_processing(LVRelStats *vacrelstats,
 								   LVShared *lvshared);
-static void do_serial_processing_for_unsafe_indexes(Relation *indrels,
-													LVRelStats *vacrelstats,
+static void do_serial_processing_for_unsafe_indexes(LVRelStats *vacrelstats,
 													LVShared *lvshared);
 static IndexBulkDeleteResult *parallel_process_one_index(Relation indrel,
 														 IndexBulkDeleteResult *istat,
@@ -3254,8 +3254,8 @@ heap_page_is_all_visible(LVRelStats *vacrelstats, Buffer buf,
  * vacuum.
  */
 static int
-compute_parallel_vacuum_workers(Relation *indrels, int nindexes,
-								int nrequested, bool *can_parallel_vacuum)
+compute_parallel_vacuum_workers(LVRelStats *vacrelstats, int nrequested,
+								bool *can_parallel_vacuum)
 {
 	int			nindexes_parallel = 0;
 	int			nindexes_parallel_bulkdel = 0;
@@ -3272,9 +3272,9 @@ compute_parallel_vacuum_workers(Relation *indrels, int nindexes,
 	/*
 	 * Compute the number of indexes that can participate in parallel vacuum.
 	 */
-	for (int idx = 0; idx < nindexes; idx++)
+	for (int idx = 0; idx < vacrelstats->nindexes; idx++)
 	{
-		Relation indrel = indrels[idx];
+		Relation indrel = vacrelstats->indrels[idx];
 		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		if (vacoptions == VACUUM_OPTION_NO_PARALLEL ||
@@ -3347,7 +3347,7 @@ begin_parallel_vacuum(LVRelStats *vacrelstats, BlockNumber nblocks,
 	 * Compute the number of parallel vacuum workers to launch
 	 */
 	can_parallel_vacuum = (bool *) palloc0(sizeof(bool) * nindexes);
-	parallel_workers = compute_parallel_vacuum_workers(indrels, nindexes,
+	parallel_workers = compute_parallel_vacuum_workers(vacrelstats,
 													   nrequested,
 													   can_parallel_vacuum);
 
@@ -3689,14 +3689,13 @@ do_parallel_vacuum_or_cleanup(LVRelStats *vacrelstats, LVParallelState *lps,
 	}
 
 	/* Process the indexes that can be processed by only leader process */
-	do_serial_processing_for_unsafe_indexes(vacrelstats->indrels, vacrelstats,
-											lps->lvshared);
+	do_serial_processing_for_unsafe_indexes(vacrelstats, lps->lvshared);
 
 	/*
 	 * Join as a parallel worker.  The leader process alone processes all the
 	 * indexes in the case where no workers are launched.
 	 */
-	do_parallel_processing(vacrelstats->indrels, vacrelstats, lps->lvshared);
+	do_parallel_processing(vacrelstats, lps->lvshared);
 
 	/*
 	 * Next, accumulate buffer and WAL usage.  (This must wait for the workers
@@ -3727,8 +3726,7 @@ do_parallel_vacuum_or_cleanup(LVRelStats *vacrelstats, LVParallelState *lps,
  * vacuum worker processes to process the indexes in parallel.
  */
 static void
-do_parallel_processing(Relation *indrels, LVRelStats *vacrelstats,
-					   LVShared *lvshared)
+do_parallel_processing(LVRelStats *vacrelstats, LVShared *lvshared)
 {
 	/*
 	 * Increment the active worker count if we are able to launch any worker.
@@ -3758,7 +3756,7 @@ do_parallel_processing(Relation *indrels, LVRelStats *vacrelstats,
 		if (shared_istat == NULL)
 			continue;
 
-		indrel = indrels[idx];
+		indrel = vacrelstats->indrels[idx];
 
 		/*
 		 * Skip processing indexes that are unsafe for workers (these are
@@ -3788,8 +3786,7 @@ do_parallel_processing(Relation *indrels, LVRelStats *vacrelstats,
  * because these indexes don't support parallel operation at that phase.
  */
 static void
-do_serial_processing_for_unsafe_indexes(Relation *indrels,
-										LVRelStats *vacrelstats,
+do_serial_processing_for_unsafe_indexes(LVRelStats *vacrelstats,
 										LVShared *lvshared)
 {
 	Assert(!IsParallelWorker());
@@ -3812,7 +3809,7 @@ do_serial_processing_for_unsafe_indexes(Relation *indrels,
 		if (shared_istat != NULL)
 			continue;
 
-		indrel = indrels[idx];
+		indrel = vacrelstats->indrels[idx];
 
 		/*
 		 * We're only here for the unsafe indexes
@@ -4024,6 +4021,9 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 	VacuumSharedCostBalance = &(lvshared->cost_balance);
 	VacuumActiveNWorkers = &(lvshared->active_nworkers);
 
+	vacrelstats.onerel = onerel;
+	vacrelstats.indrels = indrels;
+	vacrelstats.nindexes = nindexes;
 	vacrelstats.indstats = (IndexBulkDeleteResult **)
 		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
 
@@ -4038,7 +4038,6 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 	vacrelstats.relname = pstrdup(RelationGetRelationName(onerel));
 	vacrelstats.indname = NULL;
 	vacrelstats.phase = VACUUM_ERRCB_PHASE_UNKNOWN; /* Not yet processing */
-	vacrelstats.nindexes = nindexes;
 	vacrelstats.dead_tuples = dead_tuples;
 
 	/* Setup error traceback support for ereport() */
@@ -4051,7 +4050,7 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 	InstrStartParallelQuery();
 
 	/* Process indexes to perform vacuum/cleanup */
-	do_parallel_processing(indrels, &vacrelstats, lvshared);
+	do_parallel_processing(&vacrelstats, lvshared);
 
 	/* Report buffer/WAL usage during parallel execution */
 	buffer_usage = shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_BUFFER_USAGE, false);
