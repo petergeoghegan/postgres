@@ -393,15 +393,14 @@ static void lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params,
 						   bool aggressive);
 static bool lazy_scan_needs_freeze(Buffer buf, bool *hastup,
 								   LVRelStats *vacrelstats);
-static void lazy_scan_new_page(Relation onerel, Buffer buf);
-static void lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-								 LVRelStats *vacrelstats);
-static void lazy_scan_setvmbit_page(Relation onerel, Buffer buf,
+static void lazy_scan_new_page(LVRelStats *vacrelstats, Buffer buf);
+static void lazy_scan_empty_page(LVRelStats *vacrelstats, Buffer buf,
+								 Buffer vmbuffer);
+static void lazy_scan_setvmbit_page(LVRelStats *vacrelstats, Buffer buf,
 									Buffer vmbuffer,
 									LVPagePruneState *pageprunestate,
 									LVPageVisMapState *pagevmstate);
-static void lazy_prune_page_items(Relation onerel, Buffer buf,
-								  LVRelStats *vacrelstats,
+static void lazy_prune_page_items(LVRelStats *vacrelstats, Buffer buf,
 								  GlobalVisState *vistest,
 								  xl_heap_freeze_tuple *frozen,
 								  LVTempCounters *scancounts,
@@ -428,9 +427,9 @@ static IndexBulkDeleteResult *lazy_cleanup_one_index(Relation indrel,
 static int	lazy_vacuum_page(LVRelStats *vacrelstats, BlockNumber blkno,
 							 Buffer buffer, int tupindex, Buffer *vmbuffer);
 static void update_index_statistics(LVRelStats *vacrelstats);
-static bool should_attempt_truncation(VacuumParams *params,
-									  LVRelStats *vacrelstats);
-static void lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats);
+static bool should_attempt_truncation(LVRelStats *vacrelstats, VacuumParams
+									  *params);
+static void lazy_truncate_heap(LVRelStats *vacrelstats);
 static void lazy_record_dead_tuple(LVDeadTuples *dead_tuples,
 								   ItemPointer itemptr);
 static bool lazy_tid_reaped(ItemPointer itemptr, void *state);
@@ -643,7 +642,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	/*
 	 * Optionally truncate the relation.
 	 */
-	if (should_attempt_truncation(params, vacrelstats))
+	if (should_attempt_truncation(vacrelstats, params))
 	{
 		/*
 		 * Update error traceback information.  This is the last phase during
@@ -653,7 +652,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 		update_vacuum_error_info(vacrelstats, NULL, VACUUM_ERRCB_PHASE_TRUNCATE,
 								 vacrelstats->nonempty_pages,
 								 InvalidOffsetNumber);
-		lazy_truncate_heap(onerel, vacrelstats);
+		lazy_truncate_heap(vacrelstats);
 	}
 
 	/* Pop the error context stack */
@@ -1053,7 +1052,7 @@ lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params, bool aggressive)
 		 * See note above about forcing scanning of last page.
 		 */
 #define FORCE_CHECK_PAGE() \
-		(blkno == nblocks - 1 && should_attempt_truncation(params, vacrelstats))
+		(blkno == nblocks - 1 && should_attempt_truncation(vacrelstats, params))
 
 		pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
 
@@ -1283,14 +1282,14 @@ lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params, bool aggressive)
 		{
 			empty_pages++;
 			/* Releases lock on buf for us: */
-			lazy_scan_new_page(vacrelstats->onerel, buf);
+			lazy_scan_new_page(vacrelstats, buf);
 			continue;
 		}
 		else if (PageIsEmpty(page))
 		{
 			empty_pages++;
 			/* Releases lock on buf for us (though keeps vmbuffer pin): */
-			lazy_scan_empty_page(vacrelstats->onerel, buf, vmbuffer, vacrelstats);
+			lazy_scan_empty_page(vacrelstats, buf, vmbuffer);
 			continue;
 		}
 
@@ -1305,9 +1304,8 @@ lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params, bool aggressive)
 		 * Also handles tuple freezing -- considers freezing XIDs from all
 		 * tuple headers left behind following pruning.
 		 */
-		lazy_prune_page_items(vacrelstats->onerel, buf, vacrelstats, vistest,
-							  frozen, &scancounts, &pageprunestate,
-							  &pagevmstate);
+		lazy_prune_page_items(vacrelstats, buf, vistest, frozen, &scancounts,
+							  &pageprunestate, &pagevmstate);
 
 		/*
 		 * Remember the number of pages having at least one LP_DEAD line
@@ -1402,7 +1400,7 @@ lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params, bool aggressive)
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		lazy_scan_setvmbit_page(vacrelstats->onerel, buf, vmbuffer, &pageprunestate,
+		lazy_scan_setvmbit_page(vacrelstats, buf, vmbuffer, &pageprunestate,
 								&pagevmstate);
 
 		/*
@@ -1627,8 +1625,9 @@ lazy_scan_needs_freeze(Buffer buf, bool *hastup, LVRelStats *vacrelstats)
  * after all.
  */
 static void
-lazy_scan_new_page(Relation onerel, Buffer buf)
+lazy_scan_new_page(LVRelStats *vacrelstats, Buffer buf)
 {
+	Relation	onerel = vacrelstats->onerel;
 	BlockNumber blkno = BufferGetBlockNumber(buf);
 
 	if (GetRecordedFreeSpace(onerel, blkno) == 0)
@@ -1650,9 +1649,9 @@ lazy_scan_new_page(Relation onerel, Buffer buf)
  * not a lock) on vmbuffer.
  */
 static void
-lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
-					 LVRelStats *vacrelstats)
+lazy_scan_empty_page(LVRelStats *vacrelstats, Buffer buf, Buffer vmbuffer)
 {
+	Relation	onerel = vacrelstats->onerel;
 	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
 	Size		freespace = PageGetHeapFreeSpace(page);
@@ -1696,10 +1695,11 @@ lazy_scan_empty_page(Relation onerel, Buffer buf, Buffer vmbuffer,
  * Handle setting VM bit inside lazy_scan_heap(), after pruning and freezing.
  */
 static void
-lazy_scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
+lazy_scan_setvmbit_page(LVRelStats *vacrelstats, Buffer buf, Buffer vmbuffer,
 						LVPagePruneState * pageprunestate,
 						LVPageVisMapState *pagevmstate)
 {
+	Relation	onerel = vacrelstats->onerel;
 	Page		page = BufferGetPage(buf);
 	BlockNumber blkno = BufferGetBlockNumber(buf);
 
@@ -1818,12 +1818,13 @@ lazy_scan_setvmbit_page(Relation onerel, Buffer buf, Buffer vmbuffer,
  * avoid double counting.
  */
 static void
-lazy_prune_page_items(Relation onerel, Buffer buf, LVRelStats *vacrelstats,
+lazy_prune_page_items(LVRelStats *vacrelstats, Buffer buf,
 					  GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
 					  LVTempCounters *scancounts,
 					  LVPagePruneState *pageprunestate,
 					  LVPageVisMapState *pagevmstate)
 {
+	Relation onerel = vacrelstats->onerel;
 	BlockNumber blkno;
 	Page		page;
 	OffsetNumber offnum,
@@ -2702,7 +2703,7 @@ update_index_statistics(LVRelStats *vacrelstats)
  * careful to depend only on fields that lazy_scan_heap updates on-the-fly.
  */
 static bool
-should_attempt_truncation(VacuumParams *params, LVRelStats *vacrelstats)
+should_attempt_truncation(LVRelStats *vacrelstats, VacuumParams *params)
 {
 	BlockNumber possibly_freeable;
 
@@ -2723,8 +2724,9 @@ should_attempt_truncation(VacuumParams *params, LVRelStats *vacrelstats)
  * lazy_truncate_heap - try to truncate off any empty pages at the end
  */
 static void
-lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats)
+lazy_truncate_heap(LVRelStats *vacrelstats)
 {
+	Relation onerel = vacrelstats->onerel;
 	BlockNumber old_rel_pages = vacrelstats->rel_pages;
 	BlockNumber new_rel_pages;
 	int			lock_retry;
