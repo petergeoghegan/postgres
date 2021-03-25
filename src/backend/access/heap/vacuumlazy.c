@@ -425,9 +425,9 @@ static IndexBulkDeleteResult *lazy_cleanup_one_index(Relation indrel,
 													 double reltuples,
 													 bool estimated_count,
 													 LVRelStats *vacrelstats);
-static void update_index_statistics(Relation *indrels, LVRelStats *vacrelstats);
 static int	lazy_vacuum_page(LVRelStats *vacrelstats, BlockNumber blkno,
 							 Buffer buffer, int tupindex, Buffer *vmbuffer);
+static void update_index_statistics(LVRelStats *vacrelstats);
 static bool should_attempt_truncation(VacuumParams *params,
 									  LVRelStats *vacrelstats);
 static void lazy_truncate_heap(Relation onerel, LVRelStats *vacrelstats);
@@ -1500,7 +1500,7 @@ lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params, bool aggressive)
 	 * cleanup, but the index AM API allows them to, so we must check.)
 	 */
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
-		update_index_statistics(vacrelstats->indrels, vacrelstats);
+		update_index_statistics(vacrelstats);
 
 	/*
 	 * If no indexes, make log report that lazy_vacuum_all_pruned_items()
@@ -2438,37 +2438,6 @@ lazy_cleanup_one_index(Relation indrel, IndexBulkDeleteResult *istat,
 }
 
 /*
- * Update index statistics in pg_class if the statistics are accurate.
- */
-static void
-update_index_statistics(Relation *indrels, LVRelStats *vacrelstats)
-{
-	int						nindexes = vacrelstats->nindexes;
-	IndexBulkDeleteResult **indstats = vacrelstats->indstats;
-
-	Assert(!IsInParallelMode());
-
-	for (int idx = 0; idx < nindexes; idx++)
-	{
-		Relation			   indrel = indrels[idx];
-		IndexBulkDeleteResult *istat = indstats[idx];
-
-		if (istat == NULL || istat->estimated_count)
-			continue;
-
-		/* Update index statistics */
-		vac_update_relstats(indrel,
-							istat->num_pages,
-							istat->num_index_tuples,
-							0,
-							false,
-							InvalidTransactionId,
-							InvalidMultiXactId,
-							false);
-	}
-}
-
-/*
  *	lazy_vacuum_heap() -- second pass over the heap for two pass strategy
  *
  *		This routine marks dead tuples as unused and compacts out free
@@ -2678,6 +2647,38 @@ lazy_vacuum_page(LVRelStats *vacrelstats, BlockNumber blkno, Buffer buffer,
 	/* Revert to the previous phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
 	return tupindex;
+}
+
+/*
+ * Update index statistics in pg_class if the statistics are accurate.
+ */
+static void
+update_index_statistics(LVRelStats *vacrelstats)
+{
+	Relation			   *indrels = vacrelstats->indrels;
+	int						nindexes = vacrelstats->nindexes;
+	IndexBulkDeleteResult **indstats = vacrelstats->indstats;
+
+	Assert(!IsInParallelMode());
+
+	for (int idx = 0; idx < nindexes; idx++)
+	{
+		Relation			   indrel = indrels[idx];
+		IndexBulkDeleteResult *istat = indstats[idx];
+
+		if (istat == NULL || istat->estimated_count)
+			continue;
+
+		/* Update index statistics */
+		vac_update_relstats(indrel,
+							istat->num_pages,
+							istat->num_index_tuples,
+							0,
+							false,
+							InvalidTransactionId,
+							InvalidMultiXactId,
+							false);
+	}
 }
 
 /*
