@@ -2183,9 +2183,10 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		 * Skip index vacuuming, but don't skip index cleanup.
 		 *
 		 * It wouldn't make sense to not do cleanup just because this
-		 * optimization was applied.  The case where there are almost zero
-		 * dead tuples should not be meaningfully different from the case
-		 * where there are exactly zero.
+		 * optimization was applied.  (As a general rule, the case where there
+		 * are _almost_ zero dead items when vacuuming a large table should
+		 * not behave very differently from the case where there are precisely
+		 * zero dead items.)
 		 */
 		vacrel->do_index_vacuuming = false;
 	}
