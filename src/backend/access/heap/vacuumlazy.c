@@ -2146,8 +2146,8 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	 * we apply here must not create distinct new problems for the logic that
 	 * schedules autovacuum workers.  For example, an autovacuum worker that
 	 * was launched purely because the autovacuum_vacuum_insert_scale_factor
-	 * threshold has been crossed had better not be hindered from doing useful
-	 * work by the optimization.
+	 * threshold has been crossed had better not be noticeably prevented from
+	 * doing useful work by this optimization.
 	 */
 	applyskipoptimization = false;
 	if (onecall)
