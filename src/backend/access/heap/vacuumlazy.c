@@ -412,12 +412,12 @@ static void lazy_vacuum_all_pruned_items(LVRelStats *vacrelstats,
 										 BlockNumber has_dead_items_pages,
 										 bool onecall);
 static void lazy_vacuum_heap(LVRelStats *vacrelstats);
-static void lazy_vacuum_all_indexes(Relation onerel, Relation *indrels,
-									LVRelStats *vacrelstats, LVParallelState *lps);
+static void lazy_vacuum_all_indexes(LVRelStats *vacrelstats,
+									LVParallelState *lps);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
 													IndexBulkDeleteResult *istat, double reltuples,
 													LVRelStats *vacrelstats);
-static void lazy_cleanup_all_indexes(Relation *indrels, LVRelStats *vacrelstats,
+static void lazy_cleanup_all_indexes(LVRelStats *vacrelstats,
 									 LVParallelState *lps);
 static IndexBulkDeleteResult *lazy_cleanup_one_index(Relation indrel,
 													 IndexBulkDeleteResult *istat,
@@ -434,8 +434,7 @@ static void lazy_record_dead_tuple(LVDeadTuples *dead_tuples,
 								   ItemPointer itemptr);
 static bool lazy_tid_reaped(ItemPointer itemptr, void *state);
 static int	vac_cmp_itemptr(const void *left, const void *right);
-static bool heap_page_is_all_visible(Relation rel, Buffer buf,
-									 LVRelStats *vacrelstats,
+static bool heap_page_is_all_visible(LVRelStats *vacrelstats, Buffer buf,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
 static BlockNumber lazy_truncate_count_nondeletable(Relation onerel,
 													LVRelStats *vacrelstats);
@@ -1478,7 +1477,7 @@ lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params, bool aggressive)
 	 * with INDEX_CLEANUP=OFF.
 	 */
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
-		lazy_cleanup_all_indexes(vacrelstats->indrels, vacrelstats, lps);
+		lazy_cleanup_all_indexes(vacrelstats, lps);
 
 	/*
 	 * End parallel mode before updating index statistics as we cannot write
@@ -2187,8 +2186,7 @@ lazy_vacuum_all_pruned_items(LVRelStats *vacrelstats,
 	if (!skipping)
 	{
 		/* Okay, we're going to do index vacuuming */
-		lazy_vacuum_all_indexes(vacrelstats->onerel, vacrelstats->indrels,
-								vacrelstats, lps);
+		lazy_vacuum_all_indexes(vacrelstats, lps);
 
 		/* Remove tuples from heap */
 		lazy_vacuum_heap(vacrelstats);
@@ -2237,8 +2235,7 @@ lazy_vacuum_all_pruned_items(LVRelStats *vacrelstats,
  * VACUUM operation).
  */
 static void
-lazy_vacuum_all_indexes(Relation onerel, Relation *indrels,
-						LVRelStats *vacrelstats, LVParallelState *lps)
+lazy_vacuum_all_indexes(LVRelStats *vacrelstats, LVParallelState *lps)
 {
 	Assert(!IsParallelWorker());
 	Assert(vacrelstats->nindexes > 0);
@@ -2251,7 +2248,7 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *indrels,
 	{
 		for (int idx = 0; idx < vacrelstats->nindexes; idx++)
 		{
-			Relation				indrel = indrels[idx];
+			Relation				indrel = vacrelstats->indrels[idx];
 			IndexBulkDeleteResult *istat = (vacrelstats->indstats[idx]);
 
 			vacrelstats->indstats[idx] =
@@ -2263,7 +2260,9 @@ lazy_vacuum_all_indexes(Relation onerel, Relation *indrels,
 	else
 	{
 		/* Outsource everything to parallel variant */
-		do_parallel_lazy_vacuum_all_indexes(onerel, indrels, vacrelstats, lps);
+		do_parallel_lazy_vacuum_all_indexes(vacrelstats->onerel,
+											vacrelstats->indrels,
+											vacrelstats, lps);
 	}
 
 	/* Increase and report the number of index scans */
@@ -2338,8 +2337,7 @@ lazy_vacuum_one_index(Relation indrel, IndexBulkDeleteResult *istat,
  * parallel vacuum.
  */
 static void
-lazy_cleanup_all_indexes(Relation *indrels, LVRelStats *vacrelstats,
-						 LVParallelState *lps)
+lazy_cleanup_all_indexes(LVRelStats *vacrelstats, LVParallelState *lps)
 {
 	Assert(!IsParallelWorker());
 	Assert(vacrelstats->nindexes > 0);
@@ -2356,7 +2354,7 @@ lazy_cleanup_all_indexes(Relation *indrels, LVRelStats *vacrelstats,
 
 		for (int idx = 0; idx < vacrelstats->nindexes; idx++)
 		{
-			Relation				indrel = indrels[idx];
+			Relation				indrel = vacrelstats->indrels[idx];
 			IndexBulkDeleteResult *istat = (vacrelstats->indstats[idx]);
 
 			vacrelstats->indstats[idx] =
@@ -2367,7 +2365,8 @@ lazy_cleanup_all_indexes(Relation *indrels, LVRelStats *vacrelstats,
 	else
 	{
 		/* Outsource everything to parallel variant */
-		do_parallel_lazy_cleanup_all_indexes(indrels, vacrelstats, lps);
+		do_parallel_lazy_cleanup_all_indexes(vacrelstats->indrels,
+											 vacrelstats, lps);
 	}
 }
 
@@ -2619,8 +2618,8 @@ lazy_vacuum_page(LVRelStats *vacrelstats, BlockNumber blkno, Buffer buffer,
 	 * dirty, exclusively locked, and, if needed, a full page image has been
 	 * emitted.
 	 */
-	if (heap_page_is_all_visible(vacrelstats->onerel, buffer, vacrelstats,
-								 &visibility_cutoff_xid, &all_frozen))
+	if (heap_page_is_all_visible(vacrelstats, buffer, &visibility_cutoff_xid,
+								 &all_frozen))
 		PageSetAllVisible(page);
 
 	/*
@@ -3135,8 +3134,7 @@ vac_cmp_itemptr(const void *left, const void *right)
  * on this page is frozen.
  */
 static bool
-heap_page_is_all_visible(Relation rel, Buffer buf,
-						 LVRelStats *vacrelstats,
+heap_page_is_all_visible(LVRelStats *vacrelstats, Buffer buf,
 						 TransactionId *visibility_cutoff_xid,
 						 bool *all_frozen)
 {
@@ -3190,7 +3188,7 @@ heap_page_is_all_visible(Relation rel, Buffer buf,
 
 		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
 		tuple.t_len = ItemIdGetLength(itemid);
-		tuple.t_tableOid = RelationGetRelid(rel);
+		tuple.t_tableOid = RelationGetRelid(vacrelstats->onerel);
 
 		switch (HeapTupleSatisfiesVacuum(&tuple, OldestXmin, buf))
 		{
