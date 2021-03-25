@@ -62,6 +62,8 @@ int			vacuum_freeze_min_age;
 int			vacuum_freeze_table_age;
 int			vacuum_multixact_freeze_min_age;
 int			vacuum_multixact_freeze_table_age;
+int			vacuum_skip_index_age;
+int			vacuum_multixact_skip_index_age;
 
 
 /* A few variables that don't seem worth passing around as parameters */
