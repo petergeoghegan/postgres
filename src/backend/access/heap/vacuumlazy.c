@@ -2122,29 +2122,29 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	}
 
 	/*
-	 * Consider applying the optimization where we skip index vacuuming
+	 * Consider applying the optimization where we skip index vacuuming to
+	 * save work in indexes that is likely to have little upside.  This is
+	 * expected to help in the extreme (though still common) case where
+	 * autovacuum generally only triggers VACUUMs against the table because of
+	 * the need to freeze tuples and/or the need to set visibility map bits.
+	 * The overall effect is that cases where the table is slightly less than
+	 * 100% append-only (where there are some dead tuples, but very few) tend
+	 * to behave almost as if they really were 100% append-only.
 	 *
-	 * Skip index vacuuming when there are very few dead items, though only
-	 * when this is the first and last call here for the VACUUM (never use
-	 * optimization when we ran out of space for TIDs).  The specific
-	 * threshold applied here uses the number of heap blocks that had one or
-	 * more LP_DEAD items after the call to lazy_prune_page_items().
+	 * Our approach is to skip index vacuuming when there are very few heap
+	 * pages with dead items.  Even then, it must be the first and last call
+	 * here for the VACUUM (we never apply the optimization when we're low on
+	 * space for TIDs).  This threshold allows us to not give too much weight
+	 * to items that are concentrated in relatively few heap pages.  These are
+	 * usually due to correlated non-HOT UPDATEs.
 	 *
-	 * This threshold allows us to not give too much weight to items that are
-	 * concentrated in relatively few heap pages.  These are usually due to
-	 * correlated non-HOT UPDATEs.  The important thing is to avoid putting
-	 * off a VACUUM that dirties an excessive number of heap pages during
-	 * pruning, since that cannot be skipped -- even in emergencies.
-	 *
-	 * It's also important to avoid the situation where relatively many heap
-	 * pages can never have their visibility map bit set due to successive
-	 * VACUUM operations using the optimization.
-	 *
-	 * The optimization is expected to help in the extreme though common case
-	 * where autovacuum generally only triggers VACUUMs because of the need to
-	 * free and to set visibility map bits.  It blurs the distinction between
-	 * 100% append-only tables, and tables that are close to 100% append only
-	 * but have a very small number of dead tuples.
+	 * The important thing for us to get right is avoiding putting off a
+	 * VACUUM that eventually dirties an excessive number of heap pages during
+	 * pruning.  Pruning can never be skipped -- even in an emergency.  It's
+	 * also important to avoid allowing relatively many heap pages that can
+	 * never have their visibility map bit set.  In general the criteria that
+	 * we apply here must not hinder any of the standard criteria for
+	 * triggering an autovacuum worker to VACUUM a table.
 	 */
 	applyskipoptimization = false;
 	if (onecall)
