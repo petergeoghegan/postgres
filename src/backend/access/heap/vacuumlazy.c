@@ -2497,9 +2497,8 @@ lazy_vacuum_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_VACUUMED, blkno);
 
 	/* Update error traceback information */
-	update_vacuum_error_info(vacrel, &saved_err_info,
-							 VACUUM_ERRCB_PHASE_VACUUM_HEAP, blkno,
-							 InvalidOffsetNumber);
+	update_vacuum_error_info(vacrel, &saved_err_info, VACUUM_ERRCB_PHASE_VACUUM_HEAP,
+							 blkno, InvalidOffsetNumber);
 
 	START_CRIT_SECTION();
 
