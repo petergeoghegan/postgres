@@ -441,7 +441,8 @@ static BlockNumber lazy_truncate_count_nondeletable(LVRelStats *vacrelstats);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static void lazy_space_alloc(LVRelStats *vacrelstats, BlockNumber relblocks,
 							 bool hasindex);
-static int compute_parallel_vacuum_workers(LVRelStats *vacrelstats, int nrequested,
+static int compute_parallel_vacuum_workers(LVRelStats *vacrelstats,
+										   int nrequested,
 										   bool *can_parallel_vacuum);
 static LVParallelState *begin_parallel_vacuum(LVRelStats *vacrelstats,
 											  BlockNumber nblocks,
