@@ -2142,7 +2142,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	 * VACUUM that eventually dirties an excessive number of heap pages during
 	 * pruning.  Pruning can never be skipped -- even in an emergency.  It's
 	 * also important to avoid allowing relatively many heap pages that can
-	 * never have their visibility map bit set.
+	 * never have their visibility map bit set to stay that way indefinitely.
 	 *
 	 * In general the criteria that we apply here must not create distinct new
 	 * problems for the logic that schedules autovacuum workers.  For example,
