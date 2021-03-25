@@ -857,7 +857,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		PROGRESS_VACUUM_MAX_DEAD_TUPLES
 	};
 	int64		initprog_val[3];
-	int			nindexes = vacrel->nindexes;
 	GlobalVisState *vistest;
 	LVTempCounters scancounts;
 
@@ -1288,7 +1287,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 */
 		savefreespace = false;
 		freespace = 0;
-		if (nindexes > 0 && pageprunestate.has_dead_items &&
+		if (vacrel->nindexes > 0 && pageprunestate.has_dead_items &&
 			params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		{
 			/*
@@ -1312,7 +1311,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			freespace = PageGetHeapFreeSpace(page);
 		}
 
-		if (nindexes == 0 && pageprunestate.has_dead_items)
+		if (vacrel->nindexes == 0 && pageprunestate.has_dead_items)
 		{
 			Assert(dead_tuples->num_tuples > 0);
 
@@ -1352,7 +1351,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		}
 
 		/* One pass strategy had better have no dead tuples by now: */
-		Assert(nindexes > 0 || dead_tuples->num_tuples == 0);
+		Assert(vacrel->nindexes > 0 || dead_tuples->num_tuples == 0);
 
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
@@ -1409,7 +1408,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	}
 
 	/* If any tuples need to be deleted, perform final vacuum cycle */
-	Assert(nindexes > 0 || dead_tuples->num_tuples == 0);
+	Assert(vacrel->nindexes > 0 || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
 		lazy_vacuum_all_pruned_items(vacrel, params->index_cleanup,
 									 has_dead_items_pages,
@@ -1433,7 +1432,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * lazy_vacuum_all_pruned_items() decided to skip index vacuuming, but not
 	 * with INDEX_CLEANUP=OFF.
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
+	if (vacrel->nindexes > 0 &&
+		params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		lazy_cleanup_all_indexes(vacrel);
 
 	/* Free resources managed by lazy_space_alloc() */
@@ -1449,15 +1449,16 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * (In practice most index AMs won't have accurate statistics from
 	 * cleanup, but the index AM API allows them to, so we must check.)
 	 */
-	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
+	if (vacrel->nindexes > 0 &&
+		params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		update_index_statistics(vacrel);
 
 	/*
 	 * If no indexes, make log report that lazy_vacuum_all_pruned_items()
 	 * would've made
 	 */
-	Assert(nindexes == 0 || vacuumed_pages == 0);
-	if (nindexes == 0)
+	Assert(vacrel->nindexes == 0 || vacuumed_pages == 0);
+	if (vacrel->nindexes == 0)
 		ereport(elevel,
 				(errmsg("\"%s\": removed %.0f row versions in %u pages",
 						vacrel->relname, vacrel->tuples_deleted,
