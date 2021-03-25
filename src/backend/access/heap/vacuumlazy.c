@@ -2213,7 +2213,9 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		 * outage.  This is very much like the "CLEANUP_INDEX = off" case,
 		 * except we determine that index vacuuming will be skipped
 		 * dynamically.  Another difference is that we don't warn the user in
-		 * the INDEX_CLEANUP off case.
+		 * the INDEX_CLEANUP off case -- they've already determined that they
+		 * have an emergency (or some kind of special circumstances) just by
+		 * opting out of index vacuuming.
 		 *
 		 * We skip index vacuuming if the table's relfrozenxid/relminmxid is
 		 * too old, and so is at risk of XID wraparound.  Once we decided to
