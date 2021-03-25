@@ -756,10 +756,10 @@ tuple_all_visible(HeapTuple tup, TransactionId OldestXmin, Buffer buffer)
 		return false;			/* all-visible implies live */
 
 	/*
-	 * Neither lazy_scan_heap nor heap_page_is_all_visible will mark a page
-	 * all-visible unless every tuple is hinted committed. However, those hint
-	 * bits could be lost after a crash, so we can't be certain that they'll
-	 * be set here.  So just check the xmin.
+	 * Neither lazy_scan_heap/lazy_scan_new_page nor heap_page_is_all_visible
+	 * will mark a page all-visible unless every tuple is hinted committed.
+	 * However, those hint bits could be lost after a crash, so we can't be
+	 * certain that they'll be set here.  So just check the xmin.
 	 */
 
 	xmin = HeapTupleHeaderGetXmin(tup->t_data);
