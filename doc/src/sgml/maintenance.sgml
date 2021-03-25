@@ -607,8 +607,14 @@ SELECT datname, age(datfrozenxid) FROM pg_database;
 
    <para>
     If for some reason autovacuum fails to clear old XIDs from a table, the
-    system will begin to emit warning messages like this when the database's
-    oldest XIDs reach forty million transactions from the wraparound point:
+    system will begin to skip index cleanup to hurry finishing vacuum
+    operation. <xref linkend="guc-vacuum-skip-index-age"/> controls when
+    <command>VACUUM</command> and autovacuum do that.
+   </para>
+
+    <para>
+     The system emits warning messages like this when the database's
+     oldest XIDs reach forty million transactions from the wraparound point:
 
 <programlisting>
 WARNING:  database "mydb" must be vacuumed within 39985967 transactions
