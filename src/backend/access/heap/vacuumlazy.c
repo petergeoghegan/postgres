@@ -2142,12 +2142,15 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	 * VACUUM that eventually dirties an excessive number of heap pages during
 	 * pruning.  Pruning can never be skipped -- even in an emergency.  It's
 	 * also important to avoid allowing relatively many heap pages that can
-	 * never have their visibility map bit set.  In general the criteria that
-	 * we apply here must not create distinct new problems for the logic that
-	 * schedules autovacuum workers.  For example, an autovacuum worker that
-	 * was launched purely because the autovacuum_vacuum_insert_scale_factor
-	 * threshold was crossed had better not end up doing no useful work just
-	 * because the skip index vacuuming optimization is applied.
+	 * never have their visibility map bit set.
+	 *
+	 * In general the criteria that we apply here must not create distinct new
+	 * problems for the logic that schedules autovacuum workers.  For example,
+	 * we cannot allow autovacuum_vacuum_insert_scale_factor-driven autovacuum
+	 * workers to do very little or even no useful work due to misapplying
+	 * this optimization.  While the optimization is intended to avoid useful
+	 * work, it should only do so when the costs are clearly much higher than
+	 * any possible benefit.
 	 */
 	applyskipoptimization = false;
 	if (onecall)
