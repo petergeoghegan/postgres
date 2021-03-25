@@ -436,15 +436,14 @@ static bool lazy_tid_reaped(ItemPointer itemptr, void *state);
 static int	vac_cmp_itemptr(const void *left, const void *right);
 static bool heap_page_is_all_visible(LVRelStats *vacrelstats, Buffer buf,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
-static BlockNumber lazy_truncate_count_nondeletable(Relation onerel,
-													LVRelStats *vacrelstats);
+static BlockNumber lazy_truncate_count_nondeletable(LVRelStats *vacrelstats);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static void lazy_space_alloc(LVRelStats *vacrelstats, BlockNumber relblocks,
 							 bool hasindex);
 static int compute_parallel_vacuum_workers(Relation *indrels, int nindexes, int nrequested,
 										   bool *can_parallel_vacuum);
-static LVParallelState *begin_parallel_vacuum(Relation onerel, Relation *indrels,
-											  LVRelStats *vacrelstats, BlockNumber nblocks,
+static LVParallelState *begin_parallel_vacuum(LVRelStats *vacrelstats,
+											  BlockNumber nblocks,
 											  int nrequested);
 static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
 								LVParallelState *lps, int nindexes);
@@ -933,9 +932,8 @@ lazy_scan_heap(LVRelStats *vacrelstats, VacuumParams *params, bool aggressive)
 								vacrelstats->relname)));
 		}
 		else
-			lps = begin_parallel_vacuum(vacrelstats->onerel,
-										vacrelstats->indrels, vacrelstats,
-										nblocks, params->nworkers);
+			lps = begin_parallel_vacuum(vacrelstats, nblocks,
+										params->nworkers);
 	}
 
 	/*
@@ -2805,7 +2803,7 @@ lazy_truncate_heap(LVRelStats *vacrelstats)
 		 * other backends could have added tuples to these pages whilst we
 		 * were vacuuming.
 		 */
-		new_rel_pages = lazy_truncate_count_nondeletable(onerel, vacrelstats);
+		new_rel_pages = lazy_truncate_count_nondeletable(vacrelstats);
 		vacrelstats->blkno = new_rel_pages;
 
 		if (new_rel_pages >= old_rel_pages)
@@ -2854,8 +2852,9 @@ lazy_truncate_heap(LVRelStats *vacrelstats)
  * Returns number of nondeletable pages (last nonempty page + 1).
  */
 static BlockNumber
-lazy_truncate_count_nondeletable(Relation onerel, LVRelStats *vacrelstats)
+lazy_truncate_count_nondeletable(LVRelStats *vacrelstats)
 {
+	Relation	onerel = vacrelstats->onerel;
 	BlockNumber blkno;
 	BlockNumber prefetchedUntil;
 	instr_time	starttime;
@@ -3324,11 +3323,12 @@ compute_parallel_vacuum_workers(Relation *indrels, int nindexes,
  * create a parallel context, and then initialize the DSM segment.
  */
 static LVParallelState *
-begin_parallel_vacuum(Relation onerel, Relation *indrels,
-					  LVRelStats *vacrelstats, BlockNumber nblocks,
+begin_parallel_vacuum(LVRelStats *vacrelstats, BlockNumber nblocks,
 					  int nrequested)
 {
 	LVParallelState *lps = NULL;
+	Relation		onerel = vacrelstats->onerel;
+	Relation	   *indrels = vacrelstats->indrels;
 	int				nindexes = vacrelstats->nindexes;
 	ParallelContext *pcxt;
 	LVShared   *shared;
