@@ -2195,6 +2195,12 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		/*
 		 * We successfully completed a round of index vacuuming.  Do related
 		 * heap vacuuming now.
+		 *
+		 * There will be no calls to check_index_vacuum_xid_limit() to check
+		 * for issues with the age of the table's relfrozenxid unless and
+		 * until there is another call here -- heap vacuuming doesn't do that.
+		 * This should be okay, because the cost of a round of heap vacuuming
+		 * is linear. Its cost is unaffected by the total number of indexes.
 		 */
 		lazy_vacuum_heap(vacrel);
 	}
