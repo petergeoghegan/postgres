@@ -3270,8 +3270,8 @@ compute_parallel_vacuum_workers(LVRelState *vacrel, int nrequested,
 	 */
 	for (int idx = 0; idx < vacrel->nindexes; idx++)
 	{
-		Relation indrel = vacrel->indrels[idx];
-		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
+		Relation	indrel = vacrel->indrels[idx];
+		uint8		vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		if (vacoptions == VACUUM_OPTION_NO_PARALLEL ||
 			RelationGetNumberOfBlocks(indrel) < min_parallel_index_scan_size)
@@ -3316,9 +3316,9 @@ begin_parallel_vacuum(LVRelState *vacrel, BlockNumber nblocks,
 					  int nrequested)
 {
 	LVParallelState *lps = NULL;
-	Relation		onerel = vacrel->onerel;
-	Relation	   *indrels = vacrel->indrels;
-	int				nindexes = vacrel->nindexes;
+	Relation	onerel = vacrel->onerel;
+	Relation   *indrels = vacrel->indrels;
+	int			nindexes = vacrel->nindexes;
 	ParallelContext *pcxt;
 	LVShared   *shared;
 	LVDeadTuples *dead_tuples;
@@ -3366,8 +3366,8 @@ begin_parallel_vacuum(LVRelState *vacrel, BlockNumber nblocks,
 	est_shared = MAXALIGN(add_size(SizeOfLVShared, BITMAPLEN(nindexes)));
 	for (int idx = 0; idx < nindexes; idx++)
 	{
-		Relation indrel = indrels[idx];
-		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
+		Relation	indrel = indrels[idx];
+		uint8		vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		/*
 		 * Cleanup option should be either disabled, always performing in
@@ -3515,8 +3515,8 @@ static void
 end_parallel_vacuum(LVRelState *vacrel)
 {
 	IndexBulkDeleteResult **indstats = vacrel->indstats;
-	LVParallelState		   *lps = vacrel->lps;
-	int						nindexes = vacrel->nindexes;
+	LVParallelState *lps = vacrel->lps;
+	int			nindexes = vacrel->nindexes;
 
 	Assert(!IsParallelWorker());
 
@@ -3559,8 +3559,8 @@ do_parallel_lazy_vacuum_all_indexes(LVRelState *vacrel)
 	vacrel->lps->lvshared->first_time = false;
 
 	/*
-	 * We can only provide an approximate value of num_heap_tuples in
-	 * vacuum cases.
+	 * We can only provide an approximate value of num_heap_tuples in vacuum
+	 * cases.
 	 */
 	vacrel->lps->lvshared->reltuples = vacrel->old_live_tuples;
 	vacrel->lps->lvshared->estimated_count = true;
@@ -3734,7 +3734,7 @@ do_parallel_processing(LVRelState *vacrel, LVShared *lvshared)
 	{
 		int			idx;
 		LVSharedIndStats *shared_istat;
-		Relation				indrel;
+		Relation	indrel;
 		IndexBulkDeleteResult *istat;
 
 		/* Get an index number to process */
@@ -3794,7 +3794,7 @@ do_serial_processing_for_unsafe_indexes(LVRelState *vacrel, LVShared *lvshared)
 	for (int idx = 0; idx < vacrel->nindexes; idx++)
 	{
 		LVSharedIndStats *shared_istat;
-		Relation				indrel;
+		Relation	indrel;
 		IndexBulkDeleteResult *istat;
 
 		shared_istat = parallel_stats_for_idx(lvshared, idx);
@@ -4025,13 +4025,12 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 		maintenance_work_mem = lvshared->maintenance_work_mem_worker;
 
 	/*
-	 * Initialize vacrel for use as error callback arg by parallel
-	 * worker.
+	 * Initialize vacrel for use as error callback arg by parallel worker.
 	 */
 	vacrel.relnamespace = get_namespace_name(RelationGetNamespace(onerel));
 	vacrel.relname = pstrdup(RelationGetRelationName(onerel));
 	vacrel.indname = NULL;
-	vacrel.phase = VACUUM_ERRCB_PHASE_UNKNOWN; /* Not yet processing */
+	vacrel.phase = VACUUM_ERRCB_PHASE_UNKNOWN;	/* Not yet processing */
 	vacrel.dead_tuples = dead_tuples;
 
 	/* Setup error traceback support for ereport() */
