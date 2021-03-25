@@ -2199,7 +2199,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 		for (int idx = 0; idx < vacrel->nindexes; idx++)
 		{
 			Relation	indrel = vacrel->indrels[idx];
-			IndexBulkDeleteResult *istat = (vacrel->indstats[idx]);
+			IndexBulkDeleteResult *istat = vacrel->indstats[idx];
 
 			vacrel->indstats[idx] =
 				lazy_vacuum_one_index(indrel, istat, vacrel->old_live_tuples,
@@ -2300,7 +2300,7 @@ lazy_cleanup_all_indexes(LVRelState *vacrel)
 		for (int idx = 0; idx < vacrel->nindexes; idx++)
 		{
 			Relation	indrel = vacrel->indrels[idx];
-			IndexBulkDeleteResult *istat = (vacrel->indstats[idx]);
+			IndexBulkDeleteResult *istat = vacrel->indstats[idx];
 
 			vacrel->indstats[idx] =
 				lazy_cleanup_one_index(indrel, istat, reltuples,
