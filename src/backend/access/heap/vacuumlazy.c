@@ -2147,10 +2147,10 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	 * In general the criteria that we apply here must not create distinct new
 	 * problems for the logic that schedules autovacuum workers.  For example,
 	 * we cannot allow autovacuum_vacuum_insert_scale_factor-driven autovacuum
-	 * workers to do very little or even no useful work due to misapplication
-	 * of the optimization by us.  While the optimization is intended to avoid
-	 * useful work, it should only do so when the costs are clearly much
-	 * higher than any possible benefit.
+	 * workers to do little or no useful work due to misapplication of this
+	 * optimization.  While the optimization is designed to avoid work that
+	 * must have non-zero value, that should only happen when the costs are
+	 * clearly much higher than any possible benefit.
 	 */
 	applyskipoptimization = false;
 	if (onecall)
