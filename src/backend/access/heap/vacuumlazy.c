@@ -2200,7 +2200,8 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		 * for issues with the age of the table's relfrozenxid unless and
 		 * until there is another call here -- heap vacuuming doesn't do that.
 		 * This should be okay, because the cost of a round of heap vacuuming
-		 * is linear. Its cost is unaffected by the total number of indexes.
+		 * is much more linear.  Also, it has costs that are unaffected by the
+		 * number of indexes total.
 		 */
 		lazy_vacuum_heap(vacrel);
 	}
