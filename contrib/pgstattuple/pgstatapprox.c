@@ -58,8 +58,8 @@ typedef struct output_type
  * and approximate tuple_len on that basis. For the others, we count
  * the exact number of dead tuples etc.
  *
- * This scan is loosely based on vacuumlazy.c:lazy_scan_heap(), but
- * we do not try to avoid skipping single pages.
+ * This scan is loosely based on vacuumlazy.c:lazy_scan_heap and
+ * lazy_scan_new_page, but we do not try to avoid skipping single pages.
  */
 static void
 statapprox_heap(Relation rel, output_type *stat)
@@ -126,8 +126,9 @@ statapprox_heap(Relation rel, output_type *stat)
 
 		/*
 		 * Look at each tuple on the page and decide whether it's live or
-		 * dead, then count it and its size. Unlike lazy_scan_heap, we can
-		 * afford to ignore problems and special cases.
+		 * dead, then count it and its size. Unlike lazy_scan_heap and
+		 * lazy_scan_new_page, we can afford to ignore problems and special
+		 * cases.
 		 */
 		maxoff = PageGetMaxOffsetNumber(page);
 
