@@ -132,6 +132,12 @@
 #define PREFETCH_SIZE			((BlockNumber) 32)
 
 /*
+ * The threshold of the percentage of heap blocks having LP_DEAD line pointer
+ * above which index vacuuming goes ahead.
+ */
+#define SKIP_VACUUM_PAGES_RATIO		0.01
+
+/*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
  * we don't need to worry about DSM keys conflicting with plan_node_id we can
  * use small integers.
@@ -397,7 +403,9 @@ static void lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 								  LVPagePruneState *pageprunestate,
 								  LVPageVisMapState *pagevmstate);
 static void lazy_vacuum_all_pruned_items(LVRelState *vacrel,
-										 VacOptTernaryValue index_cleanup);
+										 VacOptIndexCleanupValue index_cleanup,
+										 BlockNumber has_dead_items_pages,
+										 bool onecall);
 static void lazy_vacuum_heap(LVRelState *vacrel);
 static void lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -495,7 +503,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	PgStat_Counter startwritetime = 0;
 
 	Assert(params != NULL);
-	Assert(params->index_cleanup != VACOPT_TERNARY_DEFAULT);
 	Assert(params->truncate != VACOPT_TERNARY_DEFAULT);
 
 	/* measure elapsed time iff autovacuum logging requires it */
@@ -840,7 +847,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				next_fsm_block_to_vacuum;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
-	bool		skipping_blocks;
+	bool		skipping_blocks,
+				have_vacuumed_indexes = false;
 	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
@@ -854,7 +862,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 	/* Counters of # blocks in onerel: */
 	BlockNumber empty_pages,
-				vacuumed_pages;
+				vacuumed_pages,
+				has_dead_items_pages;
 
 	pg_rusage_init(&ru0);
 
@@ -869,7 +878,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 						vacrel->relnamespace,
 						vacrel->relname)));
 
-	empty_pages = vacuumed_pages = 0;
+	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
 
 	/* Initialize counters */
 	scancounts.num_tuples = 0;
@@ -1106,8 +1115,17 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				vmbuffer = InvalidBuffer;
 			}
 
+			/*
+			 * Definitely won't be skipping index vacuuming due to finding
+			 * very few dead items during this VACUUM operation -- that's only
+			 * something that lazy_vacuum_all_pruned_items() is willing to do
+			 * when it is only called once during the entire VACUUM operation.
+			 */
+			have_vacuumed_indexes = true;
+
 			/* Remove the collected garbage tuples from table and indexes */
-			lazy_vacuum_all_pruned_items(vacrel, params->index_cleanup);
+			lazy_vacuum_all_pruned_items(vacrel, params->index_cleanup,
+										 has_dead_items_pages, false);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1246,6 +1264,17 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 							  &pageprunestate, &pagevmstate);
 
 		/*
+		 * Remember the number of pages having at least one LP_DEAD line
+		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
+		 * even opportunistic pruning.  Note that this is exactly the same
+		 * thing as having items that are stored in dead_tuples space, because
+		 * lazy_prune_page_items() doesn't count anything other than LP_DEAD
+		 * items as dead (as of PostgreSQL 14).
+		 */
+		if (pageprunestate.has_dead_items)
+			has_dead_items_pages++;
+
+		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
 		 * end of loop.  (Also performs extra single pass strategy steps in
 		 * "nindexes == 0" case.)
@@ -1259,7 +1288,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		savefreespace = false;
 		freespace = 0;
 		if (vacrel->nindexes > 0 && pageprunestate.has_dead_items &&
-			params->index_cleanup != VACOPT_TERNARY_DISABLED)
+			params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		{
 			/*
 			 * Wait until lazy_vacuum_heap() to save free space.
@@ -1381,7 +1410,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	Assert(vacrel->nindexes > 0 || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
-		lazy_vacuum_all_pruned_items(vacrel, params->index_cleanup);
+		lazy_vacuum_all_pruned_items(vacrel, params->index_cleanup,
+									 has_dead_items_pages,
+									 !have_vacuumed_indexes);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -1397,11 +1428,12 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/*
 	 * Do post-vacuum cleanup.
 	 *
-	 * Note that post-vacuum cleanup does not take place with
-	 * INDEX_CLEANUP=OFF.
+	 * Note that post-vacuum cleanup is supposed to take place when
+	 * lazy_vacuum_all_pruned_items() decided to skip index vacuuming, but not
+	 * with INDEX_CLEANUP=OFF.
 	 */
 	if (vacrel->nindexes > 0 &&
-		params->index_cleanup != VACOPT_TERNARY_DISABLED)
+		params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		lazy_cleanup_all_indexes(vacrel);
 
 	/* Free resources managed by lazy_space_alloc() */
@@ -1410,11 +1442,15 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/*
 	 * Update index statistics.
 	 *
-	 * Note that updating the statistics does not take place with
-	 * INDEX_CLEANUP=OFF.
+	 * Note that updating the statistics takes places when
+	 * lazy_vacuum_all_pruned_items() decided to skip index vacuuming, but not
+	 * with INDEX_CLEANUP=OFF.
+	 *
+	 * (In practice most index AMs won't have accurate statistics from
+	 * cleanup, but the index AM API allows them to, so we must check.)
 	 */
 	if (vacrel->nindexes > 0 &&
-		params->index_cleanup != VACOPT_TERNARY_DISABLED)
+		params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		update_index_statistics(vacrel);
 
 	/*
@@ -2056,7 +2092,8 @@ retry:
  */
 static void
 lazy_vacuum_all_pruned_items(LVRelState *vacrel,
-							 VacOptTernaryValue index_cleanup)
+							 VacOptIndexCleanupValue index_cleanup,
+							 BlockNumber has_dead_items_pages, bool onecall)
 {
 	bool		skipping;
 
@@ -2064,11 +2101,40 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	Assert(vacrel->nindexes > 0);
 	Assert(!IsParallelWorker());
 
-	/* Check whether or not to do index vacuum and heap vacuum */
-	if (index_cleanup == VACOPT_TERNARY_DISABLED)
+	/*
+	 * Check whether or not to do index vacuum and heap vacuum.
+	 *
+	 * We do both index vacuum and heap vacuum if more than
+	 * SKIP_VACUUM_PAGES_RATIO of all heap pages have at least one LP_DEAD
+	 * line pointer.  This is normally a case where dead tuples on the heap
+	 * are highly concentrated in relatively few heap blocks, where the
+	 * index's enhanced deletion mechanism that is clever about heap block
+	 * dead tuple concentrations including btree's bottom-up index deletion
+	 * works well.  Also, since we can clean only a few heap blocks, it would
+	 * be a less negative impact in terms of visibility map update.
+	 */
+	if (index_cleanup == VACOPT_CLEANUP_DISABLED)
 		skipping = true;
-	else
+	else if (index_cleanup == VACOPT_CLEANUP_ENABLED)
 		skipping = false;
+	else if (!onecall)
+		skipping = false;
+	else
+	{
+		BlockNumber rel_pages_threshold;
+
+		Assert(onecall);
+		Assert(vacrel->num_index_scans == 0);
+		Assert(index_cleanup == VACOPT_CLEANUP_AUTO);
+
+		rel_pages_threshold =
+			(double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+
+		if (has_dead_items_pages < rel_pages_threshold)
+			skipping = true;
+		else
+			skipping = false;
+	}
 
 	if (!skipping)
 	{
@@ -2090,10 +2156,16 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		 * the similar "nindexes == 0" specific ereport() at the end of
 		 * lazy_scan_heap().
 		 */
-		ereport(elevel,
-				(errmsg("\"%s\": INDEX_CLEANUP off forced VACUUM to not totally remove %d pruned items",
-						vacrel->relname,
-						vacrel->dead_tuples->num_tuples)));
+		if (index_cleanup == VACOPT_CLEANUP_AUTO)
+			ereport(elevel,
+					(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
+							vacrel->relname, vacrel->dead_tuples->num_tuples,
+							has_dead_items_pages)));
+		else
+			ereport(elevel,
+					(errmsg("\"%s\": INDEX_CLEANUP off forced VACUUM to not totally remove %d pruned items in %u pages",
+							vacrel->relname, vacrel->dead_tuples->num_tuples,
+							has_dead_items_pages)));
 	}
 
 	/*
