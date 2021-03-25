@@ -2322,9 +2322,9 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 static bool
 check_index_vacuum_xid_limit(LVRelState *vacrel)
 {
-	TransactionId	xid_skip_limit;
-	MultiXactId		multi_skip_limit;
-	int	skip_index_vacuum;
+	TransactionId xid_skip_limit;
+	MultiXactId	  multi_skip_limit;
+	int			  skip_index_vacuum;
 
 	/*
 	 * Determine the index skipping age to use. In any case not less than
