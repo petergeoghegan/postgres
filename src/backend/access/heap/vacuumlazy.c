@@ -2156,17 +2156,15 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	applyskipoptimization = false;
 	if (onecall)
 	{
-		BlockNumber rel_pages_threshold;
+		BlockNumber threshold;
 
 		Assert(vacrel->num_index_scans == 0);
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
-		rel_pages_threshold =
-			(double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+		threshold = (double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
-		if (has_dead_items_pages < rel_pages_threshold)
-			applyskipoptimization = true;
+		applyskipoptimization = (has_dead_items_pages < threshold);
 	}
 
 	if (applyskipoptimization)
