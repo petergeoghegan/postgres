@@ -2143,8 +2143,11 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	 * pruning.  Pruning can never be skipped -- even in an emergency.  It's
 	 * also important to avoid allowing relatively many heap pages that can
 	 * never have their visibility map bit set.  In general the criteria that
-	 * we apply here must not hinder any of the standard criteria for
-	 * triggering an autovacuum worker to VACUUM a table.
+	 * we apply here must not create distinct new problems for the logic that
+	 * schedules autovacuum workers.  For example, an autovacuum worker that
+	 * was launched purely because the autovacuum_vacuum_insert_scale_factor
+	 * threshold has been crossed had better not be hindered from doing useful
+	 * work by the optimization.
 	 */
 	applyskipoptimization = false;
 	if (onecall)
