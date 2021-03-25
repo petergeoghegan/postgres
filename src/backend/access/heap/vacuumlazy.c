@@ -2245,7 +2245,6 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		ereport(WARNING,
 				(errmsg("VACUUM abandoned index vacuuming of \"%s\" due to wraparound emergency",
 						vacrel->relname)));
-
 	}
 
 	/*
