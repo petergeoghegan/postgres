@@ -412,7 +412,7 @@ static void lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 static void lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 										 BlockNumber has_dead_items_pages,
 										 bool onecall);
-static bool check_index_vacuum_xid_limit(Relation onerel);
+static bool check_index_vacuum_xid_limit(LVRelState *vacrel);
 static void lazy_vacuum_heap(LVRelState *vacrel);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -2264,7 +2264,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	Assert(vacrel->do_index_cleanup);
 
 	/* Precheck for risk of XID wraparound */
-	if (check_index_vacuum_xid_limit(vacrel->onerel))
+	if (check_index_vacuum_xid_limit(vacrel))
 	{
 		/* This doesn't count as an index scan for stats purposes */
 		return false;
@@ -2284,7 +2284,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 			vacrel->indstats[idx] =
 				lazy_vacuum_one_index(indrel, istat, vacrel->old_live_tuples,
 									  vacrel);
-			if (check_index_vacuum_xid_limit(vacrel->onerel))
+			if (check_index_vacuum_xid_limit(vacrel))
 			{
 				/*
 				 * Wraparound emergency -- end current index scan round early
@@ -2320,7 +2320,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
  * index vacuum age.
  */
 static bool
-check_index_vacuum_xid_limit(Relation onerel)
+check_index_vacuum_xid_limit(LVRelState *vacrel)
 {
 	TransactionId	xid_skip_limit;
 	MultiXactId		multi_skip_limit;
@@ -2330,6 +2330,8 @@ check_index_vacuum_xid_limit(Relation onerel)
 	 * Determine the index skipping age to use. In any case not less than
 	 * autovacuum_freeze_max_age * 1.05, so that VACUUM always does an
 	 * aggressive scan.
+	 *
+	 * TODO: Think some more about the TransactionIdIsNormal() case.
 	 */
 	skip_index_vacuum = Max(vacuum_skip_index_age, autovacuum_freeze_max_age * 1.05);
 
@@ -2337,9 +2339,8 @@ check_index_vacuum_xid_limit(Relation onerel)
 	if (!TransactionIdIsNormal(xid_skip_limit))
 		xid_skip_limit = FirstNormalTransactionId;
 
-	if (TransactionIdIsNormal(onerel->rd_rel->relfrozenxid) &&
-		TransactionIdPrecedes(onerel->rd_rel->relfrozenxid,
-							  xid_skip_limit))
+	if (TransactionIdIsNormal(vacrel->RelFrozenXid) &&
+		TransactionIdPrecedes(vacrel->RelFrozenXid, xid_skip_limit))
 	{
 		/* The table's relfrozenxid is too old */
 		return true;
@@ -2361,9 +2362,8 @@ check_index_vacuum_xid_limit(Relation onerel)
 	if (multi_skip_limit < FirstMultiXactId)
 		multi_skip_limit = FirstMultiXactId;
 
-	if (MultiXactIdIsValid(onerel->rd_rel->relminmxid) &&
-		MultiXactIdPrecedes(onerel->rd_rel->relminmxid,
-							multi_skip_limit))
+	if (MultiXactIdIsValid(vacrel->RelMinMxid) &&
+		MultiXactIdPrecedes(vacrel->RelMinMxid, multi_skip_limit))
 	{
 		/* The table's relminmxid is too old */
 		return true;
