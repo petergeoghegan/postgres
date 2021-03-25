@@ -263,8 +263,8 @@ typedef struct LVShared
  */
 typedef struct LVSharedIndStats
 {
-	bool					updated;		/* are the stats updated? */
-	IndexBulkDeleteResult	istat;
+	bool		updated;		/* are the stats updated? */
+	IndexBulkDeleteResult istat;
 } LVSharedIndStats;
 
 /* Struct for maintaining a parallel vacuum state. */
@@ -435,9 +435,9 @@ static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static void lazy_space_alloc(LVRelState *vacrel, int nworkers,
 							 BlockNumber relblocks);
 static void lazy_space_free(LVRelState *vacrel);
-static int compute_parallel_vacuum_workers(LVRelState *vacrel,
-										   int nrequested,
-										   bool *can_parallel_vacuum);
+static int	compute_parallel_vacuum_workers(LVRelState *vacrel,
+											int nrequested,
+											bool *can_parallel_vacuum);
 static LVParallelState *begin_parallel_vacuum(LVRelState *vacrel,
 											  BlockNumber nblocks,
 											  int nrequested);
@@ -586,7 +586,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 		indnames = palloc(sizeof(char *) * vacrel->nindexes);
 		for (int i = 0; i < vacrel->nindexes; i++)
 			indnames[i] =
-					pstrdup(RelationGetRelationName(vacrel->indrels[i]));
+				pstrdup(RelationGetRelationName(vacrel->indrels[i]));
 	}
 
 	/*
@@ -1649,7 +1649,7 @@ lazy_scan_empty_page(LVRelState *vacrel, Buffer buf, Buffer vmbuffer)
  */
 static void
 lazy_scan_setvmbit_page(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
-						LVPagePruneState * pageprunestate,
+						LVPagePruneState *pageprunestate,
 						LVPageVisMapState *pagevmstate)
 {
 	Relation	onerel = vacrel->onerel;
@@ -1777,7 +1777,7 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 					  LVPagePruneState *pageprunestate,
 					  LVPageVisMapState *pagevmstate)
 {
-	Relation onerel = vacrel->onerel;
+	Relation	onerel = vacrel->onerel;
 	BlockNumber blkno;
 	Page		page;
 	OffsetNumber offnum,
@@ -2198,7 +2198,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	{
 		for (int idx = 0; idx < vacrel->nindexes; idx++)
 		{
-			Relation				indrel = vacrel->indrels[idx];
+			Relation	indrel = vacrel->indrels[idx];
 			IndexBulkDeleteResult *istat = (vacrel->indstats[idx]);
 
 			vacrel->indstats[idx] =
@@ -2261,7 +2261,7 @@ lazy_vacuum_one_index(Relation indrel, IndexBulkDeleteResult *istat,
 
 	/* Do bulk deletion */
 	istat = index_bulk_delete(&ivinfo, istat, lazy_tid_reaped,
-							   (void *) vacrel->dead_tuples);
+							  (void *) vacrel->dead_tuples);
 
 	ereport(elevel,
 			(errmsg("scanned index \"%s\" to remove %d row versions",
@@ -2293,13 +2293,13 @@ lazy_cleanup_all_indexes(LVRelState *vacrel)
 
 	if (!vacrel->lps)
 	{
-		double	reltuples = vacrel->new_rel_tuples;
-		bool	estimated_count =
-				vacrel->tupcount_pages < vacrel->rel_pages;
+		double		reltuples = vacrel->new_rel_tuples;
+		bool		estimated_count =
+		vacrel->tupcount_pages < vacrel->rel_pages;
 
 		for (int idx = 0; idx < vacrel->nindexes; idx++)
 		{
-			Relation				indrel = vacrel->indrels[idx];
+			Relation	indrel = vacrel->indrels[idx];
 			IndexBulkDeleteResult *istat = (vacrel->indstats[idx]);
 
 			vacrel->indstats[idx] =
@@ -2573,7 +2573,7 @@ lazy_vacuum_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 	 */
 	if (PageIsAllVisible(page))
 	{
-		uint8 vm_status = visibilitymap_get_status(vacrel->onerel, blkno, vmbuffer);
+		uint8		vm_status = visibilitymap_get_status(vacrel->onerel, blkno, vmbuffer);
 		uint8		flags = 0;
 
 		/* Set the VM all-frozen bit to flag, if needed */
@@ -2599,15 +2599,15 @@ lazy_vacuum_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 static void
 update_index_statistics(LVRelState *vacrel)
 {
-	Relation			   *indrels = vacrel->indrels;
-	int						nindexes = vacrel->nindexes;
+	Relation   *indrels = vacrel->indrels;
+	int			nindexes = vacrel->nindexes;
 	IndexBulkDeleteResult **indstats = vacrel->indstats;
 
 	Assert(!IsInParallelMode());
 
 	for (int idx = 0; idx < nindexes; idx++)
 	{
-		Relation			   indrel = indrels[idx];
+		Relation	indrel = indrels[idx];
 		IndexBulkDeleteResult *istat = indstats[idx];
 
 		if (istat == NULL || istat->estimated_count)
@@ -2668,7 +2668,7 @@ should_attempt_truncation(LVRelState *vacrel, VacuumParams *params)
 static void
 lazy_truncate_heap(LVRelState *vacrel)
 {
-	Relation onerel = vacrel->onerel;
+	Relation	onerel = vacrel->onerel;
 	BlockNumber old_rel_pages = vacrel->rel_pages;
 	BlockNumber new_rel_pages;
 	int			lock_retry;
@@ -2732,11 +2732,11 @@ lazy_truncate_heap(LVRelState *vacrel)
 		if (new_rel_pages != old_rel_pages)
 		{
 			/*
-			 * Note: we intentionally don't update vacrel->rel_pages with
-			 * the new rel size here.  If we did, it would amount to assuming
-			 * that the new pages are empty, which is unlikely. Leaving the
-			 * numbers alone amounts to assuming that the new pages have the
-			 * same tuple density as existing ones, which is less unlikely.
+			 * Note: we intentionally don't update vacrel->rel_pages with the
+			 * new rel size here.  If we did, it would amount to assuming that
+			 * the new pages are empty, which is unlikely. Leaving the numbers
+			 * alone amounts to assuming that the new pages have the same
+			 * tuple density as existing ones, which is less unlikely.
 			 */
 			UnlockRelation(onerel, AccessExclusiveLock);
 			return;
@@ -3270,8 +3270,8 @@ compute_parallel_vacuum_workers(LVRelState *vacrel, int nrequested,
 	 */
 	for (int idx = 0; idx < vacrel->nindexes; idx++)
 	{
-		Relation indrel = vacrel->indrels[idx];
-		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
+		Relation	indrel = vacrel->indrels[idx];
+		uint8		vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		if (vacoptions == VACUUM_OPTION_NO_PARALLEL ||
 			RelationGetNumberOfBlocks(indrel) < min_parallel_index_scan_size)
@@ -3316,9 +3316,9 @@ begin_parallel_vacuum(LVRelState *vacrel, BlockNumber nblocks,
 					  int nrequested)
 {
 	LVParallelState *lps = NULL;
-	Relation		onerel = vacrel->onerel;
-	Relation	   *indrels = vacrel->indrels;
-	int				nindexes = vacrel->nindexes;
+	Relation	onerel = vacrel->onerel;
+	Relation   *indrels = vacrel->indrels;
+	int			nindexes = vacrel->nindexes;
 	ParallelContext *pcxt;
 	LVShared   *shared;
 	LVDeadTuples *dead_tuples;
@@ -3366,8 +3366,8 @@ begin_parallel_vacuum(LVRelState *vacrel, BlockNumber nblocks,
 	est_shared = MAXALIGN(add_size(SizeOfLVShared, BITMAPLEN(nindexes)));
 	for (int idx = 0; idx < nindexes; idx++)
 	{
-		Relation indrel = indrels[idx];
-		uint8	 vacoptions = indrel->rd_indam->amparallelvacuumoptions;
+		Relation	indrel = indrels[idx];
+		uint8		vacoptions = indrel->rd_indam->amparallelvacuumoptions;
 
 		/*
 		 * Cleanup option should be either disabled, always performing in
@@ -3515,8 +3515,8 @@ static void
 end_parallel_vacuum(LVRelState *vacrel)
 {
 	IndexBulkDeleteResult **indstats = vacrel->indstats;
-	LVParallelState		   *lps = vacrel->lps;
-	int						nindexes = vacrel->nindexes;
+	LVParallelState *lps = vacrel->lps;
+	int			nindexes = vacrel->nindexes;
 
 	Assert(!IsParallelWorker());
 
@@ -3559,8 +3559,8 @@ do_parallel_lazy_vacuum_all_indexes(LVRelState *vacrel)
 	vacrel->lps->lvshared->first_time = false;
 
 	/*
-	 * We can only provide an approximate value of num_heap_tuples in
-	 * vacuum cases.
+	 * We can only provide an approximate value of num_heap_tuples in vacuum
+	 * cases.
 	 */
 	vacrel->lps->lvshared->reltuples = vacrel->old_live_tuples;
 	vacrel->lps->lvshared->estimated_count = true;
@@ -3734,7 +3734,7 @@ do_parallel_processing(LVRelState *vacrel, LVShared *lvshared)
 	{
 		int			idx;
 		LVSharedIndStats *shared_istat;
-		Relation				indrel;
+		Relation	indrel;
 		IndexBulkDeleteResult *istat;
 
 		/* Get an index number to process */
@@ -3794,7 +3794,7 @@ do_serial_processing_for_unsafe_indexes(LVRelState *vacrel, LVShared *lvshared)
 	for (int idx = 0; idx < vacrel->nindexes; idx++)
 	{
 		LVSharedIndStats *shared_istat;
-		Relation				indrel;
+		Relation	indrel;
 		IndexBulkDeleteResult *istat;
 
 		shared_istat = parallel_stats_for_idx(lvshared, idx);
@@ -4025,13 +4025,12 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 		maintenance_work_mem = lvshared->maintenance_work_mem_worker;
 
 	/*
-	 * Initialize vacrel for use as error callback arg by parallel
-	 * worker.
+	 * Initialize vacrel for use as error callback arg by parallel worker.
 	 */
 	vacrel.relnamespace = get_namespace_name(RelationGetNamespace(onerel));
 	vacrel.relname = pstrdup(RelationGetRelationName(onerel));
 	vacrel.indname = NULL;
-	vacrel.phase = VACUUM_ERRCB_PHASE_UNKNOWN; /* Not yet processing */
+	vacrel.phase = VACUUM_ERRCB_PHASE_UNKNOWN;	/* Not yet processing */
 	vacrel.dead_tuples = dead_tuples;
 
 	/* Setup error traceback support for ereport() */
