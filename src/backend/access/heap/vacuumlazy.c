@@ -412,7 +412,7 @@ static void lazy_vacuum_all_pruned_items(LVRelStats *vacrelstats,
 										 VacOptIndexCleanupValue index_cleanup,
 										 BlockNumber has_dead_items_pages,
 										 bool onecall);
-static void lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats);
+static void lazy_vacuum_heap(LVRelStats *vacrelstats);
 static void lazy_vacuum_all_indexes(Relation onerel, Relation *indrels,
 									LVRelStats *vacrelstats, LVParallelState *lps);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -2190,7 +2190,7 @@ lazy_vacuum_all_pruned_items(LVRelStats *vacrelstats,
 								vacrelstats, lps);
 
 		/* Remove tuples from heap */
-		lazy_vacuum_heap(vacrelstats->onerel, vacrelstats);
+		lazy_vacuum_heap(vacrelstats);
 	}
 	else
 	{
@@ -2452,7 +2452,7 @@ lazy_cleanup_one_index(Relation indrel, IndexBulkDeleteResult *istat,
  * VACUUM operation).
  */
 static void
-lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
+lazy_vacuum_heap(LVRelStats *vacrelstats)
 {
 	int			tupindex;
 	int			npages;
@@ -2465,7 +2465,8 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 								 PROGRESS_VACUUM_PHASE_VACUUM_HEAP);
 
 	/* Update error traceback information */
-	update_vacuum_error_info(vacrelstats, &saved_err_info, VACUUM_ERRCB_PHASE_VACUUM_HEAP,
+	update_vacuum_error_info(vacrelstats, &saved_err_info,
+							 VACUUM_ERRCB_PHASE_VACUUM_HEAP,
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
 	pg_rusage_init(&ru0);
@@ -2483,8 +2484,8 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 
 		tblk = ItemPointerGetBlockNumber(&vacrelstats->dead_tuples->itemptrs[tupindex]);
 		vacrelstats->blkno = tblk;
-		buf = ReadBufferExtended(onerel, MAIN_FORKNUM, tblk, RBM_NORMAL,
-								 vac_strategy);
+		buf = ReadBufferExtended(vacrelstats->onerel, MAIN_FORKNUM, tblk,
+								 RBM_NORMAL, vac_strategy);
 		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
 		tupindex = lazy_vacuum_page(vacrelstats, tblk, buf, tupindex,
 									&vmbuffer);
@@ -2494,7 +2495,7 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 		freespace = PageGetHeapFreeSpace(page);
 
 		UnlockReleaseBuffer(buf);
-		RecordPageWithFreeSpace(onerel, tblk, freespace);
+		RecordPageWithFreeSpace(vacrelstats->onerel, tblk, freespace);
 		npages++;
 	}
 
