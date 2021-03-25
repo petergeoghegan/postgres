@@ -2193,12 +2193,8 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	else if (lazy_vacuum_all_indexes(vacrel))
 	{
 		/*
-		 * We weren't already skipping, and so attempted index vacuuming -- it
-		 * completely successfully (it did not end early due to wraparound
-		 * emergency)
-		 *
-		 * Completed full index scan to do vacuuming -- do follow-up heap
-		 * vacuuming
+		 * We successfully completed a round of index vacuuming.  Do related
+		 * heap vacuuming now.
 		 */
 		lazy_vacuum_heap(vacrel);
 	}
