@@ -447,15 +447,11 @@ static LVParallelState *begin_parallel_vacuum(LVRelStats *vacrelstats,
 											  int nrequested);
 static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
 								LVParallelState *lps, int nindexes);
-static void do_parallel_lazy_vacuum_all_indexes(Relation onerel,
-												Relation *indrels,
-												LVRelStats *vacrelstats,
+static void do_parallel_lazy_vacuum_all_indexes(LVRelStats *vacrelstats,
 												LVParallelState *lps);
-static void do_parallel_lazy_cleanup_all_indexes(Relation *indrels,
-												 LVRelStats *vacrelstats,
+static void do_parallel_lazy_cleanup_all_indexes(LVRelStats *vacrelstats,
 												 LVParallelState *lps);
-static void do_parallel_vacuum_or_cleanup(Relation *indrels,
-										  LVRelStats *vacrelstats,
+static void do_parallel_vacuum_or_cleanup(LVRelStats *vacrelstats,
 										  LVParallelState *lps, int nworkers);
 static void do_parallel_processing(Relation *indrels, LVRelStats *vacrelstats,
 								   LVShared *lvshared);
@@ -2258,9 +2254,7 @@ lazy_vacuum_all_indexes(LVRelStats *vacrelstats, LVParallelState *lps)
 	else
 	{
 		/* Outsource everything to parallel variant */
-		do_parallel_lazy_vacuum_all_indexes(vacrelstats->onerel,
-											vacrelstats->indrels,
-											vacrelstats, lps);
+		do_parallel_lazy_vacuum_all_indexes(vacrelstats, lps);
 	}
 
 	/* Increase and report the number of index scans */
@@ -2363,8 +2357,7 @@ lazy_cleanup_all_indexes(LVRelStats *vacrelstats, LVParallelState *lps)
 	else
 	{
 		/* Outsource everything to parallel variant */
-		do_parallel_lazy_cleanup_all_indexes(vacrelstats->indrels,
-											 vacrelstats, lps);
+		do_parallel_lazy_cleanup_all_indexes(vacrelstats, lps);
 	}
 }
 
@@ -3562,8 +3555,7 @@ end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 }
 
 static void
-do_parallel_lazy_vacuum_all_indexes(Relation onerel, Relation *indrels,
-									LVRelStats *vacrelstats,
+do_parallel_lazy_vacuum_all_indexes(LVRelStats *vacrelstats,
 									LVParallelState *lps)
 {
 	/* Tell parallel workers to do index vacuuming */
@@ -3577,13 +3569,12 @@ do_parallel_lazy_vacuum_all_indexes(Relation onerel, Relation *indrels,
 	lps->lvshared->reltuples = vacrelstats->old_live_tuples;
 	lps->lvshared->estimated_count = true;
 
-	do_parallel_vacuum_or_cleanup(indrels, vacrelstats, lps,
+	do_parallel_vacuum_or_cleanup(vacrelstats, lps,
 								  lps->nindexes_parallel_bulkdel);
 }
 
 static void
-do_parallel_lazy_cleanup_all_indexes(Relation *indrels,
-									 LVRelStats *vacrelstats,
+do_parallel_lazy_cleanup_all_indexes(LVRelStats *vacrelstats,
 									 LVParallelState *lps)
 {
 	int			nworkers;
@@ -3613,7 +3604,7 @@ do_parallel_lazy_cleanup_all_indexes(Relation *indrels,
 	else
 		nworkers = lps->nindexes_parallel_cleanup;
 
-	do_parallel_vacuum_or_cleanup(indrels, vacrelstats, lps, nworkers);
+	do_parallel_vacuum_or_cleanup(vacrelstats, lps, nworkers);
 }
 
 /*
@@ -3623,8 +3614,8 @@ do_parallel_lazy_cleanup_all_indexes(Relation *indrels,
  * cleanup.
  */
 static void
-do_parallel_vacuum_or_cleanup(Relation *indrels, LVRelStats *vacrelstats,
-							  LVParallelState *lps, int nworkers)
+do_parallel_vacuum_or_cleanup(LVRelStats *vacrelstats, LVParallelState *lps,
+							  int nworkers)
 {
 	Assert(!IsParallelWorker());
 	Assert(ParallelVacuumIsActive(lps));
@@ -3698,14 +3689,14 @@ do_parallel_vacuum_or_cleanup(Relation *indrels, LVRelStats *vacrelstats,
 	}
 
 	/* Process the indexes that can be processed by only leader process */
-	do_serial_processing_for_unsafe_indexes(indrels, vacrelstats,
+	do_serial_processing_for_unsafe_indexes(vacrelstats->indrels, vacrelstats,
 											lps->lvshared);
 
 	/*
 	 * Join as a parallel worker.  The leader process alone processes all the
 	 * indexes in the case where no workers are launched.
 	 */
-	do_parallel_processing(indrels, vacrelstats, lps->lvshared);
+	do_parallel_processing(vacrelstats->indrels, vacrelstats, lps->lvshared);
 
 	/*
 	 * Next, accumulate buffer and WAL usage.  (This must wait for the workers
