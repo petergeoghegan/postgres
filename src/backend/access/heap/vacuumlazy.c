@@ -2234,14 +2234,14 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
 		ereport(WARNING,
-				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" after %d index scans",
+				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",
 						get_database_name(MyDatabaseId),
 						vacrel->relname,
 						vacrel->relname,
 						vacrel->num_index_scans),
-				 errdetail("table's relfrozenxid or relminmxid is dangerously far in the past"),
-				 errhint("Consider increasing configuration parameter \"maintenance_work_mem\" or \"autovacuum_work_mem\".")));
-
+				 errdetail("table's relfrozenxid or relminmxid is far in the past"),
+				 errhint("Consider increasing configuration parameter \"maintenance_work_mem\" or \"autovacuum_work_mem\".\n"
+						 "You might also need to consider other ways for VACUUM to keep up with the allocation of transaction IDs.")));
 	}
 
 	/*
