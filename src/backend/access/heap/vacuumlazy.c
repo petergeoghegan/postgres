@@ -2187,7 +2187,6 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 static void
 lazy_vacuum_all_indexes(LVRelState *vacrel)
 {
-	Assert(!IsParallelWorker());
 	Assert(vacrel->nindexes > 0);
 
 	/* Report that we are now vacuuming indexes */
@@ -2285,7 +2284,6 @@ lazy_vacuum_one_index(Relation indrel, IndexBulkDeleteResult *istat,
 static void
 lazy_cleanup_all_indexes(LVRelState *vacrel)
 {
-	Assert(!IsParallelWorker());
 	Assert(vacrel->nindexes > 0);
 
 	/* Report that we are now cleaning up indexes */
