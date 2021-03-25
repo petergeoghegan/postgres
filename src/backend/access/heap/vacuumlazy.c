@@ -434,14 +434,14 @@ static BlockNumber lazy_truncate_count_nondeletable(LVRelState *vacrel);
 static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static void lazy_space_alloc(LVRelState *vacrel, int nworkers,
 							 BlockNumber relblocks);
+static void lazy_space_free(LVRelState *vacrel);
 static int compute_parallel_vacuum_workers(LVRelState *vacrel,
 										   int nrequested,
 										   bool *can_parallel_vacuum);
 static LVParallelState *begin_parallel_vacuum(LVRelState *vacrel,
 											  BlockNumber nblocks,
 											  int nrequested);
-static void end_parallel_vacuum(IndexBulkDeleteResult **indstats,
-								LVParallelState *lps, int nindexes);
+static void end_parallel_vacuum(LVRelState *vacrel);
 static void do_parallel_lazy_vacuum_all_indexes(LVRelState *vacrel);
 static void do_parallel_lazy_cleanup_all_indexes(LVRelState *vacrel);
 static void do_parallel_vacuum_or_cleanup(LVRelState *vacrel, int nworkers);
@@ -897,7 +897,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->nonempty_pages = 0;
 
 	vistest = GlobalVisTestFor(vacrel->onerel);
-
 
 	/*
 	 * Allocate the space for dead tuples in case parallel vacuum is not
@@ -1437,12 +1436,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	if (nindexes > 0 && params->index_cleanup != VACOPT_CLEANUP_DISABLED)
 		lazy_cleanup_all_indexes(vacrel);
 
-	/*
-	 * End parallel mode before updating index statistics as we cannot write
-	 * during parallel mode.
-	 */
-	if (vacrel->lps)
-		end_parallel_vacuum(vacrel->indstats, vacrel->lps, nindexes);
+	/* Free resources managed by lazy_space_alloc() */
+	lazy_space_free(vacrel);
 
 	/*
 	 * Update index statistics.
@@ -3019,6 +3014,20 @@ lazy_space_alloc(LVRelState *vacrel, int nworkers, BlockNumber nblocks)
 	}
 }
 
+/* Free space for dead tuples */
+static void
+lazy_space_free(LVRelState *vacrel)
+{
+	if (!vacrel->lps)
+		return;
+
+	/*
+	 * End parallel mode before updating index statistics as we cannot write
+	 * during parallel mode.
+	 */
+	end_parallel_vacuum(vacrel);
+}
+
 /*
  * lazy_record_dead_tuple - remember one deletable tuple
  */
@@ -3504,10 +3513,11 @@ begin_parallel_vacuum(LVRelState *vacrel, BlockNumber nblocks,
  * context, but that won't be safe (see ExitParallelMode).
  */
 static void
-end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
-					int nindexes)
+end_parallel_vacuum(LVRelState *vacrel)
 {
-	LVShared *lvshared = lps->lvshared;
+	IndexBulkDeleteResult **indstats = vacrel->indstats;
+	LVParallelState		   *lps = vacrel->lps;
+	int						nindexes = vacrel->nindexes;
 
 	Assert(!IsParallelWorker());
 
@@ -3516,7 +3526,7 @@ end_parallel_vacuum(IndexBulkDeleteResult **indstats, LVParallelState *lps,
 	{
 		LVSharedIndStats *shared_istat;
 
-		shared_istat = parallel_stats_for_idx(lvshared, idx);
+		shared_istat = parallel_stats_for_idx(lps->lvshared, idx);
 
 		/*
 		 * Skip unused slot.  The statistics of this index are already stored
