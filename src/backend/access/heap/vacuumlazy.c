@@ -2119,7 +2119,7 @@ static void
 lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 							 BlockNumber has_dead_items_pages, bool onecall)
 {
-	bool		skipping;
+	bool		applyskipoptimization;
 
 	/* Should not end up here with no indexes */
 	Assert(vacrel->nindexes > 0);
@@ -2137,30 +2137,35 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 	}
 
 	/*
-	 * Skip index vacuuming if the table's relfrozenxid/relminmxid is too
-	 * old so at risk of XID wraparound.  Once we decided to skip index
-	 * vacuuming, the decision never goes back to index vacuuming.  This saves
-	 * extra check_index_vacuum_xid_limit() calls and is less confusing for
-	 * users since we have ereport'ed that we decided not to do index
-	 * vacuuming.
+	 * Consider applying the optimization where we skip index vacuuming
+	 *
+	 * Skip index vacuuming when there are very few dead items, though only
+	 * when this is the first and last call here for the VACUUM (never use
+	 * optimization when we ran out of space for TIDs).  The specific
+	 * threshold applied here uses the number of heap blocks that had one or
+	 * more LP_DEAD items after the call to lazy_prune_page_items().
+	 *
+	 * This threshold allows us to not give too much weight to items that are
+	 * concentrated in relatively few heap pages.  These are usually due to
+	 * correlated non-HOT UPDATEs.  The important thing is to avoid putting
+	 * off a VACUUM that dirties an excessive number of heap pages during
+	 * pruning, since that cannot be skipped -- even in emergencies.
+	 *
+	 * It's also important to avoid the situation where relatively many heap
+	 * pages can never have their visibility map bit set due to successive
+	 * VACUUM operations using the optimization.
+	 *
+	 * The optimization is expected to help in the extreme though common case
+	 * where autovacuum generally only triggers VACUUMs because of the need to
+	 * free and to set visibility map bits.  It blurs the distinction between
+	 * 100% append-only tables, and tables that are close to 100% append only
+	 * but have a very small number of dead tuples.
 	 */
-	if (!vacrel->do_index_vacuuming)
+	applyskipoptimization = false;
+	if (onecall)
 	{
-		skipping = true;
-	}
-	else if (!onecall)
-	{
-		/* Not eligible to apply optimization outside of first call here */
-		skipping = false;
-	}
-	else
-	{
-		/* Consider optimization-based skip of index vacuuming */
 		BlockNumber rel_pages_threshold;
 
-		skipping = false;			/* for now */
-
-		Assert(onecall);
 		Assert(vacrel->num_index_scans == 0);
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
@@ -2169,21 +2174,13 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 			(double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
 		if (has_dead_items_pages < rel_pages_threshold)
-		{
-			/*
-			 * Skip index vacuuming, but don't skip cleanup -- only emergency
-			 * mechanism does that
-			 */
-			vacrel->do_index_vacuuming = false;
-			skipping = true;
-		}
+			applyskipoptimization = true;
 	}
 
-
-	if (skipping)
+	if (applyskipoptimization)
 	{
 		/*
-		 * skipped index vacuuming for the first time.  Make log report that
+		 * skipped index vacuuming due to optimization.  Make log report that
 		 * lazy_vacuum_heap would've made.
 		 *
 		 * Don't report tups_vacuumed here because it will be zero here in
@@ -2192,16 +2189,20 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		 * the similar "nindexes == 0" specific ereport() at the end of
 		 * lazy_scan_heap().
 		 */
-		if (vacrel->do_index_cleanup)
-			ereport(elevel,
-					(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
-							vacrel->relname, vacrel->dead_tuples->num_tuples,
-							has_dead_items_pages)));
-		else
-			ereport(elevel,
-					(errmsg("\"%s\": INDEX_CLEANUP off forced VACUUM to not totally remove %d pruned items in %u pages",
-							vacrel->relname, vacrel->dead_tuples->num_tuples,
-							has_dead_items_pages)));
+		ereport(elevel,
+				(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
+						vacrel->relname, vacrel->dead_tuples->num_tuples,
+						has_dead_items_pages)));
+
+		/*
+		 * Skip index vacuuming, but don't skip index cleanup.
+		 *
+		 * It wouldn't make sense to not do cleanup just because this
+		 * optimization was applied.  The case where there are almost zero
+		 * dead tuples should not be meaningfully different from the case
+		 * where there are exactly zero.
+		 */
+		vacrel->do_index_vacuuming = false;
 	}
 	else if (lazy_vacuum_all_indexes(vacrel))
 	{
