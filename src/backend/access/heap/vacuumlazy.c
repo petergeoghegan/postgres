@@ -485,7 +485,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 				BufferAccessStrategy bstrategy)
 {
 	LVRelState *vacrel;
-	int			nindexes;
 	PGRUsage	ru0;
 	TimestampTz starttime = 0;
 	WalUsage	walusage_start = pgWalUsage;
@@ -559,16 +558,18 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	vacrel = (LVRelState *) palloc0(sizeof(LVRelState));
 
 	vacrel->onerel = onerel;
-	vacrel->lps = NULL;
-	vacrel->do_index_vacuuming = true;
-	vacrel->do_index_cleanup = true;
-
+	/* Open all indexes of the relation */
+	vac_open_indexes(vacrel->onerel, RowExclusiveLock, &vacrel->nindexes,
+					 &vacrel->indrels);
 	vacrel->vac_strategy = bstrategy;
 	vacrel->relfrozenxid = onerel->rd_rel->relfrozenxid;
 	vacrel->relminmxid = onerel->rd_rel->relminmxid;
 	vacrel->OldestXmin = OldestXmin;
 	vacrel->FreezeLimit = FreezeLimit;
 	vacrel->MultiXactCutoff = MultiXactCutoff;
+	vacrel->lps = NULL;		/* For now */
+	vacrel->do_index_vacuuming = true;
+	vacrel->do_index_cleanup = true;
 	vacrel->relnamespace = get_namespace_name(RelationGetNamespace(onerel));
 	vacrel->relname = pstrdup(RelationGetRelationName(onerel));
 	vacrel->indname = NULL;
@@ -578,12 +579,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	vacrel->num_index_scans = 0;
 	vacrel->pages_removed = 0;
 	vacrel->lock_waiter_detected = false;
-
-	/* Open all indexes of the relation */
-	vac_open_indexes(onerel, RowExclusiveLock, &nindexes,
-					 &vacrel->indrels);
-
-	vacrel->nindexes = nindexes;
 
 	/*
 	 * Determine if we should skip index vacuuming and cleanup based on user's
@@ -597,11 +592,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	}
 
 	vacrel->indstats = (IndexBulkDeleteResult **)
-		palloc0(nindexes * sizeof(IndexBulkDeleteResult *));
+		palloc0(vacrel->nindexes * sizeof(IndexBulkDeleteResult *));
 
 	/* Save index names iff autovacuum logging requires it */
-	if (IsAutoVacuumWorkerProcess() &&
-		params->log_min_duration >= 0 &&
+	if (IsAutoVacuumWorkerProcess() && params->log_min_duration >= 0 &&
 		vacrel->nindexes > 0)
 	{
 		indnames = palloc(sizeof(char *) * vacrel->nindexes);
@@ -630,7 +624,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	lazy_scan_heap(vacrel, params, aggressive);
 
 	/* Done with indexes */
-	vac_close_indexes(nindexes, vacrel->indrels, NoLock);
+	vac_close_indexes(vacrel->nindexes, vacrel->indrels, NoLock);
 
 	/*
 	 * Compute whether we actually scanned the all unfrozen pages. If we did,
@@ -699,7 +693,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 						new_rel_pages,
 						new_live_tuples,
 						new_rel_allvisible,
-						nindexes > 0,
+						vacrel->nindexes > 0,
 						new_frozen_xid,
 						new_min_multi,
 						false);
