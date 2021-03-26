@@ -343,10 +343,10 @@ typedef struct LVRelState
 	OffsetNumber offnum;		/* used only for heap operations */
 	VacErrPhase phase;
 
-	/* Main dead items array  */
+	/* Main dead items array */
 	LVDeadItems		*dead_items;
 	/* Scratch space used during pruning */
-	OffsetNumber		 deaditems[MaxHeapTuplesPerPage];
+	OffsetNumber		 dead_offsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 } LVRelState;
 
@@ -1868,7 +1868,7 @@ retry:
 		 */
 		if (ItemIdIsDead(itemid))
 		{
-			vacrel->deaditems[ndead++] = offnum;
+			vacrel->dead_offsets[ndead++] = offnum;
 			pageprunestate->all_visible = false;
 			pageprunestate->has_dead_items = true;
 			continue;
@@ -2031,7 +2031,7 @@ retry:
 	{
 		ItemPointerData itemptr;
 
-		ItemPointerSet(&itemptr, blkno, vacrel->deaditems[i]);
+		ItemPointerSet(&itemptr, blkno, vacrel->dead_offsets[i]);
 		lazy_record_dead_tuple(vacrel->dead_items, &itemptr);
 	}
 
