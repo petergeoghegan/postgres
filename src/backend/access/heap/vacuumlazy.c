@@ -330,7 +330,6 @@ typedef struct LVRelState
 	BlockNumber pages_removed;
 	double		tuples_deleted;
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
-	LVDeadTuples *dead_tuples;
 	int			num_index_scans;
 	bool		lock_waiter_detected;
 
@@ -342,6 +341,12 @@ typedef struct LVRelState
 	BlockNumber blkno;			/* used only for heap operations */
 	OffsetNumber offnum;		/* used only for heap operations */
 	VacErrPhase phase;
+
+	/* Main dead items array  */
+	LVDeadTuples		*dead_tuples;
+	/* Scratch space used during pruning */
+	OffsetNumber		 deaditems[MaxHeapTuplesPerPage];
+	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 } LVRelState;
 
 /* Struct for saving and restoring vacuum error information. */
@@ -404,7 +409,6 @@ static void lazy_scan_setvmbit_page(LVRelState *vacrel, Buffer buf,
 									LVPageVisMapState *pagevmstate);
 static void lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 								  GlobalVisState *vistest,
-								  xl_heap_freeze_tuple *frozen,
 								  LVTempCounters *scancounts,
 								  LVPagePruneState *pageprunestate,
 								  LVPageVisMapState *pagevmstate);
@@ -857,7 +861,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	Buffer		vmbuffer = InvalidBuffer;
 	bool		skipping_blocks,
 				have_vacuumed_indexes = false;
-	xl_heap_freeze_tuple *frozen;
 	StringInfoData buf;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
@@ -912,7 +915,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	lazy_space_alloc(vacrel, params->nworkers, nblocks);
 
 	dead_tuples = vacrel->dead_tuples;
-	frozen = palloc(sizeof(xl_heap_freeze_tuple) * MaxHeapTuplesPerPage);
 
 	/* Report that we're scanning the heap, advertising total # of blocks */
 	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
@@ -1267,7 +1269,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Also handles tuple freezing -- considers freezing XIDs from all
 		 * tuple headers left behind following pruning.
 		 */
-		lazy_prune_page_items(vacrel, buf, vistest, frozen, &scancounts,
+		lazy_prune_page_items(vacrel, buf, vistest, &scancounts,
 							  &pageprunestate, &pagevmstate);
 
 		/*
@@ -1385,8 +1387,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 	/* Clear the block number information */
 	vacrel->blkno = InvalidBlockNumber;
-
-	pfree(frozen);
 
 	/* save stats for use later */
 	vacrel->tuples_deleted = scancounts.tups_vacuumed;
@@ -1760,7 +1760,7 @@ lazy_scan_setvmbit_page(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
  */
 static void
 lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
-					  GlobalVisState *vistest, xl_heap_freeze_tuple *frozen,
+					  GlobalVisState *vistest,
 					  LVTempCounters *scancounts,
 					  LVPagePruneState *pageprunestate,
 					  LVPageVisMapState *pagevmstate)
@@ -1774,7 +1774,6 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 	int			nfrozen,
 				ndead;
 	LVTempCounters pagecounts;
-	OffsetNumber deaditems[MaxHeapTuplesPerPage];
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -1868,7 +1867,7 @@ retry:
 		 */
 		if (ItemIdIsDead(itemid))
 		{
-			deaditems[ndead++] = offnum;
+			vacrel->deaditems[ndead++] = offnum;
 			pageprunestate->all_visible = false;
 			pageprunestate->has_dead_items = true;
 			continue;
@@ -1994,9 +1993,9 @@ retry:
 									  vacrel->relminmxid,
 									  vacrel->FreezeLimit,
 									  vacrel->MultiXactCutoff,
-									  &frozen[nfrozen],
+									  &vacrel->frozen[nfrozen],
 									  &tuple_totally_frozen))
-			frozen[nfrozen++].offset = offnum;
+			vacrel->frozen[nfrozen++].offset = offnum;
 
 		pagecounts.num_tuples += 1;
 		pageprunestate->hastup = true;
@@ -2031,7 +2030,7 @@ retry:
 	{
 		ItemPointerData itemptr;
 
-		ItemPointerSet(&itemptr, blkno, deaditems[i]);
+		ItemPointerSet(&itemptr, blkno, vacrel->deaditems[i]);
 		lazy_record_dead_tuple(vacrel->dead_tuples, &itemptr);
 	}
 
@@ -2054,10 +2053,10 @@ retry:
 			ItemId		itemid;
 			HeapTupleHeader htup;
 
-			itemid = PageGetItemId(page, frozen[i].offset);
+			itemid = PageGetItemId(page, vacrel->frozen[i].offset);
 			htup = (HeapTupleHeader) PageGetItem(page, itemid);
 
-			heap_execute_freeze_tuple(htup, &frozen[i]);
+			heap_execute_freeze_tuple(htup, &vacrel->frozen[i]);
 		}
 
 		/* Now WAL-log freezing if necessary */
@@ -2065,8 +2064,8 @@ retry:
 		{
 			XLogRecPtr	recptr;
 
-			recptr = log_heap_freeze(onerel, buf, vacrel->FreezeLimit, frozen,
-									 nfrozen);
+			recptr = log_heap_freeze(onerel, buf, vacrel->FreezeLimit,
+									 vacrel->frozen, nfrozen);
 			PageSetLSN(page, recptr);
 		}
 
