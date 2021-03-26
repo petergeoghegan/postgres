@@ -348,8 +348,9 @@ typedef struct LVRelState
 
 	/* Scratch space used during pruning and freezing */
 	int		ndeadoffsets;
-	int		nfrozen;
+	int		nnondeadoffsets;
 	OffsetNumber		 deadoffsets[MaxHeapTuplesPerPage];
+	OffsetNumber		 nondeadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 } LVRelState;
 
@@ -439,8 +440,14 @@ static bool should_attempt_truncation(LVRelState *vacrel,
 static void lazy_truncate_heap(LVRelState *vacrel);
 static inline void lazy_record_dead_item(LVRelState * vacrel,
 										 OffsetNumber deadoffset);
+static inline void lazy_record_nondead_item(LVRelState * vacrel,
+											OffsetNumber nondeadoffset);
 static void lazy_flush_recorded_dead_items(LVRelState *vacrel,
 										   BlockNumber pruneblk);
+static void lazy_flush_recorded_nondead_items(LVRelState *vacrel,
+											  LVPagePruneState *pageprunestate,
+											  BlockNumber pruneblk,
+											  Buffer buf);
 static bool lazy_tid_reaped(ItemPointer itemptr, void *state);
 static int	vac_cmp_itemptr(const void *left, const void *right);
 static bool heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
@@ -1812,8 +1819,8 @@ retry:
 	pageprunestate->has_dead_items = false;
 	pageprunestate->all_visible = true;
 	pageprunestate->all_frozen = true;
-	vacrel->nfrozen = 0;
 	vacrel->ndeadoffsets = 0;
+	vacrel->nnondeadoffsets = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
 
 #ifdef DEBUG
@@ -1835,7 +1842,6 @@ retry:
 	{
 		ItemId		itemid;
 		HeapTupleData tuple;
-		bool		tuple_totally_frozen;
 
 		/*
 		 * Set the offset number so that we can display it along with any
@@ -1992,20 +1998,9 @@ retry:
 		 * Each non-removable tuple must be checked to see if it needs
 		 * freezing
 		 */
-		if (heap_prepare_freeze_tuple(tuple.t_data,
-									  vacrel->relfrozenxid,
-									  vacrel->relminmxid,
-									  vacrel->FreezeLimit,
-									  vacrel->MultiXactCutoff,
-									  &vacrel->frozen[vacrel->nfrozen],
-									  &tuple_totally_frozen))
-			vacrel->frozen[vacrel->nfrozen++].offset = offnum;
-
+		lazy_record_nondead_item(vacrel, offnum);
 		pagecounts.num_tuples += 1;
 		pageprunestate->hastup = true;
-
-		if (!tuple_totally_frozen)
-			pageprunestate->all_frozen = false;
 	}
 
 	/*
@@ -2032,43 +2027,8 @@ retry:
 	 */
 	lazy_flush_recorded_dead_items(vacrel, blkno);
 
-	/*
-	 * Finally, execute tuple freezing as planned.
-	 *
-	 * If we need to freeze any tuples we'll mark the buffer dirty, and write
-	 * a WAL record recording the changes.  We must log the changes to be
-	 * crash-safe against future truncation of CLOG.
-	 */
-	if (vacrel->nfrozen > 0)
-	{
-		START_CRIT_SECTION();
+	lazy_flush_recorded_nondead_items(vacrel, pageprunestate, blkno, buf);
 
-		MarkBufferDirty(buf);
-
-		/* execute collected freezes */
-		for (int i = 0; i < vacrel->nfrozen; i++)
-		{
-			ItemId		itemid;
-			HeapTupleHeader htup;
-
-			itemid = PageGetItemId(page, vacrel->frozen[i].offset);
-			htup = (HeapTupleHeader) PageGetItem(page, itemid);
-
-			heap_execute_freeze_tuple(htup, &vacrel->frozen[i]);
-		}
-
-		/* Now WAL-log freezing if necessary */
-		if (RelationNeedsWAL(onerel))
-		{
-			XLogRecPtr	recptr;
-
-			recptr = log_heap_freeze(onerel, buf, vacrel->FreezeLimit,
-									 vacrel->frozen, vacrel->nfrozen);
-			PageSetLSN(page, recptr);
-		}
-
-		END_CRIT_SECTION();
-	}
 }
 
 /*
@@ -3157,6 +3117,14 @@ lazy_record_dead_item(LVRelState *vacrel, OffsetNumber deadoffset)
 	vacrel->deadoffsets[vacrel->ndeadoffsets++] = deadoffset;
 }
 
+static inline void
+lazy_record_nondead_item(LVRelState *vacrel, OffsetNumber nondeadoffset)
+{
+	Assert(vacrel->nnondeadoffsets == 0 ||
+		   vacrel->nondeadoffsets[vacrel->nnondeadoffsets - 1] < nondeadoffset);
+	vacrel->nondeadoffsets[vacrel->nnondeadoffsets++] = nondeadoffset;
+}
+
 static void
 lazy_flush_recorded_dead_items(LVRelState *vacrel, BlockNumber pruneblk)
 {
@@ -3180,6 +3148,82 @@ lazy_flush_recorded_dead_items(LVRelState *vacrel, BlockNumber pruneblk)
 	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
 								 dead_items->num_items);
 	vacrel->ndeadoffsets = 0;
+}
+
+static void
+lazy_flush_recorded_nondead_items(LVRelState *vacrel,
+								  LVPagePruneState *pageprunestate,
+								  BlockNumber pruneblk, Buffer buf)
+{
+	HeapTupleData tuple;
+	int			nfrozen;
+	Page		page;
+	ItemId		itemid;
+
+	if (vacrel->nnondeadoffsets == 0)
+		return;
+
+	page = BufferGetPage(buf);
+
+	nfrozen = 0;
+	for (int i = 0; i < vacrel->nnondeadoffsets; i++)
+	{
+		OffsetNumber nondeadoffset = vacrel->nondeadoffsets[i];
+		bool		tuple_totally_frozen;
+
+		ItemPointerSet(&(tuple.t_self), pruneblk, nondeadoffset);
+		itemid = PageGetItemId(page, nondeadoffset);
+		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
+		tuple.t_len = ItemIdGetLength(itemid);
+		tuple.t_tableOid = RelationGetRelid(vacrel->onerel);
+		if (heap_prepare_freeze_tuple(tuple.t_data,
+									  vacrel->relfrozenxid,
+									  vacrel->relminmxid,
+									  vacrel->FreezeLimit,
+									  vacrel->MultiXactCutoff,
+									  &vacrel->frozen[nfrozen],
+									  &tuple_totally_frozen))
+			vacrel->frozen[nfrozen++].offset = nondeadoffset;
+		if (!tuple_totally_frozen)
+			pageprunestate->all_frozen = false;
+	}
+
+	if (nfrozen == 0)
+		return;
+
+	/*
+	 * Finally, execute tuple freezing as planned.
+	 *
+	 * If we need to freeze any tuples we'll mark the buffer dirty, and write
+	 * a WAL record recording the changes.  We must log the changes to be
+	 * crash-safe against future truncation of CLOG.
+	 */
+	START_CRIT_SECTION();
+
+	MarkBufferDirty(buf);
+
+	/* execute collected freezes */
+	for (int i = 0; i < nfrozen; i++)
+	{
+		HeapTupleHeader htup;
+
+		itemid = PageGetItemId(page, vacrel->frozen[i].offset);
+		htup = (HeapTupleHeader) PageGetItem(page, itemid);
+
+		heap_execute_freeze_tuple(htup, &vacrel->frozen[i]);
+	}
+
+	/* Now WAL-log freezing if necessary */
+	if (RelationNeedsWAL(vacrel->onerel))
+	{
+		XLogRecPtr	recptr;
+
+		recptr = log_heap_freeze(vacrel->onerel, buf, vacrel->FreezeLimit,
+								 vacrel->frozen, nfrozen);
+		PageSetLSN(page, recptr);
+	}
+
+	END_CRIT_SECTION();
 }
 
 /*
