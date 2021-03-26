@@ -345,8 +345,11 @@ typedef struct LVRelState
 
 	/* Main dead items array */
 	LVDeadItems		*dead_items;
-	/* Scratch space used during pruning */
-	OffsetNumber		 dead_offsets[MaxHeapTuplesPerPage];
+
+	/* Scratch space used during pruning and freezing */
+	int		ndeadoffsets;
+	int		nfrozen;
+	OffsetNumber		 deadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 } LVRelState;
 
@@ -434,8 +437,10 @@ static void update_index_statistics(LVRelState *vacrel);
 static bool should_attempt_truncation(LVRelState *vacrel,
 									  VacuumParams *params);
 static void lazy_truncate_heap(LVRelState *vacrel);
-static void lazy_record_dead_tuple(LVDeadItems *dead_items,
-								   ItemPointer itemptr);
+static inline void lazy_record_dead_item(LVRelState * vacrel,
+										 OffsetNumber deadoffset);
+static void lazy_flush_recorded_dead_items(LVRelState *vacrel,
+										   BlockNumber pruneblk);
 static bool lazy_tid_reaped(ItemPointer itemptr, void *state);
 static int	vac_cmp_itemptr(const void *left, const void *right);
 static bool heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
@@ -1772,8 +1777,6 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 	OffsetNumber offnum,
 				maxoff;
 	HTSV_Result res;
-	int			nfrozen,
-				ndead;
 	LVTempCounters pagecounts;
 
 	blkno = BufferGetBlockNumber(buf);
@@ -1809,8 +1812,8 @@ retry:
 	pageprunestate->has_dead_items = false;
 	pageprunestate->all_visible = true;
 	pageprunestate->all_frozen = true;
-	nfrozen = 0;
-	ndead = 0;
+	vacrel->nfrozen = 0;
+	vacrel->ndeadoffsets = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
 
 #ifdef DEBUG
@@ -1868,7 +1871,7 @@ retry:
 		 */
 		if (ItemIdIsDead(itemid))
 		{
-			vacrel->dead_offsets[ndead++] = offnum;
+			lazy_record_dead_item(vacrel, offnum);
 			pageprunestate->all_visible = false;
 			pageprunestate->has_dead_items = true;
 			continue;
@@ -1994,9 +1997,9 @@ retry:
 									  vacrel->relminmxid,
 									  vacrel->FreezeLimit,
 									  vacrel->MultiXactCutoff,
-									  &vacrel->frozen[nfrozen],
+									  &vacrel->frozen[vacrel->nfrozen],
 									  &tuple_totally_frozen))
-			vacrel->frozen[nfrozen++].offset = offnum;
+			vacrel->frozen[vacrel->nfrozen++].offset = offnum;
 
 		pagecounts.num_tuples += 1;
 		pageprunestate->hastup = true;
@@ -2027,13 +2030,7 @@ retry:
 	/*
 	 * Now save the local dead items array to VACUUM's dead_items array.
 	 */
-	for (int i = 0; i < ndead; i++)
-	{
-		ItemPointerData itemptr;
-
-		ItemPointerSet(&itemptr, blkno, vacrel->dead_offsets[i]);
-		lazy_record_dead_tuple(vacrel->dead_items, &itemptr);
-	}
+	lazy_flush_recorded_dead_items(vacrel, blkno);
 
 	/*
 	 * Finally, execute tuple freezing as planned.
@@ -2042,14 +2039,14 @@ retry:
 	 * a WAL record recording the changes.  We must log the changes to be
 	 * crash-safe against future truncation of CLOG.
 	 */
-	if (nfrozen > 0)
+	if (vacrel->nfrozen > 0)
 	{
 		START_CRIT_SECTION();
 
 		MarkBufferDirty(buf);
 
 		/* execute collected freezes */
-		for (int i = 0; i < nfrozen; i++)
+		for (int i = 0; i < vacrel->nfrozen; i++)
 		{
 			ItemId		itemid;
 			HeapTupleHeader htup;
@@ -2066,7 +2063,7 @@ retry:
 			XLogRecPtr	recptr;
 
 			recptr = log_heap_freeze(onerel, buf, vacrel->FreezeLimit,
-									 vacrel->frozen, nfrozen);
+									 vacrel->frozen, vacrel->nfrozen);
 			PageSetLSN(page, recptr);
 		}
 
@@ -2243,7 +2240,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		 * TODO:
 		 *
 		 * Call lazy_space_free() and arrange to stop even recording TIDs
-		 * (i.e. make lazy_record_dead_tuple() into a no-op)
+		 * (i.e. make lazy_record_dead_item() into a no-op)
 		 */
 	}
 
@@ -3146,23 +3143,43 @@ lazy_space_free(LVRelState *vacrel)
 }
 
 /*
- * lazy_record_dead_tuple - remember one deletable tuple
+ * lazy_record_dead_item - remember one deletable item in per-page dead item
+ * offset buffer
+ *
+ * The dead items are not actually recorded in the authoritative dead items
+ * array until lazy_flush_recorded_dead_items() is called.
  */
-static void
-lazy_record_dead_tuple(LVDeadItems *dead_items, ItemPointer itemptr)
+static inline void
+lazy_record_dead_item(LVRelState *vacrel, OffsetNumber deadoffset)
 {
-	/*
-	 * The array shouldn't overflow under normal behavior, but perhaps it
-	 * could if we are given a really small maintenance_work_mem. In that
-	 * case, just forget the last few tuples (we'll get 'em next time).
-	 */
-	if (dead_items->num_items < dead_items->max_items)
+	Assert(vacrel->ndeadoffsets == 0 ||
+		   vacrel->deadoffsets[vacrel->ndeadoffsets - 1] < deadoffset);
+	vacrel->deadoffsets[vacrel->ndeadoffsets++] = deadoffset;
+}
+
+static void
+lazy_flush_recorded_dead_items(LVRelState *vacrel, BlockNumber pruneblk)
+{
+	LVDeadItems *dead_items = vacrel->dead_items;
+	ItemPointerData tmp;
+
+	if (!vacrel->do_index_vacuuming)
+		return;
+	if (vacrel->ndeadoffsets == 0)
+		return;
+
+	ItemPointerSetBlockNumber(&tmp, pruneblk);
+
+	for (int i = 0; i < vacrel->ndeadoffsets; i++)
 	{
-		dead_items->itemptrs[dead_items->num_items] = *itemptr;
-		dead_items->num_items++;
-		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
-									 dead_items->num_items);
+		ItemPointerSetOffsetNumber(&tmp, vacrel->deadoffsets[i]);
+		dead_items->itemptrs[dead_items->num_items++] = tmp;
 	}
+
+	Assert(dead_items->num_items <= dead_items->max_items);
+	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
+								 dead_items->num_items);
+	vacrel->ndeadoffsets = 0;
 }
 
 /*
@@ -3666,7 +3683,7 @@ end_parallel_vacuum(LVRelState *vacrel)
 
 	/* Deactivate parallel vacuum */
 	pfree(lps);
-	lps = NULL;
+	vacrel->lps = NULL;
 }
 
 static void
