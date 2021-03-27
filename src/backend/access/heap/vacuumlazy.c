@@ -804,12 +804,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 				 * to it
 				 */
 				if (!vacrel->do_index_vacuuming)
-					appendStringInfo(&buf, _("opted to skip index vacuuming\n"));
+					appendStringInfo(&buf, _("opted to skip index scan: %u table pages with dead item identifiers\n"),
+									 vacrel->deaditempages);
 				else
-					appendStringInfo(&buf, _("no need for index vacuuming\n"));
-
-				appendStringInfo(&buf, _("table pages with dead item identifiers: %u\n"),
-								 vacrel->deaditempages);
+					appendStringInfo(&buf, _("index scan not needed\n"));
 			}
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
