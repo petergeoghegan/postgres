@@ -796,9 +796,14 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 								 istat->pages_deleted,
 								 istat->pages_free);
 			}
-			if (vacrel->nindexes > 0 && vacrel->num_index_scans == 0)
+			if (vacrel->nindexes > 0 && vacrel->num_index_scans == 0 &&
+				vacrel->do_index_cleanup)
 			{
-				if (!vacrel->do_index_vacuuming && vacrel->do_index_cleanup)
+				/*
+				 * Either there were 0 items to vacuum from indexes, or close
+				 * to it
+				 */
+				if (!vacrel->do_index_vacuuming)
 					appendStringInfo(&buf, _("opted to skip index vacuuming\n"));
 				else
 					appendStringInfo(&buf, _("no need for index vacuuming\n"));
