@@ -781,7 +781,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageHit,
 							 (long long) VacuumPageMiss,
 							 (long long) VacuumPageDirty);
-			if (vacrel->nindexes > 0)
+			if (vacrel->nindexes > 0 && vacrel->rel_pages > 0)
 			{
 				if (!vacrel->do_index_vacuuming && !vacrel->do_index_cleanup)
 					appendStringInfo(&buf, _("forced to skip index scan:"));
