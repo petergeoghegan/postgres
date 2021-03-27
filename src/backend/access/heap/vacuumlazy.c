@@ -793,11 +793,11 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 					appendStringInfo(&buf, _("index scan needed:"));
 
 				if (vacrel->do_index_vacuuming && vacrel->num_index_scans > 0)
-					appendStringInfo(&buf, _(" %u pages from table (%.2f %% of total) had dead item identifiers removed\n"),
+					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had dead item identifiers removed\n"),
 									 vacrel->deaditempages,
 									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
 				else
-					appendStringInfo(&buf, _(" %u pages from table (%.2f %% of total) have dead item identifiers\n"),
+					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have dead item identifiers\n"),
 									 vacrel->deaditempages,
 									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
 			}
