@@ -320,6 +320,7 @@ typedef struct LVRelState
 	/* Overall statistics about onerel */
 	BlockNumber old_rel_pages;	/* previous value of pg_class.relpages */
 	BlockNumber rel_pages;		/* total number of pages */
+	BlockNumber deaditempages;		/* total number of pages with dead items */
 	BlockNumber scanned_pages;	/* number of pages we examined */
 	BlockNumber pinskipped_pages;	/* # of pages we skipped due to a pin */
 	BlockNumber frozenskipped_pages;	/* # of frozen pages we skipped */
@@ -417,9 +418,7 @@ static void lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 								  LVTempCounters *scancounts,
 								  LVPagePruneState *pageprunestate,
 								  LVPageVisMapState *pagevmstate);
-static void lazy_vacuum_all_pruned_items(LVRelState *vacrel,
-										 BlockNumber has_dead_items_pages,
-										 bool onecall);
+static void lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall);
 static void lazy_vacuum_heap(LVRelState *vacrel);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -766,9 +765,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 vacrel->relnamespace,
 							 vacrel->relname,
 							 vacrel->num_index_scans);
-			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u skipped due to pins, %u skipped frozen\n"),
+			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u have dead items, %u skipped due to pins, %u skipped frozen\n"),
 							 vacrel->pages_removed,
 							 vacrel->rel_pages,
+							 vacrel->deaditempages,
 							 vacrel->pinskipped_pages,
 							 vacrel->frozenskipped_pages);
 			appendStringInfo(&buf,
@@ -886,8 +886,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 	/* Counters of # blocks in onerel: */
 	BlockNumber empty_pages,
-				vacuumed_pages,
-				has_dead_items_pages;
+				vacuumed_pages;
 
 	pg_rusage_init(&ru0);
 
@@ -902,7 +901,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 						vacrel->relnamespace,
 						vacrel->relname)));
 
-	empty_pages = vacuumed_pages = has_dead_items_pages = 0;
+	empty_pages = vacuumed_pages = 0;
 
 	/* Initialize counters */
 	scancounts.num_tuples = 0;
@@ -915,6 +914,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	next_unskippable_block = 0;
 	next_fsm_block_to_vacuum = 0;
 	vacrel->rel_pages = nblocks;
+	vacrel->deaditempages = 0;
 	vacrel->scanned_pages = 0;
 	vacrel->tupcount_pages = 0;
 	vacrel->nonempty_pages = 0;
@@ -1147,7 +1147,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			have_vacuumed_indexes = true;
 
 			/* Remove the collected garbage tuples from table and indexes */
-			lazy_vacuum_all_pruned_items(vacrel, has_dead_items_pages, false);
+			lazy_vacuum_all_pruned_items(vacrel, false);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1294,7 +1294,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * items as dead (as of PostgreSQL 14).
 		 */
 		if (pageprunestate.has_dead_items)
-			has_dead_items_pages++;
+			vacrel->deaditempages++;
 
 		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
@@ -1429,8 +1429,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	Assert(vacrel->nindexes > 0 || dead_items->num_items == 0);
 	if (dead_items->num_items > 0)
-		lazy_vacuum_all_pruned_items(vacrel, has_dead_items_pages,
-									 !have_vacuumed_indexes);
+		lazy_vacuum_all_pruned_items(vacrel, !have_vacuumed_indexes);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -2038,8 +2037,7 @@ retry:
  * reloption)
  */
 static void
-lazy_vacuum_all_pruned_items(LVRelState *vacrel,
-							 BlockNumber has_dead_items_pages, bool onecall)
+lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 {
 	bool		applyskipoptimization;
 
@@ -2101,7 +2099,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 
 		threshold = (double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
-		applyskipoptimization = (has_dead_items_pages < threshold);
+		applyskipoptimization = (vacrel->deaditempages < threshold);
 	}
 
 	if (applyskipoptimization)
@@ -2119,7 +2117,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel,
 		ereport(elevel,
 				(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
 						vacrel->relname, vacrel->dead_items->num_items,
-						has_dead_items_pages)));
+						vacrel->deaditempages)));
 
 		/*
 		 * Skip index vacuuming, but don't skip index cleanup.
