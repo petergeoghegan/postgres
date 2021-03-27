@@ -794,19 +794,30 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 				else
 					appendStringInfo(&buf, _("index scan needed:"));
 
-				if (vacrel->do_index_vacuuming && vacrel->num_index_scans > 0)
-					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had dead item identifiers removed\n"),
-									 vacrel->deaditempages,
-									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
-				else if (vacrel->skipped_ndeaditems != -1)
-					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n"),
-									 vacrel->deaditempages,
-									 100.0 * vacrel->deaditempages / vacrel->rel_pages,
-									 vacrel->skipped_ndeaditems);
+				if (vacrel->do_index_vacuuming)
+				{
+					if (vacrel->skipped_ndeaditems != -1)
+						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had %d dead item identifiers removed\n"),
+										 vacrel->deaditempages,
+										 100.0 * vacrel->deaditempages / vacrel->rel_pages,
+										 vacrel->skipped_ndeaditems);
+					else
+						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had dead item identifiers removed\n"),
+										 vacrel->deaditempages,
+										 100.0 * vacrel->deaditempages / vacrel->rel_pages);
+				}
 				else
-					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have dead item identifiers\n"),
-									 vacrel->deaditempages,
-									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
+				{
+					if (vacrel->skipped_ndeaditems != -1)
+						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n"),
+										 vacrel->deaditempages,
+										 100.0 * vacrel->deaditempages / vacrel->rel_pages,
+										 vacrel->skipped_ndeaditems);
+					else
+						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have dead item identifiers\n"),
+										 vacrel->deaditempages,
+										 100.0 * vacrel->deaditempages / vacrel->rel_pages);
+				}
 			}
 			for (int i = 0; i < vacrel->nindexes; i++)
 			{
@@ -2119,6 +2130,9 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 	{
 		BlockNumber threshold;
 
+		/* Remember the number of dead items at this point in any case */
+		vacrel->skipped_ndeaditems = vacrel->dead_items->num_items;
+
 		Assert(vacrel->num_index_scans == 0);
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
@@ -2126,7 +2140,6 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 		threshold = (double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
 		applyskipoptimization = (vacrel->deaditempages < threshold);
-		vacrel->skipped_ndeaditems = vacrel->dead_items->num_items;
 	}
 
 	if (applyskipoptimization)
@@ -2204,8 +2217,6 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
-		if (onecall)
-			vacrel->skipped_ndeaditems = vacrel->dead_items->num_items;
 		ereport(WARNING,
 				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",
 						get_database_name(MyDatabaseId),
