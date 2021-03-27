@@ -796,19 +796,21 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 								 istat->pages_deleted,
 								 istat->pages_free);
 			}
-			if (vacrel->nindexes > 0 && vacrel->num_index_scans == 0 &&
-				vacrel->do_index_cleanup)
+			if (vacrel->nindexes > 0)
 			{
-				/*
-				 * Either there were 0 items to vacuum from indexes, or close
-				 * to it
-				 */
-				if (!vacrel->do_index_vacuuming)
+				if (!vacrel->do_index_vacuuming && !vacrel->do_index_cleanup)
+					appendStringInfo(&buf, _("forced to skip index scan:"));
+				else if (!vacrel->do_index_vacuuming && vacrel->do_index_cleanup)
 					appendStringInfo(&buf, _("opted to skip index scan:"));
-				else
+				else if (vacrel->num_index_scans == 0)
 					appendStringInfo(&buf, _("index scan not needed:"));
+				else
+					appendStringInfo(&buf, _("index scan needed:"));
+
+				appendStringInfo(&buf, _(" %u pages from table (%.3f%%) have dead item identifiers\n"),
+								 vacrel->deaditempages,
+								 (double) vacrel->deaditempages / vacrel->rel_pages);
 			}
-			appendStringInfo(&buf, _(" %u pages from table have dead item identifiers\n"), vacrel->deaditempages);
 
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
