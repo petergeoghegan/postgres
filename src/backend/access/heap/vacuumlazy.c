@@ -797,6 +797,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 								 istat->pages_deleted,
 								 istat->pages_free);
 			}
+			if (vacrel->nindexes > 0 &&
+				!vacrel->do_index_vacuuming &&
+				vacrel->do_index_cleanup)
+				appendStringInfo(&buf, _("skipped index vacuuming due to low number of dead items\n"));
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
 			if (track_io_timing)
