@@ -1360,10 +1360,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		}
 		else
 		{
-			/*
-			 * Will never reach lazy_vacuum_heap() (or will, but won't reach
-			 * this specific page)
-			 */
+			/* Will never reach lazy_vacuum_heap() -- save free space now */
 			savefreespace = true;
 			freespace = PageGetHeapFreeSpace(page);
 		}
