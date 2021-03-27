@@ -333,7 +333,7 @@ typedef struct LVRelState
 	double		tuples_deleted;
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
 	int			num_index_scans;
-	int			skipped_ndeaditems;
+	int			final_ndeaditems;
 	bool		lock_waiter_detected;
 
 	/* Statistics output by index AMs */
@@ -598,7 +598,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	vacrel->old_rel_pages = onerel->rd_rel->relpages;
 	vacrel->old_live_tuples = onerel->rd_rel->reltuples;
 	vacrel->num_index_scans = 0;
-	vacrel->skipped_ndeaditems = -1;
+	vacrel->final_ndeaditems = -1;
 	vacrel->pages_removed = 0;
 	vacrel->lock_waiter_detected = false;
 
@@ -785,21 +785,22 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageDirty);
 			if (vacrel->nindexes > 0 && vacrel->rel_pages > 0)
 			{
+				/*
+				 * Don't report per-index tuples_removed to avoid being too
+				 * chatty.  Just report table-level final_ndeaditems count,
+				 * which can be thought of as the tuples_removed high
+				 * watermark among the table's indexes.
+				 */
 				if (vacrel->do_index_vacuuming)
 				{
 					if (vacrel->num_index_scans == 0)
 						appendStringInfo(&buf, _("index scan not needed:"));
 					else
 						appendStringInfo(&buf, _("index scan needed:"));
-					if (vacrel->skipped_ndeaditems != -1)
-						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had %d dead item identifiers removed\n"),
-										 vacrel->deaditempages,
-										 100.0 * vacrel->deaditempages / vacrel->rel_pages,
-										 vacrel->skipped_ndeaditems);
+					if (vacrel->final_ndeaditems != -1)
+						msgfmt = _(" %u pages from table (%.2f%% of total) had %d dead item identifiers removed\n");
 					else
-						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had dead item identifiers removed\n"),
-										 vacrel->deaditempages,
-										 100.0 * vacrel->deaditempages / vacrel->rel_pages);
+						msgfmt = _(" %u pages from table (%.2f%% of total) had dead item identifiers removed\n");
 				}
 				else
 				{
@@ -807,16 +808,20 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 						appendStringInfo(&buf, _("index scan bypassed:"));
 					else
 						appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
-					if (vacrel->skipped_ndeaditems != -1)
-						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n"),
-										 vacrel->deaditempages,
-										 100.0 * vacrel->deaditempages / vacrel->rel_pages,
-										 vacrel->skipped_ndeaditems);
+					if (vacrel->final_ndeaditems != -1)
+						msgfmt = _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n");
 					else
-						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have dead item identifiers\n"),
-										 vacrel->deaditempages,
-										 100.0 * vacrel->deaditempages / vacrel->rel_pages);
+						msgfmt = _(" %u pages from table (%.2f%% of total) have dead item identifiers\n");
 				}
+				if (vacrel->final_ndeaditems != -1)
+					appendStringInfo(&buf, msgfmt,
+									 vacrel->deaditempages,
+									 100.0 * vacrel->deaditempages / vacrel->rel_pages,
+									 vacrel->final_ndeaditems);
+				else
+					appendStringInfo(&buf, msgfmt,
+									 vacrel->deaditempages,
+									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
 			}
 			for (int i = 0; i < vacrel->nindexes; i++)
 			{
@@ -1902,10 +1907,10 @@ retry:
 		 * in the common case where heap_page_prune() just freed up a non-HOT
 		 * tuple).
 		 *
-		 * Note also that the final tups_vacuumed value might be very low for
-		 * tables where opportunistic page pruning happens to occur very
-		 * frequently (via heap_page_prune_opt() calls that free up non-HOT
-		 * tuples).
+		 * We are usually able to log final_ndeaditems separately, though,
+		 * which shows a count of precisely these dead items -- items that
+		 * we'll delete from indexes.  It's treated as index-related
+		 * instrumentation.
 		 */
 		if (ItemIdIsDead(itemid))
 		{
@@ -2127,7 +2132,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 		BlockNumber threshold;
 
 		/* Remember the number of dead items at this point in any case */
-		vacrel->skipped_ndeaditems = vacrel->dead_items->num_items;
+		vacrel->final_ndeaditems = vacrel->dead_items->num_items;
 
 		Assert(vacrel->num_index_scans == 0);
 		Assert(vacrel->do_index_vacuuming);
