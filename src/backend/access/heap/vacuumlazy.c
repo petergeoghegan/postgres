@@ -135,7 +135,7 @@
  * The threshold of the percentage of heap blocks having LP_DEAD line pointer
  * above which index vacuuming goes ahead.
  */
-#define SKIP_VACUUM_PAGES_RATIO		0.01
+#define SKIP_VACUUM_PAGES_RATIO		0.02
 
 /*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
