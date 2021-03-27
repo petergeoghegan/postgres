@@ -781,21 +781,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageHit,
 							 (long long) VacuumPageMiss,
 							 (long long) VacuumPageDirty);
-			for (int i = 0; i < vacrel->nindexes; i++)
-			{
-				IndexBulkDeleteResult *istat = vacrel->indstats[i];
-
-				if (!istat)
-					continue;
-
-				appendStringInfo(&buf,
-								 _("index \"%s\": pages: %u in total, %u newly deleted, %u currently deleted, %u reusable\n"),
-								 indnames[i],
-								 istat->num_pages,
-								 istat->pages_newly_deleted,
-								 istat->pages_deleted,
-								 istat->pages_free);
-			}
 			if (vacrel->nindexes > 0)
 			{
 				if (!vacrel->do_index_vacuuming && !vacrel->do_index_cleanup)
@@ -816,7 +801,21 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 									 vacrel->deaditempages,
 									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
 			}
+			for (int i = 0; i < vacrel->nindexes; i++)
+			{
+				IndexBulkDeleteResult *istat = vacrel->indstats[i];
 
+				if (!istat)
+					continue;
+
+				appendStringInfo(&buf,
+								 _("index \"%s\": pages: %u in total, %u newly deleted, %u currently deleted, %u reusable\n"),
+								 indnames[i],
+								 istat->num_pages,
+								 istat->pages_newly_deleted,
+								 istat->pages_deleted,
+								 istat->pages_free);
+			}
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
 			if (track_io_timing)
