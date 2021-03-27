@@ -598,7 +598,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	vacrel->old_rel_pages = onerel->rd_rel->relpages;
 	vacrel->old_live_tuples = onerel->rd_rel->reltuples;
 	vacrel->num_index_scans = 0;
-	vacrel->skipped_ndeaditems = 0;
+	vacrel->skipped_ndeaditems = -1;
 	vacrel->pages_removed = 0;
 	vacrel->lock_waiter_detected = false;
 
@@ -794,15 +794,15 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 				else
 					appendStringInfo(&buf, _("index scan needed:"));
 
-				if (!vacrel->do_index_vacuuming && vacrel->do_index_cleanup)
+				if (vacrel->do_index_vacuuming && vacrel->num_index_scans > 0)
+					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had dead item identifiers removed\n"),
+									 vacrel->deaditempages,
+									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
+				else if (vacrel->skipped_ndeaditems != -1)
 					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n"),
 									 vacrel->deaditempages,
 									 100.0 * vacrel->deaditempages / vacrel->rel_pages,
 									 vacrel->skipped_ndeaditems);
-				else if (!vacrel->do_index_vacuuming)
-					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have dead item identifiers\n"),
-									 vacrel->deaditempages,
-									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
 				else
 					appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have dead item identifiers\n"),
 									 vacrel->deaditempages,
@@ -2204,6 +2204,8 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
+		if (onecall)
+			vacrel->skipped_ndeaditems = vacrel->dead_items->num_items;
 		ereport(WARNING,
 				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",
 						get_database_name(MyDatabaseId),
