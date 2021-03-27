@@ -804,7 +804,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 				 * to it
 				 */
 				if (!vacrel->do_index_vacuuming)
-					appendStringInfo(&buf, _("opted to skip index scan: only %u table pages with dead item identifiers\n"),
+					appendStringInfo(&buf, _("opted to skip index scan: only %u pages from table have dead item identifiers\n"),
 									 vacrel->deaditempages);
 				else
 					appendStringInfo(&buf, _("index scan not needed\n"));
