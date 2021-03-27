@@ -785,17 +785,12 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageDirty);
 			if (vacrel->nindexes > 0 && vacrel->rel_pages > 0)
 			{
-				if (!vacrel->do_index_vacuuming && !vacrel->do_index_cleanup)
-					appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
-				else if (!vacrel->do_index_vacuuming && vacrel->do_index_cleanup)
-					appendStringInfo(&buf, _("index scan bypassed:"));
-				else if (vacrel->num_index_scans == 0)
-					appendStringInfo(&buf, _("index scan not needed:"));
-				else
-					appendStringInfo(&buf, _("index scan needed:"));
-
 				if (vacrel->do_index_vacuuming)
 				{
+					if (vacrel->num_index_scans == 0)
+						appendStringInfo(&buf, _("index scan not needed:"));
+					else
+						appendStringInfo(&buf, _("index scan needed:"));
 					if (vacrel->skipped_ndeaditems != -1)
 						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) had %d dead item identifiers removed\n"),
 										 vacrel->deaditempages,
@@ -808,6 +803,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 				}
 				else
 				{
+					if (vacrel->do_index_cleanup)
+						appendStringInfo(&buf, _("index scan bypassed:"));
+					else
+						appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
 					if (vacrel->skipped_ndeaditems != -1)
 						appendStringInfo(&buf, _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n"),
 										 vacrel->deaditempages,
