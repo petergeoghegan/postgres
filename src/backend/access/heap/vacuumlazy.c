@@ -2202,9 +2202,6 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 		/* Stop applying cost limits from this point on */
 		VacuumCostActive = false;
 		VacuumCostBalance = 0;
-		VacuumPageHit = 0;
-		VacuumPageMiss = 0;
-		VacuumPageDirty = 0;
 
 		/*
 		 * TODO:
