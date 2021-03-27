@@ -765,10 +765,9 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 vacrel->relnamespace,
 							 vacrel->relname,
 							 vacrel->num_index_scans);
-			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u have dead items, %u skipped due to pins, %u skipped frozen\n"),
+			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u skipped due to pins, %u skipped frozen\n"),
 							 vacrel->pages_removed,
 							 vacrel->rel_pages,
-							 vacrel->deaditempages,
 							 vacrel->pinskipped_pages,
 							 vacrel->frozenskipped_pages);
 			appendStringInfo(&buf,
@@ -797,10 +796,16 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 								 istat->pages_deleted,
 								 istat->pages_free);
 			}
-			if (vacrel->nindexes > 0 &&
-				!vacrel->do_index_vacuuming &&
-				vacrel->do_index_cleanup)
-				appendStringInfo(&buf, _("skipped index vacuuming due to low number of dead items\n"));
+			if (vacrel->nindexes > 0 && vacrel->num_index_scans == 0)
+			{
+				if (!vacrel->do_index_vacuuming && vacrel->do_index_cleanup)
+					appendStringInfo(&buf, _("opted to skip index vacuuming\n"));
+				else
+					appendStringInfo(&buf, _("no need for index vacuuming\n"));
+
+				appendStringInfo(&buf, _("table pages with dead item identifiers: %u\n"),
+								 vacrel->deaditempages);
+			}
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
 			if (track_io_timing)
