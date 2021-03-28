@@ -358,7 +358,7 @@ typedef struct LVRelState
 
 /*
  * State set up and maintained in lazy_scan_heap() (also maintained in
- * lazy_scan_prune_heap_page()) that represents VM bit status.
+ * lazy_scan_prune()) that represents VM bit status.
  *
  * Used by lazy_scan_setvmbit() when we're done pruning.
  */
@@ -369,7 +369,7 @@ typedef struct LVPageVisMapState
 } LVPageVisMapState;
 
 /*
- * State output by lazy_scan_prune_heap_page()
+ * State output by lazy_scan_prune()
  */
 typedef struct LVPagePruneState
 {
@@ -403,10 +403,10 @@ static void lazy_scan_setvmbit(LVRelState *vacrel, Buffer buf,
 							   Buffer vmbuffer,
 							   LVPagePruneState *pageprunestate,
 							   LVPageVisMapState *pagevmstate);
-static void lazy_scan_prune_heap_page(LVRelState *vacrel, Buffer buf,
-									  GlobalVisState *vistest,
-									  LVPagePruneState *pageprunestate,
-									  LVPageVisMapState *pagevmstate);
+static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
+							GlobalVisState *vistest,
+							LVPagePruneState *pageprunestate,
+							LVPageVisMapState *pagevmstate);
 static void lazy_vacuum(LVRelState *vacrel, bool onecall);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -1038,7 +1038,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Initialize vm state for page
 		 *
 		 * Can't touch pageprunestate for page until we reach
-		 * lazy_scan_prune_heap_page(), though -- that's output state only
+		 * lazy_scan_prune(), though -- that's output state only
 		 */
 		pagevmstate.all_visible_according_to_vm = false;
 		pagevmstate.visibility_cutoff_xid = InvalidTransactionId;
@@ -1299,8 +1299,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Also handles tuple freezing -- considers freezing XIDs from all
 		 * tuple headers left behind following pruning.
 		 */
-		lazy_scan_prune_heap_page(vacrel, buf, vistest, &pageprunestate,
-								  &pagevmstate);
+		lazy_scan_prune(vacrel, buf, vistest, &pageprunestate, &pagevmstate);
 
 		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
@@ -1308,10 +1307,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * "nindexes == 0" case.)
 		 *
 		 * If we have any LP_DEAD items on this page (i.e. any new dead_tuples
-		 * entries compared to just before lazy_scan_prune_heap_page()) then
-		 * the page will be visited again by lazy_vacuum_heap_rel(), which
-		 * will compute and record its post-compaction free space.  If not,
-		 * then we're done with this page, so remember its free space as-is.
+		 * entries compared to just before lazy_scan_prune()) then the page
+		 * will be visited again by lazy_vacuum_heap_rel(), which will compute
+		 * and record its post-compaction free space.  If not, then we're done
+		 * with this page, so remember its free space as-is.
 		 */
 		savefreespace = false;
 		freespace = 0;
@@ -1757,7 +1756,7 @@ lazy_scan_setvmbit(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
 }
 
 /*
- *	lazy_scan_prune_heap_page() -- lazy_scan_heap() pruning and freezing.
+ *	lazy_scan_prune() -- lazy_scan_heap() pruning and freezing.
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
  *
@@ -1783,10 +1782,9 @@ lazy_scan_setvmbit(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
  * avoid double counting.
  */
 static void
-lazy_scan_prune_heap_page(LVRelState *vacrel, Buffer buf,
-						  GlobalVisState *vistest,
-						  LVPagePruneState *pageprunestate,
-						  LVPageVisMapState *pagevmstate)
+lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
+				LVPagePruneState * pageprunestate,
+				LVPageVisMapState *pagevmstate)
 {
 	Relation	onerel = vacrel->onerel;
 	BlockNumber blkno;
@@ -2590,8 +2588,8 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
  * tuples with storage to unused.  These days it is strictly responsible for
  * marking LP_DEAD stub line pointers as unused.  This only happens for those
  * LP_DEAD items on the page that were determined to be LP_DEAD items back
- * when the same page was visited by lazy_scan_prune_heap_page() (i.e. those
- * whose TID was recorded in the dead_tuples array).
+ * when the same page was visited by lazy_scan_prune() (i.e. those whose TID
+ * was recorded in the dead_tuples array).
  *
  * We cannot defragment the page here because that isn't safe while only
  * holding an exclusive lock.
@@ -3158,8 +3156,8 @@ lazy_flush_recorded_dead_items(LVRelState *vacrel,
 	 * pointer.  This could be from this VACUUM, a previous VACUUM, or
 	 * even opportunistic pruning.  Note that this is exactly the same
 	 * thing as having items that are stored in dead_items space, because
-	 * lazy_scan_prune_heap_page() doesn't count anything other than LP_DEAD
-	 * items as dead (as of PostgreSQL 14).
+	 * lazy_scan_prune() doesn't count anything other than LP_DEAD items as
+	 * dead (as of PostgreSQL 14).
 	 */
 	pageprunestate->all_visible = false;
 	pageprunestate->has_lpdead_items = true;
