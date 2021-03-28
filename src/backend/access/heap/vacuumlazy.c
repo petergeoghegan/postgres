@@ -771,24 +771,20 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageHit,
 							 (long long) VacuumPageMiss,
 							 (long long) VacuumPageDirty);
-			if (vacrel->nindexes > 0 && vacrel->rel_pages > 0)
+			if (vacrel->rel_pages > 0)
 			{
-				/*
-				 * Don't report per-index tuples_removed to avoid being too
-				 * chatty.  Just report table-level lpdead_items count, which
-				 * can be thought of as the tuples_removed high watermark
-				 * among the table's indexes.
-				 */
 				if (vacrel->do_index_vacuuming)
 				{
 					if (vacrel->num_index_scans == 0)
 						appendStringInfo(&buf, _("index scan not needed:"));
 					else
 						appendStringInfo(&buf, _("index scan needed:"));
-					msgfmt = _(" %u pages from table (%.2f%% of total) had %d dead item identifiers removed\n");
+					msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
 				}
 				else
 				{
+					Assert(vacrel->nindexes > 0);
+
 					if (vacrel->do_index_cleanup)
 						appendStringInfo(&buf, _("index scan bypassed:"));
 					else
@@ -1460,12 +1456,20 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * We deliberately don't do this in the case where are indexes but index
 	 * vacuuming has been bypassed.  In general we either complete a full
 	 * round of index and heap vacuuming or we abandon both before we reach
-	 * lazy_vacuum_heap.
+	 * lazy_vacuum_heap. (We make a similar report at the point that index
+	 * vacuuming is bypassed, but that's about work _not_ done -- so it's not
+	 * all that similar.)
+	 *
+	 * log_autovacuum output is different, though.  In general it is not
+	 * supposed to break out information from each lazy_vacuum_heap call
+	 * separately, unlike us (unlike VACUUM VERBOSE).  We want to make the
+	 * distinction clear because we report on each round of index and heap
+	 * vacuuming separately.
 	 */
 	Assert(vacrel->nindexes == 0 || vacuumed_pages == 0);
 	if (vacrel->nindexes == 0)
 		ereport(elevel,
-				(errmsg("\"%s\": removed %lld row versions in %u pages",
+				(errmsg("\"%s\": removed %lld dead item identifiers in %u pages",
 						vacrel->relname, (long long) vacrel->lpdead_items,
 						vacuumed_pages)));
 
@@ -2125,7 +2129,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 	 * the costs and the benefits of skipping.
 	 */
 	applyskipoptimization = false;
-	if (onecall)
+	if (onecall && vacrel->rel_pages > 0)
 	{
 		BlockNumber threshold;
 
@@ -2150,6 +2154,11 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 		 * zero dead items.)
 		 */
 		vacrel->do_index_vacuuming = false;
+		ereport(elevel,
+				(errmsg("\"%s\": index scan bypassed: %u pages from table (%.2f%% of total) have %lld dead item identifiers",
+						vacrel->relname, vacrel->rel_pages,
+						100.0 * vacrel->lpdead_item_pages / vacrel->rel_pages,
+						(long long) vacrel->lpdead_items)));
 	}
 	else if (lazy_vacuum_all_indexes(vacrel))
 	{
@@ -2485,7 +2494,7 @@ static void
 lazy_vacuum_heap(LVRelState *vacrel)
 {
 	int			tupindex;
-	int			npages;
+	int			vacuumed_pages;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
 	LVSavedErrInfo saved_err_info;
@@ -2504,7 +2513,7 @@ lazy_vacuum_heap(LVRelState *vacrel)
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
 	pg_rusage_init(&ru0);
-	npages = 0;
+	vacuumed_pages = 0;
 
 	tupindex = 0;
 	while (tupindex < vacrel->dead_items->num_items)
@@ -2530,7 +2539,7 @@ lazy_vacuum_heap(LVRelState *vacrel)
 
 		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(vacrel->onerel, tblk, freespace);
-		npages++;
+		vacuumed_pages++;
 	}
 
 	/* Clear the block number information */
@@ -2544,13 +2553,13 @@ lazy_vacuum_heap(LVRelState *vacrel)
 
 	/*
 	 * We set all LP_DEAD items from the first heap pass to LP_UNUSED during
-	 * the second heap pass.  There are no exceptions.
+	 * the second heap pass.  No more, no less.
 	 */
 	Assert(vacrel->num_index_scans > 1 || tupindex == vacrel->lpdead_items);
 
 	ereport(elevel,
-			(errmsg("\"%s\": removed %d row versions in %d pages",
-					vacrel->relname, tupindex, npages),
+			(errmsg("\"%s\": removed %d dead item identifiers in %u pages",
+					vacrel->relname, tupindex, vacuumed_pages),
 			 errdetail_internal("%s", pg_rusage_show(&ru0))));
 
 	/* Revert to the previous phase information for error traceback */
