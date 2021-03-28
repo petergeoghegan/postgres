@@ -2020,14 +2020,18 @@ retry:
 	}
 
 	/*
-	 * Success -- we're done pruning, and have determined which tuples are to
-	 * be recorded as dead in local array.  We've also prepared the details of
-	 * which remaining tuples are to be frozen.
-	 *
-	 * First clear the offset information once we have processed all the
-	 * tuples on the page.
+	 * We now have divided every item on the page into either an LP_DEAD item
+	 * that will need to be vacuumed in indexes later, or a LP_NORMAL tuple
+	 * that remains and needs to be considered for freezing now (there will
+	 * usually also be LP_UNUSED and LP_REDIRECT items, but those are of no
+	 * further interest).
 	 */
-	Assert(nunused + nredirect + lpdead_items + nnondeadoffsets == maxoff);
+	Assert(lpdead_items + nnondeadoffsets + nunused + nredirect == maxoff);
+
+	/*
+	 * Clear the offset information once we have processed all the tuples on
+	 * the page.
+	 */
 	vacrel->offnum = InvalidOffsetNumber;
 
 	/*
