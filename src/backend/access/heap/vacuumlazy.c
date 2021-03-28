@@ -339,8 +339,8 @@ typedef struct LVRelState
 
 	/* Instrumentation counters */
 	int			num_index_scans;
-	int64		tuples_deleted;	/* Deleted from table */
-	int64		lpdead_items;	/* Deleted from indexes */
+	int64		tuples_deleted;	/* # deleted from table */
+	int64		lpdead_items;	/* # deleted from indexes */
 	int64		new_dead_items;	/* new estimated total # of dead items in table */
 	int64		num_tuples;		/* total number of nonremovable tuples */
 	int64		live_tuples;	/* live tuples (reltuples estimate) */
