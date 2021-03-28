@@ -2022,9 +2022,8 @@ retry:
 	/*
 	 * We have now divided every item on the page into either an LP_DEAD item
 	 * that will need to be vacuumed in indexes later, or a LP_NORMAL tuple
-	 * that remains and needs to be considered for freezing now (there will
-	 * usually also be LP_UNUSED and LP_REDIRECT items, but those are of no
-	 * further interest).
+	 * that remains and needs to be considered for freezing now (LP_UNUSED and
+	 * LP_REDIRECT items also remain, but are of no further interest to us).
 	 */
 	Assert(lpdead_items + nnondeadoffsets + nunused + nredirect == maxoff);
 
