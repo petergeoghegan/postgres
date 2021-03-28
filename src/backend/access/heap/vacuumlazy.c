@@ -341,7 +341,7 @@ typedef struct LVRelState
 	int			num_index_scans;
 	int64		tuples_deleted;	/* # deleted from table */
 	int64		lpdead_items;	/* # deleted from indexes */
-	int64		new_dead_items;	/* new estimated total # of dead items in table */
+	int64		new_dead_tuples;	/* new estimated total # of dead items in table */
 	int64		num_tuples;		/* total number of nonremovable tuples */
 	int64		live_tuples;	/* live tuples (reltuples estimate) */
 	int64		nunused;		/* # existing unused line pointers */
@@ -701,7 +701,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	pgstat_report_vacuum(RelationGetRelid(onerel),
 						 onerel->rd_rel->relisshared,
 						 Max(new_live_tuples, 0),
-						 vacrel->new_dead_items);
+						 vacrel->new_dead_tuples);
 	pgstat_progress_end_command();
 
 	/* and log the action if appropriate */
@@ -764,7 +764,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 _("tuples: %lld removed, %lld remain, %lld are dead but not yet removable, oldest xmin: %u\n"),
 							 (long long) vacrel->tuples_deleted,
 							 (long long) vacrel->new_rel_tuples,
-							 (long long) vacrel->new_dead_items,
+							 (long long) vacrel->new_dead_tuples,
 							 OldestXmin);
 			appendStringInfo(&buf,
 							 _("buffer usage: %lld hits, %lld misses, %lld dirtied\n"),
@@ -929,7 +929,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->num_index_scans = 0;
 	vacrel->tuples_deleted = 0;
 	vacrel->lpdead_items = 0;
-	vacrel->new_dead_items = 0;
+	vacrel->new_dead_tuples = 0;
 	vacrel->num_tuples = 0;
 	vacrel->live_tuples = 0;
 	vacrel->nunused = 0;
@@ -1411,7 +1411,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * (unlikely) scenario that new_live_tuples is -1, take it as zero.
 	 */
 	vacrel->new_rel_tuples =
-		Max(vacrel->new_live_tuples, 0) + vacrel->new_dead_items;
+		Max(vacrel->new_live_tuples, 0) + vacrel->new_dead_tuples;
 
 	/*
 	 * Release any remaining pin on visibility map page.
@@ -1475,7 +1475,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
 					 _("%lld dead row versions cannot be removed yet, oldest xmin: %u\n"),
-					 (long long) vacrel->new_dead_items, vacrel->OldestXmin);
+					 (long long) vacrel->new_dead_tuples, vacrel->OldestXmin);
 	appendStringInfo(&buf, _("There were %lld unused item identifiers.\n"),
 					 (long long) vacrel->nunused);
 	appendStringInfo(&buf, ngettext("Skipped %u page due to buffer pins, ",
@@ -1794,7 +1794,7 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 	HTSV_Result res;
 	int			tuples_deleted,
 				lpdead_items,
-				new_dead_items,
+				new_dead_tuples,
 				num_tuples,
 				live_tuples,
 				nunused;
@@ -1811,7 +1811,7 @@ retry:
 	/* Initialize (or reset) page-level counters */
 	tuples_deleted = 0;
 	lpdead_items = 0;
-	new_dead_items = 0;
+	new_dead_tuples = 0;
 	num_tuples = 0;
 	live_tuples = 0;
 	nunused = 0;
@@ -1985,7 +1985,7 @@ retry:
 				 * If tuple is recently deleted then we must not remove it
 				 * from relation.
 				 */
-				new_dead_items++;
+				new_dead_tuples++;
 				pageprunestate->all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
@@ -2040,7 +2040,7 @@ retry:
 
 	vacrel->tuples_deleted += tuples_deleted;
 	vacrel->lpdead_items += lpdead_items;
-	vacrel->new_dead_items += new_dead_items;
+	vacrel->new_dead_tuples += new_dead_tuples;
 	vacrel->num_tuples += num_tuples;
 	vacrel->live_tuples += live_tuples;
 	vacrel->nunused += nunused;
