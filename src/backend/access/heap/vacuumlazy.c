@@ -2016,6 +2016,8 @@ retry:
 		pageprunestate->hastup = true;
 	}
 
+	Assert(nunused + lpdead_items + nnondeadoffsets == maxoff);
+
 	/*
 	 * Success -- we're done pruning, and have determined which tuples are to
 	 * be recorded as dead in local array.  We've also prepared the details of
