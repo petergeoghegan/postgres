@@ -801,12 +801,12 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 						appendStringInfo(&buf, _("index scan bypassed:"));
 					else
 						appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
-					msgfmt = _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n");
+					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
 				}
 				appendStringInfo(&buf, msgfmt,
 								 vacrel->deaditempages,
 								 100.0 * vacrel->deaditempages / vacrel->rel_pages,
-								 vacrel->lpdead_items);
+								 (long long) vacrel->lpdead_items);
 			}
 			for (int i = 0; i < vacrel->nindexes; i++)
 			{
