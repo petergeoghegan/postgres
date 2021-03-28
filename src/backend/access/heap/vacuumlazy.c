@@ -381,10 +381,10 @@ typedef struct LVTempCounters
  */
 typedef struct LVPagePruneState
 {
-	bool		hastup;			/* Page is truncatable? */
-	bool		has_dead_items; /* includes existing LP_DEAD items */
-	bool		all_visible;	/* Every item visible to all? */
-	bool		all_frozen;		/* provided all_visible is also true */
+	bool		hastup;				/* Page is truncatable? */
+	bool		has_lpdead_items;	/* includes existing LP_DEAD items */
+	bool		all_visible;		/* Every item visible to all? */
+	bool		all_frozen;			/* provided all_visible is also true */
 } LVPagePruneState;
 
 /*
@@ -1329,7 +1329,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 */
 		savefreespace = false;
 		freespace = 0;
-		if (vacrel->nindexes > 0 && pageprunestate.has_dead_items &&
+		if (vacrel->nindexes > 0 && pageprunestate.has_lpdead_items &&
 			vacrel->do_index_vacuuming)
 		{
 			/*
@@ -1349,7 +1349,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			freespace = PageGetHeapFreeSpace(page);
 		}
 
-		if (vacrel->nindexes == 0 && pageprunestate.has_dead_items)
+		if (vacrel->nindexes == 0 && pageprunestate.has_lpdead_items)
 		{
 			Assert(dead_items->num_items > 0);
 
@@ -1369,7 +1369,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * Make sure lazy_scan_setvmbit_page() won't stop setting VM due
 			 * to now-vacuumed LP_DEAD items:
 			 */
-			pageprunestate.has_dead_items = false;
+			pageprunestate.has_lpdead_items = false;
 
 			/* Forget the now-vacuumed tuples */
 			dead_items->num_items = 0;
@@ -1732,7 +1732,7 @@ lazy_scan_setvmbit_page(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
 	 * There should never be dead tuples on a page with PD_ALL_VISIBLE set,
 	 * however.
 	 */
-	else if (PageIsAllVisible(page) && pageprunestate->has_dead_items)
+	else if (PageIsAllVisible(page) && pageprunestate->has_lpdead_items)
 	{
 		elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
 			 RelationGetRelationName(onerel), blkno);
@@ -1832,7 +1832,7 @@ retry:
 	 * doesn't matter -- the newest XMIN on page can't be missed this way.
 	 */
 	pageprunestate->hastup = false;
-	pageprunestate->has_dead_items = false;
+	pageprunestate->has_lpdead_items = false;
 	pageprunestate->all_visible = true;
 	pageprunestate->all_frozen = true;
 	vacrel->ndeadoffsets = 0;
@@ -3166,7 +3166,7 @@ lazy_flush_recorded_dead_items(LVRelState *vacrel,
 	 * items as dead (as of PostgreSQL 14).
 	 */
 	pageprunestate->all_visible = false;
-	pageprunestate->has_dead_items = true;
+	pageprunestate->has_lpdead_items = true;
 	vacrel->lpdead_items += vacrel->ndeadoffsets;
 	vacrel->deaditempages++;
 
