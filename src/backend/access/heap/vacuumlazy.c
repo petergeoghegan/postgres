@@ -3072,6 +3072,8 @@ compute_max_dead_items(BlockNumber relblocks, bool hasindex)
 static void
 lazy_space_alloc(LVRelState *vacrel, int nworkers, BlockNumber nblocks)
 {
+	LVDeadItems *dead_items;
+	long		max_items;
 
 	/*
 	 * Initialize state for a parallel vacuum.  As of now, only one worker can
@@ -3097,21 +3099,19 @@ lazy_space_alloc(LVRelState *vacrel, int nworkers, BlockNumber nblocks)
 		}
 		else
 			vacrel->lps = begin_parallel_vacuum(vacrel, nblocks, nworkers);
+
+		/* If parallel mode started, we're done */
+		if (vacrel->lps != NULL)
+			return;
 	}
 
-	if (vacrel->lps == NULL)
-	{
-		LVDeadItems *dead_items;
-		long		max_items;
+	max_items = compute_max_dead_items(nblocks, vacrel->nindexes > 0);
 
-		max_items = compute_max_dead_items(nblocks, vacrel->nindexes > 0);
+	dead_items = (LVDeadItems *) palloc(SizeOfDeadTuples(max_items));
+	dead_items->num_items = 0;
+	dead_items->max_items = (int) max_items;
 
-		dead_items = (LVDeadItems *) palloc(SizeOfDeadTuples(max_items));
-		dead_items->num_items = 0;
-		dead_items->max_items = (int) max_items;
-
-		vacrel->dead_items = dead_items;
-	}
+	vacrel->dead_items = dead_items;
 }
 
 /* Free space for dead tuples */
