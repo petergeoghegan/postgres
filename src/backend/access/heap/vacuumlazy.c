@@ -315,21 +315,30 @@ typedef struct LVRelState
 	/* Parallel VACUUM state */
 	LVParallelState *lps;
 
-	char	   *relnamespace;
-	char	   *relname;
-	/* Overall statistics about onerel */
+	/* Statistics from pg_class when we start out */
 	BlockNumber old_rel_pages;	/* previous value of pg_class.relpages */
+	double		old_live_tuples;	/* previous value of pg_class.reltuples */
+
+	/* State managed by lazy_scan_heap() */
+	LVDeadItems	*dead_items;	/* items to vacuum from indexes, heap */
 	BlockNumber rel_pages;		/* total number of pages */
-	BlockNumber deaditempages;		/* total number of pages with dead items */
 	BlockNumber scanned_pages;	/* number of pages we examined */
 	BlockNumber pinskipped_pages;	/* # of pages we skipped due to a pin */
 	BlockNumber frozenskipped_pages;	/* # of frozen pages we skipped */
 	BlockNumber tupcount_pages; /* pages whose tuples we counted */
-	double		old_live_tuples;	/* previous value of pg_class.reltuples */
+	BlockNumber pages_removed;
+	BlockNumber deaditempages;		/* total number of pages with dead items */
+	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
+	bool		lock_waiter_detected;
+
+	/* Statistics output by us, for table */
 	double		new_rel_tuples; /* new estimated total # of tuples */
 	double		new_live_tuples;	/* new estimated total # of live tuples */
-	BlockNumber pages_removed;
+	/* Statistics output by index AMs */
+	IndexBulkDeleteResult **indstats;
 
+	/* Instrumentation counters */
+	int			num_index_scans;
 	double		tuples_deleted;	/* Deleted from table */
 	double		lpdead_items;	/* Deleted from indexes */
 	double		new_dead_items;	/* new estimated total # of dead items in table */
@@ -337,21 +346,14 @@ typedef struct LVRelState
 	double		live_tuples;	/* live tuples (reltuples estimate) */
 	double		nunused;		/* # existing unused line pointers */
 
-	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
-	int			num_index_scans;
-	bool		lock_waiter_detected;
-
-	/* Statistics output by index AMs */
-	IndexBulkDeleteResult **indstats;
-
+	/* Used for reporting */
+	char	   *relnamespace;
+	char	   *relname;
 	/* Used for error callback */
 	char	   *indname;
 	BlockNumber blkno;			/* used only for heap operations */
 	OffsetNumber offnum;		/* used only for heap operations */
 	VacErrPhase phase;
-
-	/* Main dead items array */
-	LVDeadItems		*dead_items;
 
 	/* Scratch space used during pruning and freezing */
 	int		ndeadoffsets;
@@ -584,16 +586,18 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	vacrel->FreezeLimit = FreezeLimit;
 	vacrel->MultiXactCutoff = MultiXactCutoff;
 	vacrel->lps = NULL;		/* For now */
-	vacrel->relnamespace = get_namespace_name(RelationGetNamespace(onerel));
-	vacrel->relname = pstrdup(RelationGetRelationName(onerel));
-	vacrel->indname = NULL;
-	vacrel->phase = VACUUM_ERRCB_PHASE_UNKNOWN;
+
 	vacrel->old_rel_pages = onerel->rd_rel->relpages;
+	vacrel->rel_pages = 0; /* for now */
 	vacrel->old_live_tuples = onerel->rd_rel->reltuples;
 	vacrel->num_index_scans = 0;
 	vacrel->pages_removed = 0;
 	vacrel->lock_waiter_detected = false;
 
+	vacrel->relnamespace = get_namespace_name(RelationGetNamespace(onerel));
+	vacrel->relname = pstrdup(RelationGetRelationName(onerel));
+	vacrel->indname = NULL;
+	vacrel->phase = VACUUM_ERRCB_PHASE_UNKNOWN;
 	vacrel->indstats = (IndexBulkDeleteResult **)
 		palloc0(vacrel->nindexes * sizeof(IndexBulkDeleteResult *));
 
@@ -934,6 +938,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->nonempty_pages = 0;
 
 	/* Initialize instrumentation counters */
+	vacrel->num_index_scans = 0;
 	vacrel->tuples_deleted = 0;
 	vacrel->lpdead_items = 0;
 	vacrel->new_dead_items = 0;
