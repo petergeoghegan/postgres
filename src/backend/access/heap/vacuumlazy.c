@@ -2234,11 +2234,6 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 /*
  *	lazy_vacuum_all_indexes() -- Main entry for index vacuuming
  *
- * We don't need a latestRemovedXid value for recovery conflicts here -- we
- * rely on conflicts from heap pruning instead (i.e. a heap_page_prune() call
- * that took place earlier, usually though not always during the ongoing
- * VACUUM operation).
- *
  * Returns true in the common case when all indexes were successfully
  * vacuumed.  Returns false in rare cases where we determined that the ongoing
  * VACUUM operation is at risk of taking too long to finish, leading to
