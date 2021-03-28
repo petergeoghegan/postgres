@@ -328,10 +328,11 @@ typedef struct LVRelState
 	double		old_live_tuples;	/* previous value of pg_class.reltuples */
 	double		new_rel_tuples; /* new estimated total # of tuples */
 	double		new_live_tuples;	/* new estimated total # of live tuples */
-	double		new_dead_items;	/* new estimated total # of dead items */
 	BlockNumber pages_removed;
-	double		tuples_deleted;
-	double		lpdead_items;
+
+	double		tuples_deleted;	/* Deleted from table */
+	double		lpdead_items;	/* Deleted from indexes */
+	double		new_dead_items;	/* new estimated total # of dead items in table */
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
 	int			num_index_scans;
 	bool		lock_waiter_detected;
@@ -371,8 +372,6 @@ typedef struct LVTempCounters
 {
 	double		num_tuples;		/* total number of nonremovable tuples */
 	double		live_tuples;	/* live tuples (reltuples estimate) */
-	double		tups_vacuumed;	/* tuples cleaned up by current vacuum */
-	double		nkeep;			/* dead-but-not-removable tuples */
 	double		nunused;		/* # existing unused line pointers */
 } LVTempCounters;
 
@@ -936,8 +935,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/* Initialize counters */
 	scancounts.num_tuples = 0;
 	scancounts.live_tuples = 0;
-	scancounts.tups_vacuumed = 0;
-	scancounts.nkeep = 0;
 	scancounts.nunused = 0;
 
 	nblocks = RelationGetNumberOfBlocks(vacrel->onerel);
@@ -948,7 +945,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->scanned_pages = 0;
 	vacrel->tupcount_pages = 0;
 	vacrel->nonempty_pages = 0;
+	vacrel->tuples_deleted = 0;
 	vacrel->lpdead_items = 0;
+	vacrel->new_dead_items = 0;
 
 	vistest = GlobalVisTestFor(vacrel->onerel);
 
@@ -1418,10 +1417,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/* Clear the block number information */
 	vacrel->blkno = InvalidBlockNumber;
 
-	/* save stats for use later */
-	vacrel->tuples_deleted = scancounts.tups_vacuumed;
-	vacrel->new_dead_items = scancounts.nkeep;
-
 	/* now we can compute the new value for pg_class.reltuples */
 	vacrel->new_live_tuples = vac_estimate_reltuples(vacrel->onerel, nblocks,
 													 vacrel->tupcount_pages,
@@ -1484,7 +1479,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
 					 _("%.0f dead row versions cannot be removed yet, oldest xmin: %u\n"),
-					 scancounts.nkeep, vacrel->OldestXmin);
+					 vacrel->new_dead_items, vacrel->OldestXmin);
 	appendStringInfo(&buf, _("There were %.0f unused item identifiers.\n"),
 					 scancounts.nunused);
 	appendStringInfo(&buf, ngettext("Skipped %u page due to buffer pins, ",
@@ -1503,7 +1498,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 	ereport(elevel,
 			(errmsg("\"%s\": newly pruned %.0f items, found %.0f nonremovable items in %u out of %u pages",
-					vacrel->relname, scancounts.tups_vacuumed,
+					vacrel->relname, vacrel->tuples_deleted,
 					scancounts.num_tuples, vacrel->scanned_pages, nblocks),
 			 errdetail_internal("%s", buf.data)));
 	pfree(buf.data);
@@ -1801,6 +1796,8 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 				maxoff;
 	HTSV_Result res;
 	LVTempCounters pagecounts;
+	double		nkeep,			/* dead-but-not-removable tuples */
+				tups_vacuumed;	/* tuples cleaned up by prune */
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -1810,9 +1807,9 @@ retry:
 	/* Initialize (or reset) page-level counters */
 	pagecounts.num_tuples = 0;
 	pagecounts.live_tuples = 0;
-	pagecounts.tups_vacuumed = 0;
-	pagecounts.nkeep = 0;
 	pagecounts.nunused = 0;
+	tups_vacuumed = 0;
+	nkeep = 0;
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1820,9 +1817,9 @@ retry:
 	 * We count tuples removed by the pruning step as removed by VACUUM
 	 * (existing LP_DEAD line pointers don't count).
 	 */
-	pagecounts.tups_vacuumed = heap_page_prune(onerel, buf, vistest,
-											   InvalidTransactionId, 0, false,
-											   &vacrel->offnum);
+	tups_vacuumed = heap_page_prune(onerel, buf, vistest,
+									InvalidTransactionId, 0, false,
+									&vacrel->offnum);
 
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
@@ -1982,7 +1979,7 @@ retry:
 				 * If tuple is recently deleted then we must not remove it
 				 * from relation.
 				 */
-				pagecounts.nkeep += 1;
+				nkeep += 1;
 				pageprunestate->all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
@@ -2038,8 +2035,6 @@ retry:
 	 */
 	scancounts->num_tuples += pagecounts.num_tuples;
 	scancounts->live_tuples += pagecounts.live_tuples;
-	scancounts->tups_vacuumed += pagecounts.tups_vacuumed;
-	scancounts->nkeep += pagecounts.nkeep;
 	scancounts->nunused += pagecounts.nunused;
 
 	/*
@@ -2054,6 +2049,9 @@ retry:
 	 * still need to do.
 	 */
 	lazy_flush_recorded_nondead_items(vacrel, pageprunestate, blkno, buf);
+
+	vacrel->tuples_deleted += tups_vacuumed;
+	vacrel->new_dead_items += nkeep;
 }
 
 /*
