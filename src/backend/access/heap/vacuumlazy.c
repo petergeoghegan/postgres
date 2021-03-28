@@ -301,8 +301,13 @@ typedef struct LVRelState
 	bool		do_index_vacuuming;
 	bool		do_index_cleanup;
 
+	/* Buffer access strategy and parallel state */
 	BufferAccessStrategy bstrategy;
+	LVParallelState *lps;
 
+	/* Statistics from pg_class when we start out */
+	BlockNumber old_rel_pages;	/* previous value of pg_class.relpages */
+	double		old_live_tuples;	/* previous value of pg_class.reltuples */
 	/* onerel's initial relfrozenxid and relminmxid */
 	TransactionId relfrozenxid;
 	MultiXactId relminmxid;
@@ -312,14 +317,18 @@ typedef struct LVRelState
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
 
-	/* Parallel VACUUM state */
-	LVParallelState *lps;
+	/* Used for reporting */
+	char	   *relnamespace;
+	char	   *relname;
+	/* Used for error callback */
+	char	   *indname;
+	BlockNumber blkno;			/* used only for heap operations */
+	OffsetNumber offnum;		/* used only for heap operations */
+	VacErrPhase phase;
 
-	/* Statistics from pg_class when we start out */
-	BlockNumber old_rel_pages;	/* previous value of pg_class.relpages */
-	double		old_live_tuples;	/* previous value of pg_class.reltuples */
-
-	/* State managed by lazy_scan_heap() */
+	/*
+	 * State managed by lazy_scan_heap() follows
+	 */
 	LVDeadTuples *dead_tuples;			/* items to vacuum from indexes */
 	BlockNumber rel_pages;				/* total number of pages */
 	BlockNumber scanned_pages;			/* number of pages we examined */
@@ -345,15 +354,6 @@ typedef struct LVRelState
 	int64		num_tuples;		/* total number of nonremovable tuples */
 	int64		live_tuples;	/* live tuples (reltuples estimate) */
 	int64		nunused;		/* # existing unused line pointers */
-
-	/* Used for reporting */
-	char	   *relnamespace;
-	char	   *relname;
-	/* Used for error callback */
-	char	   *indname;
-	BlockNumber blkno;			/* used only for heap operations */
-	OffsetNumber offnum;		/* used only for heap operations */
-	VacErrPhase phase;
 } LVRelState;
 
 /* Struct for saving and restoring vacuum error information. */
@@ -560,8 +560,8 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 
 	vacrel = (LVRelState *) palloc0(sizeof(LVRelState));
 
+	/* Set up high level stuff about onerel */
 	vacrel->onerel = onerel;
-	/* Open all indexes of the relation */
 	vac_open_indexes(vacrel->onerel, RowExclusiveLock, &vacrel->nindexes,
 					 &vacrel->indrels);
 	vacrel->do_index_vacuuming = true;
@@ -572,26 +572,21 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 		vacrel->do_index_cleanup = false;
 	}
 	vacrel->bstrategy = bstrategy;
+	vacrel->lps = NULL;		/* For now */
+	vacrel->old_rel_pages = onerel->rd_rel->relpages;
+	vacrel->old_live_tuples = onerel->rd_rel->reltuples;
 	vacrel->relfrozenxid = onerel->rd_rel->relfrozenxid;
 	vacrel->relminmxid = onerel->rd_rel->relminmxid;
+
+	/* Set cutoffs for entire VACUUM */
 	vacrel->OldestXmin = OldestXmin;
 	vacrel->FreezeLimit = FreezeLimit;
 	vacrel->MultiXactCutoff = MultiXactCutoff;
-	vacrel->lps = NULL;		/* For now */
-
-	vacrel->old_rel_pages = onerel->rd_rel->relpages;
-	vacrel->rel_pages = 0; /* for now */
-	vacrel->old_live_tuples = onerel->rd_rel->reltuples;
-	vacrel->num_index_scans = 0;
-	vacrel->pages_removed = 0;
-	vacrel->lock_waiter_detected = false;
 
 	vacrel->relnamespace = get_namespace_name(RelationGetNamespace(onerel));
 	vacrel->relname = pstrdup(RelationGetRelationName(onerel));
 	vacrel->indname = NULL;
 	vacrel->phase = VACUUM_ERRCB_PHASE_UNKNOWN;
-	vacrel->indstats = (IndexBulkDeleteResult **)
-		palloc0(vacrel->nindexes * sizeof(IndexBulkDeleteResult *));
 
 	/* Save index names iff autovacuum logging requires it */
 	if (IsAutoVacuumWorkerProcess() && params->log_min_duration >= 0 &&
@@ -920,10 +915,14 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	next_unskippable_block = 0;
 	next_fsm_block_to_vacuum = 0;
 	vacrel->rel_pages = nblocks;
-	vacrel->lpdead_item_pages = 0;
 	vacrel->scanned_pages = 0;
+	vacrel->pinskipped_pages = 0;
+	vacrel->frozenskipped_pages = 0;
 	vacrel->tupcount_pages = 0;
+	vacrel->pages_removed = 0;
+	vacrel->lpdead_item_pages = 0;
 	vacrel->nonempty_pages = 0;
+	vacrel->lock_waiter_detected = false;
 
 	/* Initialize instrumentation counters */
 	vacrel->num_index_scans = 0;
@@ -935,6 +934,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->nunused = 0;
 
 	vistest = GlobalVisTestFor(vacrel->onerel);
+
+	vacrel->indstats = (IndexBulkDeleteResult **)
+		palloc0(vacrel->nindexes * sizeof(IndexBulkDeleteResult *));
 
 	/*
 	 * Allocate the space for dead tuples in case parallel vacuum is not
