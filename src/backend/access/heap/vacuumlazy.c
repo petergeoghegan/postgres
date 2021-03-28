@@ -407,7 +407,7 @@ static void lazy_scan_prune_heap_page(LVRelState *vacrel, Buffer buf,
 									  GlobalVisState *vistest,
 									  LVPagePruneState *pageprunestate,
 									  LVPageVisMapState *pagevmstate);
-static void lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall);
+static void lazy_vacuum(LVRelState *vacrel, bool onecall);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
 													IndexBulkDeleteResult *istat,
@@ -853,8 +853,8 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
  *		lists of dead tuples and pages with free space, calculates statistics
  *		on the number of live tuples in the heap, and marks pages as
  *		all-visible if appropriate.  When done, or when we run low on space
- *		for dead-tuple TIDs, invoke lazy_vacuum_all_pruned_items to vacuum
- *		indexes, and then vacuum the heap during a second heap pass.
+ *		for dead-tuple TIDs, invoke lazy_vacuum to vacuum indexes and vacuum
+ *		heap relation during its own second pass over the heap.
  *
  *		If the table has at least two indexes, we execute both index vacuum
  *		and index cleanup with parallel workers unless parallel vacuum is
@@ -1158,13 +1158,13 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			/*
 			 * Definitely won't be skipping index vacuuming due to finding
 			 * very few dead items during this VACUUM operation -- that's only
-			 * something that lazy_vacuum_all_pruned_items() is willing to do
-			 * when it is only called once during the entire VACUUM operation.
+			 * something that lazy_vacuum() is willing to do when it is only
+			 * called once during the entire VACUUM operation.
 			 */
 			have_vacuumed_indexes = true;
 
 			/* Remove the collected garbage tuples from table and indexes */
-			lazy_vacuum_all_pruned_items(vacrel, false);
+			lazy_vacuum(vacrel, false);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1322,10 +1322,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * Wait until lazy_vacuum_heap_rel() to save free space.
 			 *
 			 * Note: It's not in fact 100% certain that we really will call
-			 * lazy_vacuum_heap_rel() -- lazy_vacuum_all_pruned_items() might
-			 * opt to skip index vacuuming (and so must skip heap vacuuming).
-			 * This is deemed okay because it only happens in emergencies, or
-			 * when there is very little free space anyway.
+			 * lazy_vacuum_heap_rel() -- lazy_vacuum() might opt to skip index
+			 * vacuuming (and so must skip heap vacuuming).  This is deemed
+			 * okay because it only happens in emergencies, or when there is
+			 * very little free space anyway.
 			 */
 		}
 		else
@@ -1428,7 +1428,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	Assert(vacrel->nindexes > 0 || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
-		lazy_vacuum_all_pruned_items(vacrel, !have_vacuumed_indexes);
+		lazy_vacuum(vacrel, !have_vacuumed_indexes);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -2078,7 +2078,7 @@ retry:
  * reloption)
  */
 static void
-lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
+lazy_vacuum(LVRelState *vacrel, bool onecall)
 {
 	bool		applyskipoptimization;
 
@@ -2239,7 +2239,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 /*
  *	lazy_vacuum_all_indexes() -- Main entry for index vacuuming
  *
- * Should only be called through lazy_vacuum_all_pruned_items().
+ * Should only be called through lazy_vacuum().
  *
  * We don't need a latestRemovedXid value for recovery conflicts here -- we
  * rely on conflicts from heap pruning instead (i.e. a heap_page_prune() call
@@ -2492,7 +2492,7 @@ lazy_cleanup_one_index(Relation indrel, IndexBulkDeleteResult *istat,
  *		space on their pages.  Pages not having dead tuples recorded from
  *		lazy_scan_heap are not visited at all.
  *
- * Should only be called through lazy_vacuum_all_pruned_items().
+ * Should only be called through lazy_vacuum().
  *
  * We don't need a latestRemovedXid value for recovery conflicts here -- we
  * rely on conflicts from heap pruning instead (i.e. a heap_page_prune() call
