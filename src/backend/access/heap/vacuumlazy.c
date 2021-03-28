@@ -318,10 +318,9 @@ typedef struct LVRelState
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
 
-	/* Used for reporting */
+	/* Error reporting state */
 	char	   *relnamespace;
 	char	   *relname;
-	/* Used for error callback */
 	char	   *indname;
 	BlockNumber blkno;			/* used only for heap operations */
 	OffsetNumber offnum;		/* used only for heap operations */
