@@ -1896,8 +1896,6 @@ retry:
 		{
 			/* Note: Handle all LP_DEAD item pageprunestate later */
 			lazy_record_dead_item(vacrel, offnum);
-			pageprunestate->all_visible = false;
-			pageprunestate->has_dead_items = true;
 			continue;
 		}
 
