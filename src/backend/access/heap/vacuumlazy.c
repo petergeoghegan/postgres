@@ -879,7 +879,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 static void
 lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 {
-	LVDeadTuples *dead_tuples;;
+	LVDeadTuples *dead_tuples;
 	BlockNumber nblocks,
 				blkno,
 				next_unskippable_block,
