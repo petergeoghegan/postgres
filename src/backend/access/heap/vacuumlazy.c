@@ -335,7 +335,7 @@ typedef struct LVRelState
 	BlockNumber pinskipped_pages;		/* # of pages skipped due to a pin */
 	BlockNumber frozenskipped_pages;	/* # of frozen pages we skipped */
 	BlockNumber tupcount_pages;			/* pages whose tuples we counted */
-	BlockNumber pages_removed;
+	BlockNumber pages_removed;			/* pages remove by truncation */
 	BlockNumber lpdead_item_pages;	/* total number of pages with dead items */
 	BlockNumber nonempty_pages;		/* actually, last nonempty page + 1 */
 	bool		lock_waiter_detected;
