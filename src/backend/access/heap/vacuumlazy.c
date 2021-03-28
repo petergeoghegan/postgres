@@ -356,14 +356,6 @@ typedef struct LVRelState
 	int64		nunused;		/* # existing unused line pointers */
 } LVRelState;
 
-/* Struct for saving and restoring vacuum error information. */
-typedef struct LVSavedErrInfo
-{
-	BlockNumber blkno;
-	OffsetNumber offnum;
-	VacErrPhase phase;
-} LVSavedErrInfo;
-
 /*
  * State output by lazy_prune_page_items()
  */
@@ -387,6 +379,15 @@ typedef struct LVPageVisMapState
 	TransactionId visibility_cutoff_xid;
 } LVPageVisMapState;
 
+/* Struct for saving and restoring vacuum error information. */
+typedef struct LVSavedErrInfo
+{
+	BlockNumber blkno;
+	OffsetNumber offnum;
+	VacErrPhase phase;
+} LVSavedErrInfo;
+
+/* elevel controls whole VACUUM's verbosity */
 static int	elevel = -1;
 
 
