@@ -1465,7 +1465,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * log_autovacuum output does things differently; it consistently presents
 	 * information about LP_DEAD identifiers for the VACUUM as a whole.  We
 	 * always report on each round of index and heap vacuuming separately,
-	 * though, so in general we need to avoid flattening the details.
+	 * though.
 	 */
 	Assert(vacrel->nindexes == 0 || vacuumed_pages == 0);
 	if (vacuumed_pages > 0)
