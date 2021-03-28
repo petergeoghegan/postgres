@@ -2544,8 +2544,7 @@ lazy_vacuum_heap(LVRelState *vacrel)
 
 	/*
 	 * We always set those items found LP_DEAD inside lazy_prune_page_items()
-	 * during the first heap pass to LP_UNUSED now, during the second heap
-	 * pass
+	 * (during earlier first heap pass) to LP_UNUSED -- no exceptions
 	 */
 	Assert(vacrel->num_index_scans > 1 || tupindex == vacrel->lpdead_items);
 
