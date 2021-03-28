@@ -2024,14 +2024,19 @@ retry:
 	 * that will need to be vacuumed in indexes later, or a LP_NORMAL tuple
 	 * that remains and needs to be considered for freezing now (LP_UNUSED and
 	 * LP_REDIRECT items also remain, but are of no further interest to us).
+	 *
+	 * Add page level counters to caller's counts, and then actually process
+	 * LP_DEAD and LP_NORMAL items.
 	 */
 	Assert(lpdead_items + nnondeadoffsets + nunused + nredirect == maxoff);
-
-	/*
-	 * Clear the offset information once we have processed all the tuples on
-	 * the page.
-	 */
 	vacrel->offnum = InvalidOffsetNumber;
+
+	vacrel->tuples_deleted += tuples_deleted;
+	vacrel->lpdead_items += lpdead_items;
+	vacrel->new_dead_items += new_dead_items;
+	vacrel->num_tuples += num_tuples;
+	vacrel->live_tuples += live_tuples;
+	vacrel->nunused += nunused;
 
 	/*
 	 * Now save the local dead items array to VACUUM's dead_items array.  Also
@@ -2055,16 +2060,6 @@ retry:
 										  nondeadoffsets, pageprunestate,
 										  blkno, buf);
 	}
-
-	/*
-	 * Next add page level counters to caller's counts
-	 */
-	vacrel->tuples_deleted += tuples_deleted;
-	vacrel->lpdead_items += lpdead_items;
-	vacrel->new_dead_items += new_dead_items;
-	vacrel->num_tuples += num_tuples;
-	vacrel->live_tuples += live_tuples;
-	vacrel->nunused += nunused;
 }
 
 /*
