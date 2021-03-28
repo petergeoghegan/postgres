@@ -327,7 +327,7 @@ typedef struct LVRelState
 	BlockNumber frozenskipped_pages;	/* # of frozen pages we skipped */
 	BlockNumber tupcount_pages;			/* pages whose tuples we counted */
 	BlockNumber pages_removed;
-	BlockNumber dead_item_pages;	/* total number of pages with dead items */
+	BlockNumber lpdead_item_pages;	/* total number of pages with dead items */
 	BlockNumber nonempty_pages;		/* actually, last nonempty page + 1 */
 	bool		lock_waiter_detected;
 
@@ -796,8 +796,8 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
 				}
 				appendStringInfo(&buf, msgfmt,
-								 vacrel->dead_item_pages,
-								 100.0 * vacrel->dead_item_pages / vacrel->rel_pages,
+								 vacrel->lpdead_item_pages,
+								 100.0 * vacrel->lpdead_item_pages / vacrel->rel_pages,
 								 (long long) vacrel->lpdead_items);
 			}
 			for (int i = 0; i < vacrel->nindexes; i++)
@@ -924,7 +924,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	next_unskippable_block = 0;
 	next_fsm_block_to_vacuum = 0;
 	vacrel->rel_pages = nblocks;
-	vacrel->dead_item_pages = 0;
+	vacrel->lpdead_item_pages = 0;
 	vacrel->scanned_pages = 0;
 	vacrel->tupcount_pages = 0;
 	vacrel->nonempty_pages = 0;
@@ -2042,7 +2042,7 @@ retry:
 	{
 		lazy_flush_recorded_dead_items(vacrel, lpdead_items, deadoffsets,
 									   pageprunestate, blkno);
-		vacrel->dead_item_pages++;
+		vacrel->lpdead_item_pages++;
 	}
 
 	/*
@@ -2137,7 +2137,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 
 		threshold = (double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
 
-		applyskipoptimization = (vacrel->dead_item_pages < threshold);
+		applyskipoptimization = (vacrel->lpdead_item_pages < threshold);
 	}
 
 	if (applyskipoptimization)
@@ -2155,7 +2155,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 		ereport(elevel,
 				(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
 						vacrel->relname, vacrel->dead_items->num_items,
-						vacrel->dead_item_pages)));
+						vacrel->lpdead_item_pages)));
 
 		/*
 		 * Skip index vacuuming, but don't skip index cleanup.
