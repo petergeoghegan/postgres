@@ -1455,14 +1455,18 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		update_index_statistics(vacrel);
 
 	/*
-	 * If no indexes, make log report that lazy_vacuum_all_pruned_items()
-	 * would've made
+	 * If no indexes, make log report that lazy_vacuum_heap would've made.
+	 *
+	 * We deliberately don't do this in the case where are indexes but index
+	 * vacuuming has been bypassed.  In general we either complete a full
+	 * round of index and heap vacuuming or we abandon both before we reach
+	 * lazy_vacuum_heap.
 	 */
 	Assert(vacrel->nindexes == 0 || vacuumed_pages == 0);
 	if (vacrel->nindexes == 0)
 		ereport(elevel,
 				(errmsg("\"%s\": removed %lld row versions in %u pages",
-						vacrel->relname, (long long) vacrel->tuples_deleted,
+						vacrel->relname, (long long) vacrel->lpdead_items,
 						vacuumed_pages)));
 
 	initStringInfo(&buf);
@@ -2136,21 +2140,6 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 
 	if (applyskipoptimization)
 	{
-		/*
-		 * skipped index vacuuming due to optimization.  Make log report that
-		 * lazy_vacuum_heap would've made.
-		 *
-		 * Don't report tuples_deleted here because it will be zero here in
-		 * common case where there are no newly pruned LP_DEAD items for this
-		 * VACUUM.  This is roughly consistent with lazy_vacuum_heap(), and
-		 * the similar "nindexes == 0" specific ereport() at the end of
-		 * lazy_scan_heap().
-		 */
-		ereport(elevel,
-				(errmsg("\"%s\": opted to not totally remove %d pruned items in %u pages",
-						vacrel->relname, vacrel->dead_items->num_items,
-						vacrel->lpdead_item_pages)));
-
 		/*
 		 * Skip index vacuuming, but don't skip index cleanup.
 		 *
