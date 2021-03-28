@@ -1791,11 +1791,11 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 	OffsetNumber offnum,
 				maxoff;
 	HTSV_Result res;
-	double		nkeep,			/* dead-but-not-removable tuples */
-				tups_vacuumed;	/* tuples cleaned up by prune */
-	double		num_tuples;		/* total number of nonremovable tuples */
-	double		live_tuples;	/* live tuples (reltuples estimate) */
-	double		nunused;		/* # existing unused line pointers */
+	double		tuples_deleted;
+	double		new_dead_items;
+	double		num_tuples;
+	double		live_tuples;
+	double		nunused;
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -1803,11 +1803,11 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 retry:
 
 	/* Initialize (or reset) page-level counters */
+	tuples_deleted = 0;
+	new_dead_items = 0;
 	num_tuples = 0;
 	live_tuples = 0;
 	nunused = 0;
-	tups_vacuumed = 0;
-	nkeep = 0;
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1815,9 +1815,9 @@ retry:
 	 * We count tuples removed by the pruning step as removed by VACUUM
 	 * (existing LP_DEAD line pointers don't count).
 	 */
-	tups_vacuumed = heap_page_prune(onerel, buf, vistest,
-									InvalidTransactionId, 0, false,
-									&vacrel->offnum);
+	tuples_deleted = heap_page_prune(onerel, buf, vistest,
+									 InvalidTransactionId, 0, false,
+									 &vacrel->offnum);
 
 	/*
 	 * Now scan the page to collect vacuumable items and check for tuples
@@ -1878,7 +1878,7 @@ retry:
 
 		/*
 		 * LP_DEAD line pointers are to be vacuumed normally; but we don't
-		 * count them in tups_vacuumed, else we'd be double-counting (at least
+		 * count them in tuples_deleted, else we'd be double-counting (at least
 		 * in the common case where heap_page_prune() just freed up a non-HOT
 		 * tuple).
 		 *
@@ -1977,7 +1977,7 @@ retry:
 				 * If tuple is recently deleted then we must not remove it
 				 * from relation.
 				 */
-				nkeep += 1;
+				new_dead_items += 1;
 				pageprunestate->all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
@@ -2043,12 +2043,14 @@ retry:
 
 	/*
 	 * Next add page level counters to caller's counts
+	 *
+	 * Note that lazy_flush_recorded_dead_items handles deaditempages for us
 	 */
 	vacrel->num_tuples += num_tuples;
 	vacrel->live_tuples += live_tuples;
 	vacrel->nunused += nunused;
-	vacrel->tuples_deleted += tups_vacuumed;
-	vacrel->new_dead_items += nkeep;
+	vacrel->tuples_deleted += tuples_deleted;
+	vacrel->new_dead_items += new_dead_items;
 }
 
 /*
@@ -2129,7 +2131,7 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 		 * skipped index vacuuming due to optimization.  Make log report that
 		 * lazy_vacuum_heap would've made.
 		 *
-		 * Don't report tups_vacuumed here because it will be zero here in
+		 * Don't report tuples_deleted here because it will be zero here in
 		 * common case where there are no newly pruned LP_DEAD items for this
 		 * VACUUM.  This is roughly consistent with lazy_vacuum_heap(), and
 		 * the similar "nindexes == 0" specific ereport() at the end of
