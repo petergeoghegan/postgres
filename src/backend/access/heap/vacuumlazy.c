@@ -1453,7 +1453,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		update_index_statistics(vacrel);
 
 	/*
-	 * If no indexes, make log report that lazy_vacuum_heap would've made.
+	 * If table has no indexes and some heap pages were vacuumed using the
+	 * single pass strategy, make log report that lazy_vacuum_heap would've
+	 * made if it had indexes (and therefore had to use two pass strategy).
 	 *
 	 * We deliberately don't do this in the case where there are indexes but
 	 * index vacuuming was bypassed.  We make a similar report at the point
@@ -1466,7 +1468,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * vacuuming separately.
 	 */
 	Assert(vacrel->nindexes == 0 || vacuumed_pages == 0);
-	if (vacrel->nindexes == 0)
+	if (vacuumed_pages > 0)
 		ereport(elevel,
 				(errmsg("\"%s\": removed %lld dead item identifiers in %u pages",
 						vacrel->relname, (long long) vacrel->lpdead_items,
