@@ -312,8 +312,9 @@ typedef struct LVRelState
 	TransactionId relfrozenxid;
 	MultiXactId relminmxid;
 
-	/* VACUUM operation's cutoffs for dead items and freezing */
+	/* VACUUM operation's cutoff for pruning */
 	TransactionId OldestXmin;
+	/* VACUUM operation's cutoff for freezing XIDs and MultiXactIds */
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
 
