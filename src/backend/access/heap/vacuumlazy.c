@@ -339,12 +339,12 @@ typedef struct LVRelState
 
 	/* Instrumentation counters */
 	int			num_index_scans;
-	double		tuples_deleted;	/* Deleted from table */
-	double		lpdead_items;	/* Deleted from indexes */
-	double		new_dead_items;	/* new estimated total # of dead items in table */
-	double		num_tuples;		/* total number of nonremovable tuples */
-	double		live_tuples;	/* live tuples (reltuples estimate) */
-	double		nunused;		/* # existing unused line pointers */
+	int64		tuples_deleted;	/* Deleted from table */
+	int64		lpdead_items;	/* Deleted from indexes */
+	int64		new_dead_items;	/* new estimated total # of dead items in table */
+	int64		num_tuples;		/* total number of nonremovable tuples */
+	int64		live_tuples;	/* live tuples (reltuples estimate) */
+	int64		nunused;		/* # existing unused line pointers */
 
 	/* Used for reporting */
 	char	   *relnamespace;
@@ -769,10 +769,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 vacrel->pinskipped_pages,
 							 vacrel->frozenskipped_pages);
 			appendStringInfo(&buf,
-							 _("tuples: %.0f removed, %.0f remain, %.0f are dead but not yet removable, oldest xmin: %u\n"),
-							 vacrel->tuples_deleted,
-							 vacrel->new_rel_tuples,
-							 vacrel->new_dead_items,
+							 _("tuples: %lld removed, %lld remain, %lld are dead but not yet removable, oldest xmin: %u\n"),
+							 (long long) vacrel->tuples_deleted,
+							 (long long) vacrel->new_rel_tuples,
+							 (long long) vacrel->new_dead_items,
 							 OldestXmin);
 			appendStringInfo(&buf,
 							 _("buffer usage: %lld hits, %lld misses, %lld dirtied\n"),
@@ -1469,16 +1469,16 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	Assert(vacrel->nindexes == 0 || vacuumed_pages == 0);
 	if (vacrel->nindexes == 0)
 		ereport(elevel,
-				(errmsg("\"%s\": removed %.0f row versions in %u pages",
-						vacrel->relname, vacrel->tuples_deleted,
+				(errmsg("\"%s\": removed %lld row versions in %u pages",
+						vacrel->relname, (long long) vacrel->tuples_deleted,
 						vacuumed_pages)));
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-					 _("%.0f dead row versions cannot be removed yet, oldest xmin: %u\n"),
-					 vacrel->new_dead_items, vacrel->OldestXmin);
-	appendStringInfo(&buf, _("There were %.0f unused item identifiers.\n"),
-					 vacrel->nunused);
+					 _("%lld dead row versions cannot be removed yet, oldest xmin: %u\n"),
+					 (long long) vacrel->new_dead_items, vacrel->OldestXmin);
+	appendStringInfo(&buf, _("There were %lld unused item identifiers.\n"),
+					 (long long) vacrel->nunused);
 	appendStringInfo(&buf, ngettext("Skipped %u page due to buffer pins, ",
 									"Skipped %u pages due to buffer pins, ",
 									vacrel->pinskipped_pages),
@@ -1494,9 +1494,11 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	appendStringInfo(&buf, _("%s."), pg_rusage_show(&ru0));
 
 	ereport(elevel,
-			(errmsg("\"%s\": newly pruned %.0f items, found %.0f nonremovable items in %u out of %u pages",
-					vacrel->relname, vacrel->tuples_deleted,
-					vacrel->num_tuples, vacrel->scanned_pages, nblocks),
+			(errmsg("\"%s\": newly pruned %lld items, found %lld nonremovable items in %u out of %u pages",
+					vacrel->relname,
+					(long long) vacrel->tuples_deleted,
+					(long long) vacrel->num_tuples, vacrel->scanned_pages,
+					nblocks),
 			 errdetail_internal("%s", buf.data)));
 	pfree(buf.data);
 }
