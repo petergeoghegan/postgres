@@ -440,7 +440,7 @@ static int	vac_cmp_itemptr(const void *left, const void *right);
 static bool heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
 static BlockNumber lazy_truncate_count_nondeletable(LVRelState *vacrel);
-static long compute_max_dead_items(BlockNumber relblocks, bool hasindex);
+static long compute_max_dead_tuples(BlockNumber relblocks, bool hasindex);
 static void lazy_space_alloc(LVRelState *vacrel, int nworkers,
 							 BlockNumber relblocks);
 static void lazy_space_free(LVRelState *vacrel);
@@ -879,7 +879,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 static void
 lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 {
-	LVDeadTuples *dead_tuples = vacrel->dead_tuples;
+	LVDeadTuples *dead_tuples;;
 	BlockNumber nblocks,
 				blkno,
 				next_unskippable_block,
@@ -941,6 +941,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * initialized.
 	 */
 	lazy_space_alloc(vacrel, params->nworkers, nblocks);
+	dead_tuples = vacrel->dead_tuples;
 
 	/* Report that we're scanning the heap, advertising total # of blocks */
 	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
