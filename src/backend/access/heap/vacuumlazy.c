@@ -1791,11 +1791,11 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 	OffsetNumber offnum,
 				maxoff;
 	HTSV_Result res;
-	double		tuples_deleted;
-	double		new_dead_items;
-	double		num_tuples;
-	double		live_tuples;
-	double		nunused;
+	int			tuples_deleted,
+				new_dead_items,
+				num_tuples,
+				live_tuples,
+				nunused;
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -1864,7 +1864,7 @@ retry:
 		/* Unused items require no processing, but we count 'em */
 		if (!ItemIdIsUsed(itemid))
 		{
-			nunused += 1;
+			nunused++;
 			continue;
 		}
 
@@ -1934,7 +1934,7 @@ retry:
 				 * Count it as live.  Not only is this natural, but it's also
 				 * what acquire_sample_rows() does.
 				 */
-				live_tuples += 1;
+				live_tuples++;
 
 				/*
 				 * Is the tuple definitely visible to all transactions?
@@ -1977,7 +1977,7 @@ retry:
 				 * If tuple is recently deleted then we must not remove it
 				 * from relation.
 				 */
-				new_dead_items += 1;
+				new_dead_items++;
 				pageprunestate->all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
@@ -2002,7 +2002,7 @@ retry:
 				 * transaction will commit and update the counters after we
 				 * report.
 				 */
-				live_tuples += 1;
+				live_tuples++;
 				break;
 			default:
 				elog(ERROR, "unexpected HeapTupleSatisfiesVacuum result");
@@ -2014,7 +2014,7 @@ retry:
 		 * freezing
 		 */
 		lazy_record_nondead_item(vacrel, offnum);
-		num_tuples += 1;
+		num_tuples++;
 		pageprunestate->hastup = true;
 	}
 
