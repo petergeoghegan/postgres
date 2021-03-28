@@ -1453,9 +1453,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		update_index_statistics(vacrel);
 
 	/*
-	 * If table has no indexes and some heap pages were vacuumed using the
-	 * single pass strategy, make log report that lazy_vacuum_heap would've
-	 * made if it had indexes (and therefore had to use two pass strategy).
+	 * If table has no indexes and at least one heap pages was vacuumed, make
+	 * log report that lazy_vacuum_heap would've made had there been indexes
+	 * (having indexes implies using the two pass strategy).
 	 *
 	 * We deliberately don't do this in the case where there are indexes but
 	 * index vacuuming was bypassed.  We make a similar report at the point
