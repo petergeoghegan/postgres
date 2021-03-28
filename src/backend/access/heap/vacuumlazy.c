@@ -2221,14 +2221,14 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 		/* Stop applying cost limits from this point on */
 		VacuumCostActive = false;
 		VacuumCostBalance = 0;
-
-		/*
-		 * TODO:
-		 *
-		 * Call lazy_space_free() and arrange to stop even recording TIDs
-		 * (i.e. make lazy_record_dead_item() into a no-op)
-		 */
 	}
+
+	/*
+	 * TODO:
+	 *
+	 * Call lazy_space_free() and arrange to stop even recording TIDs
+	 * (i.e. make lazy_record_dead_item() into a no-op)
+	 */
 
 	/*
 	 * Forget the now-vacuumed tuples -- just press on
