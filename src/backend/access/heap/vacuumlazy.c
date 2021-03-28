@@ -160,7 +160,7 @@ typedef enum
 } VacErrPhase;
 
 /*
- * LVDeadItems stores TIDs that are gathered during pruning/the initial heap
+ * LVDeadTuples stores TIDs that are gathered during pruning/the initial heap
  * scan.  These get deleted from indexes during index vacuuming.  They're then
  * removed from the heap during a second heap pass that performs heap
  * vacuuming.
