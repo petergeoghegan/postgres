@@ -1791,6 +1791,7 @@ lazy_prune_page_items(LVRelState *vacrel, Buffer buf,
 				num_tuples,
 				live_tuples,
 				nunused;
+	int			nredirect PG_USED_FOR_ASSERTS_ONLY;
 	int			nnondeadoffsets;
 	OffsetNumber	deadoffsets[MaxHeapTuplesPerPage];
 	OffsetNumber	nondeadoffsets[MaxHeapTuplesPerPage];
@@ -1807,6 +1808,7 @@ retry:
 	num_tuples = 0;
 	live_tuples = 0;
 	nunused = 0;
+	nredirect = 0;
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1871,6 +1873,7 @@ retry:
 		{
 			/* Note: Handle all LP_REDIRECT item pageprunestate now */
 			pageprunestate->hastup = true;	/* page won't be truncatable */
+			nredirect++;
 			continue;
 		}
 
@@ -2024,7 +2027,7 @@ retry:
 	 * First clear the offset information once we have processed all the
 	 * tuples on the page.
 	 */
-	Assert(nunused + lpdead_items + nnondeadoffsets == maxoff);
+	Assert(nunused + nredirect + lpdead_items + nnondeadoffsets == maxoff);
 	vacrel->offnum = InvalidOffsetNumber;
 
 	/*
