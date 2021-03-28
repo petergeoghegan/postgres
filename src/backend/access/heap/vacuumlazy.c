@@ -357,17 +357,6 @@ typedef struct LVRelState
 } LVRelState;
 
 /*
- * State output by lazy_prune_page_items()
- */
-typedef struct LVPagePruneState
-{
-	bool		hastup;				/* Page is truncatable? */
-	bool		has_lpdead_items;	/* includes existing LP_DEAD items */
-	bool		all_visible;		/* Every item visible to all? */
-	bool		all_frozen;			/* provided all_visible is also true */
-} LVPagePruneState;
-
-/*
  * State set up and maintained in lazy_scan_heap() (also maintained in
  * lazy_prune_page_items()) that represents VM bit status.
  *
@@ -378,6 +367,17 @@ typedef struct LVPageVisMapState
 	bool		all_visible_according_to_vm;
 	TransactionId visibility_cutoff_xid;
 } LVPageVisMapState;
+
+/*
+ * State output by lazy_prune_page_items()
+ */
+typedef struct LVPagePruneState
+{
+	bool		hastup;				/* Page is truncatable? */
+	bool		has_lpdead_items;	/* includes existing LP_DEAD items */
+	bool		all_visible;		/* Every item visible to all? */
+	bool		all_frozen;			/* provided all_visible is also true */
+} LVPagePruneState;
 
 /* Struct for saving and restoring vacuum error information. */
 typedef struct LVSavedErrInfo
