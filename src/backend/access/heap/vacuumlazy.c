@@ -2492,6 +2492,7 @@ lazy_vacuum_heap(LVRelState *vacrel)
 
 	Assert(vacrel->do_index_vacuuming);
 	Assert(vacrel->do_index_cleanup);
+	Assert(vacrel->num_index_scans > 0);
 
 	/* Report that we are now vacuuming the heap */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -2540,6 +2541,13 @@ lazy_vacuum_heap(LVRelState *vacrel)
 		ReleaseBuffer(vmbuffer);
 		vmbuffer = InvalidBuffer;
 	}
+
+	/*
+	 * We always set those items found LP_DEAD inside lazy_prune_page_items()
+	 * during the first heap pass to LP_UNUSED now, during the second heap
+	 * pass
+	 */
+	Assert(vacrel->num_index_scans > 1 || tupindex == vacrel->lpdead_items);
 
 	ereport(elevel,
 			(errmsg("\"%s\": removed %d row versions in %d pages",
