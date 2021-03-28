@@ -2301,6 +2301,14 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	}
 
 	/*
+	 * We delete all LP_DEAD items from the first heap pass in all indexes on
+	 * each call here (except calls where we don't finish all indexes).  This
+	 * makes the concomitant call to lazy_vacuum_heap() safe.
+	 */
+	Assert(vacrel->num_index_scans > 1 ||
+		   vacrel->dead_tuples->num_tuples == vacrel->lpdead_items);
+
+	/*
 	 * Increase and report the number of index scans.  Note that we include
 	 * the case where we started a round index scanning that we weren't able
 	 * to finish.
