@@ -1461,7 +1461,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * index vacuuming was bypassed.  We make a similar report at the point
 	 * that index vacuuming is bypassed, but that's about work _not_ done.
 	 *
-	 * log_autovacuum output does thigns differently; it consistently presents
+	 * log_autovacuum output does things differently; it consistently presents
 	 * information about LP_DEAD identifiers for the VACUUM as a whole.  We
 	 * always report on each round of index and heap vacuuming separately,
 	 * though, so in general we need to avoid flattening the details.
