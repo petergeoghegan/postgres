@@ -331,9 +331,9 @@ typedef struct LVRelState
 	double		new_dead_items;	/* new estimated total # of dead items */
 	BlockNumber pages_removed;
 	double		tuples_deleted;
+	double		lpdead_items;
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
 	int			num_index_scans;
-	int			final_ndeaditems;
 	bool		lock_waiter_detected;
 
 	/* Statistics output by index AMs */
@@ -443,6 +443,7 @@ static inline void lazy_record_dead_item(LVRelState * vacrel,
 static inline void lazy_record_nondead_item(LVRelState * vacrel,
 											OffsetNumber nondeadoffset);
 static void lazy_flush_recorded_dead_items(LVRelState *vacrel,
+										   LVPagePruneState *pageprunestate,
 										   BlockNumber pruneblk);
 static void lazy_flush_recorded_nondead_items(LVRelState *vacrel,
 											  LVPagePruneState *pageprunestate,
@@ -598,7 +599,6 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 	vacrel->old_rel_pages = onerel->rd_rel->relpages;
 	vacrel->old_live_tuples = onerel->rd_rel->reltuples;
 	vacrel->num_index_scans = 0;
-	vacrel->final_ndeaditems = -1;
 	vacrel->pages_removed = 0;
 	vacrel->lock_waiter_detected = false;
 
@@ -787,9 +787,9 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 			{
 				/*
 				 * Don't report per-index tuples_removed to avoid being too
-				 * chatty.  Just report table-level final_ndeaditems count,
-				 * which can be thought of as the tuples_removed high
-				 * watermark among the table's indexes.
+				 * chatty.  Just report table-level lpdead_items count, which
+				 * can be thought of as the tuples_removed high watermark
+				 * among the table's indexes.
 				 */
 				if (vacrel->do_index_vacuuming)
 				{
@@ -797,10 +797,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 						appendStringInfo(&buf, _("index scan not needed:"));
 					else
 						appendStringInfo(&buf, _("index scan needed:"));
-					if (vacrel->final_ndeaditems != -1)
-						msgfmt = _(" %u pages from table (%.2f%% of total) had %d dead item identifiers removed\n");
-					else
-						msgfmt = _(" %u pages from table (%.2f%% of total) had dead item identifiers removed\n");
+					msgfmt = _(" %u pages from table (%.2f%% of total) had %d dead item identifiers removed\n");
 				}
 				else
 				{
@@ -808,20 +805,12 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 						appendStringInfo(&buf, _("index scan bypassed:"));
 					else
 						appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
-					if (vacrel->final_ndeaditems != -1)
-						msgfmt = _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n");
-					else
-						msgfmt = _(" %u pages from table (%.2f%% of total) have dead item identifiers\n");
+					msgfmt = _(" %u pages from table (%.2f%% of total) have %d dead item identifiers\n");
 				}
-				if (vacrel->final_ndeaditems != -1)
-					appendStringInfo(&buf, msgfmt,
-									 vacrel->deaditempages,
-									 100.0 * vacrel->deaditempages / vacrel->rel_pages,
-									 vacrel->final_ndeaditems);
-				else
-					appendStringInfo(&buf, msgfmt,
-									 vacrel->deaditempages,
-									 100.0 * vacrel->deaditempages / vacrel->rel_pages);
+				appendStringInfo(&buf, msgfmt,
+								 vacrel->deaditempages,
+								 100.0 * vacrel->deaditempages / vacrel->rel_pages,
+								 vacrel->lpdead_items);
 			}
 			for (int i = 0; i < vacrel->nindexes; i++)
 			{
@@ -959,6 +948,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->scanned_pages = 0;
 	vacrel->tupcount_pages = 0;
 	vacrel->nonempty_pages = 0;
+	vacrel->lpdead_items = 0;
 
 	vistest = GlobalVisTestFor(vacrel->onerel);
 
@@ -1325,17 +1315,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 */
 		lazy_prune_page_items(vacrel, buf, vistest, &scancounts,
 							  &pageprunestate, &pagevmstate);
-
-		/*
-		 * Remember the number of pages having at least one LP_DEAD line
-		 * pointer.  This could be from this VACUUM, a previous VACUUM, or
-		 * even opportunistic pruning.  Note that this is exactly the same
-		 * thing as having items that are stored in dead_items space, because
-		 * lazy_prune_page_items() doesn't count anything other than LP_DEAD
-		 * items as dead (as of PostgreSQL 14).
-		 */
-		if (pageprunestate.has_dead_items)
-			vacrel->deaditempages++;
 
 		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
@@ -1897,6 +1876,7 @@ retry:
 		/* Redirect items mustn't be touched */
 		if (ItemIdIsRedirected(itemid))
 		{
+			/* Note: Handle all LP_REDIRECT item pageprunestate now */
 			pageprunestate->hastup = true;	/* page won't be truncatable */
 			continue;
 		}
@@ -1907,13 +1887,14 @@ retry:
 		 * in the common case where heap_page_prune() just freed up a non-HOT
 		 * tuple).
 		 *
-		 * We are usually able to log final_ndeaditems separately, though,
-		 * which shows a count of precisely these dead items -- items that
-		 * we'll delete from indexes.  It's treated as index-related
+		 * We are usually able to log lpdead_items separately, though, which
+		 * shows a count of precisely these dead items -- items that we'll
+		 * delete from indexes.  It's treated as index-related
 		 * instrumentation.
 		 */
 		if (ItemIdIsDead(itemid))
 		{
+			/* Note: Handle all LP_DEAD item pageprunestate later */
 			lazy_record_dead_item(vacrel, offnum);
 			pageprunestate->all_visible = false;
 			pageprunestate->has_dead_items = true;
@@ -1922,6 +1903,10 @@ retry:
 
 		Assert(ItemIdIsNormal(itemid));
 
+		/*
+		 * Mote: some LP_NORMAL item pageprunestate is taken care of here, the
+		 * rest later
+		 */
 		ItemPointerSet(&(tuple.t_self), blkno, offnum);
 		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
 		tuple.t_len = ItemIdGetLength(itemid);
@@ -2060,12 +2045,17 @@ retry:
 	scancounts->nunused += pagecounts.nunused;
 
 	/*
-	 * Now save the local dead items array to VACUUM's dead_items array.
+	 * Now save the local dead items array to VACUUM's dead_items array.  Also
+	 * record that page has dead items in per-page prunestate.
 	 */
-	lazy_flush_recorded_dead_items(vacrel, blkno);
+	lazy_flush_recorded_dead_items(vacrel, pageprunestate, blkno);
 
+	/*
+	 * Now see about freezing recorded non-dead items on page.  Also finalize
+	 * per-page prunestate -- there are some LP_NORMAL-related things that we
+	 * still need to do.
+	 */
 	lazy_flush_recorded_nondead_items(vacrel, pageprunestate, blkno, buf);
-
 }
 
 /*
@@ -2130,9 +2120,6 @@ lazy_vacuum_all_pruned_items(LVRelState *vacrel, bool onecall)
 	if (onecall)
 	{
 		BlockNumber threshold;
-
-		/* Remember the number of dead items at this point in any case */
-		vacrel->final_ndeaditems = vacrel->dead_items->num_items;
 
 		Assert(vacrel->num_index_scans == 0);
 		Assert(vacrel->do_index_vacuuming);
@@ -3162,14 +3149,34 @@ lazy_record_nondead_item(LVRelState *vacrel, OffsetNumber nondeadoffset)
 }
 
 static void
-lazy_flush_recorded_dead_items(LVRelState *vacrel, BlockNumber pruneblk)
+lazy_flush_recorded_dead_items(LVRelState *vacrel,
+							   LVPagePruneState *pageprunestate,
+							   BlockNumber pruneblk)
 {
 	LVDeadItems *dead_items = vacrel->dead_items;
 	ItemPointerData tmp;
 
-	if (!vacrel->do_index_vacuuming)
-		return;
 	if (vacrel->ndeadoffsets == 0)
+		return;
+
+	/*
+	 * Remember the number of pages having at least one LP_DEAD line
+	 * pointer.  This could be from this VACUUM, a previous VACUUM, or
+	 * even opportunistic pruning.  Note that this is exactly the same
+	 * thing as having items that are stored in dead_items space, because
+	 * lazy_prune_page_items() doesn't count anything other than LP_DEAD
+	 * items as dead (as of PostgreSQL 14).
+	 */
+	pageprunestate->all_visible = false;
+	pageprunestate->has_dead_items = true;
+	vacrel->lpdead_items += vacrel->ndeadoffsets;
+	vacrel->deaditempages++;
+
+	/*
+	 * Don't actually save item when it is known for sure that both index
+	 * vacuuming and heap vacuuming cannot go ahead during the ongoing VACUUM
+	 */
+	if (!vacrel->do_index_vacuuming && vacrel->nindexes > 0)
 		return;
 
 	ItemPointerSetBlockNumber(&tmp, pruneblk);
@@ -3199,6 +3206,7 @@ lazy_flush_recorded_nondead_items(LVRelState *vacrel,
 	if (vacrel->nnondeadoffsets == 0)
 		return;
 
+	Assert(pageprunestate->hastup);
 	page = BufferGetPage(buf);
 
 	nfrozen = 0;
