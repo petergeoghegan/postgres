@@ -1761,18 +1761,25 @@ lazy_scan_setvmbit(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
  *
  * Caller must hold pin and buffer cleanup lock on the buffer.
  *
- * Prior to PostgreSQL 14 there were very rare cases where lazy_scan_heap()
- * treated tuples that still had storage after pruning as DEAD.  That happened
- * when heap_page_prune() could not prune tuples that were nevertheless deemed
- * DEAD by its own HeapTupleSatisfiesVacuum() call.  This created rare hard to
- * test cases.  It meant that there was no very sharp distinction between DEAD
- * tuples and tuples that are to be kept and be considered for freezing inside
- * heap_prepare_freeze_tuple().
+ * Prior to PostgreSQL 14 there were very rare cases where heap_page_prune()
+ * was allowed to disagree with our HeapTupleSatisfiesVacuum() call about
+ * whether or not a tuple should be considered DEAD.  This happened when an
+ * inserting transaction concurrently aborted (after our heap_page_prune()
+ * call, before our HeapTupleSatisfiesVacuum() call).  Aborted transactions
+ * have tuples that we can treat as DEAD without caring about where there
+ * tuple header XIDs are with respect to the OldestXid cutoff.
  *
- * The approach we take here now (to eliminate all of this complexity) is to
- * simply restart pruning in these very rare cases -- cases where a concurrent
- * abort of an xact makes our HeapTupleSatisfiesVacuum() call disagrees with
- * what heap_page_prune() thought about the tuple only microseconds earlier.
+ * This created rare, hard to test cases -- exceptions to the general rule
+ * that TIDs that we enter into the dead_tuples array are in fact just LP_DEAD
+ * items without storage.  We had rather a lot of complexity to account for
+ * tuples that were dead, but still had storage, and so still had a tuple
+ * header with XIDs that were not quite unambiguously after the FreezeLimit
+ * limit.
+ *
+ * The approach we take here now is a little crude, but simple and robust:
+ * restart pruning when the race condition is detected.  We're guaranteed that
+ * any items that make it into the dead_tuples array are simple LP_DEAD line
+ * pointers.
  */
 static void
 lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
