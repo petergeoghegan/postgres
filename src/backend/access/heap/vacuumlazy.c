@@ -2363,7 +2363,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	 * each call here (except calls where we don't finish all indexes).  This
 	 * makes call to lazy_vacuum_heap_rel() safe.
 	 */
-	Assert(vacrel->num_index_scans > 1 ||
+	Assert(vacrel->num_index_scans > 0 ||
 		   vacrel->dead_tuples->num_tuples == vacrel->lpdead_items);
 
 	/*
