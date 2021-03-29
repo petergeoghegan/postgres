@@ -2582,7 +2582,12 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		vacrel->blkno = tblk;
 		buf = ReadBufferExtended(vacrel->onerel, MAIN_FORKNUM, tblk,
 								 RBM_NORMAL, vacrel->bstrategy);
-		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
+		if (!ConditionalLockBufferForCleanup(buf))
+		{
+			ReleaseBuffer(buf);
+			++tupindex;
+			continue;
+		}
 		tupindex = lazy_vacuum_heap_page(vacrel, tblk, buf, tupindex,
 										 &vmbuffer);
 
