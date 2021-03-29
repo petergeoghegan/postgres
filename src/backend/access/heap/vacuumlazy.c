@@ -2194,8 +2194,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * (the TIDs that tie back to the index tuples we're thinking about not
 	 * deleting this time around) must not exceed 64MB.  This limits the risk
 	 * that we will bypass index vacuuming again and again until eventually
-	 * there is a VACUUM whose dead_tuples space is not resident in L3 cache
-	 * -- that could actually be less efficient.
+	 * there is a VACUUM whose dead_tuples space is not resident in L3 cache.
+	 * Again, we must avoid "getting into debt".
 	 */
 	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
