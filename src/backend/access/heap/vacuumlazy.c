@@ -1826,6 +1826,15 @@ retry:
 	pageprunestate->all_visible = true;
 	pageprunestate->all_frozen = true;
 
+#ifdef DEBUG
+
+	/*
+	 * Enable this to debug the retry logic -- it's actually quite hard to hit
+	 * even with this artificial delay
+	 */
+	pg_usleep(10000);
+#endif
+
 	for (offnum = FirstOffsetNumber;
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
