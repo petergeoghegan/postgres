@@ -1792,9 +1792,9 @@ lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
 				live_tuples,
 				nunused;
 	int			nredirect PG_USED_FOR_ASSERTS_ONLY;
-	int			nitemswithtupstorageoffsets;
+	int			ntupoffsets;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
-	OffsetNumber itemswithtupstorageoffsets[MaxHeapTuplesPerPage];
+	OffsetNumber tupoffsets[MaxHeapTuplesPerPage];
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -1831,7 +1831,7 @@ retry:
 	pageprunestate->has_lpdead_items = false;
 	pageprunestate->all_visible = true;
 	pageprunestate->all_frozen = true;
-	nitemswithtupstorageoffsets = 0;
+	ntupoffsets = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
 
 #ifdef DEBUG
@@ -2006,7 +2006,7 @@ retry:
 		 * Each non-removable tuple must be checked to see if it needs
 		 * freezing
 		 */
-		itemswithtupstorageoffsets[nitemswithtupstorageoffsets++] = offnum;
+		tupoffsets[ntupoffsets++] = offnum;
 		num_tuples++;
 		pageprunestate->hastup = true;
 	}
@@ -2020,7 +2020,7 @@ retry:
 	 * Add page level counters to caller's counts, and then actually process
 	 * LP_DEAD and LP_NORMAL items.
 	 */
-	Assert(lpdead_items + nitemswithtupstorageoffsets + nunused + nredirect == maxoff);
+	Assert(lpdead_items + ntupoffsets + nunused + nredirect == maxoff);
 	vacrel->offnum = InvalidOffsetNumber;
 
 	vacrel->tuples_deleted += tuples_deleted;
@@ -2031,20 +2031,19 @@ retry:
 	vacrel->nunused += nunused;
 
 	/*
-	 * Now see about freezing recorded non-dead items on page.  Also finalize
-	 * per-page prunestate -- there are some LP_NORMAL-related things that we
-	 * still need to do.
+	 * Consider the need to freeze any items with tuple storage from the page
+	 * first (arbitrary)
 	 */
-	if (nitemswithtupstorageoffsets > 0)
+	if (ntupoffsets > 0)
 	{
 		xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 		int					 nfrozen = 0;
 
 		Assert(pageprunestate->hastup);
 
-		for (int i = 0; i < nitemswithtupstorageoffsets; i++)
+		for (int i = 0; i < ntupoffsets; i++)
 		{
-			OffsetNumber item = itemswithtupstorageoffsets[i];
+			OffsetNumber item = tupoffsets[i];
 			bool		tuple_totally_frozen;
 
 			ItemPointerSet(&(tuple.t_self), blkno, item);
@@ -2068,7 +2067,8 @@ retry:
 		if (nfrozen > 0)
 		{
 			/*
-			 * Finally, execute tuple freezing as planned.
+			 * At least one tuple with storage needs to be frozen -- execute
+			 * that now.
 			 *
 			 * If we need to freeze any tuples we'll mark the buffer dirty,
 			 * and write a WAL record recording the changes.  We must log the
@@ -2104,24 +2104,17 @@ retry:
 	}
 
 	/*
-	 * Now save the local dead items array to VACUUM's dead_items array.  Also
-	 * record that page has dead items in per-page prunestate.
+	 * Now save details of the LP_DEAD items from the page in the dead_tuples
+	 * array.  Also record that page has dead items in per-page prunestate.
 	 */
 	if (lpdead_items > 0)
 	{
 		LVDeadTuples *dead_tuples = vacrel->dead_tuples;
 		ItemPointerData tmp;
 
-		/*
-		 * Remember the number of pages having at least one LP_DEAD line pointer.
-		 * This could be from this VACUUM, a previous VACUUM, or even
-		 * opportunistic pruning.  Note that this is exactly the same thing as
-		 * having items that are stored in dead_items space, because
-		 * lazy_scan_prune() doesn't count anything other than LP_DEAD items as
-		 * dead (as of PostgreSQL 14).
-		 */
 		pageprunestate->all_visible = false;
 		pageprunestate->has_lpdead_items = true;
+		vacrel->lpdead_item_pages++;
 
 		/*
 		 * Don't actually save item when it is known for sure that both index
@@ -2141,7 +2134,6 @@ retry:
 		Assert(dead_tuples->num_tuples <= dead_tuples->max_tuples);
 		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
 									 dead_tuples->num_tuples);
-		vacrel->lpdead_item_pages++;
 	}
 }
 
