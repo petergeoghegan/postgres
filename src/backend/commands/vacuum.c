@@ -62,6 +62,8 @@ int			vacuum_freeze_min_age;
 int			vacuum_freeze_table_age;
 int			vacuum_multixact_freeze_min_age;
 int			vacuum_multixact_freeze_table_age;
+int			vacuum_skip_index_age;
+int			vacuum_multixact_skip_index_age;
 
 
 /* A few variables that don't seem worth passing around as parameters */
@@ -1132,6 +1134,65 @@ vacuum_set_xid_limits(Relation rel,
 	{
 		Assert(mxactFullScanLimit == NULL);
 	}
+}
+
+/*
+ * vacuum_xid_limit_emergency() -- Handle wraparound emergencies
+ *
+ * Input parameters are the target relation's relfrozenxid and relminmxid.
+ */
+bool
+vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
+{
+	TransactionId xid_skip_limit;
+	MultiXactId	  multi_skip_limit;
+	int			  skip_index_vacuum;
+
+	Assert(TransactionIdIsNormal(relfrozenxid));
+	Assert(MultiXactIdIsValid(relminmxid));
+
+	/*
+	 * Determine the index skipping age to use. In any case not less than
+	 * autovacuum_freeze_max_age * 1.05, so that VACUUM always does an
+	 * aggressive scan.
+	 */
+	skip_index_vacuum = Max(vacuum_skip_index_age, autovacuum_freeze_max_age * 1.05);
+
+	xid_skip_limit = ReadNextTransactionId() - skip_index_vacuum;
+	if (!TransactionIdIsNormal(xid_skip_limit))
+		xid_skip_limit = FirstNormalTransactionId;
+
+	if (TransactionIdIsNormal(relfrozenxid) &&
+		TransactionIdPrecedes(relfrozenxid, xid_skip_limit))
+	{
+		/* The table's relfrozenxid is too old */
+		return true;
+	}
+
+	/*
+	 * Similar to above, determine the index skipping age to use for multixact.
+	 * In any case not less than autovacuum_multixact_freeze_max_age * 1.05.
+	 */
+	skip_index_vacuum = Max(vacuum_multixact_skip_index_age,
+							autovacuum_multixact_freeze_max_age * 1.05);
+
+	/*
+	 * Compute the multixact age for which freezing is urgent.  This is
+	 * normally autovacuum_multixact_freeze_max_age, but may be less if we are
+	 * short of multixact member space.
+	 */
+	multi_skip_limit = ReadNextMultiXactId() - skip_index_vacuum;
+	if (multi_skip_limit < FirstMultiXactId)
+		multi_skip_limit = FirstMultiXactId;
+
+	if (MultiXactIdIsValid(relminmxid) &&
+		MultiXactIdPrecedes(relminmxid, multi_skip_limit))
+	{
+		/* The table's relminmxid is too old */
+		return true;
+	}
+
+	return false;
 }
 
 /*
