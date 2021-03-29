@@ -2180,20 +2180,22 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 *
 	 * Our approach is to bypass index vacuuming only when there are very few
 	 * heap pages with dead items.  Even then, it must be the first and last
-	 * call here for the VACUUM (we never apply the optimization when we're
-	 * low on space for TIDs).  This threshold allows us to not give as much
-	 * weight to items that are concentrated in relatively few heap pages.
-	 * Concentrated build-up of LP_DEAD items tends to occur with workloads
-	 * that have non-HOT updates that affect the same few logical rows again
-	 * and again -- it's probably impossible for VACUUM to keep the VM bits
-	 * for such pages set for long anyway.
+	 * call here for the VACUUM.  We never apply the optimization when
+	 * multiple index scans will be required -- we cannot "get into debt".
+	 *
+	 * This threshold we apply allows us to not give as much weight to items
+	 * that are concentrated in relatively few heap pages.  Concentrated
+	 * build-up of LP_DEAD items tends to occur with workloads that have
+	 * non-HOT updates that affect the same logical rows again and again.  It
+	 * is probably not possible for us to keep the visibility map bits for
+	 * these pages set for a useful amount of time anyway.
 	 *
 	 * We apply one further check: the space currently used to store the TIDs
 	 * (the TIDs that tie back to the index tuples we're thinking about not
-	 * deleting) must not exceed 64MB.  This limits the risk that we will
-	 * bypass index vacuuming again and again until eventually there is a
-	 * VACUUM whose dead_tuples space is not resident in L3 cache -- that
-	 * could actually be less efficient.
+	 * deleting this time around) must not exceed 64MB.  This limits the risk
+	 * that we will bypass index vacuuming again and again until eventually
+	 * there is a VACUUM whose dead_tuples space is not resident in L3 cache
+	 * -- that could actually be less efficient.
 	 */
 	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
