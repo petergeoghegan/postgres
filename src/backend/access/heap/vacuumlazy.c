@@ -1773,11 +1773,6 @@ lazy_scan_setvmbit(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
  * simply restart pruning in these very rare cases -- cases where a concurrent
  * abort of an xact makes our HeapTupleSatisfiesVacuum() call disagrees with
  * what heap_page_prune() thought about the tuple only microseconds earlier.
- *
- * Since we might have to prune a second time here, the code is structured to
- * use a local per-page copy of the counters that caller accumulates.  We add
- * our per-page counters to the per-VACUUM totals from caller last of all, to
- * avoid double counting.
  */
 static void
 lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
