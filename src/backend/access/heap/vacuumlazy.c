@@ -132,11 +132,10 @@
 #define PREFETCH_SIZE			((BlockNumber) 32)
 
 /*
- * The threshold that controls whether we bypass index vacuuming as an
- * optimization.  This is a percentage of all rel_pages that have one or more
- * LP_DEAD items -- bypassing index vacuuming implies that the current VACUUM
- * operation cannot perform the heap vacuuming that would be required to make
- * the LP_DEAD items LP_UNUSED.
+ * Threshold that controls whether we bypass index vacuuming because it is
+ * deemed unnecessary.  This is a percentage of all table rel_pages that have
+ * one or more LP_DEAD items -- they will persist as LP_DEAD items iff we
+ * bypass index vacuuming.
  */
 #define BYPASS_VACUUM_PAGES_RATIO		0.02
 
