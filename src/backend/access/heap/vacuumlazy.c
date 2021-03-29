@@ -2174,8 +2174,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * _close to_ zero LP_DEAD items/TIDs to delete from indexes.  It would be
 	 * totally arbitrary to perform a round of full index scans in that case,
 	 * while not also doing the same thing when we happen to have _precisely_
-	 * zero TIDs -- so we do neither.  We avoid sharp discontinuities in the
-	 * duration and in the overhead of successive VACUUM operations that run
+	 * zero TIDs -- so we do neither.  This avoids sharp discontinuities in
+	 * the duration and overhead of successive VACUUM operations that run
 	 * against the same table with the same workload.
 	 *
 	 * Our approach is to bypass index vacuuming only when there are very few
