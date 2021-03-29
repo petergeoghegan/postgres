@@ -2181,7 +2181,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * Our approach is to bypass index vacuuming only when there are very few
 	 * heap pages with dead items.  Even then, it must be the first and last
 	 * call here for the VACUUM.  We never apply the optimization when
-	 * multiple index scans will be required -- we cannot "get into debt".
+	 * multiple index scans will be required -- we cannot accumulate "debt"
+	 * without bound.
 	 *
 	 * This threshold we apply allows us to not give as much weight to items
 	 * that are concentrated in relatively few heap pages.  Concentrated
@@ -2195,7 +2196,9 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * deleting this time around) must not exceed 64MB.  This limits the risk
 	 * that we will bypass index vacuuming again and again until eventually
 	 * there is a VACUUM whose dead_tuples space is not resident in L3 cache.
-	 * Again, we must avoid "getting into debt".
+	 * We can be conservative about avoiding an eventual cliff edge while
+	 * still managing to avoid almost all index vacuuming that is truly
+	 * unnecessary.
 	 */
 	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
