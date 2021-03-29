@@ -2187,6 +2187,13 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * that have non-HOT updates that affect the same few logical rows again
 	 * and again -- it's probably impossible for VACUUM to keep the VM bits
 	 * for such pages set for long anyway.
+	 *
+	 * We apply one further check: the space currently used to store the TIDs
+	 * (the TIDs that tie back to the index tuples we're thinking about not
+	 * deleting) must not exceed 64MB.  This limits the risk that we will
+	 * bypass index vacuuming again and again until eventually there is a
+	 * VACUUM whose dead_tuples space is not resident in L3 cache -- that
+	 * could actually be less efficient.
 	 */
 	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
@@ -2194,12 +2201,15 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		BlockNumber threshold;
 
 		Assert(vacrel->num_index_scans == 0);
+		Assert(vacrel->lpdead_items == vacrel->dead_tuples->num_tuples);
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
 		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_NPAGES;
 
-		do_bypass_optimization = (vacrel->lpdead_item_pages < threshold);
+		do_bypass_optimization =
+				(vacrel->lpdead_item_pages < threshold &&
+				 vacrel->lpdead_items < MAXDEADTUPLES(64L * 1024L * 1024L));
 	}
 
 	if (do_bypass_optimization)
