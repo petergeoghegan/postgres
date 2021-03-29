@@ -104,6 +104,14 @@
 #define VACUUM_TRUNCATE_LOCK_TIMEOUT			5000	/* ms */
 
 /*
+ * Threshold that controls whether we bypass index vacuuming and heap
+ * vacuuming.  When we're under the threshold they're deemed unnecessary.
+ * BYPASS_THRESHOLD_NPAGES is applied as a multiplier on the table's rel_pages
+ * for those pages known to contain one or more LP_DEAD items.
+ */
+#define BYPASS_THRESHOLD_NPAGES	0.02	/* i.e. 2% of rel_pages */
+
+/*
  * When a table has no indexes, vacuum the FSM after every 8GB, approximately
  * (it won't be exact because we only vacuum FSM after processing a heap page
  * that has some removable tuples).  When there are indexes, this is ignored,
@@ -402,8 +410,8 @@ static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							GlobalVisState *vistest,
 							LVPagePruneState *pageprunestate,
 							LVPageVisMapState *pagevmstate);
-static void lazy_vacuum(LVRelState *vacrel);
-static void lazy_vacuum_all_indexes(LVRelState *vacrel);
+static void lazy_vacuum(LVRelState *vacrel, bool onecall);
+static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
 													IndexBulkDeleteResult *istat,
 													double reltuples,
@@ -752,6 +760,31 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageHit,
 							 (long long) VacuumPageMiss,
 							 (long long) VacuumPageDirty);
+			if (vacrel->rel_pages > 0)
+			{
+				if (vacrel->do_index_vacuuming)
+				{
+					if (vacrel->num_index_scans == 0)
+						appendStringInfo(&buf, _("index scan not needed:"));
+					else
+						appendStringInfo(&buf, _("index scan needed:"));
+					msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
+				}
+				else
+				{
+					Assert(vacrel->nindexes > 0);
+
+					if (vacrel->do_index_cleanup)
+						appendStringInfo(&buf, _("index scan bypassed:"));
+					else
+						appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
+					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
+				}
+				appendStringInfo(&buf, msgfmt,
+								 vacrel->lpdead_item_pages,
+								 100.0 * vacrel->lpdead_item_pages / vacrel->rel_pages,
+								 (long long) vacrel->lpdead_items);
+			}
 			for (int i = 0; i < vacrel->nindexes; i++)
 			{
 				IndexBulkDeleteResult *istat = vacrel->indstats[i];
@@ -842,7 +875,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				next_fsm_block_to_vacuum;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
-	bool		skipping_blocks;
+	bool		skipping_blocks,
+				have_vacuumed_indexes = false;
 	StringInfoData buf;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
@@ -1109,11 +1143,22 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			}
 
 			/* Remove the collected garbage tuples from table and indexes */
-			lazy_vacuum(vacrel);
+			lazy_vacuum(vacrel, false);
+			have_vacuumed_indexes = true;
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
 			 * upper-level FSM pages.  Note we have not yet processed blkno.
+			 *
+			 * Note also that it's possible that the call to lazy_vacuum()
+			 * decided to end index vacuuming due to an emergency (though not
+			 * for any other reason).  When that happens we can miss out on
+			 * some of the free space that we originally expected to be able
+			 * to pick up within lazy_vacuum_heap_rel().
+			 *
+			 * We do at least start saving free space eagerly from this point
+			 * on should this happen.  That is, we set 'savefreespace' from
+			 * here on (just like the single heap pass/"nindexes == 0" case).
 			 */
 			FreeSpaceMapVacuumRange(vacrel->onerel, next_fsm_block_to_vacuum,
 									blkno);
@@ -1257,7 +1302,15 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		if (vacrel->nindexes > 0 && pageprunestate.has_lpdead_items &&
 			vacrel->do_index_vacuuming)
 		{
-			/* Wait until lazy_vacuum_heap_rel() to save free space */
+			/*
+			 * Wait until lazy_vacuum_heap_rel() to save free space.
+			 *
+			 * Note: It's not in fact 100% certain that we really will call
+			 * lazy_vacuum_heap_rel() -- lazy_vacuum() might opt to skip index
+			 * vacuuming (and so must skip heap vacuuming).  This is deemed
+			 * okay because it only happens in emergencies, or when there is
+			 * very little free space anyway.
+			 */
 		}
 		else
 		{
@@ -1356,13 +1409,12 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	}
 
 	/* If any tuples need to be deleted, perform final vacuum cycle */
-	/* XXX put a threshold on min number of tuples here? */
 	if (dead_tuples->num_tuples > 0)
-		lazy_vacuum(vacrel);
+		lazy_vacuum(vacrel, !have_vacuumed_indexes);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
-	 * not there were indexes.
+	 * not there were indexes, and whether or not we bypassed index vacuuming.
 	 */
 	if (blkno > next_fsm_block_to_vacuum)
 		FreeSpaceMapVacuumRange(vacrel->onerel, next_fsm_block_to_vacuum,
@@ -1386,6 +1438,16 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	 * If table has no indexes and at least one heap pages was vacuumed, make
 	 * log report that lazy_vacuum_heap_rel would've made had there been
 	 * indexes (having indexes implies using the two pass strategy).
+	 *
+	 * We deliberately don't do this in the case where there are indexes but
+	 * index vacuuming was bypassed.  We make a similar report at the point
+	 * that index vacuuming is bypassed, but that's actually quite different
+	 * in one important sense: it shows information about work we _haven't_
+	 * done.
+	 *
+	 * log_autovacuum output does things differently; it consistently presents
+	 * information about LP_DEAD items for the VACUUM as a whole.  We always
+	 * report on each round of index and heap vacuuming separately, though.
 	 */
 	if (vacrel->nindexes == 0 && vacrel->lpdead_item_pages > 0)
 		ereport(elevel,
@@ -2084,10 +2146,19 @@ retry:
 
 /*
  * Remove the collected garbage tuples from the table and its indexes.
+ *
+ * We may choose to bypass index vacuuming at this point.
+ *
+ * In rare emergencies, the ongoing VACUUM operation can be made to skip both
+ * index vacuuming and index cleanup at the point we're called.  This avoids
+ * having the whole system refuse to allocate further XIDs/MultiXactIds due to
+ * wraparound.
  */
 static void
-lazy_vacuum(LVRelState *vacrel)
+lazy_vacuum(LVRelState *vacrel, bool onecall)
 {
+	bool		do_bypass_optimization;
+
 	/* Should not end up here with no indexes */
 	Assert(vacrel->nindexes > 0);
 	Assert(!IsParallelWorker());
@@ -2100,11 +2171,139 @@ lazy_vacuum(LVRelState *vacrel)
 		return;
 	}
 
-	/* Okay, we're going to do index vacuuming */
-	lazy_vacuum_all_indexes(vacrel);
+	/*
+	 * Consider bypassing index vacuuming (and heap vacuuming) entirely.
+	 *
+	 * It's far from clear how we might assess the point at which bypassing
+	 * index vacuuming starts to make sense.  But it is at least clear that
+	 * VACUUM should not go ahead with index vacuuming in certain extreme
+	 * (though still fairly common) cases.  These are the cases where we have
+	 * _close to_ zero LP_DEAD items/TIDs to delete from indexes.  It would be
+	 * totally arbitrary to perform a round of full index scans in that case,
+	 * while not also doing the same thing when we happen to have _precisely_
+	 * zero TIDs -- so we do neither.  This avoids sharp discontinuities in
+	 * the duration and overhead of successive VACUUM operations that run
+	 * against the same table with the same workload.
+	 *
+	 * Our approach is to bypass index vacuuming only when there are very few
+	 * heap pages with dead items.  Even then, it must be the first and last
+	 * call here for the VACUUM.  We never apply the optimization when
+	 * multiple index scans will be required -- we cannot accumulate "debt"
+	 * without bound.
+	 *
+	 * This threshold we apply allows us to not give as much weight to items
+	 * that are concentrated in relatively few heap pages.  Concentrated
+	 * build-up of LP_DEAD items tends to occur with workloads that have
+	 * non-HOT updates that affect the same logical rows again and again.  It
+	 * is probably not possible for us to keep the visibility map bits for
+	 * these pages set for a useful amount of time anyway.
+	 *
+	 * We apply one further check: the space currently used to store the TIDs
+	 * (the TIDs that tie back to the index tuples we're thinking about not
+	 * deleting this time around) must not exceed 64MB.  This limits the risk
+	 * that we will bypass index vacuuming again and again until eventually
+	 * there is a VACUUM whose dead_tuples space is not resident in L3 cache.
+	 *
+	 * We can be conservative about avoiding eventually reaching some kind of
+	 * cliff edge while still avoiding almost all truly unnecessary index
+	 * vacuuming.
+	 */
+	do_bypass_optimization = false;
+	if (onecall && vacrel->rel_pages > 0)
+	{
+		BlockNumber threshold;
 
-	/* Remove tuples from heap */
-	lazy_vacuum_heap_rel(vacrel);
+		Assert(vacrel->num_index_scans == 0);
+		Assert(vacrel->lpdead_items == vacrel->dead_tuples->num_tuples);
+		Assert(vacrel->do_index_vacuuming);
+		Assert(vacrel->do_index_cleanup);
+
+		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_NPAGES;
+
+		do_bypass_optimization =
+				(vacrel->lpdead_item_pages < threshold &&
+				 vacrel->lpdead_items < MAXDEADTUPLES(64L * 1024L * 1024L));
+	}
+
+	if (do_bypass_optimization)
+	{
+		/*
+		 * Bypass index vacuuming.
+		 *
+		 * Since VACUUM aims to behave as if there were precisely zero index
+		 * tuples, even when there are actually slightly more than zero, we
+		 * will still do index cleanup.  This is expected to have practically
+		 * no overhead with tables where bypassing index vacuuming helps.
+		 */
+		vacrel->do_index_vacuuming = false;
+		ereport(elevel,
+				(errmsg("\"%s\": index scan bypassed: %u pages from table (%.2f%% of total) have %lld dead item identifiers",
+						vacrel->relname, vacrel->rel_pages,
+						100.0 * vacrel->lpdead_item_pages / vacrel->rel_pages,
+						(long long) vacrel->lpdead_items)));
+	}
+	else if (lazy_vacuum_all_indexes(vacrel))
+	{
+		/*
+		 * We successfully completed a round of index vacuuming.  Do related
+		 * heap vacuuming now.
+		 *
+		 * There will be no calls to vacuum_xid_limit_emergency() to check for
+		 * issues with the age of the table's relfrozenxid unless and until
+		 * there is another call here -- heap vacuuming doesn't do that. This
+		 * should be okay, because the cost of a round of heap vacuuming is
+		 * much more linear.  Also, it has costs that are unaffected by the
+		 * number of indexes total.
+		 */
+		lazy_vacuum_heap_rel(vacrel);
+	}
+	else
+	{
+		/*
+		 * Emergency case:  We attempted index vacuuming, didn't finish
+		 * another round of index vacuuming (or one that reliably deleted
+		 * tuples from all of the table's indexes, at least).  This happens
+		 * when the table's relfrozenxid is too far in the past.
+		 *
+		 * From this point on the VACUUM operation will do no further index
+		 * vacuuming or heap vacuuming.  It will do any remaining pruning that
+		 * is required, plus other heap-related and relation-level maintenance
+		 * tasks.  But that's it.  We also disable a cost delay when a delay
+		 * is in effect.
+		 *
+		 * Note that we deliberately don't vary our behavior based on factors
+		 * like whether or not the ongoing VACUUM is aggressive.  If it's not
+		 * aggressive we probably won't be able to advance relfrozenxid during
+		 * this VACUUM.  If we can't, then an anti-wraparound VACUUM should
+		 * take place immediately after we finish up.  We should be able to
+		 * bypass all index vacuuming for the later anti-wraparound VACUUM.
+		 */
+		Assert(vacrel->do_index_vacuuming);
+		Assert(vacrel->do_index_cleanup);
+
+		vacrel->do_index_vacuuming = false;
+		vacrel->do_index_cleanup = false;
+		ereport(WARNING,
+				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",
+						get_database_name(MyDatabaseId),
+						vacrel->relname,
+						vacrel->relname,
+						vacrel->num_index_scans),
+				 errdetail("table's relfrozenxid or relminmxid is too far in the past"),
+				 errhint("Consider increasing configuration parameter \"maintenance_work_mem\" or \"autovacuum_work_mem\".\n"
+						 "You might also need to consider other ways for VACUUM to keep up with the allocation of transaction IDs.")));
+
+		/* Stop applying cost limits from this point on */
+		VacuumCostActive = false;
+		VacuumCostBalance = 0;
+	}
+
+	/*
+	 * TODO:
+	 *
+	 * Call lazy_space_free() and arrange to stop even recording TIDs (i.e.
+	 * make lazy_record_dead_item() into a no-op)
+	 */
 
 	/*
 	 * Forget the now-vacuumed tuples -- just press on
@@ -2114,15 +2313,29 @@ lazy_vacuum(LVRelState *vacrel)
 
 /*
  *	lazy_vacuum_all_indexes() -- Main entry for index vacuuming
+ *
+ * Returns true in the common case when all indexes were successfully
+ * vacuumed.  Returns false in rare cases where we determined that the ongoing
+ * VACUUM operation is at risk of taking too long to finish, leading to
+ * wraparound failure.
  */
-static void
+static bool
 lazy_vacuum_all_indexes(LVRelState *vacrel)
 {
+	bool		allindexes = true;
+
 	Assert(vacrel->nindexes > 0);
 	Assert(vacrel->do_index_vacuuming);
 	Assert(vacrel->do_index_cleanup);
 	Assert(TransactionIdIsNormal(vacrel->relfrozenxid));
 	Assert(MultiXactIdIsValid(vacrel->relminmxid));
+
+	/* Precheck for XID wraparound emergencies */
+	if (vacuum_xid_limit_emergency(vacrel->relfrozenxid, vacrel->relminmxid))
+	{
+		/* Wraparound emergency -- don't even start an index scan */
+		return false;
+	}
 
 	/* Report that we are now vacuuming indexes */
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
@@ -2138,26 +2351,43 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 			vacrel->indstats[idx] =
 				lazy_vacuum_one_index(indrel, istat, vacrel->old_live_tuples,
 									  vacrel);
+
+			if (vacuum_xid_limit_emergency(vacrel->relfrozenxid,
+										   vacrel->relminmxid))
+			{
+				/* Wraparound emergency -- end current index scan */
+				allindexes = false;
+				break;
+			}
 		}
 	}
 	else
 	{
+		/* Note: parallel VACUUM only gets the precheck */
+		allindexes = true;
+
 		/* Outsource everything to parallel variant */
 		do_parallel_lazy_vacuum_all_indexes(vacrel);
 	}
 
 	/*
 	 * We delete all LP_DEAD items from the first heap pass in all indexes on
-	 * each call here.  This makes the next call to lazy_vacuum_heap_rel()
-	 * safe.
+	 * each call here (except calls where we don't finish all indexes).  This
+	 * makes the next call to lazy_vacuum_heap_rel() safe.
 	 */
 	Assert(vacrel->num_index_scans > 0 ||
 		   vacrel->dead_tuples->num_tuples == vacrel->lpdead_items);
 
-	/* Increase and report the number of index scans */
+	/*
+	 * Increase and report the number of index scans.  Note that we include
+	 * the case where we started a round index scanning that we weren't able
+	 * to finish.
+	 */
 	vacrel->num_index_scans++;
 	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_INDEX_VACUUMS,
 								 vacrel->num_index_scans);
+
+	return allindexes;
 }
 
 /*
