@@ -104,6 +104,14 @@
 #define VACUUM_TRUNCATE_LOCK_TIMEOUT			5000	/* ms */
 
 /*
+ * Threshold that controls whether we bypass index vacuuming and heap
+ * vacuuming.  When we're under the threshold they're deemed unnecessary.
+ * BYPASS_THRESHOLD_NPAGES is applied as a multiplier on the table's rel_pages
+ * for those pages known to contain one or more LP_DEAD items.
+ */
+#define BYPASS_THRESHOLD_NPAGES	0.02	/* i.e. 2% of rel_pages */
+
+/*
  * When a table has no indexes, vacuum the FSM after every 8GB, approximately
  * (it won't be exact because we only vacuum FSM after processing a heap page
  * that has some removable tuples).  When there are indexes, this is ignored,
@@ -130,12 +138,6 @@
  * Needs to be a power of 2.
  */
 #define PREFETCH_SIZE			((BlockNumber) 32)
-
-/*
- * The threshold of the percentage of heap blocks having LP_DEAD line pointer
- * above which index vacuuming goes ahead.
- */
-#define SKIP_VACUUM_PAGES_RATIO		0.02
 
 /*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
@@ -2148,11 +2150,12 @@ retry:
 static void
 lazy_vacuum(LVRelState *vacrel, bool onecall)
 {
-	bool		applyskipoptimization;
+	bool		do_bypass_optimization;
 
 	/* Should not end up here with no indexes */
 	Assert(vacrel->nindexes > 0);
 	Assert(!IsParallelWorker());
+	Assert(vacrel->lpdead_item_pages > 0);
 
 	if (!vacrel->do_index_vacuuming)
 	{
@@ -2162,61 +2165,68 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	}
 
 	/*
-	 * Consider applying the optimization where we skip index vacuuming to
-	 * save work in indexes that is likely to have little upside.  This is
-	 * expected to help in the extreme (though still common) case where
-	 * autovacuum generally only triggers VACUUMs against the table because of
-	 * the need to freeze tuples and/or the need to set visibility map bits.
-	 * The overall effect is that cases where the table is slightly less than
-	 * 100% append-only (where there are some dead tuples, but very few) tend
-	 * to behave almost as if they really were 100% append-only.
+	 * Consider bypassing index vacuuming (and heap vacuuming) entirely.
 	 *
-	 * Our approach is to skip index vacuuming when there are very few heap
-	 * pages with dead items.  Even then, it must be the first and last call
-	 * here for the VACUUM (we never apply the optimization when we're low on
-	 * space for TIDs).  This threshold allows us to not give too much weight
-	 * to items that are concentrated in relatively few heap pages.  These are
-	 * usually due to correlated non-HOT UPDATEs.
+	 * It's far from clear how we might assess the point at which bypassing
+	 * index vacuuming starts to make sense.  But it is at least clear that
+	 * VACUUM should not go ahead with index vacuuming in certain extreme
+	 * (though still fairly common) cases.  These are the cases where we have
+	 * _close to_ zero LP_DEAD items/TIDs to delete from indexes.  It would be
+	 * totally arbitrary to perform a round of full index scans in that case,
+	 * while not also doing the same thing when we happen to have _precisely_
+	 * zero TIDs -- so we do neither.  This avoids sharp discontinuities in
+	 * the duration and overhead of successive VACUUM operations that run
+	 * against the same table with the same workload.
 	 *
-	 * It's important that we avoid putting off a VACUUM that eventually
-	 * dirties index pages more often than would happen if we didn't skip.
-	 * It's also important to avoid allowing relatively many heap pages that
-	 * can never have their visibility map bit set to stay that way
-	 * indefinitely.
+	 * Our approach is to bypass index vacuuming only when there are very few
+	 * heap pages with dead items.  Even then, it must be the first and last
+	 * call here for the VACUUM.  We never apply the optimization when
+	 * multiple index scans will be required -- we cannot accumulate "debt"
+	 * without bound.
 	 *
-	 * In general the criteria that we apply here must not create distinct new
-	 * problems for the logic that schedules autovacuum workers.  For example,
-	 * we cannot allow autovacuum_vacuum_insert_scale_factor-driven autovacuum
-	 * workers to do little or no useful work due to misapplication of this
-	 * optimization.  While the optimization is expressly designed to avoid
-	 * work that has non-zero value to the system, the value of that work
-	 * should be close to zero.  There should be a natural asymmetry between
-	 * the costs and the benefits of skipping.
+	 * This threshold we apply allows us to not give as much weight to items
+	 * that are concentrated in relatively few heap pages.  Concentrated
+	 * build-up of LP_DEAD items tends to occur with workloads that have
+	 * non-HOT updates that affect the same logical rows again and again.  It
+	 * is probably not possible for us to keep the visibility map bits for
+	 * these pages set for a useful amount of time anyway.
+	 *
+	 * We apply one further check: the space currently used to store the TIDs
+	 * (the TIDs that tie back to the index tuples we're thinking about not
+	 * deleting this time around) must not exceed 64MB.  This limits the risk
+	 * that we will bypass index vacuuming again and again until eventually
+	 * there is a VACUUM whose dead_tuples space is not resident in L3 cache.
+	 *
+	 * We can be conservative about avoiding eventually reaching some kind of
+	 * cliff edge while still avoiding almost all truly unnecessary index
+	 * vacuuming.
 	 */
-	applyskipoptimization = false;
+	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
 	{
 		BlockNumber threshold;
 
 		Assert(vacrel->num_index_scans == 0);
+		Assert(vacrel->lpdead_items == vacrel->dead_tuples->num_tuples);
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
-		threshold = (double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_NPAGES;
 
-		applyskipoptimization = (vacrel->lpdead_item_pages < threshold);
+		do_bypass_optimization =
+				(vacrel->lpdead_item_pages < threshold &&
+				 vacrel->lpdead_items < MAXDEADTUPLES(64L * 1024L * 1024L));
 	}
 
-	if (applyskipoptimization)
+	if (do_bypass_optimization)
 	{
 		/*
-		 * Skip index vacuuming, but don't skip index cleanup.
+		 * Bypass index vacuuming.
 		 *
-		 * It wouldn't make sense to not do cleanup just because this
-		 * optimization was applied.  (As a general rule, the case where there
-		 * are _almost_ zero dead items when vacuuming a large table should
-		 * not behave very differently from the case where there are precisely
-		 * zero dead items.)
+		 * Since VACUUM aims to behave as if there were precisely zero index
+		 * tuples, even when there are actually slightly more than zero, we
+		 * will still do index cleanup.  This is expected to have practically
+		 * no overhead with tables where bypassing index vacuuming helps.
 		 */
 		vacrel->do_index_vacuuming = false;
 		ereport(elevel,
