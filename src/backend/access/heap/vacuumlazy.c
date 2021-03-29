@@ -1781,6 +1781,8 @@ lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
 	Page		page;
 	OffsetNumber offnum,
 				maxoff;
+	ItemId		itemid;
+	HeapTupleData tuple;
 	HTSV_Result res;
 	int			tuples_deleted,
 				lpdead_items,
@@ -1789,9 +1791,9 @@ lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
 				live_tuples,
 				nunused;
 	int			nredirect PG_USED_FOR_ASSERTS_ONLY;
-	int			nnondeadoffsets;
+	int			nitemswithtupstorageoffsets;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
-	OffsetNumber nondeadoffsets[MaxHeapTuplesPerPage];
+	OffsetNumber itemswithtupstorageoffsets[MaxHeapTuplesPerPage];
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -1828,7 +1830,7 @@ retry:
 	pageprunestate->has_lpdead_items = false;
 	pageprunestate->all_visible = true;
 	pageprunestate->all_frozen = true;
-	nnondeadoffsets = 0;
+	nitemswithtupstorageoffsets = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
 
 #ifdef DEBUG
@@ -1848,9 +1850,6 @@ retry:
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
 	{
-		ItemId		itemid;
-		HeapTupleData tuple;
-
 		/*
 		 * Set the offset number so that we can display it along with any
 		 * error that occurred while processing this tuple.
@@ -1868,7 +1867,6 @@ retry:
 		/* Redirect items mustn't be touched */
 		if (ItemIdIsRedirected(itemid))
 		{
-			/* Note: Handle all LP_REDIRECT item pageprunestate now */
 			pageprunestate->hastup = true;	/* page won't be truncatable */
 			nredirect++;
 			continue;
@@ -1887,17 +1885,12 @@ retry:
 		 */
 		if (ItemIdIsDead(itemid))
 		{
-			/* Note: Handle all LP_DEAD item pageprunestate later */
 			deadoffsets[lpdead_items++] = offnum;
 			continue;
 		}
 
 		Assert(ItemIdIsNormal(itemid));
 
-		/*
-		 * Mote: some LP_NORMAL item pageprunestate is taken care of here, the
-		 * rest later
-		 */
 		ItemPointerSet(&(tuple.t_self), blkno, offnum);
 		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
 		tuple.t_len = ItemIdGetLength(itemid);
@@ -1973,7 +1966,8 @@ retry:
 
 				/*
 				 * If tuple is recently deleted then we must not remove it
-				 * from relation.
+				 * from relation.  (We only remove items that are LP_DEAD from
+				 * pruning.)
 				 */
 				new_dead_tuples++;
 				pageprunestate->all_visible = false;
@@ -2011,7 +2005,7 @@ retry:
 		 * Each non-removable tuple must be checked to see if it needs
 		 * freezing
 		 */
-		nondeadoffsets[nnondeadoffsets++] = offnum;
+		itemswithtupstorageoffsets[nitemswithtupstorageoffsets++] = offnum;
 		num_tuples++;
 		pageprunestate->hastup = true;
 	}
@@ -2025,7 +2019,7 @@ retry:
 	 * Add page level counters to caller's counts, and then actually process
 	 * LP_DEAD and LP_NORMAL items.
 	 */
-	Assert(lpdead_items + nnondeadoffsets + nunused + nredirect == maxoff);
+	Assert(lpdead_items + nitemswithtupstorageoffsets + nunused + nredirect == maxoff);
 	vacrel->offnum = InvalidOffsetNumber;
 
 	vacrel->tuples_deleted += tuples_deleted;
@@ -2040,26 +2034,22 @@ retry:
 	 * per-page prunestate -- there are some LP_NORMAL-related things that we
 	 * still need to do.
 	 */
-	if (nnondeadoffsets > 0)
+	if (nitemswithtupstorageoffsets > 0)
 	{
-		HeapTupleData tuple;
-		int			nfrozen;
-		Page		page;
-		ItemId		itemid;
 		xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
+		int					 nfrozen = 0;
 
 		Assert(pageprunestate->hastup);
-		page = BufferGetPage(buf);
 
-		nfrozen = 0;
-		for (int i = 0; i < nnondeadoffsets; i++)
+		for (int i = 0; i < nitemswithtupstorageoffsets; i++)
 		{
-			OffsetNumber nondeadoffset = nondeadoffsets[i];
+			OffsetNumber item = itemswithtupstorageoffsets[i];
 			bool		tuple_totally_frozen;
 
-			ItemPointerSet(&(tuple.t_self), blkno, nondeadoffset);
-			itemid = PageGetItemId(page, nondeadoffset);
+			ItemPointerSet(&(tuple.t_self), blkno, item);
+			itemid = PageGetItemId(page, item);
 			tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
+			Assert(ItemIdIsNormal(itemid) && ItemIdHasStorage(itemid));
 			tuple.t_len = ItemIdGetLength(itemid);
 			tuple.t_tableOid = RelationGetRelid(vacrel->onerel);
 			if (heap_prepare_freeze_tuple(tuple.t_data,
@@ -2069,7 +2059,7 @@ retry:
 										  vacrel->MultiXactCutoff,
 										  &frozen[nfrozen],
 										  &tuple_totally_frozen))
-				frozen[nfrozen++].offset = nondeadoffset;
+				frozen[nfrozen++].offset = item;
 			if (!tuple_totally_frozen)
 				pageprunestate->all_frozen = false;
 		}
