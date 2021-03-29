@@ -427,11 +427,6 @@ static void update_index_statistics(LVRelState *vacrel);
 static bool should_attempt_truncation(LVRelState *vacrel,
 									  VacuumParams *params);
 static void lazy_truncate_heap(LVRelState *vacrel);
-static void lazy_flush_recorded_dead_items(LVRelState *vacrel,
-										   int nnondeadoffsets,
-										   OffsetNumber *nondeadoffsets,
-										   LVPagePruneState *pageprunestate,
-										   BlockNumber pruneblk);
 static void lazy_flush_recorded_nondead_items(LVRelState *vacrel,
 											  int nnondeadoffsets,
 											  OffsetNumber *nondeadoffsets,
@@ -2045,16 +2040,6 @@ retry:
 	vacrel->live_tuples += live_tuples;
 	vacrel->nunused += nunused;
 
-	/*
-	 * Now save the local dead items array to VACUUM's dead_items array.  Also
-	 * record that page has dead items in per-page prunestate.
-	 */
-	if (lpdead_items > 0)
-	{
-		lazy_flush_recorded_dead_items(vacrel, lpdead_items, deadoffsets,
-									   pageprunestate, blkno);
-		vacrel->lpdead_item_pages++;
-	}
 
 	/*
 	 * Now see about freezing recorded non-dead items on page.  Also finalize
@@ -2066,6 +2051,47 @@ retry:
 		lazy_flush_recorded_nondead_items(vacrel, nnondeadoffsets,
 										  nondeadoffsets, pageprunestate,
 										  blkno, buf);
+	}
+
+	/*
+	 * Now save the local dead items array to VACUUM's dead_items array.  Also
+	 * record that page has dead items in per-page prunestate.
+	 */
+	if (lpdead_items > 0)
+	{
+		LVDeadTuples *dead_tuples = vacrel->dead_tuples;
+		ItemPointerData tmp;
+
+		/*
+		 * Remember the number of pages having at least one LP_DEAD line pointer.
+		 * This could be from this VACUUM, a previous VACUUM, or even
+		 * opportunistic pruning.  Note that this is exactly the same thing as
+		 * having items that are stored in dead_items space, because
+		 * lazy_scan_prune() doesn't count anything other than LP_DEAD items as
+		 * dead (as of PostgreSQL 14).
+		 */
+		pageprunestate->all_visible = false;
+		pageprunestate->has_lpdead_items = true;
+
+		/*
+		 * Don't actually save item when it is known for sure that both index
+		 * vacuuming and heap vacuuming cannot go ahead during the ongoing VACUUM
+		 */
+		if (!vacrel->do_index_vacuuming && vacrel->nindexes > 0)
+			return;
+
+		ItemPointerSetBlockNumber(&tmp, blkno);
+
+		for (int i = 0; i < lpdead_items; i++)
+		{
+			ItemPointerSetOffsetNumber(&tmp, deadoffsets[i]);
+			dead_tuples->itemptrs[dead_tuples->num_tuples++] = tmp;
+		}
+
+		Assert(dead_tuples->num_tuples <= dead_tuples->max_tuples);
+		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
+									 dead_tuples->num_tuples);
+		vacrel->lpdead_item_pages++;
 	}
 }
 
@@ -3117,47 +3143,6 @@ lazy_space_free(LVRelState *vacrel)
 	 * during parallel mode.
 	 */
 	end_parallel_vacuum(vacrel);
-}
-
-static void
-lazy_flush_recorded_dead_items(LVRelState *vacrel,
-							   int ndeadoffsets,
-							   OffsetNumber *deadoffsets,
-							   LVPagePruneState *pageprunestate,
-							   BlockNumber pruneblk)
-{
-	LVDeadTuples *dead_tuples = vacrel->dead_tuples;
-	ItemPointerData tmp;
-
-	/*
-	 * Remember the number of pages having at least one LP_DEAD line pointer.
-	 * This could be from this VACUUM, a previous VACUUM, or even
-	 * opportunistic pruning.  Note that this is exactly the same thing as
-	 * having items that are stored in dead_items space, because
-	 * lazy_scan_prune() doesn't count anything other than LP_DEAD items as
-	 * dead (as of PostgreSQL 14).
-	 */
-	pageprunestate->all_visible = false;
-	pageprunestate->has_lpdead_items = true;
-
-	/*
-	 * Don't actually save item when it is known for sure that both index
-	 * vacuuming and heap vacuuming cannot go ahead during the ongoing VACUUM
-	 */
-	if (!vacrel->do_index_vacuuming && vacrel->nindexes > 0)
-		return;
-
-	ItemPointerSetBlockNumber(&tmp, pruneblk);
-
-	for (int i = 0; i < ndeadoffsets; i++)
-	{
-		ItemPointerSetOffsetNumber(&tmp, deadoffsets[i]);
-		dead_tuples->itemptrs[dead_tuples->num_tuples++] = tmp;
-	}
-
-	Assert(dead_tuples->num_tuples <= dead_tuples->max_tuples);
-	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
-								 dead_tuples->num_tuples);
 }
 
 static void
