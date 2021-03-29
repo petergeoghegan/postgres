@@ -1766,10 +1766,11 @@ lazy_scan_setvmbit(LVRelState *vacrel, Buffer buf, Buffer vmbuffer,
  * header with XIDs that were not quite unambiguously after the FreezeLimit
  * limit.
  *
- * The approach we take here now is a little crude, but simple and robust:
- * restart pruning when the race condition is detected.  We're guaranteed that
- * any items that make it into the dead_tuples array are simple LP_DEAD line
- * pointers.
+ * The approach we take here now is a little crude, but it's also simple and
+ * robust: we restart pruning when the race condition is detected.  This
+ * guarantees that any items that make it into the dead_tuples array are
+ * simple LP_DEAD line pointers, and that every item with tuple storage is
+ * considered as a candidate for freezing.
  */
 static void
 lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
