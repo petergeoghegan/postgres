@@ -851,6 +851,10 @@ PageTruncateLinePointerArray(Page page)
 		}
 	}
 
+#if 0
+	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, sethint %d",
+		 nline, nline - nunusedend, nunusedend, sethint);
+#endif
 	Assert(nline > nunusedend);
 	if (nunusedend > 0)
 		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
