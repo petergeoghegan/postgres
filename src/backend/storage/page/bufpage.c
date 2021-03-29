@@ -856,6 +856,10 @@ PageTruncateLinePointerArray(Page page)
 		}
 	}
 
+#if 0
+	elog(WARNING, "#LPs before %lu, reduction %d, sethint %d",
+		 PageGetMaxOffsetNumber(page), nunusedend, sethint);
+#endif
 	if (nunusedend > 0)
 	{
 		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
