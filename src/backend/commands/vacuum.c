@@ -1156,6 +1156,17 @@ vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
 	Assert(TransactionIdIsNormal(relfrozenxid));
 	Assert(MultiXactIdIsValid(relminmxid));
 
+#if 0
+	ereport(WARNING,
+			(errmsg("table \"%s.%s.%s\" call after %d index scans",
+					get_database_name(MyDatabaseId),
+					vacrel->relname,
+					vacrel->relname,
+					vacrel->num_index_scans),
+			 errdetail("table's relfrozenxid %u, xid_skip_limit is %u",
+					   vacrel->RelFrozenXid, xid_skip_limit)));
+#endif
+
 	/*
 	 * Determine the index skipping age to use. In any case not less than
 	 * autovacuum_freeze_max_age * 1.05, so that VACUUM always does an
