@@ -137,7 +137,7 @@
  * one or more LP_DEAD items -- they will persist as LP_DEAD items iff we
  * bypass index vacuuming.
  */
-#define BYPASS_VACUUM_PAGES_RATIO		0.02
+#define BYPASS_INDEXES_THRESHOLD	0.02
 
 /*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
@@ -2197,7 +2197,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
-		threshold = (double) vacrel->rel_pages * BYPASS_VACUUM_PAGES_RATIO;
+		threshold = (double) vacrel->rel_pages * BYPASS_INDEXES_THRESHOLD;
 
 		do_bypass_optimization = (vacrel->lpdead_item_pages < threshold);
 	}
