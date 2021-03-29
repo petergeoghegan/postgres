@@ -1834,6 +1834,15 @@ retry:
 	ntupoffsets = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
 
+#ifdef DEBUG
+
+	/*
+	 * Enable this to debug the retry logic -- it's actually quite hard to hit
+	 * even with this artificial delay
+	 */
+	pg_usleep(10000);
+#endif
+
 	/*
 	 * Note: If you change anything in the loop below, also look at
 	 * heap_page_is_all_visible to see if that needs to be changed.
