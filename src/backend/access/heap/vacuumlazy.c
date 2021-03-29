@@ -132,10 +132,13 @@
 #define PREFETCH_SIZE			((BlockNumber) 32)
 
 /*
- * The threshold of the percentage of heap blocks having LP_DEAD line pointer
- * above which index vacuuming goes ahead.
+ * The threshold that controls whether we bypass index vacuuming as an
+ * optimization.  This is a percentage of all rel_pages that have one or more
+ * LP_DEAD items -- bypassing index vacuuming implies that the current VACUUM
+ * operation cannot perform the heap vacuuming that would be required to make
+ * the LP_DEAD items LP_UNUSED.
  */
-#define SKIP_VACUUM_PAGES_RATIO		0.02
+#define BYPASS_VACUUM_PAGES_RATIO		0.02
 
 /*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
@@ -2148,7 +2151,7 @@ retry:
 static void
 lazy_vacuum(LVRelState *vacrel, bool onecall)
 {
-	bool		applyskipoptimization;
+	bool		do_bypass_optimization;
 
 	/* Should not end up here with no indexes */
 	Assert(vacrel->nindexes > 0);
@@ -2162,38 +2165,37 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	}
 
 	/*
-	 * Consider applying the optimization where we skip index vacuuming to
-	 * save work in indexes that is likely to have little upside.  This is
-	 * expected to help in the extreme (though still common) case where
-	 * autovacuum generally only triggers VACUUMs against the table because of
-	 * the need to freeze tuples and/or the need to set visibility map bits.
-	 * The overall effect is that cases where the table is slightly less than
-	 * 100% append-only (where there are some dead tuples, but very few) tend
-	 * to behave almost as if they really were 100% append-only.
+	 * Consider bypassing index vacuuming entirely.
 	 *
-	 * Our approach is to skip index vacuuming when there are very few heap
-	 * pages with dead items.  Even then, it must be the first and last call
-	 * here for the VACUUM (we never apply the optimization when we're low on
-	 * space for TIDs).  This threshold allows us to not give too much weight
-	 * to items that are concentrated in relatively few heap pages.  These are
-	 * usually due to correlated non-HOT UPDATEs.
+	 * This optimization speeds up vacuuming in the extreme (though still
+	 * common) case where autovacuum generally only triggers VACUUMs against
+	 * the table because of the need to freeze tuples and/or the need to set
+	 * visibility map bits -- it is not sensible to do index vacuuming when we
+	 * have close to zero LP_DEAD items.  We should always try to avoid any
+	 * sharp discontinuities in the behavior of autovacuum over time.
 	 *
-	 * It's important that we avoid putting off a VACUUM that eventually
-	 * dirties index pages more often than would happen if we didn't skip.
-	 * It's also important to avoid allowing relatively many heap pages that
-	 * can never have their visibility map bit set to stay that way
-	 * indefinitely.
+	 * Even with a table with a lower-than-default heap fillfactor and no
+	 * indexes that get modified by UPDATEs, UPDATEs often won't quite manage
+	 * to apply the HOT optimization in 100% of cases.  It would be perverse
+	 * to allow (say) a single isolated UPDATE that cannot apply HOT to
+	 * totally alter the behavior of the next VACUUM.  Unexpectedly forcing
+	 * index vacuuming during the next VACUUM (to delete one insignificant
+	 * index tuple from each index) also makes it hard for DBAs to reason
+	 * about and tune autovacuum.
 	 *
-	 * In general the criteria that we apply here must not create distinct new
-	 * problems for the logic that schedules autovacuum workers.  For example,
-	 * we cannot allow autovacuum_vacuum_insert_scale_factor-driven autovacuum
-	 * workers to do little or no useful work due to misapplication of this
-	 * optimization.  While the optimization is expressly designed to avoid
-	 * work that has non-zero value to the system, the value of that work
-	 * should be close to zero.  There should be a natural asymmetry between
-	 * the costs and the benefits of skipping.
+	 * In general the criteria that triggers the optimization must not create
+	 * distinct new problems for the logic that schedules autovacuum workers.
+	 * For example, autovacuum_vacuum_insert_scale_factor-driven autovacuum
+	 * workers must always be able to do almost all of the work that the
+	 * scheduling logic's model expects it to do.
+	 *
+	 * Our approach is to bypass index vacuuming only when there are very few
+	 * heap pages with dead items.  Even then, it must be the first and last
+	 * call here for the VACUUM (we never apply the optimization when we're
+	 * low on space for TIDs).  This threshold allows us to not give as much
+	 * weight to items that are concentrated in relatively few heap pages.
 	 */
-	applyskipoptimization = false;
+	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
 	{
 		BlockNumber threshold;
@@ -2202,15 +2204,15 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
-		threshold = (double) vacrel->rel_pages * SKIP_VACUUM_PAGES_RATIO;
+		threshold = (double) vacrel->rel_pages * BYPASS_VACUUM_PAGES_RATIO;
 
-		applyskipoptimization = (vacrel->lpdead_item_pages < threshold);
+		do_bypass_optimization = (vacrel->lpdead_item_pages < threshold);
 	}
 
-	if (applyskipoptimization)
+	if (do_bypass_optimization)
 	{
 		/*
-		 * Skip index vacuuming, but don't skip index cleanup.
+		 * Bypass index vacuuming, but don't bypass index cleanup.
 		 *
 		 * It wouldn't make sense to not do cleanup just because this
 		 * optimization was applied.  (As a general rule, the case where there
