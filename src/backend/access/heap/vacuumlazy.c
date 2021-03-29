@@ -109,7 +109,7 @@
  * BYPASS_THRESHOLD_NPAGES is applied as a multiplier on the table's rel_pages
  * for those pages known to contain one or more LP_DEAD items.
  */
-#define BYPASS_THRESHOLD_NPAGES	0.02	/* 2% of rel_pages */
+#define BYPASS_THRESHOLD_NPAGES	0.02	/* i.e. 2% of rel_pages */
 
 /*
  * When a table has no indexes, vacuum the FSM after every 8GB, approximately
