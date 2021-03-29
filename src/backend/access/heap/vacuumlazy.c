@@ -2172,18 +2172,12 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * index vacuuming starts to make sense.  But it is at least clear that
 	 * VACUUM should not go ahead with index vacuuming in certain extreme
 	 * (though still fairly common) cases.  These are the cases where we have
-	 * _close to_ zero LP_DEAD items/TIDs to delete from indexes -- it would
-	 * be quite arbitrary to perform a round of full index scans there, but
-	 * not do so in the case where there are precisely zero TIDs.  We want to
-	 * avoid any sharp discontinuities in the duration and the overhead of
-	 * successive related VACUUM operations against the same table.
-	 *
-	 * This optimization speeds up vacuuming in the extreme though fairly
-	 * common case where autovacuum generally only triggers VACUUMs against
-	 * the table due to the need for freezing or the need to set VM bits as an
-	 * enabler of index-only scans.  Allowing it to go ahead is not just a
-	 * simple waste of the system's resources; it also makes it harder for
-	 * VACUUM to do whatever remaining work there is that is truly useful.
+	 * _close to_ zero LP_DEAD items/TIDs to delete from indexes.  It would be
+	 * totally arbitrary to perform a round of full index scans in that case,
+	 * while not also doing the same thing when we happen to have _precisely_
+	 * zero TIDs -- so we do neither.  We avoid sharp discontinuities in the
+	 * duration and in the overhead of successive VACUUM operations that run
+	 * against the same table with the same workload.
 	 *
 	 * Even with a table with a lower-than-default heap fillfactor and no
 	 * indexes that get modified by UPDATEs, UPDATEs often won't quite manage
