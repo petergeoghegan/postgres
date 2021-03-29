@@ -2179,26 +2179,15 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * duration and in the overhead of successive VACUUM operations that run
 	 * against the same table with the same workload.
 	 *
-	 * Even with a table with a lower-than-default heap fillfactor and no
-	 * indexes that get modified by UPDATEs, UPDATEs often won't quite manage
-	 * to apply the HOT optimization in 100% of cases.  It would be perverse
-	 * to allow (say) a single isolated UPDATE that cannot apply HOT to
-	 * totally alter the behavior of the next VACUUM.  Unexpectedly forcing
-	 * index vacuuming during the next VACUUM (to delete one insignificant
-	 * index tuple from each index) also makes it hard for DBAs to reason
-	 * about and tune autovacuum.
-	 *
-	 * In general the criteria that triggers the optimization must not create
-	 * distinct new problems for the logic that schedules autovacuum workers.
-	 * For example, autovacuum_vacuum_insert_scale_factor-driven autovacuum
-	 * workers must always be able to do almost all of the work that the
-	 * scheduling logic's model expects it to do.
-	 *
 	 * Our approach is to bypass index vacuuming only when there are very few
 	 * heap pages with dead items.  Even then, it must be the first and last
 	 * call here for the VACUUM (we never apply the optimization when we're
 	 * low on space for TIDs).  This threshold allows us to not give as much
 	 * weight to items that are concentrated in relatively few heap pages.
+	 * Concentrated build-up of LP_DEAD items tends to occur with workloads
+	 * that have non-HOT updates that affect the same few logical rows again
+	 * and again -- it's probably impossible for VACUUM to keep the VM bits
+	 * for such pages set for very long anyway.
 	 */
 	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
@@ -2217,13 +2206,11 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	if (do_bypass_optimization)
 	{
 		/*
-		 * Bypass index vacuuming, but don't bypass index cleanup.
+		 * Bypass index vacuuming.
 		 *
-		 * It wouldn't make sense to not do cleanup just because this
-		 * optimization was applied.  (As a general rule, the case where there
-		 * are _almost_ zero dead items when vacuuming a large table should
-		 * not behave very differently from the case where there are precisely
-		 * zero dead items.)
+		 * Since VACUUM aims to behave as if there were precisely zero index
+		 * tuples even when there are actually slightly more than zero, we
+		 * don't bypass index cleanup.
 		 */
 		vacrel->do_index_vacuuming = false;
 		ereport(elevel,
