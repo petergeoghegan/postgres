@@ -104,12 +104,12 @@
 #define VACUUM_TRUNCATE_LOCK_TIMEOUT			5000	/* ms */
 
 /*
- * Threshold that controls whether we bypass index vacuuming because it is
- * deemed unnecessary.  This is a percentage of all table rel_pages that have
- * one or more LP_DEAD items -- they will persist as LP_DEAD items iff we
- * bypass index vacuuming.
+ * Threshold that controls whether we bypass index vacuuming and heap
+ * vacuuming.  When we're under the threshold they're deemed unnecessary.
+ * BYPASS_THRESHOLD_NPAGES is applied as a multiplier on the table's rel_pages
+ * for those pages known to contain one or more LP_DEAD items.
  */
-#define BYPASS_INDEXES_THRESHOLD	0.02
+#define BYPASS_THRESHOLD_NPAGES	0.02	/* 2% of rel_pages */
 
 /*
  * When a table has no indexes, vacuum the FSM after every 8GB, approximately
@@ -2197,7 +2197,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
-		threshold = (double) vacrel->rel_pages * BYPASS_INDEXES_THRESHOLD;
+		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_NPAGES;
 
 		do_bypass_optimization = (vacrel->lpdead_item_pages < threshold);
 	}
