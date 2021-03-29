@@ -1792,7 +1792,6 @@ lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
 				live_tuples,
 				nunused;
 	int			nredirect PG_USED_FOR_ASSERTS_ONLY;
-	int			ntupoffsets;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	OffsetNumber tupoffsets[MaxHeapTuplesPerPage];
 
@@ -1831,7 +1830,6 @@ retry:
 	pageprunestate->has_lpdead_items = false;
 	pageprunestate->all_visible = true;
 	pageprunestate->all_frozen = true;
-	ntupoffsets = 0;
 	maxoff = PageGetMaxOffsetNumber(page);
 
 #ifdef DEBUG
@@ -2006,8 +2004,7 @@ retry:
 		 * Each non-removable tuple must be checked to see if it needs
 		 * freezing
 		 */
-		tupoffsets[ntupoffsets++] = offnum;
-		num_tuples++;
+		tupoffsets[num_tuples++] = offnum;
 		pageprunestate->hastup = true;
 	}
 
@@ -2020,7 +2017,7 @@ retry:
 	 * Add page level counters to caller's counts, and then actually process
 	 * LP_DEAD and LP_NORMAL items.
 	 */
-	Assert(lpdead_items + ntupoffsets + nunused + nredirect == maxoff);
+	Assert(lpdead_items + num_tuples + nunused + nredirect == maxoff);
 	vacrel->offnum = InvalidOffsetNumber;
 
 	vacrel->tuples_deleted += tuples_deleted;
@@ -2034,14 +2031,14 @@ retry:
 	 * Consider the need to freeze any items with tuple storage from the page
 	 * first (arbitrary)
 	 */
-	if (ntupoffsets > 0)
+	if (num_tuples > 0)
 	{
 		xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 		int					 nfrozen = 0;
 
 		Assert(pageprunestate->hastup);
 
-		for (int i = 0; i < ntupoffsets; i++)
+		for (int i = 0; i < num_tuples; i++)
 		{
 			OffsetNumber item = tupoffsets[i];
 			bool		tuple_totally_frozen;
