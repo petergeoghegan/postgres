@@ -104,6 +104,14 @@
 #define VACUUM_TRUNCATE_LOCK_TIMEOUT			5000	/* ms */
 
 /*
+ * Threshold that controls whether we bypass index vacuuming because it is
+ * deemed unnecessary.  This is a percentage of all table rel_pages that have
+ * one or more LP_DEAD items -- they will persist as LP_DEAD items iff we
+ * bypass index vacuuming.
+ */
+#define BYPASS_INDEXES_THRESHOLD	0.02
+
+/*
  * When a table has no indexes, vacuum the FSM after every 8GB, approximately
  * (it won't be exact because we only vacuum FSM after processing a heap page
  * that has some removable tuples).  When there are indexes, this is ignored,
@@ -130,14 +138,6 @@
  * Needs to be a power of 2.
  */
 #define PREFETCH_SIZE			((BlockNumber) 32)
-
-/*
- * Threshold that controls whether we bypass index vacuuming because it is
- * deemed unnecessary.  This is a percentage of all table rel_pages that have
- * one or more LP_DEAD items -- they will persist as LP_DEAD items iff we
- * bypass index vacuuming.
- */
-#define BYPASS_INDEXES_THRESHOLD	0.02
 
 /*
  * DSM keys for parallel vacuum.  Unlike other parallel execution code, since
@@ -2186,7 +2186,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * Concentrated build-up of LP_DEAD items tends to occur with workloads
 	 * that have non-HOT updates that affect the same few logical rows again
 	 * and again -- it's probably impossible for VACUUM to keep the VM bits
-	 * for such pages set for very long anyway.
+	 * for such pages set for long anyway.
 	 */
 	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
