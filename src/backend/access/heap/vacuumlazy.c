@@ -2156,6 +2156,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	/* Should not end up here with no indexes */
 	Assert(vacrel->nindexes > 0);
 	Assert(!IsParallelWorker());
+	Assert(vacrel->lpdead_item_pages > 0);
 
 	if (!vacrel->do_index_vacuuming)
 	{
@@ -2165,14 +2166,24 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	}
 
 	/*
-	 * Consider bypassing index vacuuming entirely.
+	 * Consider bypassing index vacuuming (and heap vacuuming) entirely.
 	 *
-	 * This optimization speeds up vacuuming in the extreme (though still
-	 * common) case where autovacuum generally only triggers VACUUMs against
-	 * the table because of the need to freeze tuples and/or the need to set
-	 * visibility map bits -- it is not sensible to do index vacuuming when we
-	 * have close to zero LP_DEAD items.  We should always try to avoid any
-	 * sharp discontinuities in the behavior of autovacuum over time.
+	 * It's far from clear how we might assess the point at which bypassing
+	 * index vacuuming starts to make sense.  But it is at least clear that
+	 * VACUUM should not go ahead with index vacuuming in certain extreme
+	 * (though still fairly common) cases.  These are the cases where we have
+	 * _close to_ zero LP_DEAD items/TIDs to delete from indexes -- it would
+	 * be quite arbitrary to perform a round of full index scans there, but
+	 * not do so in the case where there are precisely zero TIDs.  We want to
+	 * avoid any sharp discontinuities in the duration and the overhead of
+	 * successive related VACUUM operations against the same table.
+	 *
+	 * This optimization speeds up vacuuming in the extreme though fairly
+	 * common case where autovacuum generally only triggers VACUUMs against
+	 * the table due to the need for freezing or the need to set VM bits as an
+	 * enabler of index-only scans.  Allowing it to go ahead is not just a
+	 * simple waste of the system's resources; it also makes it harder for
+	 * VACUUM to do whatever remaining work there is that is truly useful.
 	 *
 	 * Even with a table with a lower-than-default heap fillfactor and no
 	 * indexes that get modified by UPDATEs, UPDATEs often won't quite manage
