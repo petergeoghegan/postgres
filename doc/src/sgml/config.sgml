@@ -8605,6 +8605,31 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-vacuum-skip-index-age" xreflabel="vacuum_skip_index_age">
+      <term><varname>vacuum_skip_index_age</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>vacuum_skip_index_age</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        <command>VACUUM</command> skips index cleanup if the table's
+        <structname>pg_class</structname>.<structfield>relfrozenxid</structfield> field has reached
+        the age specified by this setting.   A <command>VACUUM</command> with skipping
+        index cleanup hurries finishing <command>VACUUM</command> to advance
+        <structname>pg_class</structname>.<structfield>relfrozenxid</structfield>
+        as quickly as possible.  This is an equivalent behavior to setting
+        <literal>OFF</literal> to <literal>INDEX_CLEANUP</literal> option except that
+        this parameters skips index cleanup even in the middle of vacuum operation.
+        The default is 1.8 billion transactions. Although users can set this value
+        anywhere from zero to 2.1 billion, <command>VACUUM</command> will silently
+        adjust the effective value more than 105% of
+        <xref linkend="guc-autovacuum-freeze-max-age"/>, so that only anti-wraparound
+        autovacuums and aggressive scans have a chance to skip index cleanup.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-vacuum-multixact-freeze-table-age" xreflabel="vacuum_multixact_freeze_table_age">
       <term><varname>vacuum_multixact_freeze_table_age</varname> (<type>integer</type>)
       <indexterm>
@@ -8647,6 +8672,32 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         so that there is not an unreasonably short time between forced
         autovacuums.
         For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-multixact-vacuum-skip-index-age" xreflabel="vacuum_multixact_skip_index_age">
+      <term><varname>vacuum_multixact_skip_index_age</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>vacuum_multixact_skip_index_age</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        <command>VACUUM</command> skips index cleanup if the table's
+        <structname>pg_class</structname>.<structfield>relminmxid</structfield> field has reached
+        the age specified by this setting.   A <command>VACUUM</command> with skipping
+        index cleanup hurries finishing <command>VACUUM</command> to advance
+        <structname>pg_class</structname>.<structfield>relminmxid</structfield>
+        as quickly as possible.  This is an equivalent behavior to setting
+        <literal>OFF</literal> to <literal>INDEX_CLEANUP</literal> option except that
+        this parameters skips index cleanup even in the middle of vacuum operation.
+        The default is 1.8 billion multixacts. Although users can set this value
+        anywhere from zero to 2.1 billion, <command>VACUUM</command> will silently
+        adjust the effective value more than 105% of
+        <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>, so that only
+        anti-wraparound autovacuums and aggressive scans have a chance to skip
+        index cleanup.
        </para>
       </listitem>
      </varlistentry>
