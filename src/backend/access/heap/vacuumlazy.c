@@ -1708,6 +1708,15 @@ retry:
 	prunestate->visibility_cutoff_xid = InvalidTransactionId;
 	nfrozen = 0;
 
+#ifdef DEBUG
+
+	/*
+	 * Enable this to debug the retry logic -- it's actually quite hard to hit
+	 * even with this artificial delay
+	 */
+	pg_usleep(10000);
+#endif
+
 	for (offnum = FirstOffsetNumber;
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
