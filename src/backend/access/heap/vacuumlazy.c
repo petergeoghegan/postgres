@@ -2092,6 +2092,29 @@ retry:
 	}
 
 	/*
+	 * The logic for maintaining the all_visible and all_frozen flags for the
+	 * page is duplicated inside heap_page_is_all_visible().  Assert that
+	 * we're in agreement with what it says now.
+	 *
+	 * Note that all_frozen value does not matter when !all_visible.
+	 */
+#ifdef USE_ASSERT_CHECKING
+	if (pageprunestate->all_visible)
+	{
+		TransactionId cutoff;
+		bool		  all_frozen;
+
+		if (!heap_page_is_all_visible(vacrel, buf, &cutoff, &all_frozen))
+			Assert(false);
+
+		Assert(lpdead_items == 0);
+		Assert(pageprunestate->all_frozen == all_frozen);
+		Assert(cutoff == FrozenTransactionId ||
+			   cutoff == pagevmstate->visibility_cutoff_xid);
+	}
+#endif
+
+	/*
 	 * Now save details of the LP_DEAD items from the page in the dead_tuples
 	 * array.  Also record that page has dead items in per-page prunestate.
 	 */
@@ -2124,28 +2147,6 @@ retry:
 		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
 									 dead_tuples->num_tuples);
 	}
-
-	/*
-	 * The logic for maintaining the all_visible and all_frozen flags for the
-	 * page is duplicated inside heap_page_is_all_visible().  Assert that
-	 * we're in agreement with what it says now.
-	 *
-	 * Note that all_frozen value does not matter when !all_visible.
-	 */
-#ifdef USE_ASSERT_CHECKING
-	if (pageprunestate->all_visible)
-	{
-		TransactionId cutoff;
-		bool		  all_frozen;
-
-		if (!heap_page_is_all_visible(vacrel, buf, &cutoff, &all_frozen))
-			Assert(false);
-
-		Assert(pageprunestate->all_frozen == all_frozen);
-		Assert(cutoff == FrozenTransactionId ||
-			   cutoff == pagevmstate->visibility_cutoff_xid);
-	}
-#endif
 }
 
 /*
