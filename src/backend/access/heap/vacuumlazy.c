@@ -1805,8 +1805,11 @@ retry:
 	/*
 	 * Prune all HOT-update chains in this page.
 	 *
-	 * We count tuples removed by the pruning step as removed by VACUUM
-	 * (existing LP_DEAD line pointers don't count).
+	 * We count tuples removed by the pruning step as tuples_deleted.  This
+	 * can be thought of as tuples deleted from the table.  lpdead_items
+	 * counts the number of LP_DEAD items that remain, regardless of when or
+	 * how they were pruned.  This can be thought of as tuples we locate and
+	 * delete from indexes later on.
 	 */
 	tuples_deleted = heap_page_prune(onerel, buf, vistest,
 									 InvalidTransactionId, 0, false,
