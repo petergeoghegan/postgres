@@ -2139,6 +2139,29 @@ retry:
 		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
 									 dead_tuples->num_tuples);
 	}
+
+#ifdef USE_ASSERT_CHECKING
+	if (pageprunestate->all_visible)
+	{
+		TransactionId cutoff;
+		bool		  all_frozen;
+
+		if (!heap_page_is_all_visible(vacrel, buf, &cutoff, &all_frozen))
+			Assert(false);
+
+		Assert(pageprunestate->all_frozen == all_frozen);
+
+		if (pagevmstate->visibility_cutoff_xid != cutoff)
+		{
+			elog(WARNING, "pagevmstate->visibility_cutoff_xid %u, cutoff %u",
+				 pagevmstate->visibility_cutoff_xid, cutoff);
+		}
+#if 0
+		Assert(all_frozen ||
+			   TransactionIdEquals(pagevmstate->visibility_cutoff_xid, cutoff));
+#endif
+	}
+#endif
 }
 
 /*
