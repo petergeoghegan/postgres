@@ -564,7 +564,7 @@ extern bool LockHeldByMe(const LOCKTAG *locktag, LOCKMODE lockmode);
 extern HTAB *GetLockMethodLocalHash(void);
 #endif
 extern bool LockHasWaiters(const LOCKTAG *locktag,
-						   LOCKMODE lockmode, LOCKMASK waitMask);
+						   LOCKMODE lockmode, bool sessionLock);
 extern VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
 											  LOCKMODE lockmode, int *countp);
 extern void AtPrepare_Locks(void);
