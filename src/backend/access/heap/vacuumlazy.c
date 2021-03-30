@@ -2151,14 +2151,14 @@ retry:
 
 		Assert(pageprunestate->all_frozen == all_frozen);
 
+		Assert(TransactionIdFollowsOrEquals(pagevmstate->visibility_cutoff_xid,
+											cutoff));
+#if 0
 		if (pagevmstate->visibility_cutoff_xid != cutoff)
 		{
 			elog(WARNING, "pagevmstate->visibility_cutoff_xid %u, cutoff %u",
 				 pagevmstate->visibility_cutoff_xid, cutoff);
 		}
-#if 0
-		Assert(all_frozen ||
-			   TransactionIdEquals(pagevmstate->visibility_cutoff_xid, cutoff));
 #endif
 	}
 #endif
