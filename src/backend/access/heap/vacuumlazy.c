@@ -2691,7 +2691,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 		toff = ItemPointerGetOffsetNumber(&dead_tuples->itemptrs[tupindex]);
 		itemid = PageGetItemId(page, toff);
 
-		Assert(ItemIdIsDead(itemid));
+		Assert(ItemIdIsDead(itemid) && !ItemIdHasStorage(itemid));
 		ItemIdSetUnused(itemid);
 		unused[uncnt++] = toff;
 	}

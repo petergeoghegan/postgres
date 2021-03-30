@@ -8542,7 +8542,7 @@ heap_xlog_vacuum(XLogReaderState *record)
 			OffsetNumber off = *offnum++;
 			ItemId		lp = PageGetItemId(page, off);
 
-			Assert(ItemIdIsDead(lp));
+			Assert(ItemIdIsDead(lp) && !ItemIdHasStorage(lp));
 			ItemIdSetUnused(lp);
 		}
 
