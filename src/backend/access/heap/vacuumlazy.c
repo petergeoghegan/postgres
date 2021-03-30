@@ -1844,7 +1844,7 @@ retry:
 		vacrel->offnum = offnum;
 		itemid = PageGetItemId(page, offnum);
 
-		/* Unused items require no processing, but we count 'em */
+		/* Unused items only need to be counted for log message */
 		if (!ItemIdIsUsed(itemid))
 		{
 			nunused++;
@@ -1859,17 +1859,7 @@ retry:
 			continue;
 		}
 
-		/*
-		 * LP_DEAD line pointers are to be vacuumed normally; but we don't
-		 * count them in tuples_deleted, else we'd be double-counting (at
-		 * least in the common case where heap_page_prune() just freed up a
-		 * non-HOT tuple).
-		 *
-		 * We are usually able to log lpdead_items separately, though, which
-		 * shows a count of precisely these dead items -- items that we'll
-		 * delete from indexes.  It's treated as index-related
-		 * instrumentation.
-		 */
+		/* LP_DEAD items are processed outside of the loop */
 		if (ItemIdIsDead(itemid))
 		{
 			deadoffsets[lpdead_items++] = offnum;
@@ -1964,8 +1954,6 @@ retry:
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
 
 				/*
-				 * This is an expected case during concurrent vacuum.
-				 *
 				 * We do not count these rows as live, because we expect the
 				 * inserting transaction to update the counters at commit, and
 				 * we assume that will happen only after we report our
@@ -2092,13 +2080,19 @@ retry:
 	}
 
 	/*
-	 * The logic for maintaining the all_visible and all_frozen flags for the
-	 * page is duplicated inside heap_page_is_all_visible().  Assert that
-	 * we're in agreement with what it says now.
+	 * The second pass over the heap can also set visibility map bits in the
+	 * same way as we do.  This is important when the table frequently has a
+	 * few old LP_DEAD items left on each page by the time we get to it
+	 * (typically because past opportunistic pruning operations freed some
+	 * non-HOT tuples).  It calls heap_page_is_all_visible() to determine
+	 * all_visible and all_frozen for the page -- this is a specialized
+	 * version of the logic from this function.
 	 *
-	 * Note that all_frozen value does not matter when !all_visible.
+	 * Now that we've finished pruning and freezing, make sure that we're in
+	 * total agreement with heap_page_is_all_visible() using an assertion.
 	 */
 #ifdef USE_ASSERT_CHECKING
+	/* Note that all_frozen value does not matter when !all_visible */
 	if (pageprunestate->all_visible)
 	{
 		TransactionId cutoff;
@@ -2109,6 +2103,13 @@ retry:
 
 		Assert(lpdead_items == 0);
 		Assert(pageprunestate->all_frozen == all_frozen);
+
+		/*
+		 * It's possible that we froze tuples and made the page's XID cutoff
+		 * (for recovery conflict purposes) FrozenTransactionId.  This is okay
+		 * because visibility_cutoff_xid will be logged by our caller in a
+		 * moment.
+		 */
 		Assert(cutoff == FrozenTransactionId ||
 			   cutoff == pagevmstate->visibility_cutoff_xid);
 	}
