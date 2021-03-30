@@ -1996,7 +1996,7 @@ retry:
 		 */
 		tupoffsets[num_tuples++] = offnum;
 		pageprunestate->hastup = true;
-		/* Consider pageprunestate->all_frozen later */
+		/* Consider pageprunestate->all_frozen below, during freezing */
 	}
 
 	/*
