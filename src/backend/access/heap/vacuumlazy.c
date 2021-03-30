@@ -2152,8 +2152,9 @@ retry:
 			Assert(false);
 
 		Assert(pageprunestate->all_frozen == all_frozen);
-		Assert(TransactionIdFollowsOrEquals(pagevmstate->visibility_cutoff_xid,
-											cutoff));
+		Assert(!TransactionIdIsNormal(cutoff) ||
+			   TransactionIdEquals(pagevmstate->visibility_cutoff_xid,
+								   cutoff));
 	}
 #endif
 }
