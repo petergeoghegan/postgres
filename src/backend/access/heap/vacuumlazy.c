@@ -410,7 +410,7 @@ static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							GlobalVisState *vistest,
 							LVPagePruneState *pageprunestate,
 							LVPageVisMapState *pagevmstate);
-static void lazy_vacuum(LVRelState *vacrel, bool onecall);
+static void lazy_vacuum(LVRelState *vacrel, bool onecall, bool aggressive);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
 													IndexBulkDeleteResult *istat,
@@ -1151,7 +1151,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			have_vacuumed_indexes = true;
 
 			/* Remove the collected garbage tuples from table and indexes */
-			lazy_vacuum(vacrel, false);
+			lazy_vacuum(vacrel, false, aggressive);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1411,7 +1411,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	Assert(vacrel->nindexes > 0 || dead_tuples->num_tuples == 0);
 	if (dead_tuples->num_tuples > 0)
-		lazy_vacuum(vacrel, !have_vacuumed_indexes);
+		lazy_vacuum(vacrel, !have_vacuumed_indexes, aggressive);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -2161,7 +2161,7 @@ retry:
  * reloption)
  */
 static void
-lazy_vacuum(LVRelState *vacrel, bool onecall)
+lazy_vacuum(LVRelState *vacrel, bool onecall, bool aggressive)
 {
 	bool		do_bypass_optimization;
 
@@ -2248,6 +2248,21 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 						100.0 * vacrel->lpdead_item_pages / vacrel->rel_pages,
 						(long long) vacrel->lpdead_items)));
 	}
+	else if (aggressive &&
+			 LockHasWaitersRelation(vacrel->onerel, ShareUpdateExclusiveLock))
+	{
+		vacrel->do_index_vacuuming = false;
+		vacrel->do_index_cleanup = false;
+		ereport(WARNING,
+				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" because of lock contention",
+						get_database_name(MyDatabaseId),
+						vacrel->relname,
+						vacrel->relname)));
+
+		/* Stop applying cost limits from this point on */
+		VacuumCostActive = false;
+		VacuumCostBalance = 0;
+	}
 	else if (lazy_vacuum_all_indexes(vacrel))
 	{
 		/*
@@ -2289,9 +2304,6 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		 * difference is that we don't warn the user in the INDEX_CLEANUP off
 		 * case, and we don't presume to stop applying a cost delay.
 		 */
-		Assert(vacrel->do_index_vacuuming);
-		Assert(vacrel->do_index_cleanup);
-
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
 		ereport(WARNING,

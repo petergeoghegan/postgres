@@ -630,7 +630,7 @@ GetLockMethodLocalHash(void)
  *		lock would wake up other processes waiting for it.
  */
 bool
-LockHasWaiters(const LOCKTAG *locktag, LOCKMODE lockmode, bool sessionLock)
+LockHasWaiters(const LOCKTAG *locktag, LOCKMODE lockmode, LOCKMASK waitMask)
 {
 	LOCKMETHODID lockmethodid = locktag->locktag_lockmethodid;
 	LockMethod	lockMethodTable;
@@ -710,7 +710,10 @@ LockHasWaiters(const LOCKTAG *locktag, LOCKMODE lockmode, bool sessionLock)
 	 * Do the checking.
 	 */
 	if ((lockMethodTable->conflictTab[lockmode] & lock->waitMask) != 0)
-		hasWaiters = true;
+	{
+		if (lock->waitMask > 16)
+			hasWaiters = true;
+	}
 
 	LWLockRelease(partitionLock);
 

@@ -345,12 +345,18 @@ bool
 LockHasWaitersRelation(Relation relation, LOCKMODE lockmode)
 {
 	LOCKTAG		tag;
+	LOCKMASK waitMask = 0;
 
 	SET_LOCKTAG_RELATION(tag,
 						 relation->rd_lockInfo.lockRelId.dbId,
 						 relation->rd_lockInfo.lockRelId.relId);
 
-	return LockHasWaiters(&tag, lockmode, false);
+	waitMask |= LOCKBIT_ON(ShareLock);
+	//waitMask |= LOCKBIT_ON(ShareRowExclusiveLock); waitMask |=
+	//LOCKBIT_ON(ExclusiveLock); //waitMask |=
+	//LOCKBIT_ON(AccessExclusiveLock);
+
+	return LockHasWaiters(&tag, lockmode, waitMask);
 }
 
 /*
