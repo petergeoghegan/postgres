@@ -1843,10 +1843,6 @@ retry:
 	pg_usleep(10000);
 #endif
 
-	/*
-	 * Note: If you change anything in the loop below, also look at
-	 * heap_page_is_all_visible to see if that needs to be changed.
-	 */
 	for (offnum = FirstOffsetNumber;
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
@@ -2114,7 +2110,6 @@ retry:
 		LVDeadTuples *dead_tuples = vacrel->dead_tuples;
 		ItemPointerData tmp;
 
-		/* Note that all_frozen value does not matter when !all_visible */
 		Assert(!pageprunestate->all_visible);
 		Assert(pageprunestate->has_lpdead_items);
 
@@ -2140,6 +2135,13 @@ retry:
 									 dead_tuples->num_tuples);
 	}
 
+	/*
+	 * The logic for maintaining the all_visible and all_frozen flags for the
+	 * page is duplicated inside heap_page_is_all_visible().  Assert that
+	 * we're in agreement with what it says now.
+	 *
+	 * Note that all_frozen value does not matter when !all_visible.
+	 */
 #ifdef USE_ASSERT_CHECKING
 	if (pageprunestate->all_visible)
 	{
@@ -2150,7 +2152,6 @@ retry:
 			Assert(false);
 
 		Assert(pageprunestate->all_frozen == all_frozen);
-
 		Assert(TransactionIdFollowsOrEquals(pagevmstate->visibility_cutoff_xid,
 											cutoff));
 	}
