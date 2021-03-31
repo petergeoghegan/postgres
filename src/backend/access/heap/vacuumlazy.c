@@ -376,7 +376,7 @@ typedef struct LVPageVisMapState
  */
 typedef struct LVPagePruneState
 {
-	bool		hastup;			/* Page is truncatable? */
+	bool		hastup;			/* Page has non-LP_UNUSED items? */
 	bool		has_lpdead_items;	/* includes existing LP_DEAD items */
 	bool		all_visible;	/* Every item visible to all? */
 	bool		all_frozen;		/* provided all_visible is also true */
