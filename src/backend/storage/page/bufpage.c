@@ -788,6 +788,12 @@ PageRepairFragmentation(Page page)
 		nunused = nunused - (nline - lastUsed);
 	}
 
+#ifdef CLOBBER_FREED_MEMORY
+	memset(((char *) page) + ((PageHeader) page)->pd_lower,
+		0x7f,
+		((PageHeader) page)->pd_upper - ((PageHeader) page)->pd_upper);
+#endif
+
 	/* Set hint bit for PageAddItemExtended */
 	if (nunused > 0)
 		PageSetHasFreeLinePointers(page);
