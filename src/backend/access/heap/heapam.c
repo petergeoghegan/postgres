@@ -635,8 +635,15 @@ heapgettup(HeapScanDesc scan,
 		}
 		else
 		{
+			/* 
+			 * The previous returned tuple may have been vacuumed since the
+			 * previous scan when we use a non-MVCC snapshot, so we must
+			 * re-establish the lineoff <= PageGetMaxOffsetNumber(dp)
+			 * invariant
+			 */
 			lineoff =			/* previous offnum */
-				OffsetNumberPrev(ItemPointerGetOffsetNumber(&(tuple->t_self)));
+				Min(lines,
+					OffsetNumberPrev(ItemPointerGetOffsetNumber(&(tuple->t_self))));
 		}
 		/* page and lineoff now reference the physically previous tid */
 
