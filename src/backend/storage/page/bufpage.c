@@ -250,8 +250,17 @@ PageAddItemExtended(Page page,
 		/* if no free slot, we'll put it at limit (1st open slot) */
 		if (PageHasFreeLinePointers(phdr))
 		{
-			/* Look for "recyclable" (unused) ItemId */
-			for (offsetNumber = 1; offsetNumber < limit; offsetNumber++)
+			/*
+			 * Scan line pointer array to locate a "recyclable" (unused)
+			 * ItemId.
+			 *
+			 * Always use earlier items first.  PageTruncateLinePointerArray
+			 * can only truncate unused items when they appear as a contiguous
+			 * group at the end of the line pointer array.
+			 */
+			for (offsetNumber = FirstOffsetNumber;
+				 offsetNumber < limit;		/* limit is maxoff+1 */
+				 offsetNumber++)
 			{
 				itemId = PageGetItemId(phdr, offsetNumber);
 
@@ -676,9 +685,10 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * PageRepairFragmentation
  *
  * Frees fragmented space on a page.
- * It doesn't remove unused line pointers! Please don't change this.
  *
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
+ * It never removes unused line pointers, though PageTruncateLinePointerArray
+ * will do so at the point that VACUUM sets LP_DEAD items to LP_UNUSED.
  *
  * Caller had better have a super-exclusive lock on page's buffer.  As a side
  * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
@@ -779,6 +789,97 @@ PageRepairFragmentation(Page page)
 
 	/* Set hint bit for PageAddItemExtended */
 	if (nunused > 0)
+		PageSetHasFreeLinePointers(page);
+	else
+		PageClearHasFreeLinePointers(page);
+}
+
+/*
+ * PageTruncateLinePointerArray
+ *
+ * Removes unused line pointers at the end of the line pointer array.
+ *
+ * This routine is usable for heap pages only.  It is called by VACUUM during
+ * its second pass over the heap.  We expect at least one LP_UNUSED line
+ * pointer on the page (if VACUUM didn't have an LP_DEAD item on the page that
+ * it just set to LP_UNUSED then it should not call here).
+ *
+ * We avoid truncating the line pointer array to 0 items, if necessary by
+ * leaving behind a single remaining LP_UNUSED item.
+ *
+ * Caller can have either an exclusive lock or a super-exclusive lock on
+ * page's buffer.  The page's PD_HAS_FREE_LINES hint bit will be set or unset
+ * based on whether or not we leave behind any remaining LP_UNUSED items.
+ */
+void
+PageTruncateLinePointerArray(Page page)
+{
+	PageHeader	phdr = (PageHeader) page;
+	bool		countdone = false,
+				sethint = false;
+	int			nunusedend = 0;
+
+	/* Scan line pointer array back-to-front */
+	for (int i = PageGetMaxOffsetNumber(page); i >= FirstOffsetNumber; i--)
+	{
+		ItemId		lp = PageGetItemId(page, i);
+
+		if (!countdone && i > FirstOffsetNumber)
+		{
+			/*
+			 * Still determining which line pointers from the end of the array
+			 * will be truncated away.  Either count another line pointer as
+			 * safe to truncate, or notice that it's not safe to truncate
+			 * additional line pointers (stop counting line pointers).
+			 */
+			if (!ItemIdIsUsed(lp))
+				nunusedend++;
+			else
+				countdone = true;
+		}
+		else
+		{
+			/*
+			 * Once we've stopped counting we still need to figure out if
+			 * there are any remaining LP_UNUSED line pointers somewhere more
+			 * towards the front of the array.
+			 */
+			if (!ItemIdIsUsed(lp))
+			{
+				/*
+				 * This is an unused line pointer that we won't be truncating
+				 * away -- so there is at least one.  Set hint on page.
+				 */
+				sethint = true;
+				break;
+			}
+		}
+	}
+
+	if (nunusedend > 0)
+	{
+		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
+
+#ifdef CLOBBER_FREED_MEMORY
+		{
+			ItemIdData selfredirect;
+			int		   firstinfreedspace = PageGetMaxOffsetNumber(page) + 1;
+
+			for (int i = 0; i < nunusedend; i++)
+			{
+				ItemId p = ((ItemId) (page + phdr->pd_lower)) + i;
+
+				ItemIdSetRedirect(&selfredirect, firstinfreedspace + i);
+				*p = selfredirect;
+			}
+		}
+#endif
+	}
+	else
+		Assert(sethint);
+
+	/* Set hint bit for PageAddItemExtended */
+	if (sethint)
 		PageSetHasFreeLinePointers(page);
 	else
 		PageClearHasFreeLinePointers(page);
