@@ -676,7 +676,11 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * PageRepairFragmentation
  *
  * Frees fragmented space on a page.
- * It doesn't remove unused line pointers! Please don't change this.
+ * It doesn't remove intermediate unused line pointers (that would mean
+ * moving ItemIds, and that would imply invalidating indexed values), but it
+ * does truncate the page->pd_linp array to the last unused line pointer, so
+ * that this space may also be reused for data, instead of only for line
+ * pointers.
  *
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
  *
@@ -697,6 +701,7 @@ PageRepairFragmentation(Page page)
 	int			nline,
 				nstorage,
 				nunused;
+	OffsetNumber lastUsed = InvalidOffsetNumber;
 	int			i;
 	Size		totallen;
 	bool		presorted = true;	/* For now */
@@ -730,6 +735,7 @@ PageRepairFragmentation(Page page)
 		lp = PageGetItemId(page, i);
 		if (ItemIdIsUsed(lp))
 		{
+			lastUsed = i;
 			if (ItemIdHasStorage(lp))
 			{
 				itemidptr->offsetindex = i - 1;
@@ -775,6 +781,13 @@ PageRepairFragmentation(Page page)
 							(unsigned int) totallen, pd_special - pd_lower)));
 
 		compactify_tuples(itemidbase, nstorage, page, presorted);
+	}
+
+	if (lastUsed != nline)
+	{
+		((PageHeader) page)->pd_lower =
+				SizeOfPageHeaderData + (sizeof(ItemIdData) * lastUsed);
+		nunused = nunused - (nline - lastUsed);
 	}
 
 	/* Set hint bit for PageAddItemExtended */
