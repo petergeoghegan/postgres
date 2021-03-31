@@ -676,9 +676,10 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * PageRepairFragmentation
  *
  * Frees fragmented space on a page.
- * It doesn't remove unused line pointers! Please don't change this.
  *
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
+ * It never removes unused line pointers, though PageTruncateLinePointerArray
+ * will do so at the point that VACUUM sets LP_DEAD items to LP_UNUSED.
  *
  * Caller had better have a super-exclusive lock on page's buffer.  As a side
  * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
@@ -779,6 +780,85 @@ PageRepairFragmentation(Page page)
 
 	/* Set hint bit for PageAddItemExtended */
 	if (nunused > 0)
+		PageSetHasFreeLinePointers(page);
+	else
+		PageClearHasFreeLinePointers(page);
+}
+
+/*
+ * PageTruncateLinePointerArray
+ *
+ * Removes unused line pointers at the end of the line pointer array.
+ *
+ * This routine is usable for heap pages only.  It is called by VACUUM during
+ * its second pass over the heap.  We expect that there will be at least one
+ * LP_UNUSED line pointer on the page (if VACUUM didn't have an LP_DEAD item
+ * to set LP_UNUSED on the page then it wouldn't have visited the page).
+ *
+ * Caller can have either an exclusive lock or a super-exclusive lock on
+ * page's buffer.  As a side effect the page's PD_HAS_FREE_LINES hint bit will
+ * be set as needed.
+ */
+void
+PageTruncateLinePointerArray(Page page)
+{
+	PageHeader	phdr = (PageHeader) page;
+	ItemId		lp;
+	bool		truncating = true;
+	bool		sethint = false;
+	int			nline,
+				nunusedend;
+
+	/*
+	 * Scan original line pointer array backwards to determine how to far to
+	 * truncate to.  Note that we avoid truncating the line pointer to 0 items
+	 * in all cases.
+	 */
+	nline = PageGetMaxOffsetNumber(page);
+	nunusedend = 0;
+
+	for (int i = nline; i >= FirstOffsetNumber; i--)
+	{
+		lp = PageGetItemId(page, i);
+
+		if (truncating && i > FirstOffsetNumber)
+		{
+			/*
+			 * Still counting which line pointers from the end of the array
+			 * can be truncated away.
+			 *
+			 * If this is another LP_UNUSED line pointer (or the first), count
+			 * it among those we'll truncate.  Otherwise stop considering
+			 * further LP_UNUSED line pointers for truncation, but continue
+			 * with scan of array in any case.
+			 */
+			if (!ItemIdIsUsed(lp))
+				nunusedend++;
+			else
+				truncating = false;
+		}
+		else
+		{
+			if (!ItemIdIsUsed(lp))
+			{
+				/*
+				 * This is an unused line pointer that we won't be truncating
+				 * away -- so there is at least one.  Set hint on page.
+				 */
+				sethint = true;
+				break;
+			}
+		}
+	}
+
+	Assert(nline > nunusedend);
+	if (nunusedend > 0)
+		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
+	else
+		Assert(sethint);
+
+	/* Set hint bit for PageAddItemExtended */
+	if (sethint)
 		PageSetHasFreeLinePointers(page);
 	else
 		PageClearHasFreeLinePointers(page);
