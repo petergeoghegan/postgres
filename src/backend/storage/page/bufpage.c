@@ -676,7 +676,7 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * PageRepairFragmentation
  *
  * Frees fragmented space on a page.
- * It doesn't remove unused line pointers! Please don't change this.
+ * It doesn't remove unused line pointers -- only PageShrinkEndUnused can.
  *
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
  *
@@ -782,6 +782,61 @@ PageRepairFragmentation(Page page)
 		PageSetHasFreeLinePointers(page);
 	else
 		PageClearHasFreeLinePointers(page);
+}
+
+/*
+ * PageShrinkEndUnused
+ *
+ * Removes unused line pointers at the end of the line pointer array.
+ *
+ * This routine is usable for heap pages only.
+ *
+ * Caller can have either an exclusive lock or a super-exclusive lock on
+ * page's buffer.  As a side effect the page's PD_HAS_FREE_LINES hint bit will
+ * be set as needed.
+ */
+void
+PageShrinkEndUnused(Page page, int nnewlyunused)
+{
+	PageHeader	phdr = (PageHeader) page;
+	ItemId		lp;
+	int			nline,
+				nunusedend;
+
+	Assert(nnewlyunused > 0);
+
+	/*
+	 * Run through the line pointer array and collect data about live items.
+	 */
+	nline = PageGetMaxOffsetNumber(page);
+	nunusedend = 0;
+
+	/* Leave 1 LP_UNUSED item if the page would be empty otherwise */
+	for (int i = nline; i > FirstOffsetNumber; i--)
+	{
+		lp = PageGetItemId(page, i);
+		if (ItemIdIsUsed(lp))
+			break;
+
+		nunusedend++;
+	}
+
+#if 0
+	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, nnewlyunused %d",
+		 nline, nline - nunusedend, nunusedend, nnewlyunused);
+#endif
+	Assert(nline > nunusedend);
+	if (nunusedend > 0)
+		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
+
+	/*
+	 * Set hint bit for PageAddItemExtended when it's still necessary.  Don't
+	 * unset hint, though, because it might already be correctly set.
+	 *
+	 * XXX: Maybe always set this, to be on the safe side?
+	 */
+	if (nunusedend < nnewlyunused)
+		PageSetHasFreeLinePointers(page);
 }
 
 /*
