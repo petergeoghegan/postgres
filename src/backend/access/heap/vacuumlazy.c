@@ -1391,8 +1391,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 */
 			if (blkno - next_fsm_block_to_vacuum >= VACUUM_FSM_EVERY_PAGES)
 			{
-				FreeSpaceMapVacuumRange(vacrel->onerel, next_fsm_block_to_vacuum,
-										blkno);
+				FreeSpaceMapVacuumRange(vacrel->onerel,
+										next_fsm_block_to_vacuum, blkno);
 				next_fsm_block_to_vacuum = blkno;
 				should_speedup_failsafe(vacrel);
 			}
