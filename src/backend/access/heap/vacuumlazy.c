@@ -370,9 +370,15 @@ typedef struct LVPagePruneState
 {
 	bool		hastup;			/* Page is truncatable? */
 	bool		has_lpdead_items;	/* includes existing LP_DEAD items */
-	bool		all_visible;	/* Every item visible to all? */
-	bool		all_frozen;		/* provided all_visible is also true */
-	TransactionId visibility_cutoff_xid;
+
+	/*
+	 * State describes the proper VM bit states to set for the page following
+	 * pruning and freezing.  all_visible implies !has_lpdead_items, but don't
+	 * trust all_frozen result unless all_visible is also set to true.
+	 */
+	bool		  all_visible; /* Every item visible to all? */
+	bool		  all_frozen;  /* provided all_visible is also true */
+	TransactionId visibility_cutoff_xid; /* For recovery conflicts */
 } LVPagePruneState;
 
 /* Struct for saving and restoring vacuum error information. */
@@ -1324,6 +1330,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 */
 		lazy_scan_prune(vacrel, buf, vistest, &prunestate);
 
+		/* Remember the location of the last page with nonremovable tuples */
+		if (prunestate.hastup)
+			vacrel->nonempty_pages = blkno + 1;
+
 		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
 		 * end of loop.  (Also performs extra single pass strategy steps in
@@ -1373,9 +1383,11 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
 
 			/*
-			 * Make sure we won't stop setting VM due to now-vacuumed LP_DEAD
-			 * items:
+			 * Our call to lazy_vacuum_heap_page() will have set LP_DEAD items
+			 * from pruning to LP_UNUSED already.  Pretend that prune state
+			 * saw no LP_DEAD items.
 			 */
+			prunestate.all_visible = false;
 			prunestate.has_lpdead_items = false;
 
 			/* Forget the now-vacuumed tuples */
@@ -1497,9 +1509,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 */
 
 		UnlockReleaseBuffer(buf);
-		/* Remember the location of the last page with nonremovable tuples */
-		if (prunestate.hastup)
-			vacrel->nonempty_pages = blkno + 1;
 		if (savefreespace)
 			RecordPageWithFreeSpace(vacrel->onerel, blkno, freespace);
 
@@ -1716,8 +1725,10 @@ lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
 				live_tuples,
 				nunused;
 	int			nredirect PG_USED_FOR_ASSERTS_ONLY;
+	int			nfrozen;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
-	OffsetNumber tupoffsets[MaxHeapTuplesPerPage];
+	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
+
 
 	blkno = BufferGetBlockNumber(buf);
 	page = BufferGetPage(buf);
@@ -1754,8 +1765,9 @@ retry:
 	prunestate->hastup = false;
 	prunestate->has_lpdead_items = false;
 	prunestate->all_visible = true;
-	/* Consider prunestate->all_frozen below, when executing freezing */
+	prunestate->all_frozen = true;
 	prunestate->visibility_cutoff_xid = InvalidTransactionId;
+	nfrozen = 0;
 
 #ifdef DEBUG
 
@@ -1770,6 +1782,8 @@ retry:
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
 	{
+		bool		tuple_totally_frozen;
+
 		/*
 		 * Set the offset number so that we can display it along with any
 		 * error that occurred while processing this tuple.
@@ -1911,11 +1925,31 @@ retry:
 		}
 
 		/*
-		 * Each non-removable tuple must be checked to see if it needs
-		 * freezing
+		 * Non-removable tuple (i.e. tuple with storage).
+		 *
+		 * Check tuple left behind after pruning to see if needs to be frozen
+		 * now.
 		 */
-		tupoffsets[num_tuples++] = offnum;
+		num_tuples++;
 		prunestate->hastup = true;
+		if (heap_prepare_freeze_tuple(tuple.t_data,
+									  vacrel->relfrozenxid,
+									  vacrel->relminmxid,
+									  vacrel->FreezeLimit,
+									  vacrel->MultiXactCutoff,
+									  &frozen[nfrozen],
+									  &tuple_totally_frozen))
+		{
+			/* Will execute freeze below */
+			frozen[nfrozen++].offset = offnum;
+		}
+
+		/*
+		 * If tuple is not frozen (and not about to become frozen) then caller
+		 * had better not go on to set this page's VM bit
+		 */
+		if (!tuple_totally_frozen)
+			prunestate->all_frozen = false;
 	}
 
 	/*
@@ -1934,74 +1968,44 @@ retry:
 	 * Consider the need to freeze any items with tuple storage from the page
 	 * first (arbitrary)
 	 */
-	prunestate->all_frozen = true;
-	if (num_tuples > 0)
+	if (nfrozen > 0)
 	{
-		xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
-		int					 nfrozen = 0;
-
 		Assert(prunestate->hastup);
 
-		for (int i = 0; i < num_tuples; i++)
-		{
-			OffsetNumber item = tupoffsets[i];
-			bool		tuple_totally_frozen;
+		/*
+		 * At least one tuple with storage needs to be frozen -- execute that
+		 * now.
+		 *
+		 * If we need to freeze any tuples we'll mark the buffer dirty, and
+		 * write a WAL record recording the changes.  We must log the changes
+		 * to be crash-safe against future truncation of CLOG.
+		 */
+		START_CRIT_SECTION();
 
-			ItemPointerSet(&(tuple.t_self), blkno, item);
-			itemid = PageGetItemId(page, item);
-			tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
-			Assert(ItemIdIsNormal(itemid) && ItemIdHasStorage(itemid));
-			tuple.t_len = ItemIdGetLength(itemid);
-			tuple.t_tableOid = RelationGetRelid(vacrel->onerel);
-			if (heap_prepare_freeze_tuple(tuple.t_data,
-										  vacrel->relfrozenxid,
-										  vacrel->relminmxid,
-										  vacrel->FreezeLimit,
-										  vacrel->MultiXactCutoff,
-										  &frozen[nfrozen],
-										  &tuple_totally_frozen))
-				frozen[nfrozen++].offset = item;
-			if (!tuple_totally_frozen)
-				prunestate->all_frozen = false;
+		MarkBufferDirty(buf);
+
+		/* execute collected freezes */
+		for (int i = 0; i < nfrozen; i++)
+		{
+			HeapTupleHeader htup;
+
+			itemid = PageGetItemId(page, frozen[i].offset);
+			htup = (HeapTupleHeader) PageGetItem(page, itemid);
+
+			heap_execute_freeze_tuple(htup, &frozen[i]);
 		}
 
-		if (nfrozen > 0)
+		/* Now WAL-log freezing if necessary */
+		if (RelationNeedsWAL(vacrel->onerel))
 		{
-			/*
-			 * At least one tuple with storage needs to be frozen -- execute
-			 * that now.
-			 *
-			 * If we need to freeze any tuples we'll mark the buffer dirty,
-			 * and write a WAL record recording the changes.  We must log the
-			 * changes to be crash-safe against future truncation of CLOG.
-			 */
-			START_CRIT_SECTION();
+			XLogRecPtr	recptr;
 
-			MarkBufferDirty(buf);
-
-			/* execute collected freezes */
-			for (int i = 0; i < nfrozen; i++)
-			{
-				HeapTupleHeader htup;
-
-				itemid = PageGetItemId(page, frozen[i].offset);
-				htup = (HeapTupleHeader) PageGetItem(page, itemid);
-
-				heap_execute_freeze_tuple(htup, &frozen[i]);
-			}
-
-			/* Now WAL-log freezing if necessary */
-			if (RelationNeedsWAL(vacrel->onerel))
-			{
-				XLogRecPtr	recptr;
-
-				recptr = log_heap_freeze(vacrel->onerel, buf, vacrel->FreezeLimit,
-										 frozen, nfrozen);
-				PageSetLSN(page, recptr);
-			}
-
-			END_CRIT_SECTION();
+			recptr = log_heap_freeze(vacrel->onerel, buf, vacrel->FreezeLimit,
+									 frozen, nfrozen);
+			PageSetLSN(page, recptr);
 		}
+
+		END_CRIT_SECTION();
 	}
 
 	/*
