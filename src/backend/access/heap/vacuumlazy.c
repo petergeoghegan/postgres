@@ -305,6 +305,7 @@ typedef struct LVRelState
 	/* Do index vacuuming/cleanup? */
 	bool		do_index_vacuuming;
 	bool		do_index_cleanup;
+	bool		do_failsafe_speedup;
 
 	/* Buffer access strategy and parallel state */
 	BufferAccessStrategy bstrategy;
@@ -429,7 +430,7 @@ static void lazy_vacuum_heap_rel(LVRelState *vacrel);
 static int	lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
 								  Buffer buffer, int tupindex, Buffer *vmbuffer);
 static void update_index_statistics(LVRelState *vacrel);
-static inline bool should_speedup_failsafe(LVRelState *vacrel);
+static bool should_speedup_failsafe(LVRelState *vacrel);
 static bool should_attempt_truncation(LVRelState *vacrel,
 									  VacuumParams *params);
 static void lazy_truncate_heap(LVRelState *vacrel);
@@ -564,6 +565,7 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 					 &vacrel->indrels);
 	vacrel->do_index_vacuuming = true;
 	vacrel->do_index_cleanup = true;
+	vacrel->do_failsafe_speedup = false;
 	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
 	{
 		vacrel->do_index_vacuuming = false;
@@ -766,23 +768,21 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 (long long) VacuumPageDirty);
 			if (vacrel->rel_pages > 0)
 			{
-				if (vacrel->do_index_vacuuming)
-				{
-					if (vacrel->num_index_scans == 0)
-						appendStringInfo(&buf, _("index scan not needed:"));
-					else
-						appendStringInfo(&buf, _("index scan needed:"));
-					msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
-				}
+				msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
+
+				if (vacrel->nindexes == 0 || (vacrel->do_index_vacuuming &&
+											  vacrel->num_index_scans == 0))
+					appendStringInfo(&buf, _("index scan not needed:"));
+				else if (vacrel->do_index_vacuuming && vacrel->num_index_scans > 0)
+					appendStringInfo(&buf, _("index scan needed:"));
 				else
 				{
-					Assert(vacrel->nindexes > 0);
+					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
 
-					if (vacrel->do_index_cleanup)
+					if (!vacrel->do_failsafe_speedup)
 						appendStringInfo(&buf, _("index scan bypassed:"));
 					else
 						appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
-					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
 				}
 				appendStringInfo(&buf, msgfmt,
 								 vacrel->lpdead_item_pages,
@@ -1349,15 +1349,18 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 			/*
 			 * Periodically do incremental FSM vacuuming to make newly-freed
-			 * space visible on upper FSM pages.  Note: although we've cleaned
-			 * the current block, we haven't yet updated its FSM entry (that
-			 * happens further down), so passing end == blkno is correct.
+			 * space visible on upper FSM pages.  This is also a convenient
+			 * point to check if we should do failsafe speedup to avoid
+			 * wraparound failures.  Note: although we've cleaned the current
+			 * block, we haven't yet updated its FSM entry (that happens
+			 * further down), so passing end == blkno is correct.
 			 */
 			if (blkno - next_fsm_block_to_vacuum >= VACUUM_FSM_EVERY_PAGES)
 			{
 				FreeSpaceMapVacuumRange(vacrel->onerel,
 										next_fsm_block_to_vacuum, blkno);
 				next_fsm_block_to_vacuum = blkno;
+				should_speedup_failsafe(vacrel);
 			}
 		}
 
@@ -2260,55 +2263,23 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		/*
 		 * We successfully completed a round of index vacuuming.  Do related
 		 * heap vacuuming now.
-		 *
-		 * There will be no calls to vacuum_xid_limit_emergency() to check for
-		 * issues with the age of the table's relfrozenxid unless and until
-		 * there is another call here -- heap vacuuming doesn't do that. This
-		 * should be okay, because the cost of a round of heap vacuuming is
-		 * much more linear.  Also, it has costs that are unaffected by the
-		 * number of indexes total.
 		 */
 		lazy_vacuum_heap_rel(vacrel);
 	}
 	else
 	{
 		/*
-		 * Emergency case:  We attempted index vacuuming, didn't finish
-		 * another round of index vacuuming (or one that reliably deleted
-		 * tuples from all of the table's indexes, at least).  This happens
-		 * when the table's relfrozenxid is too far in the past.
+		 * Emergency case.
+		 *
+		 * we attempted index vacuuming, but didn't finish a full round/full
+		 * index scan.  This happens when relfrozenxid or relminmxid is too
+		 * far in the past.
 		 *
 		 * From this point on the VACUUM operation will do no further index
 		 * vacuuming or heap vacuuming.  It will do any remaining pruning that
-		 * is required, plus other heap-related and relation-level maintenance
-		 * tasks.  But that's it.  We also disable a cost delay when a delay
-		 * is in effect.
-		 *
-		 * Note that we deliberately don't vary our behavior based on factors
-		 * like whether or not the ongoing VACUUM is aggressive.  If it's not
-		 * aggressive we probably won't be able to advance relfrozenxid during
-		 * this VACUUM.  If we can't, then an anti-wraparound VACUUM should
-		 * take place immediately after we finish up.  We should be able to
-		 * bypass all index vacuuming for the later anti-wraparound VACUUM.
+		 * may be required, plus other heap-related and relation-level
+		 * maintenance tasks.  But that's it.
 		 */
-		Assert(vacrel->do_index_vacuuming);
-		Assert(vacrel->do_index_cleanup);
-
-		vacrel->do_index_vacuuming = false;
-		vacrel->do_index_cleanup = false;
-		ereport(WARNING,
-				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",
-						get_database_name(MyDatabaseId),
-						vacrel->relname,
-						vacrel->relname,
-						vacrel->num_index_scans),
-				 errdetail("table's relfrozenxid or relminmxid is too far in the past"),
-				 errhint("Consider increasing configuration parameter \"maintenance_work_mem\" or \"autovacuum_work_mem\".\n"
-						 "You might also need to consider other ways for VACUUM to keep up with the allocation of transaction IDs.")));
-
-		/* Stop applying cost limits from this point on */
-		VacuumCostActive = false;
-		VacuumCostBalance = 0;
 	}
 
 	/*
@@ -2817,18 +2788,69 @@ update_index_statistics(LVRelState *vacrel)
 	}
 }
 
-static inline bool
+/*
+ * Determine if there is an unacceptable risk of wraparound failure due to the
+ * fact that the ongoing VACUUM is taking too long -- the table that is being
+ * vacuumed should not have a relfrozenxid or relminmxid that is too far in
+ * the past.
+ *
+ * Note that we deliberately don't vary our behavior based on factors like
+ * whether or not the ongoing VACUUM is aggressive.  If it's not aggressive we
+ * probably won't be able to advance relfrozenxid during this VACUUM.  If we
+ * can't, then an anti-wraparound VACUUM should take place immediately after
+ * we finish up.  We should be able to bypass all index vacuuming for the
+ * later anti-wraparound VACUUM.
+ *
+ * If the user-configurable threshold has been crossed then hurry things up:
+ * Stop applying any VACUUM cost delay going forward, and remember to skip any
+ * further index vacuuming (and heap vacuuming too, in the common case where
+ * table has indexes but not in one-pass VACUUM case).  Return true to inform
+ * caller of the emergency.  Otherwise return false.
+ *
+ * Caller is expected to call here before and after vacuuming each index in
+ * the case of two-pass VACUUM, or every BYPASS_EMERGENCY_MIN_PAGES blocks in
+ * the case of no-indexes/one-pass VACUUM.
+ */
+static bool
 should_speedup_failsafe(LVRelState *vacrel)
 {
+	/* Avoid calling vacuum_xid_limit_emergency() very frequently */
 	if (vacrel->num_index_scans == 0 &&
 		vacrel->rel_pages <= BYPASS_EMERGENCY_MIN_PAGES)
 		return false;
 
-	/* Precheck for XID wraparound emergencies */
+	/* Don't warn more than once per VACUUM */
+	if (vacrel->do_failsafe_speedup)
+		return true;
+
 	if (unlikely(vacuum_xid_limit_emergency(vacrel->relfrozenxid,
 											vacrel->relminmxid)))
 	{
-		/* Wraparound emergency -- don't even start an index scan */
+		/*
+		 * Wraparound emergency -- the table's relfrozenxid or relminmxid is
+		 * too far in the past
+		 */
+		Assert(vacrel->do_index_vacuuming);
+		Assert(vacrel->do_index_cleanup);
+
+		vacrel->do_index_vacuuming = false;
+		vacrel->do_index_cleanup = false;
+		vacrel->do_failsafe_speedup = true;
+
+		ereport(WARNING,
+				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",
+						get_database_name(MyDatabaseId),
+						vacrel->relname,
+						vacrel->relname,
+						vacrel->num_index_scans),
+				 errdetail("table's relfrozenxid or relminmxid is too far in the past"),
+				 errhint("Consider increasing configuration parameter \"maintenance_work_mem\" or \"autovacuum_work_mem\".\n"
+						 "You might also need to consider other ways for VACUUM to keep up with the allocation of transaction IDs.")));
+
+		/* Stop applying cost limits from this point on */
+		VacuumCostActive = false;
+		VacuumCostBalance = 0;
+
 		return true;
 	}
 
