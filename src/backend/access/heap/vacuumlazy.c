@@ -1754,7 +1754,7 @@ retry:
 	prunestate->hastup = false;
 	prunestate->has_lpdead_items = false;
 	prunestate->all_visible = true;
-	prunestate->all_frozen = true;
+	/* Consider prunestate->all_frozen below, when executing freezing */
 	prunestate->visibility_cutoff_xid = InvalidTransactionId;
 
 #ifdef DEBUG
@@ -1916,7 +1916,6 @@ retry:
 		 */
 		tupoffsets[num_tuples++] = offnum;
 		prunestate->hastup = true;
-		/* Consider prunestate->all_frozen below, during freezing */
 	}
 
 	/*
@@ -1931,17 +1930,11 @@ retry:
 	Assert(lpdead_items + num_tuples + nunused + nredirect == maxoff);
 	vacrel->offnum = InvalidOffsetNumber;
 
-	vacrel->tuples_deleted += tuples_deleted;
-	vacrel->lpdead_items += lpdead_items;
-	vacrel->new_dead_tuples += new_dead_tuples;
-	vacrel->num_tuples += num_tuples;
-	vacrel->live_tuples += live_tuples;
-	vacrel->nunused += nunused;
-
 	/*
 	 * Consider the need to freeze any items with tuple storage from the page
 	 * first (arbitrary)
 	 */
+	prunestate->all_frozen = true;
 	if (num_tuples > 0)
 	{
 		xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
@@ -2047,6 +2040,14 @@ retry:
 			   cutoff == prunestate->visibility_cutoff_xid);
 	}
 #endif
+
+	/* Add page-local counts to whole-VACUUM counts */
+	vacrel->tuples_deleted += tuples_deleted;
+	vacrel->lpdead_items += lpdead_items;
+	vacrel->new_dead_tuples += new_dead_tuples;
+	vacrel->num_tuples += num_tuples;
+	vacrel->live_tuples += live_tuples;
+	vacrel->nunused += nunused;
 
 	/*
 	 * Now save details of the LP_DEAD items from the page in the dead_tuples
