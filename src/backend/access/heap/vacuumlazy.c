@@ -394,7 +394,7 @@ static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelState *vacrel);
 static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							GlobalVisState *vistest,
-							LVPagePruneState *pageprunestate);
+							LVPagePruneState *prunestate);
 static void lazy_vacuum(LVRelState *vacrel, bool onecall);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -1001,7 +1001,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	{
 		Buffer		buf;
 		Page		page;
-		LVPagePruneState pageprunestate;
+		LVPagePruneState prunestate;
 		bool		savefreespace;
 		Size		freespace;
 		bool		all_visible_according_to_vm = false;
@@ -1322,7 +1322,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Also handles tuple freezing -- considers freezing XIDs from all
 		 * tuple headers left behind following pruning.
 		 */
-		lazy_scan_prune(vacrel, buf, vistest, &pageprunestate);
+		lazy_scan_prune(vacrel, buf, vistest, &prunestate);
 
 		/*
 		 * Step 7 for block: Set up details for saving free space in FSM at
@@ -1337,7 +1337,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 */
 		savefreespace = false;
 		freespace = 0;
-		if (vacrel->nindexes > 0 && pageprunestate.has_lpdead_items &&
+		if (vacrel->nindexes > 0 && prunestate.has_lpdead_items &&
 			vacrel->do_index_vacuuming)
 		{
 			/*
@@ -1357,7 +1357,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			freespace = PageGetHeapFreeSpace(page);
 		}
 
-		if (vacrel->nindexes == 0 && pageprunestate.has_lpdead_items)
+		if (vacrel->nindexes == 0 && prunestate.has_lpdead_items)
 		{
 			Assert(dead_tuples->num_tuples > 0);
 
@@ -1376,7 +1376,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * Make sure we won't stop setting VM due to now-vacuumed LP_DEAD
 			 * items:
 			 */
-			pageprunestate.has_lpdead_items = false;
+			prunestate.has_lpdead_items = false;
 
 			/* Forget the now-vacuumed tuples */
 			dead_tuples->num_tuples = 0;
@@ -1404,11 +1404,11 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
 		 */
-		if (pageprunestate.all_visible && !all_visible_according_to_vm)
+		if (prunestate.all_visible && !all_visible_according_to_vm)
 		{
 			uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
-			if (pageprunestate.all_frozen)
+			if (prunestate.all_frozen)
 				flags |= VISIBILITYMAP_ALL_FROZEN;
 
 			/*
@@ -1427,7 +1427,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			PageSetAllVisible(page);
 			MarkBufferDirty(buf);
 			visibilitymap_set(vacrel->onerel, blkno, buf, InvalidXLogRecPtr,
-							  vmbuffer, pageprunestate.visibility_cutoff_xid,
+							  vmbuffer, prunestate.visibility_cutoff_xid,
 							  flags);
 		}
 
@@ -1438,8 +1438,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * content lock, so we must recheck before jumping to the conclusion
 		 * that something bad has happened.
 		 */
-		else if (pageprunestate.visibility_cutoff_xid &&
-				 !PageIsAllVisible(page) &&
+		else if (prunestate.visibility_cutoff_xid && !PageIsAllVisible(page) &&
 				 VM_ALL_VISIBLE(vacrel->onerel, blkno, &vmbuffer))
 		{
 			elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
@@ -1463,7 +1462,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * There should never be dead tuples on a page with PD_ALL_VISIBLE
 		 * set, however.
 		 */
-		else if (PageIsAllVisible(page) && pageprunestate.has_lpdead_items)
+		else if (PageIsAllVisible(page) && prunestate.has_lpdead_items)
 		{
 			elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
 				 vacrel->relname, blkno);
@@ -1478,8 +1477,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * mark it as all-frozen.  Note that all_frozen is only valid if
 		 * all_visible is true, so we must check both.
 		 */
-		else if (all_visible_according_to_vm &&
-				 pageprunestate.all_visible && pageprunestate.all_frozen &&
+		else if (all_visible_according_to_vm && prunestate.all_visible &&
+				 prunestate.all_frozen &&
 				 !VM_ALL_FROZEN(vacrel->onerel, blkno, &vmbuffer))
 		{
 			/*
@@ -1499,7 +1498,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 		UnlockReleaseBuffer(buf);
 		/* Remember the location of the last page with nonremovable tuples */
-		if (pageprunestate.hastup)
+		if (prunestate.hastup)
 			vacrel->nonempty_pages = blkno + 1;
 		if (savefreespace)
 			RecordPageWithFreeSpace(vacrel->onerel, blkno, freespace);
@@ -1700,7 +1699,7 @@ lazy_check_needs_freeze(Buffer buf, bool *hastup, LVRelState *vacrel)
  */
 static void
 lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
-				LVPagePruneState *pageprunestate)
+				LVPagePruneState *prunestate)
 {
 	Relation	onerel = vacrel->onerel;
 	BlockNumber blkno;
@@ -1717,7 +1716,6 @@ lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
 				live_tuples,
 				nunused;
 	int			nredirect PG_USED_FOR_ASSERTS_ONLY;
-	TransactionId visibility_cutoff_xid;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	OffsetNumber tupoffsets[MaxHeapTuplesPerPage];
 
@@ -1735,7 +1733,6 @@ retry:
 	live_tuples = 0;
 	nunused = 0;
 	nredirect = 0;
-	visibility_cutoff_xid = InvalidTransactionId;
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1751,13 +1748,14 @@ retry:
 									 &vacrel->offnum);
 
 	/*
-	 * Now scan the page to collect vacuumable items and check for tuples
-	 * requiring freezing.
+	 * Now scan the page to collect LP_DEAD items and check for tuples
+	 * requiring freezing among remaining tuples with storage
 	 */
-	pageprunestate->hastup = false;
-	pageprunestate->has_lpdead_items = false;
-	pageprunestate->all_visible = true;
-	pageprunestate->all_frozen = true;
+	prunestate->hastup = false;
+	prunestate->has_lpdead_items = false;
+	prunestate->all_visible = true;
+	prunestate->all_frozen = true;
+	prunestate->visibility_cutoff_xid = InvalidTransactionId;
 
 #ifdef DEBUG
 
@@ -1789,7 +1787,7 @@ retry:
 		/* Redirect items mustn't be touched */
 		if (ItemIdIsRedirected(itemid))
 		{
-			pageprunestate->hastup = true;	/* page won't be truncatable */
+			prunestate->hastup = true;	/* page won't be truncatable */
 			nredirect++;
 			continue;
 		}
@@ -1798,8 +1796,8 @@ retry:
 		if (ItemIdIsDead(itemid))
 		{
 			deadoffsets[lpdead_items++] = offnum;
-			pageprunestate->all_visible = false;
-			pageprunestate->has_lpdead_items = true;
+			prunestate->all_visible = false;
+			prunestate->has_lpdead_items = true;
 			continue;
 		}
 
@@ -1849,13 +1847,13 @@ retry:
 				 * asynchronously. See SetHintBits for more info. Check that
 				 * the tuple is hinted xmin-committed because of that.
 				 */
-				if (pageprunestate->all_visible)
+				if (prunestate->all_visible)
 				{
 					TransactionId xmin;
 
 					if (!HeapTupleHeaderXminCommitted(tuple.t_data))
 					{
-						pageprunestate->all_visible = false;
+						prunestate->all_visible = false;
 						break;
 					}
 
@@ -1866,13 +1864,13 @@ retry:
 					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
 					if (!TransactionIdPrecedes(xmin, vacrel->OldestXmin))
 					{
-						pageprunestate->all_visible = false;
+						prunestate->all_visible = false;
 						break;
 					}
 
 					/* Track newest xmin on page. */
-					if (TransactionIdFollows(xmin, visibility_cutoff_xid))
-						visibility_cutoff_xid = xmin;
+					if (TransactionIdFollows(xmin, prunestate->visibility_cutoff_xid))
+						prunestate->visibility_cutoff_xid = xmin;
 				}
 				break;
 			case HEAPTUPLE_RECENTLY_DEAD:
@@ -1883,7 +1881,7 @@ retry:
 				 * pruning.)
 				 */
 				new_dead_tuples++;
-				pageprunestate->all_visible = false;
+				prunestate->all_visible = false;
 				break;
 			case HEAPTUPLE_INSERT_IN_PROGRESS:
 
@@ -1894,11 +1892,11 @@ retry:
 				 * results.  This assumption is a bit shaky, but it is what
 				 * acquire_sample_rows() does, so be consistent.
 				 */
-				pageprunestate->all_visible = false;
+				prunestate->all_visible = false;
 				break;
 			case HEAPTUPLE_DELETE_IN_PROGRESS:
 				/* This is an expected case during concurrent vacuum */
-				pageprunestate->all_visible = false;
+				prunestate->all_visible = false;
 
 				/*
 				 * Count such rows as live.  As above, we assume the deleting
@@ -1917,8 +1915,8 @@ retry:
 		 * freezing
 		 */
 		tupoffsets[num_tuples++] = offnum;
-		pageprunestate->hastup = true;
-		/* Consider pageprunestate->all_frozen below, during freezing */
+		prunestate->hastup = true;
+		/* Consider prunestate->all_frozen below, during freezing */
 	}
 
 	/*
@@ -1940,9 +1938,6 @@ retry:
 	vacrel->live_tuples += live_tuples;
 	vacrel->nunused += nunused;
 
-	/* Remember final visibility_cutoff_xid in returned state */
-	pageprunestate->visibility_cutoff_xid = visibility_cutoff_xid;
-
 	/*
 	 * Consider the need to freeze any items with tuple storage from the page
 	 * first (arbitrary)
@@ -1952,7 +1947,7 @@ retry:
 		xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 		int					 nfrozen = 0;
 
-		Assert(pageprunestate->hastup);
+		Assert(prunestate->hastup);
 
 		for (int i = 0; i < num_tuples; i++)
 		{
@@ -1974,7 +1969,7 @@ retry:
 										  &tuple_totally_frozen))
 				frozen[nfrozen++].offset = item;
 			if (!tuple_totally_frozen)
-				pageprunestate->all_frozen = false;
+				prunestate->all_frozen = false;
 		}
 
 		if (nfrozen > 0)
@@ -2031,7 +2026,7 @@ retry:
 	 */
 #ifdef USE_ASSERT_CHECKING
 	/* Note that all_frozen value does not matter when !all_visible */
-	if (pageprunestate->all_visible)
+	if (prunestate->all_visible)
 	{
 		TransactionId cutoff;
 		bool		  all_frozen;
@@ -2040,7 +2035,7 @@ retry:
 			Assert(false);
 
 		Assert(lpdead_items == 0);
-		Assert(pageprunestate->all_frozen == all_frozen);
+		Assert(prunestate->all_frozen == all_frozen);
 
 		/*
 		 * It's possible that we froze tuples and made the page's XID cutoff
@@ -2049,7 +2044,7 @@ retry:
 		 * moment.
 		 */
 		Assert(cutoff == FrozenTransactionId ||
-			   cutoff == visibility_cutoff_xid);
+			   cutoff == prunestate->visibility_cutoff_xid);
 	}
 #endif
 
@@ -2062,8 +2057,8 @@ retry:
 		LVDeadTuples *dead_tuples = vacrel->dead_tuples;
 		ItemPointerData tmp;
 
-		Assert(!pageprunestate->all_visible);
-		Assert(pageprunestate->has_lpdead_items);
+		Assert(!prunestate->all_visible);
+		Assert(prunestate->has_lpdead_items);
 
 		vacrel->lpdead_item_pages++;
 
