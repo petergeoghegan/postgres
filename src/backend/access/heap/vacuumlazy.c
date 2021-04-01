@@ -106,10 +106,13 @@
 /*
  * Threshold that controls whether we bypass index vacuuming and heap
  * vacuuming.  When we're under the threshold they're deemed unnecessary.
- * BYPASS_THRESHOLD_NPAGES is applied as a multiplier on the table's rel_pages
+ * BYPASS_THRESHOLD_PAGES is applied as a multiplier on the table's rel_pages
  * for those pages known to contain one or more LP_DEAD items.
  */
-#define BYPASS_THRESHOLD_NPAGES	0.02	/* i.e. 2% of rel_pages */
+#define BYPASS_THRESHOLD_PAGES	0.02	/* i.e. 2% of rel_pages */
+
+#define BYPASS_EMERGENCY_MIN_PAGES \
+	((BlockNumber) (((uint64) 4 * 1024 * 1024 * 1024) / BLCKSZ))
 
 /*
  * When a table has no indexes, vacuum the FSM after every 8GB, approximately
@@ -426,6 +429,7 @@ static void lazy_vacuum_heap_rel(LVRelState *vacrel);
 static int	lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
 								  Buffer buffer, int tupindex, Buffer *vmbuffer);
 static void update_index_statistics(LVRelState *vacrel);
+static inline bool should_speedup_failsafe(LVRelState *vacrel);
 static bool should_attempt_truncation(LVRelState *vacrel,
 									  VacuumParams *params);
 static void lazy_truncate_heap(LVRelState *vacrel);
@@ -2227,7 +2231,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
-		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_NPAGES;
+		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_PAGES;
 
 		do_bypass_optimization =
 				(vacrel->lpdead_item_pages < threshold &&
@@ -2340,7 +2344,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	Assert(MultiXactIdIsValid(vacrel->relminmxid));
 
 	/* Precheck for XID wraparound emergencies */
-	if (vacuum_xid_limit_emergency(vacrel->relfrozenxid, vacrel->relminmxid))
+	if (should_speedup_failsafe(vacrel))
 	{
 		/* Wraparound emergency -- don't even start an index scan */
 		return false;
@@ -2361,8 +2365,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 				lazy_vacuum_one_index(indrel, istat, vacrel->old_live_tuples,
 									  vacrel);
 
-			if (vacuum_xid_limit_emergency(vacrel->relfrozenxid,
-										   vacrel->relminmxid))
+			if (should_speedup_failsafe(vacrel))
 			{
 				/* Wraparound emergency -- end current index scan */
 				allindexes = false;
@@ -2812,6 +2815,24 @@ update_index_statistics(LVRelState *vacrel)
 							InvalidMultiXactId,
 							false);
 	}
+}
+
+static inline bool
+should_speedup_failsafe(LVRelState *vacrel)
+{
+	if (vacrel->num_index_scans == 0 &&
+		vacrel->rel_pages <= BYPASS_EMERGENCY_MIN_PAGES)
+		return false;
+
+	/* Precheck for XID wraparound emergencies */
+	if (unlikely(vacuum_xid_limit_emergency(vacrel->relfrozenxid,
+											vacrel->relminmxid)))
+	{
+		/* Wraparound emergency -- don't even start an index scan */
+		return true;
+	}
+
+	return false;
 }
 
 /*
