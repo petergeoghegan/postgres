@@ -1517,7 +1517,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		/* Finished all steps for block by here (at the latest) */
 	}
 
-	/* report that everything is scanned and vacuumed */
+	/* report that everything is now scanned */
 	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
 
 	/* Clear the block number information */
