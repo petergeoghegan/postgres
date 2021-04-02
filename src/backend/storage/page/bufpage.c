@@ -701,7 +701,7 @@ PageRepairFragmentation(Page page)
 	int			nline,
 				nstorage,
 				nunused;
-	OffsetNumber lastUsed = InvalidOffsetNumber;
+	OffsetNumber lastused = MaxOffsetNumber;
 	int			i;
 	Size		totallen;
 	bool		presorted = true;	/* For now */
@@ -735,7 +735,7 @@ PageRepairFragmentation(Page page)
 		lp = PageGetItemId(page, i);
 		if (ItemIdIsUsed(lp))
 		{
-			lastUsed = i;
+			lastused = i;
 			if (ItemIdHasStorage(lp))
 			{
 				itemidptr->offsetindex = i - 1;
@@ -783,11 +783,11 @@ PageRepairFragmentation(Page page)
 		compactify_tuples(itemidbase, nstorage, page, presorted);
 	}
 
-	if (lastUsed != nline)
+	if (nunused > 0 && lastused < nline)
 	{
 		((PageHeader) page)->pd_lower =
-				SizeOfPageHeaderData + (sizeof(ItemIdData) * lastUsed);
-		nunused = nunused - (nline - lastUsed);
+				SizeOfPageHeaderData + (sizeof(ItemIdData) * lastused);
+		nunused -= nline - lastused;
 	}
 
 	/* Set hint bit for PageAddItemExtended */
