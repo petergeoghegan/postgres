@@ -1398,7 +1398,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Handle setting visibility map bit based on what the VM said about
 		 * the page before pruning started and prunestate VM output fields.
 		 */
-		if (prunestate.all_visible && !all_visible_according_to_vm)
+		if (!all_visible_according_to_vm && prunestate.all_visible)
 		{
 			uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
@@ -1456,7 +1456,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * There should never be dead tuples on a page with PD_ALL_VISIBLE
 		 * set, however.
 		 */
-		else if (PageIsAllVisible(page) && prunestate.has_lpdead_items)
+		else if (prunestate.has_lpdead_items && PageIsAllVisible(page))
 		{
 			elog(WARNING, "page containing dead tuples is marked as all-visible in relation \"%s\" page %u",
 				 vacrel->relname, blkno);
@@ -1499,7 +1499,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * index vacuuming (and so must skip heap vacuuming).  This is
 			 * deemed okay because it only happens in emergencies, or when
 			 * there is very little free space anyway.  (Besides, we start
-			 * recording FSM here when it starts to happen.)
+			 * recording free space in FSM once we know that index vacuuming
+			 * was abandoned.)
 			 *
 			 * Note that the one-pass (no indexes) case is only supposed to
 			 * make it this far when there were no LP_DEAD items during
