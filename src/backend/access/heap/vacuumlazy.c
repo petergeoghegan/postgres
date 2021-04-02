@@ -1137,10 +1137,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * for any other reason).  When that happens we can miss out on
 			 * some of the free space that we originally expected to be able
 			 * to pick up within lazy_vacuum_heap_rel().
-			 *
-			 * We do at least start saving free space eagerly from this point
-			 * on should this happen.  That is, we set 'savefreespace' from
-			 * here on (just like the single heap pass/"nindexes == 0" case).
 			 */
 			FreeSpaceMapVacuumRange(vacrel->onerel, next_fsm_block_to_vacuum,
 									blkno);
@@ -1334,64 +1330,21 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		if (prunestate.hastup)
 			vacrel->nonempty_pages = blkno + 1;
 
-		/*
-		 * Step 7 for block: Set up details for saving free space in FSM at
-		 * end of loop.  (Also performs extra single pass strategy steps in
-		 * "nindexes == 0" case.)
-		 *
-		 * If we have any LP_DEAD items on this page (i.e. any new dead_tuples
-		 * entries compared to just before lazy_scan_prune()) then the page
-		 * will be visited again by lazy_vacuum_heap_rel(), which will compute
-		 * and record its post-compaction free space.  If not, then we're done
-		 * with this page, so remember its free space as-is.
-		 */
-		savefreespace = false;
-		freespace = 0;
-		if (vacrel->nindexes > 0 && prunestate.has_lpdead_items &&
-			vacrel->do_index_vacuuming)
+		if (vacrel->nindexes == 0)
 		{
 			/*
-			 * Wait until lazy_vacuum_heap_rel() to save free space.
-			 *
-			 * Note: It's not in fact 100% certain that we really will call
-			 * lazy_vacuum_heap_rel() -- lazy_vacuum() might opt to skip index
-			 * vacuuming (and so must skip heap vacuuming).  This is deemed
-			 * okay because it only happens in emergencies, or when there is
-			 * very little free space anyway.
-			 */
-		}
-		else
-		{
-			/* Save space as soon as lock is dropped (not in next pass) */
-			savefreespace = true;
-			freespace = PageGetHeapFreeSpace(page);
-		}
-
-		if (vacrel->nindexes == 0 && prunestate.has_lpdead_items)
-		{
-			Assert(dead_tuples->num_tuples > 0);
-
-			/*
-			 * One pass strategy (no indexes) case.
+			 * One pass strategy (no indexes).
 			 *
 			 * Do heap vacuuming (mark LP_DEAD item pointers LP_UNUSED) for
-			 * page now, since it won't be visited again later.
+			 * page now, since there won't be a second heap pass.
 			 */
-			lazy_vacuum_heap_page(vacrel, blkno, buf, 0, &vmbuffer);
+			if (prunestate.has_lpdead_items)
+			{
+				lazy_vacuum_heap_page(vacrel, blkno, buf, 0, &vmbuffer);
 
-			/* This won't have changed: */
-			Assert(savefreespace && freespace == PageGetHeapFreeSpace(page));
-
-			/*
-			 * Our call to lazy_vacuum_heap_page() will have set LP_DEAD items
-			 * from pruning to LP_UNUSED already.  Pretend that prune state
-			 * saw no LP_DEAD items.
-			 */
-			prunestate.all_visible = false;
-			prunestate.has_lpdead_items = false;
-
-			/* Forget the now-vacuumed tuples */
-			dead_tuples->num_tuples = 0;
+				/* Forget the now-vacuumed tuples */
+				dead_tuples->num_tuples = 0;
+			}
 
 			/*
 			 * Periodically do incremental FSM vacuuming to make newly-freed
@@ -1408,10 +1361,37 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				next_fsm_block_to_vacuum = blkno;
 				should_speedup_failsafe(vacrel);
 			}
-		}
 
-		/* One pass strategy had better have no dead tuples by now: */
-		Assert(vacrel->nindexes > 0 || dead_tuples->num_tuples == 0);
+			Assert(dead_tuples->num_tuples == 0);
+			if (prunestate.has_lpdead_items)
+			{
+				/*
+				 * Our call to lazy_vacuum_heap_page() will have set LP_DEAD
+				 * items encountered during pruning to LP_UNUSED, and will
+				 * then have considered if it's possible to set all_visible
+				 * and all_frozen independently of lazy_scan_prune().
+				 *
+				 * We don't want to proceed with setting VM bits based on now
+				 * outdated information in prunestate.  Just record free space
+				 * in the FSM and move on to next page.
+				 */
+				freespace = PageGetHeapFreeSpace(page);
+				UnlockReleaseBuffer(buf);
+				RecordPageWithFreeSpace(vacrel->onerel, blkno, freespace);
+				continue;
+			}
+			else
+			{
+				/*
+				 * There was no call to lazy_vacuum_heap_page() because
+				 * pruning didn't encounter/create any LP_DEAD items.
+				 *
+				 * Prune state has not been invalidated.  Proceed with vm bit
+				 * setting using prunestate.  (We'll record free space in the
+				 * FSM last of all, after dropping lock.)
+				 */
+			}
+		}
 
 		/*
 		 * Step 8 for block: Handle setting visibility map bit as appropriate
@@ -1507,6 +1487,24 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Step 9 for block: drop super-exclusive lock, finalize page by
 		 * recording its free space in the FSM as appropriate
 		 */
+		savefreespace = false;
+		if (!prunestate.has_lpdead_items || !vacrel->do_index_vacuuming)
+		{
+			/*
+			 * Wait until lazy_vacuum_heap_rel() to save free space.
+			 *
+			 * Note: It's not in fact 100% certain that we really will call
+			 * lazy_vacuum_heap_rel() -- lazy_vacuum() might opt to skip index
+			 * vacuuming (and so must skip heap vacuuming).  This is deemed
+			 * okay because it only happens in emergencies, or when there is
+			 * very little free space anyway.
+			 */
+		}
+		else
+		{
+			savefreespace = true;
+			freespace = PageGetHeapFreeSpace(page);
+		}
 
 		UnlockReleaseBuffer(buf);
 		if (savefreespace)
