@@ -1310,11 +1310,12 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 *
 		 * Accumulates details of remaining LP_DEAD line pointers on page in
 		 * dead tuple list.  This includes LP_DEAD line pointers that we
-		 * ourselves just pruned, as well as existing LP_DEAD line pointers
-		 * pruned some time earlier.
+		 * pruned ourselves, as well as existing LP_DEAD line pointers that
+		 * were pruned some time earlier.
 		 *
-		 * Also handles tuple freezing -- considers freezing XIDs from all
-		 * tuple headers left behind following pruning.
+		 * This also handles tuple freezing, which is closely related to
+		 * pruning.  Considers freezing XIDs in tuple headers from items not
+		 * made LP_DEAD by pruning.
 		 */
 		lazy_scan_prune(vacrel, buf, blkno, page, vistest, &prunestate);
 
