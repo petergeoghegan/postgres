@@ -1384,7 +1384,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			{
 				/*
 				 * There was no call to lazy_vacuum_heap_page() because
-				 * pruning didn't encounter/create any LP_DEAD items.
+				 * pruning didn't encounter/create any LP_DEAD items that
+				 * needed to be vacuumed (i.e. set to LP_UNUSED).
 				 *
 				 * Prune state has not been invalidated.  Proceed with vm bit
 				 * setting using prunestate.  (We'll record free space in the
