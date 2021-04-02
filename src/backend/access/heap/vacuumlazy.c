@@ -1371,9 +1371,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				 * then have considered if it's possible to set all_visible
 				 * and all_frozen independently of lazy_scan_prune().
 				 *
-				 * We don't want to proceed with setting VM bits based on now
-				 * outdated information in prunestate.  Just record free space
-				 * in the FSM and move on to next page.
+				 * We don't want to proceed with setting VM bits based on
+				 * information from prunestate -- it's out of date now.  Just
+				 * record free space in the FSM and move on to next page.
 				 */
 				freespace = PageGetHeapFreeSpace(page);
 				UnlockReleaseBuffer(buf);
@@ -1494,10 +1494,11 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * Wait until lazy_vacuum_heap_rel() to save free space.
 			 *
 			 * Note: It's not in fact 100% certain that we really will call
-			 * lazy_vacuum_heap_rel() -- lazy_vacuum() might opt to skip index
-			 * vacuuming (and so must skip heap vacuuming).  This is deemed
-			 * okay because it only happens in emergencies, or when there is
-			 * very little free space anyway.
+			 * lazy_vacuum_heap_rel() -- lazy_vacuum() might yet opt to skip
+			 * index vacuuming (and so must skip heap vacuuming).  This is
+			 * deemed okay because it only happens in emergencies, or when
+			 * there is very little free space anyway.  (Besides, we start
+			 * recording FSM here when it starts to happen.)
 			 */
 		}
 		else
