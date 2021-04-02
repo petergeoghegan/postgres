@@ -399,6 +399,7 @@ static void lazy_scan_heap(LVRelState *vacrel, VacuumParams *params,
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelState *vacrel);
 static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
+							BlockNumber blkno, Page page,
 							GlobalVisState *vistest,
 							LVPagePruneState *prunestate);
 static void lazy_vacuum(LVRelState *vacrel, bool onecall);
@@ -1315,13 +1316,14 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 *
 		 * Accumulates details of remaining LP_DEAD line pointers on page in
 		 * dead tuple list.  This includes LP_DEAD line pointers that we
-		 * ourselves just pruned, as well as existing LP_DEAD line pointers
-		 * pruned some time earlier.
+		 * pruned ourselves, as well as existing LP_DEAD line pointers that
+		 * were pruned some time earlier.
 		 *
-		 * Also handles tuple freezing -- considers freezing XIDs from all
-		 * tuple headers left behind following pruning.
+		 * This also handles tuple freezing, which is closely related to
+		 * pruning.  Considers freezing XIDs in tuple headers from items not
+		 * made LP_DEAD by pruning.
 		 */
-		lazy_scan_prune(vacrel, buf, vistest, &prunestate);
+		lazy_scan_prune(vacrel, buf, blkno, page, vistest, &prunestate);
 
 		/* Remember the location of the last page with nonremovable tuples */
 		if (prunestate.hastup)
@@ -1395,7 +1397,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 		/*
 		 * Handle setting visibility map bit based on what the VM said about
-		 * the page before pruning started and prunestate VM output fields.
+		 * the page before pruning started, and using prunestate
 		 */
 		if (!all_visible_according_to_vm && prunestate.all_visible)
 		{
@@ -1709,12 +1711,14 @@ lazy_check_needs_freeze(Buffer buf, bool *hastup, LVRelState *vacrel)
  * considered as a candidate for freezing.
  */
 static void
-lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
+lazy_scan_prune(LVRelState *vacrel,
+				Buffer		buf,
+				BlockNumber blkno,
+				Page		page,
+				GlobalVisState *vistest,
 				LVPagePruneState *prunestate)
 {
 	Relation	onerel = vacrel->onerel;
-	BlockNumber blkno;
-	Page		page;
 	OffsetNumber offnum,
 				maxoff;
 	ItemId		itemid;
@@ -1731,9 +1735,6 @@ lazy_scan_prune(LVRelState *vacrel, Buffer buf, GlobalVisState *vistest,
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 
-
-	blkno = BufferGetBlockNumber(buf);
-	page = BufferGetPage(buf);
 	maxoff = PageGetMaxOffsetNumber(page);
 
 retry:
