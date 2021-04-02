@@ -1012,9 +1012,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		bool		all_visible_according_to_vm = false;
 
 		/*
-		 * Step 1 for block: Consider need to skip blocks.
-		 *
-		 * See note above about forcing scanning of last page.
+		 * Consider need to skip blocks.  See note above about forcing
+		 * scanning of last page.
 		 */
 #define FORCE_CHECK_PAGE() \
 		(blkno == nblocks - 1 && should_attempt_truncation(vacrel, params))
@@ -1102,11 +1101,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		vacuum_delay_point();
 
 		/*
-		 * Step 2 for block: Consider if we definitely have enough space to
-		 * process TIDs on page already.
-		 *
-		 * If we are close to overrunning the available space for dead-tuple
-		 * TIDs, pause and do a cycle of vacuuming before we tackle this page.
+		 * Consider if we definitely have enough space to process TIDs on page
+		 * already.  If we are close to overrunning the available space for
+		 * dead-tuple TIDs, pause and do a cycle of vacuuming before we tackle
+		 * this page.
 		 */
 		if ((dead_tuples->max_tuples - dead_tuples->num_tuples) < MaxHeapTuplesPerPage &&
 			dead_tuples->num_tuples > 0)
@@ -1147,7 +1145,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		}
 
 		/*
-		 * Step 3 for block: Set up visibility map page as needed.
+		 * Set up visibility map page as needed.
 		 *
 		 * Pin the visibility map page in case we need to mark the page
 		 * all-visible.  In most cases this will be very cheap, because we'll
@@ -1162,10 +1160,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 								 RBM_NORMAL, vacrel->bstrategy);
 
 		/*
-		 * Step 4 for block: Acquire super-exclusive lock for pruning.
-		 *
 		 * We need buffer cleanup lock so that we can prune HOT chains and
-		 * defragment page.
+		 * defragment the page.
 		 */
 		if (!ConditionalLockBufferForCleanup(buf))
 		{
@@ -1228,10 +1224,14 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		}
 
 		/*
-		 * Step 5 for block: Handle empty/new pages.
+		 * By here we definitely have enough dead_tuples space for whatever
+		 * LP_DEAD tids are on this page, we have the visibility map page set
+		 * up in case we need to set this page's all_visible/all_frozen bit,
+		 * and we have a super-exclusive lock.  Any tuples on this page are
+		 * now considered "counted".
 		 *
-		 * By here we have a super-exclusive lock, and it's clear that this
-		 * page is one that we consider scanned
+		 * One last piece of preamble needs to take place before we can prune:
+		 * we need to consider new and empty pages.
 		 */
 		vacrel->scanned_pages++;
 		vacrel->tupcount_pages++;
@@ -1313,10 +1313,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		}
 
 		/*
-		 * Step 6 for block: Do pruning.
+		 * Prune and freeze tuples.
 		 *
-		 * Also accumulates details of remaining LP_DEAD line pointers on page
-		 * in dead tuple list.  This includes LP_DEAD line pointers that we
+		 * Accumulates details of remaining LP_DEAD line pointers on page in
+		 * dead tuple list.  This includes LP_DEAD line pointers that we
 		 * ourselves just pruned, as well as existing LP_DEAD line pointers
 		 * pruned earlier.
 		 *
@@ -1395,7 +1395,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		}
 
 		/*
-		 * Step 8 for block: Handle setting visibility map bit as appropriate
+		 * Handle setting visibility map bit based on what the VM said about
+		 * the page before pruning started and prunestate VM output fields.
 		 */
 		if (prunestate.all_visible && !all_visible_according_to_vm)
 		{
@@ -1485,8 +1486,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		}
 
 		/*
-		 * Step 9 for block: drop super-exclusive lock, finalize page by
-		 * recording its free space in the FSM as appropriate
+		 * Final steps for block: drop super-exclusive lock, record free space
+		 * in the FSM
 		 */
 		if (prunestate.has_lpdead_items && vacrel->do_index_vacuuming)
 		{
@@ -1513,8 +1514,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->onerel, blkno, freespace);
 		}
-
-		/* Finished all steps for block by here (at the latest) */
 	}
 
 	/* report that everything is now scanned */
