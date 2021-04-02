@@ -1390,7 +1390,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 		/*
 		 * Handle setting visibility map bit based on what the VM said about
-		 * the page before pruning started and prunestate VM output fields.
+		 * the page before pruning started, and using prunestate
 		 */
 		if (!all_visible_according_to_vm && prunestate.all_visible)
 		{
