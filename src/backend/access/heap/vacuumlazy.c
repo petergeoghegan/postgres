@@ -1128,12 +1128,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
 			 * upper-level FSM pages.  Note we have not yet processed blkno.
-			 *
-			 * Note also that it's possible that the call to lazy_vacuum()
-			 * decided to end index vacuuming due to an emergency (though not
-			 * for any other reason).  When that happens we can miss out on
-			 * some of the free space that we originally expected to be able
-			 * to pick up within lazy_vacuum_heap_rel().
 			 */
 			FreeSpaceMapVacuumRange(vacrel->onerel, next_fsm_block_to_vacuum,
 									blkno);
