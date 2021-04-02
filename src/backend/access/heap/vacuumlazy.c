@@ -1008,7 +1008,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		Buffer		buf;
 		Page		page;
 		LVPagePruneState prunestate;
-		bool		savefreespace;
 		Size		freespace;
 		bool		all_visible_according_to_vm = false;
 
@@ -1488,7 +1487,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Step 9 for block: drop super-exclusive lock, finalize page by
 		 * recording its free space in the FSM as appropriate
 		 */
-		savefreespace = false;
 		if (prunestate.has_lpdead_items && vacrel->do_index_vacuuming)
 		{
 			/*
@@ -1500,17 +1498,20 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * deemed okay because it only happens in emergencies, or when
 			 * there is very little free space anyway.  (Besides, we start
 			 * recording FSM here when it starts to happen.)
+			 *
+			 * Note that the one-pass (no indexes) case is only supposed to
+			 * make it this far when there were no LP_DEAD items during
+			 * pruning.
 			 */
+			Assert(vacrel->nindexes > 0);
+			UnlockReleaseBuffer(buf);
 		}
 		else
 		{
-			savefreespace = true;
 			freespace = PageGetHeapFreeSpace(page);
-		}
-
-		UnlockReleaseBuffer(buf);
-		if (savefreespace)
+			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->onerel, blkno, freespace);
+		}
 
 		/* Finished all steps for block by here (at the latest) */
 	}
