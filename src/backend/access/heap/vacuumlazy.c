@@ -1329,16 +1329,17 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		if (prunestate.hastup)
 			vacrel->nonempty_pages = blkno + 1;
 
+		/*
+		 * Consider heap vacuuming for one pass strategy
+		 */
 		if (vacrel->nindexes == 0)
 		{
-			/*
-			 * One pass strategy (no indexes).
-			 *
-			 * Do heap vacuuming (mark LP_DEAD item pointers LP_UNUSED) for
-			 * page now, since there won't be a second heap pass.
-			 */
 			if (prunestate.has_lpdead_items)
 			{
+				/*
+				 * Do heap vacuuming (mark LP_DEAD item pointers LP_UNUSED)
+				 * for page now, since there won't be a second heap pass
+				 */
 				lazy_vacuum_heap_page(vacrel, blkno, buf, 0, &vmbuffer);
 
 				/* Forget the now-vacuumed tuples */
@@ -1384,7 +1385,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				/*
 				 * There was no call to lazy_vacuum_heap_page() because
 				 * pruning didn't encounter/create any LP_DEAD items that
-				 * needed to be vacuumed (i.e. set to LP_UNUSED).
+				 * needed to be vacuumed (i.e. needed to be set to LP_UNUSED).
 				 *
 				 * Prune state has not been invalidated.  Proceed with vm bit
 				 * setting using prunestate.  (We'll record free space in the
