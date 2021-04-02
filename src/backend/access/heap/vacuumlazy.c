@@ -744,9 +744,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 vacrel->pinskipped_pages,
 							 vacrel->frozenskipped_pages);
 			appendStringInfo(&buf,
-							 _("tuples: %lld removed, %lld remain, %lld are dead but not yet removable, oldest xmin: %u\n"),
+							 _("tuples: %lld removed, %lld remain, %lld unused, %lld are dead but not yet removable, oldest xmin: %u\n"),
 							 (long long) vacrel->tuples_deleted,
 							 (long long) vacrel->new_rel_tuples,
+							 (long long) vacrel->nunused,
 							 (long long) vacrel->new_dead_tuples,
 							 OldestXmin);
 			appendStringInfo(&buf,
