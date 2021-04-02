@@ -1488,7 +1488,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * recording its free space in the FSM as appropriate
 		 */
 		savefreespace = false;
-		if (!prunestate.has_lpdead_items || !vacrel->do_index_vacuuming)
+		if (prunestate.has_lpdead_items && vacrel->do_index_vacuuming)
 		{
 			/*
 			 * Wait until lazy_vacuum_heap_rel() to save free space.
