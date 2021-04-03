@@ -2617,7 +2617,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 
 	Assert(uncnt > 0);
 
-	PageSetHasFreeLinePointers(page);
+	PageShrinkEndUnused(page);
 
 	/*
 	 * Mark buffer dirty before we write WAL.
