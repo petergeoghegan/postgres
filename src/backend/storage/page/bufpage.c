@@ -785,6 +785,52 @@ PageRepairFragmentation(Page page)
 
 	if (nunused > 0 && lastused < nline)
 	{
+#if 0
+		elog(WARNING, "shrink before %u, after %u (%u LPs total)",
+			 nunused, nunused - (nline - lastused), nline);
+#endif
+		((PageHeader) page)->pd_lower =
+				SizeOfPageHeaderData + (sizeof(ItemIdData) * lastused);
+		nunused -= nline - lastused;
+	}
+
+	/* Set hint bit for PageAddItemExtended */
+	if (nunused > 0)
+		PageSetHasFreeLinePointers(page);
+	else
+		PageClearHasFreeLinePointers(page);
+}
+
+void
+PageShrinkEndUnused(Page page)
+{
+	ItemId		lp;
+	int			nline,
+				nunused;
+	OffsetNumber lastused = MaxOffsetNumber;
+	int			i;
+	Size		totallen;
+
+	/*
+	 * Run through the line pointer array and collect data about live items.
+	 */
+	nline = PageGetMaxOffsetNumber(page);
+	nunused = totallen = 0;
+	for (i = FirstOffsetNumber; i <= nline; i++)
+	{
+		lp = PageGetItemId(page, i);
+		if (ItemIdIsUsed(lp))
+		{
+			lastused = i;
+		}
+		else
+			nunused++;
+	}
+
+	if (lastused < nline)
+	{
+		elog(WARNING, "shrink before %u, after %u (%u LPs total)",
+			 nunused, nunused - (nline - lastused), nline);
 		((PageHeader) page)->pd_lower =
 				SizeOfPageHeaderData + (sizeof(ItemIdData) * lastused);
 		nunused -= nline - lastused;
