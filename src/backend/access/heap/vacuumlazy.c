@@ -2144,13 +2144,6 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	}
 
 	/*
-	 * TODO:
-	 *
-	 * Call lazy_space_free() and arrange to stop even recording TIDs (i.e.
-	 * make lazy_record_dead_item() into a no-op)
-	 */
-
-	/*
 	 * Forget the now-vacuumed tuples -- just press on
 	 */
 	vacrel->dead_tuples->num_tuples = 0;
