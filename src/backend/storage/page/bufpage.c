@@ -813,11 +813,12 @@ PageShrinkEndUnused(Page page, int nnewlyunused)
 	Assert(nnewlyunused <= nline);
 	nunusedend = 0;
 
-	/* Leave 1 LP_UNUSED item if the page would be empty otherwise */
-	for (int i = nline; i > FirstOffsetNumber; i--)
+	for (int i = nline; i >= FirstOffsetNumber; i--)
 	{
 		lp = PageGetItemId(page, i);
-		if (truncating)
+
+		/* Always leave 1 line pointer behind */
+		if (truncating && i > FirstOffsetNumber)
 		{
 			/*
 			 * Still counting which line pointers from the end of the array
@@ -848,8 +849,8 @@ PageShrinkEndUnused(Page page, int nnewlyunused)
 	}
 
 #if 0
-	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, nnewlyunused %d",
-		 nline, nline - nunusedend, nunusedend, nnewlyunused);
+	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, nnewlyunused %d, sethint %d",
+		 nline, nline - nunusedend, nunusedend, nnewlyunused, sethint);
 #endif
 	Assert(nline > nunusedend);
 	if (nunusedend > 0)
