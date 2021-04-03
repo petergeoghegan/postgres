@@ -2384,7 +2384,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 	Assert(uncnt > 0);
 
 	/* Attempt to truncate line pointer array now */
-	PageShrinkEndUnused(page, uncnt);
+	PageTruncateLinePointerArray(page);
 
 	/*
 	 * Mark buffer dirty before we write WAL.

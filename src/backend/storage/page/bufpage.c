@@ -676,9 +676,10 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * PageRepairFragmentation
  *
  * Frees fragmented space on a page.
- * It doesn't remove unused line pointers -- only PageShrinkEndUnused can.
  *
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
+ * It never removes unused line pointers, though PageTruncateLinePointerArray
+ * will do so at the point that VACUUM sets LP_DEAD items to LP_UNUSED.
  *
  * Caller had better have a super-exclusive lock on page's buffer.  As a side
  * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
@@ -785,7 +786,7 @@ PageRepairFragmentation(Page page)
 }
 
 /*
- * PageShrinkEndUnused
+ * PageTruncateLinePointerArray
  *
  * Removes unused line pointers at the end of the line pointer array.
  *
@@ -796,7 +797,7 @@ PageRepairFragmentation(Page page)
  * be set as needed.
  */
 void
-PageShrinkEndUnused(Page page, int nnewlyunused)
+PageTruncateLinePointerArray(Page page)
 {
 	PageHeader	phdr = (PageHeader) page;
 	ItemId		lp;
@@ -809,8 +810,6 @@ PageShrinkEndUnused(Page page, int nnewlyunused)
 	 * Run through the line pointer array and collect data about live items.
 	 */
 	nline = PageGetMaxOffsetNumber(page);
-	Assert(nnewlyunused > 0);
-	Assert(nnewlyunused <= nline);
 	nunusedend = 0;
 
 	for (int i = nline; i >= FirstOffsetNumber; i--)
@@ -849,8 +848,8 @@ PageShrinkEndUnused(Page page, int nnewlyunused)
 	}
 
 #if 0
-	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, nnewlyunused %d, sethint %d",
-		 nline, nline - nunusedend, nunusedend, nnewlyunused, sethint);
+	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, sethint %d",
+		 nline, nline - nunusedend, nunusedend, sethint);
 #endif
 	Assert(nline > nunusedend);
 	if (nunusedend > 0)

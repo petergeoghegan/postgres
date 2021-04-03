@@ -8564,7 +8564,7 @@ heap_xlog_vacuum(XLogReaderState *record)
 		}
 
 		/* Attempt to truncate line pointer array now */
-		PageShrinkEndUnused(page, xlrec->nunused);
+		PageTruncateLinePointerArray(page);
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(buffer);
