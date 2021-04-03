@@ -153,6 +153,12 @@
 #define PARALLEL_VACUUM_KEY_BUFFER_USAGE	4
 #define PARALLEL_VACUUM_KEY_WAL_USAGE		5
 
+/*
+ * Macro to check if we are in a parallel vacuum.  If true, we are in the
+ * parallel mode and the DSM segment is initialized.
+ */
+#define ParallelVacuumIsActive(vacrel) ((vacrel)->lps != NULL)
+
 /* Phases of vacuum during which we report error context. */
 typedef enum
 {
@@ -165,10 +171,9 @@ typedef enum
 } VacErrPhase;
 
 /*
- * LVDeadTuples stores TIDs that are gathered during pruning/the initial heap
- * scan.  These get deleted from indexes during index vacuuming.  They're then
- * removed from the heap during a second heap pass that performs heap
- * vacuuming.
+ * LVDeadTuples stores the dead tuple TIDs collected during the heap scan.
+ * This is allocated in the DSM segment in parallel mode and in local memory
+ * in non-parallel mode.
  */
 typedef struct LVDeadTuples
 {
@@ -2179,7 +2184,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
 								 PROGRESS_VACUUM_PHASE_VACUUM_INDEX);
 
-	if (!vacrel->lps)
+	if (!ParallelVacuumIsActive(vacrel))
 	{
 		for (int idx = 0; idx < vacrel->nindexes; idx++)
 		{
@@ -2931,7 +2936,7 @@ lazy_cleanup_all_indexes(LVRelState *vacrel)
 	pgstat_progress_update_param(PROGRESS_VACUUM_PHASE,
 								 PROGRESS_VACUUM_PHASE_INDEX_CLEANUP);
 
-	if (!vacrel->lps)
+	if (!ParallelVacuumIsActive(vacrel))
 	{
 		double		reltuples = vacrel->new_rel_tuples;
 		bool		estimated_count =
@@ -3452,7 +3457,7 @@ lazy_space_alloc(LVRelState *vacrel, int nworkers, BlockNumber nblocks)
 			vacrel->lps = begin_parallel_vacuum(vacrel, nblocks, nworkers);
 
 		/* If parallel mode started, we're done */
-		if (vacrel->lps != NULL)
+		if (ParallelVacuumIsActive(vacrel))
 			return;
 	}
 
@@ -3471,7 +3476,7 @@ lazy_space_alloc(LVRelState *vacrel, int nworkers, BlockNumber nblocks)
 static void
 lazy_space_free(LVRelState *vacrel)
 {
-	if (!vacrel->lps)
+	if (!ParallelVacuumIsActive(vacrel))
 		return;
 
 	/*
