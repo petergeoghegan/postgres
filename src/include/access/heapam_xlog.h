@@ -258,7 +258,7 @@ typedef struct xl_heap_prune
  */
 typedef struct xl_heap_vacuum
 {
-	uint16		nunused ;
+	uint16		nunused;
 	/* OFFSET NUMBERS are in the block reference 0 */
 } xl_heap_vacuum;
 

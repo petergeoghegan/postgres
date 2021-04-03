@@ -273,7 +273,7 @@ extern void vacuum_set_xid_limits(Relation rel,
 								  MultiXactId *multiXactCutoff,
 								  MultiXactId *mxactFullScanLimit);
 extern bool vacuum_xid_limit_emergency(TransactionId relfrozenxid,
-									   MultiXactId   relminmxid);
+									   MultiXactId relminmxid);
 extern void vac_update_datfrozenxid(void);
 extern void vacuum_delay_point(void);
 extern bool vacuum_is_relation_owner(Oid relid, Form_pg_class reltuple,

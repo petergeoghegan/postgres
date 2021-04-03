@@ -376,9 +376,9 @@ typedef struct LVPagePruneState
 	 * pruning and freezing.  all_visible implies !has_lpdead_items, but don't
 	 * trust all_frozen result unless all_visible is also set to true.
 	 */
-	bool		  all_visible; /* Every item visible to all? */
-	bool		  all_frozen;  /* provided all_visible is also true */
-	TransactionId visibility_cutoff_xid; /* For recovery conflicts */
+	bool		all_visible;	/* Every item visible to all? */
+	bool		all_frozen;		/* provided all_visible is also true */
+	TransactionId visibility_cutoff_xid;	/* For recovery conflicts */
 } LVPagePruneState;
 
 /* Struct for saving and restoring vacuum error information. */
@@ -1655,9 +1655,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
  */
 static void
 lazy_scan_prune(LVRelState *vacrel,
-				Buffer		buf,
+				Buffer buf,
 				BlockNumber blkno,
-				Page		page,
+				Page page,
 				GlobalVisState *vistest,
 				LVPagePruneState *prunestate)
 {
@@ -1972,7 +1972,7 @@ retry:
 	if (prunestate->all_visible)
 	{
 		TransactionId cutoff;
-		bool		  all_frozen;
+		bool		all_frozen;
 
 		if (!heap_page_is_all_visible(vacrel, buf, &cutoff, &all_frozen))
 			Assert(false);
@@ -2015,7 +2015,8 @@ retry:
 
 		/*
 		 * Don't actually save item when it is known for sure that both index
-		 * vacuuming and heap vacuuming cannot go ahead during the ongoing VACUUM
+		 * vacuuming and heap vacuuming cannot go ahead during the ongoing
+		 * VACUUM
 		 */
 		if (!vacrel->do_index_vacuuming && vacrel->nindexes > 0)
 			return;
@@ -2111,8 +2112,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_PAGES;
 
 		do_bypass_optimization =
-				(vacrel->lpdead_item_pages < threshold &&
-				 vacrel->lpdead_items < MAXDEADTUPLES(64L * 1024L * 1024L));
+			(vacrel->lpdead_item_pages < threshold &&
+			 vacrel->lpdead_items < MAXDEADTUPLES(64L * 1024L * 1024L));
 	}
 
 	if (do_bypass_optimization)
