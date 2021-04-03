@@ -8566,7 +8566,7 @@ heap_xlog_vacuum(XLogReaderState *record)
 		/*
 		 * Update the page's hint bit about whether it has free pointers
 		 */
-		PageSetHasFreeLinePointers(page);
+		PageShrinkEndUnused(page, xlrec->nunused);
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(buffer);

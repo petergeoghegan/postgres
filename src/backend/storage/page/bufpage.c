@@ -789,47 +789,45 @@ PageRepairFragmentation(Page page)
 }
 
 void
-PageShrinkEndUnused(Page page)
+PageShrinkEndUnused(Page page, int nnewlyunused)
 {
+	PageHeader	phdr = (PageHeader) page;
 	ItemId		lp;
 	int			nline,
-				nunused;
-	OffsetNumber lastused = MaxOffsetNumber;
-	int			i;
-	Size		totallen;
+				nunusedend;
+
+	Assert(nnewlyunused > 0);
 
 	/*
 	 * Run through the line pointer array and collect data about live items.
 	 */
 	nline = PageGetMaxOffsetNumber(page);
-	nunused = totallen = 0;
-	for (i = FirstOffsetNumber; i <= nline; i++)
+	nunusedend = 0;
+
+	/* Leave 1 LP_UNUSED item if the page would be empty otherwise */
+	for (int i = nline; i > FirstOffsetNumber; i--)
 	{
 		lp = PageGetItemId(page, i);
 		if (ItemIdIsUsed(lp))
-		{
-			lastused = i;
-		}
-		else
-			nunused++;
+			break;
+
+		nunusedend++;
 	}
 
-	if (lastused < nline)
-	{
 #if 0
-		elog(WARNING, "shrink before %u, after %u (%u LPs total)",
-			 nunused, nunused - (nline - lastused), nline);
+	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, nnewlyunused %d",
+		 nline, nline - nunusedend, nunusedend, nnewlyunused);
 #endif
-		((PageHeader) page)->pd_lower =
-				SizeOfPageHeaderData + (sizeof(ItemIdData) * lastused);
-		nunused -= nline - lastused;
-	}
+	Assert(nline > nunusedend);
+	if (nunusedend > 0)
+		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
 
-	/* Set hint bit for PageAddItemExtended */
-	if (nunused > 0)
+	/*
+	 * Set hint bit for PageAddItemExtended when it's still necessary.  Don't
+	 * unset hint, though, because it might already be correctly set.
+	 */
+	if (nunusedend < nnewlyunused)
 		PageSetHasFreeLinePointers(page);
-	else
-		PageClearHasFreeLinePointers(page);
 }
 
 /*

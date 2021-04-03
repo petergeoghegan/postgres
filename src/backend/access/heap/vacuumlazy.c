@@ -2581,7 +2581,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 {
 	LVDeadTuples *dead_tuples = vacrel->dead_tuples;
 	Page		page = BufferGetPage(buffer);
-	OffsetNumber unused[MaxOffsetNumber];
+	OffsetNumber unused[MaxHeapTuplesPerPage];
 	int			uncnt = 0;
 	TransactionId visibility_cutoff_xid;
 	bool		all_frozen;
@@ -2617,7 +2617,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 
 	Assert(uncnt > 0);
 
-	PageShrinkEndUnused(page);
+	PageShrinkEndUnused(page, uncnt);
 
 	/*
 	 * Mark buffer dirty before we write WAL.
