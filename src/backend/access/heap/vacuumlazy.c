@@ -360,7 +360,6 @@ typedef struct LVRelState
 									 * table */
 	int64		num_tuples;		/* total number of nonremovable tuples */
 	int64		live_tuples;	/* live tuples (reltuples estimate) */
-	int64		nunused;		/* # existing unused line pointers */
 } LVRelState;
 
 /*
@@ -910,7 +909,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->new_dead_tuples = 0;
 	vacrel->num_tuples = 0;
 	vacrel->live_tuples = 0;
-	vacrel->nunused = 0;
 
 	vistest = GlobalVisTestFor(vacrel->rel);
 
@@ -1600,8 +1598,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	appendStringInfo(&buf,
 					 _("%lld dead row versions cannot be removed yet, oldest xmin: %u\n"),
 					 (long long) vacrel->new_dead_tuples, vacrel->OldestXmin);
-	appendStringInfo(&buf, _("There were %lld unused item identifiers.\n"),
-					 (long long) vacrel->nunused);
+	appendStringInfo(&buf, _("There were %lld dead item identifiers.\n"),
+					 (long long) vacrel->lpdead_item_pages);
 	appendStringInfo(&buf, ngettext("%u page removed.\n",
 									"%u pages removed.\n",
 									vacrel->pages_removed),
@@ -1670,9 +1668,7 @@ lazy_scan_prune(LVRelState *vacrel,
 				lpdead_items,
 				new_dead_tuples,
 				num_tuples,
-				live_tuples,
-				nunused;
-	int			nredirect PG_USED_FOR_ASSERTS_ONLY;
+				live_tuples;
 	int			nfrozen;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
@@ -1687,8 +1683,6 @@ retry:
 	new_dead_tuples = 0;
 	num_tuples = 0;
 	live_tuples = 0;
-	nunused = 0;
-	nredirect = 0;
 
 	/*
 	 * Prune all HOT-update chains in this page.
@@ -1736,18 +1730,13 @@ retry:
 		vacrel->offnum = offnum;
 		itemid = PageGetItemId(page, offnum);
 
-		/* Unused items only need to be counted for log message */
 		if (!ItemIdIsUsed(itemid))
-		{
-			nunused++;
 			continue;
-		}
 
 		/* Redirect items mustn't be touched */
 		if (ItemIdIsRedirected(itemid))
 		{
 			prunestate->hastup = true;	/* page won't be truncatable */
-			nredirect++;
 			continue;
 		}
 
@@ -1906,7 +1895,6 @@ retry:
 	 * Add page level counters to caller's counts, and then actually process
 	 * LP_DEAD and LP_NORMAL items.
 	 */
-	Assert(lpdead_items + num_tuples + nunused + nredirect == maxoff);
 	vacrel->offnum = InvalidOffsetNumber;
 
 	/*
@@ -1996,7 +1984,6 @@ retry:
 	vacrel->new_dead_tuples += new_dead_tuples;
 	vacrel->num_tuples += num_tuples;
 	vacrel->live_tuples += live_tuples;
-	vacrel->nunused += nunused;
 
 	/*
 	 * Now save details of the LP_DEAD items from the page in the dead_tuples
