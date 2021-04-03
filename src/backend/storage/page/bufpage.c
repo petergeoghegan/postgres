@@ -825,6 +825,8 @@ PageShrinkEndUnused(Page page, int nnewlyunused)
 	/*
 	 * Set hint bit for PageAddItemExtended when it's still necessary.  Don't
 	 * unset hint, though, because it might already be correctly set.
+	 *
+	 * XXX: Maybe always set this, to be on the safe side?
 	 */
 	if (nunusedend < nnewlyunused)
 		PageSetHasFreeLinePointers(page);
