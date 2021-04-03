@@ -2567,7 +2567,7 @@ should_speedup_failsafe(LVRelState *vacrel)
 		ereport(WARNING,
 				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",
 						get_database_name(MyDatabaseId),
-						vacrel->relname,
+						vacrel->relnamespace,
 						vacrel->relname,
 						vacrel->num_index_scans),
 				 errdetail("table's relfrozenxid or relminmxid is too far in the past"),
