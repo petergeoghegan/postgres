@@ -800,25 +800,51 @@ PageShrinkEndUnused(Page page, int nnewlyunused)
 {
 	PageHeader	phdr = (PageHeader) page;
 	ItemId		lp;
+	bool		truncating = true;
+	bool		sethint = false;
 	int			nline,
 				nunusedend;
-
-	Assert(nnewlyunused > 0);
 
 	/*
 	 * Run through the line pointer array and collect data about live items.
 	 */
 	nline = PageGetMaxOffsetNumber(page);
+	Assert(nnewlyunused > 0);
+	Assert(nnewlyunused <= nline);
 	nunusedend = 0;
 
 	/* Leave 1 LP_UNUSED item if the page would be empty otherwise */
 	for (int i = nline; i > FirstOffsetNumber; i--)
 	{
 		lp = PageGetItemId(page, i);
-		if (ItemIdIsUsed(lp))
-			break;
-
-		nunusedend++;
+		if (truncating)
+		{
+			/*
+			 * Still counting which line pointers from the end of the array
+			 * can be truncated away.
+			 *
+			 * If this is another LP_UNUSED line pointer (or the first), count
+			 * it among those we'll truncate.  Otherwise stop considering
+			 * further LP_UNUSED line pointers for truncation, but continue
+			 * with scan of array in any case.
+			 */
+			if (!ItemIdIsUsed(lp))
+				nunusedend++;
+			else
+				truncating = false;
+		}
+		else
+		{
+			if (!ItemIdIsUsed(lp))
+			{
+				/*
+				 * This is an unused line pointer that we won't be truncating
+				 * away -- so there is at least one.  Set hint on page.
+				 */
+				sethint = true;
+				break;
+			}
+		}
 	}
 
 #if 0
@@ -829,14 +855,11 @@ PageShrinkEndUnused(Page page, int nnewlyunused)
 	if (nunusedend > 0)
 		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
 
-	/*
-	 * Set hint bit for PageAddItemExtended when it's still necessary.  Don't
-	 * unset hint, though, because it might already be correctly set.
-	 *
-	 * XXX: Maybe always set this, to be on the safe side?
-	 */
-	if (nunusedend < nnewlyunused)
+	/* Set hint bit for PageAddItemExtended */
+	if (sethint)
 		PageSetHasFreeLinePointers(page);
+	else
+		PageClearHasFreeLinePointers(page);
 }
 
 /*
