@@ -1745,7 +1745,23 @@ retry:
 			continue;
 		}
 
-		/* LP_DEAD items are processed outside of the loop */
+		/*
+		 * LP_DEAD items are processed outside of the loop.
+		 *
+		 * Note that we deliberately don't set hastup=true in the case of an
+		 * LP_DEAD item here, which is not how lazy_check_needs_freeze() or
+		 * count_nondeletable_pages() do it -- they only consider pages empty
+		 * when they only have LP_UNUSED items, which is important for
+		 * correctness.
+		 *
+		 * Our assumption is that any LP_DEAD items we encounter here will
+		 * become LP_UNUSED inside lazy_vacuum_heap_page() before we actually
+		 * call count_nondeletable_pages().  In any case our opinion of
+		 * whether or not a page 'hastup' (which is how our caller sets its
+		 * vacrel->nonempty_pages value) is inherently race-prone.  It must be
+		 * treated as advisory/unreliable, so we might as well be slightly
+		 * optimistic.
+		 */
 		if (ItemIdIsDead(itemid))
 		{
 			deadoffsets[lpdead_items++] = offnum;
