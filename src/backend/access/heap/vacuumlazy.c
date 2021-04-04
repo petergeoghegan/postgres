@@ -1603,8 +1603,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	appendStringInfo(&buf,
 					 _("%lld dead row versions cannot be removed yet, oldest xmin: %u\n"),
 					 (long long) vacrel->new_dead_tuples, vacrel->OldestXmin);
-	appendStringInfo(&buf, _("There were %lld dead item identifiers.\n"),
-					 (long long) vacrel->lpdead_item_pages);
 	appendStringInfo(&buf, ngettext("%u page removed.\n",
 									"%u pages removed.\n",
 									vacrel->pages_removed),
