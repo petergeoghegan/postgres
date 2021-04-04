@@ -2313,7 +2313,7 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		tupindex = lazy_vacuum_heap_page(vacrel, tblk, buf, tupindex,
 										 &vmbuffer);
 
-		/* Now that we've compacted the page, record its available space */
+		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
 
