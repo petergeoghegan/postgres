@@ -727,8 +727,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				/*
 				 * While it's possible for a VACUUM to be both is_wraparound
 				 * and !aggressive, that's just a corner-case -- is_wraparound
-				 * implies aggressive.  But produce a recognizably different
-				 * log message for the corner case all the same.
+				 * implies aggressive.  Produce distinct output for the corner
+				 * case all the same, just in case.
 				 */
 				if (aggressive)
 					msgfmt = _("automatic aggressive vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
