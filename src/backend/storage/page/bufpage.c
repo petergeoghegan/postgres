@@ -800,54 +800,50 @@ PageRepairFragmentation(Page page)
  * Removes unused line pointers at the end of the line pointer array.
  *
  * This routine is usable for heap pages only.  It is called by VACUUM during
- * its second pass over the heap.  We expect that there will be at least one
- * LP_UNUSED line pointer on the page (if VACUUM didn't have an LP_DEAD item
- * to set LP_UNUSED on the page then it wouldn't have visited the page).
+ * its second pass over the heap.  We expect at least one LP_UNUSED line
+ * pointer on the page (if VACUUM didn't have an LP_DEAD item on the page that
+ * it just set to LP_UNUSED then it should not call here).
+ *
+ * We avoid truncating the line pointer array to 0 items, if necessary by
+ * leaving behind a single remaining LP_UNUSED item.
  *
  * Caller can have either an exclusive lock or a super-exclusive lock on
- * page's buffer.  As a side effect the page's PD_HAS_FREE_LINES hint bit will
- * be set as needed.
+ * page's buffer.  The page's PD_HAS_FREE_LINES hint bit will be set or unset
+ * based on whether or not we leave behind any remaining LP_UNUSED items.
  */
 void
 PageTruncateLinePointerArray(Page page)
 {
 	PageHeader	phdr = (PageHeader) page;
-	ItemId		lp;
-	bool		truncating = true;
-	bool		sethint = false;
-	int			nline,
-				nunusedend;
+	bool		countdone = false,
+				sethint = false;
+	int			nunusedend = 0;
 
-	/*
-	 * Scan original line pointer array backwards to determine how to far to
-	 * truncate to.  Note that we avoid truncating the line pointer to 0 items
-	 * in all cases.
-	 */
-	nline = PageGetMaxOffsetNumber(page);
-	nunusedend = 0;
-
-	for (int i = nline; i >= FirstOffsetNumber; i--)
+	/* Scan line pointer array back-to-front */
+	for (int i = PageGetMaxOffsetNumber(page); i >= FirstOffsetNumber; i--)
 	{
-		lp = PageGetItemId(page, i);
+		ItemId		lp = PageGetItemId(page, i);
 
-		if (truncating && i > FirstOffsetNumber)
+		if (!countdone && i > FirstOffsetNumber)
 		{
 			/*
-			 * Still counting which line pointers from the end of the array
-			 * can be truncated away.
-			 *
-			 * If this is another LP_UNUSED line pointer (or the first), count
-			 * it among those we'll truncate.  Otherwise stop considering
-			 * further LP_UNUSED line pointers for truncation, but continue
-			 * with scan of array in any case.
+			 * Still determining which line pointers from the end of the array
+			 * will be truncated away.  Either count another line pointer as
+			 * safe to truncate, or notice that it's not safe to truncate
+			 * additional line pointers (stop counting line pointers).
 			 */
 			if (!ItemIdIsUsed(lp))
 				nunusedend++;
 			else
-				truncating = false;
+				countdone = true;
 		}
 		else
 		{
+			/*
+			 * Once we've stopped counting we still need to figure out if
+			 * there are any remaining LP_UNUSED line pointers somewhere more
+			 * towards the front of the array.
+			 */
 			if (!ItemIdIsUsed(lp))
 			{
 				/*
@@ -864,7 +860,6 @@ PageTruncateLinePointerArray(Page page)
 	elog(WARNING, "#LPs before %d, #LPs after %d, reduction %d, sethint %d",
 		 nline, nline - nunusedend, nunusedend, sethint);
 #endif
-	Assert(nline > nunusedend);
 	if (nunusedend > 0)
 		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
 	else
