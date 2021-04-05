@@ -250,8 +250,17 @@ PageAddItemExtended(Page page,
 		/* if no free slot, we'll put it at limit (1st open slot) */
 		if (PageHasFreeLinePointers(phdr))
 		{
-			/* Look for "recyclable" (unused) ItemId */
-			for (offsetNumber = 1; offsetNumber < limit; offsetNumber++)
+			/*
+			 * Scan line pointer array to locate a "recyclable" (unused)
+			 * ItemId.
+			 *
+			 * Always use earlier items first.  PageTruncateLinePointerArray
+			 * can only truncate unused items when they appear as a contiguous
+			 * group at the end of the line pointer array.
+			 */
+			for (offsetNumber = FirstOffsetNumber;
+				 offsetNumber < limit;		/* limit is maxoff+1 */
+				 offsetNumber++)
 			{
 				itemId = PageGetItemId(phdr, offsetNumber);
 
