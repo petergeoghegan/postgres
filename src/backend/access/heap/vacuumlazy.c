@@ -2168,6 +2168,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 {
 	bool		allindexes = true;
 
+	Assert(!IsParallelWorker());
 	Assert(vacrel->nindexes > 0);
 	Assert(vacrel->do_index_vacuuming);
 	Assert(vacrel->do_index_cleanup);
@@ -2938,6 +2939,7 @@ parallel_process_one_index(Relation indrel,
 static void
 lazy_cleanup_all_indexes(LVRelState *vacrel)
 {
+	Assert(!IsParallelWorker());
 	Assert(vacrel->nindexes > 0);
 
 	/* Report that we are now cleaning up indexes */
