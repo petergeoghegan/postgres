@@ -861,7 +861,24 @@ PageTruncateLinePointerArray(Page page)
 		 PageGetMaxOffsetNumber(page), nunusedend, sethint);
 #endif
 	if (nunusedend > 0)
+	{
 		phdr->pd_lower -= sizeof(ItemIdData) * nunusedend;
+
+#ifdef CLOBBER_FREED_MEMORY
+		{
+			ItemIdData selfredirect;
+			int		   firstinfreedspace = PageGetMaxOffsetNumber(page) + 1;
+
+			for (int i = 0; i < nunusedend; i++)
+			{
+				ItemId p = ((ItemId) (page + phdr->pd_lower)) + i;
+
+				ItemIdSetRedirect(&selfredirect, firstinfreedspace + i);
+				*p = selfredirect;
+			}
+		}
+#endif
+	}
 	else
 		Assert(sethint);
 
