@@ -2592,6 +2592,9 @@ should_speedup_failsafe(LVRelState *vacrel)
 	return false;
 }
 
+/*
+ * Perform lazy_cleanup_all_indexes() steps in parallel
+ */
 static void
 do_parallel_lazy_vacuum_all_indexes(LVRelState *vacrel)
 {
@@ -2610,6 +2613,9 @@ do_parallel_lazy_vacuum_all_indexes(LVRelState *vacrel)
 								  vacrel->lps->nindexes_parallel_bulkdel);
 }
 
+/*
+ * Perform lazy_cleanup_all_indexes() steps in parallel
+ */
 static void
 do_parallel_lazy_cleanup_all_indexes(LVRelState *vacrel)
 {
@@ -2882,28 +2888,22 @@ parallel_process_one_index(Relation indrel,
 						   LVSharedIndStats *shared_istat,
 						   LVRelState *vacrel)
 {
-	IndexBulkDeleteResult *bulkdelete_res = NULL;
+	IndexBulkDeleteResult *istat_res;
 
-	if (shared_istat)
-	{
-		/* Get the space for IndexBulkDeleteResult */
-		bulkdelete_res = &(shared_istat->istat);
-
-		/*
-		 * Update the pointer to the corresponding bulk-deletion result if
-		 * someone has already updated it.
-		 */
-		if (shared_istat->updated && istat == NULL)
-			istat = bulkdelete_res;
-	}
+	/*
+	 * Update the pointer to the corresponding bulk-deletion result if someone
+	 * has already updated it
+	 */
+	if (shared_istat && shared_istat->updated && istat == NULL)
+		istat = &shared_istat->istat;
 
 	/* Do vacuum or cleanup of the index */
 	if (lvshared->for_cleanup)
-		istat = lazy_cleanup_one_index(indrel, istat, lvshared->reltuples,
-									   lvshared->estimated_count, vacrel);
+		istat_res = lazy_cleanup_one_index(indrel, istat, lvshared->reltuples,
+										   lvshared->estimated_count, vacrel);
 	else
-		istat = lazy_vacuum_one_index(indrel, istat, lvshared->reltuples,
-									  vacrel);
+		istat_res = lazy_vacuum_one_index(indrel, istat, lvshared->reltuples,
+										  vacrel);
 
 	/*
 	 * Copy the index bulk-deletion result returned from ambulkdelete and
@@ -2917,20 +2917,19 @@ parallel_process_one_index(Relation indrel,
 	 * Since all vacuum workers write the bulk-deletion result at different
 	 * slots we can write them without locking.
 	 */
-	if (shared_istat && !shared_istat->updated && istat != NULL)
+	if (shared_istat && !shared_istat->updated && istat_res != NULL)
 	{
-		memcpy(bulkdelete_res, istat, sizeof(IndexBulkDeleteResult));
+		memcpy(&shared_istat->istat, istat_res, sizeof(IndexBulkDeleteResult));
 		shared_istat->updated = true;
 
-		/*
-		 * Now that top-level indstats[idx] points to the DSM segment, we
-		 * don't need the locally allocated results.
-		 */
-		pfree(istat);
-		istat = bulkdelete_res;
+		/* Free the locally-allocated bulk-deletion result */
+		pfree(istat_res);
+
+		/* return the pointer to the result from shared memory */
+		return &shared_istat->istat;
 	}
 
-	return istat;
+	return istat_res;
 }
 
 /*
