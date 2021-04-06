@@ -684,16 +684,26 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
 /*
  * PageRepairFragmentation
  *
- * Frees fragmented space on a page.
- * It doesn't remove intermediate unused line pointers (that would mean
- * moving ItemIds, and that would imply invalidating indexed values), but it
- * does truncate the page->pd_linp array to the last unused line pointer, so
- * that this space may also be reused for data, instead of only for line
- * pointers.
+ * Frees fragmented space on a heap page following pruning.
  *
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
- * It never removes unused line pointers, though PageTruncateLinePointerArray
- * will do so at the point that VACUUM sets LP_DEAD items to LP_UNUSED.
+ *
+ * Never removes unused line pointers.  PageTruncateLinePointerArray can
+ * sometimes safely remove unused line pointers, though it is only called by
+ * VACUUM.
+ *
+ * Even then, its second pass over the heap.
+ *
+ * and only at the point that VACUUM sets LP_DEAD items to LP_UNUSED.
+ *
+ * though it can only free a group of contiguous unused line pointers at the
+ * end of the page's line pointer array (.  It would probably be safe to do so
+ * here
+ *
+ * It ought to be safe for this routine to free unused line pointers, but it's
+ * not clear that it would be worth the trouble.  PageTruncateLinePointerArray
+ * is called during VACUUM's second pass over the heap, so any LP_UNUSED items
+ * that it sees are likely to have been LP_DEAD just before it is called.
  *
  * Caller had better have a super-exclusive lock on page's buffer.  As a side
  * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
