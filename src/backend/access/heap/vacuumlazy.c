@@ -110,8 +110,8 @@
 #define BYPASS_THRESHOLD_PAGES	0.02	/* i.e. 2% of rel_pages */
 
 /*
- * When a table is very small (smaller than this), save cycles by not checking
- * if the emergency fail safe mechanism needs to be triggered
+ * When a table is small (i.e. smaller than this), save cycles by avoiding
+ * repeated emergency fail safe checks
  */
 #define BYPASS_EMERGENCY_MIN_PAGES \
 	((BlockNumber) (((uint64) 4 * 1024 * 1024 * 1024) / BLCKSZ))
