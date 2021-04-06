@@ -2102,6 +2102,9 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		/*
 		 * There are almost zero TIDs.  Behave as if there were precisely
 		 * zero:  bypass index vacuuming, but do index cleanup.
+		 *
+		 * We expect that the ongoing VACUUM operation will finish very
+		 * quickly, so there is no point in considering the emergency case.
 		 */
 		vacrel->do_index_vacuuming = false;
 		ereport(elevel,
