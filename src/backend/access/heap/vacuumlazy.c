@@ -2104,7 +2104,10 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		 * zero:  bypass index vacuuming, but do index cleanup.
 		 *
 		 * We expect that the ongoing VACUUM operation will finish very
-		 * quickly, so there is no point in considering the emergency case.
+		 * quickly, so there is no point in considering speeding up as a
+		 * failsafe against wraparound failure. (Index cleanup is expected to
+		 * finish very quickly in cases where there were no ambulkdelete()
+		 * calls.)
 		 */
 		vacrel->do_index_vacuuming = false;
 		ereport(elevel,
