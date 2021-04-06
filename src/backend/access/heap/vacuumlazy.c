@@ -2545,8 +2545,8 @@ lazy_check_needs_freeze(Buffer buf, bool *hastup, LVRelState *vacrel)
  * caller of the emergency.  Otherwise return false.
  *
  * Caller is expected to call here before and after vacuuming each index in
- * the case of two-pass VACUUM, or every BYPASS_EMERGENCY_MIN_PAGES blocks in
- * the case of no-indexes/one-pass VACUUM.
+ * the case of two-pass VACUUM, or every VACUUM_FSM_EVERY_PAGES blocks in the
+ * case of no-indexes/one-pass VACUUM.
  */
 static bool
 should_speedup_failsafe(LVRelState *vacrel)
