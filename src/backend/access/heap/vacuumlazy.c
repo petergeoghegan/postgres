@@ -2200,25 +2200,33 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	}
 	else
 	{
-		/* Note: parallel VACUUM only gets the precheck */
-		allindexes = true;
-
 		/* Outsource everything to parallel variant */
 		do_parallel_lazy_vacuum_all_indexes(vacrel);
+
+		/*
+		 * Do a postcheck to consider applying wraparound failsafe now.  Note
+		 * that parallel VACUUM only gets the precheck and this postcheck.
+		 */
+		if (should_speedup_failsafe(vacrel))
+			allindexes = false;
 	}
 
 	/*
 	 * We delete all LP_DEAD items from the first heap pass in all indexes on
-	 * each call here (except calls where we don't finish all indexes).  This
-	 * makes the next call to lazy_vacuum_heap_rel() safe.
+	 * each call here (except calls where we choose to do the fail safe).
+	 * This makes the next call to lazy_vacuum_heap_rel() safe (except in the
+	 * event of the fail safe triggering, which prevents the next call from
+	 * taking place).
 	 */
 	Assert(vacrel->num_index_scans > 0 ||
 		   vacrel->dead_tuples->num_tuples == vacrel->lpdead_items);
+	Assert(allindexes || vacrel->do_failsafe_speedup);
 
 	/*
-	 * Increase and report the number of index scans.  Note that we include
-	 * the case where we started a round index scanning that we weren't able
-	 * to finish.
+	 * Increase and report the number of index scans.
+	 *
+	 * We deliberately include the case where we started a round of bulk
+	 * deletes that we weren't able to finish due to the fail safe triggering.
 	 */
 	vacrel->num_index_scans++;
 	pgstat_progress_update_param(PROGRESS_VACUUM_NUM_INDEX_VACUUMS,
