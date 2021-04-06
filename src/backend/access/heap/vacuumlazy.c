@@ -2051,39 +2051,21 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	/*
 	 * Consider bypassing index vacuuming (and heap vacuuming) entirely.
 	 *
-	 * It's far from clear how we might assess the point at which bypassing
-	 * index vacuuming starts to make sense.  But it is at least clear that
-	 * VACUUM should not go ahead with index vacuuming in certain extreme
-	 * (though still fairly common) cases.  These are the cases where we have
-	 * _close to_ zero LP_DEAD items/TIDs to delete from indexes.  It would be
-	 * totally arbitrary to perform a round of full index scans in that case,
-	 * while not also doing the same thing when we happen to have _precisely_
-	 * zero TIDs -- so we do neither.  This avoids sharp discontinuities in
-	 * the duration and overhead of successive VACUUM operations that run
-	 * against the same table with the same workload.
+	 * We currently only do this in cases where the number of LP_DEAD items
+	 * for the entire VACUUM operation is close to zero.  This avoids sharp
+	 * discontinuities in the duration and overhead of successive VACUUM
+	 * operations that run against the same table with a fixed workload.
+	 * Ideally, successive VACUUM operations will behave as if there are
+	 * exactly zero LP_DEAD items in cases where there are close to zero.
 	 *
-	 * Our approach is to bypass index vacuuming only when there are very few
-	 * heap pages with dead items.  Even then, it must be the first and last
-	 * call here for the VACUUM.  We never apply the optimization when
-	 * multiple index scans will be required -- we cannot accumulate "debt"
-	 * without bound.
-	 *
-	 * This threshold we apply allows us to not give as much weight to items
-	 * that are concentrated in relatively few heap pages.  Concentrated
-	 * build-up of LP_DEAD items tends to occur with workloads that have
-	 * non-HOT updates that affect the same logical rows again and again.  It
-	 * is probably not possible for us to keep the visibility map bits for
-	 * these pages set for a useful amount of time anyway.
-	 *
-	 * We apply one further check: the space currently used to store the TIDs
-	 * (the TIDs that tie back to the index tuples we're thinking about not
-	 * deleting this time around) must not exceed 32MB.  This limits the risk
-	 * that we will bypass index vacuuming again and again until eventually
-	 * there is a VACUUM whose dead_tuples space is not resident in L3 cache.
-	 *
-	 * We can be conservative about avoiding eventually reaching some kind of
-	 * cliff edge while still avoiding almost all truly unnecessary index
-	 * vacuuming.
+	 * This is likely to be helpful with a table that is continually affected
+	 * by UPDATEs that can mostly apply the HOT optimization, but occasionally
+	 * have small aberrations that lead to just a few heap pages retaining
+	 * only one or two LP_DEAD items.  This is pretty common; even when the
+	 * DBA goes out of their way to make UPDATEs use HOT, it is practically
+	 * impossible to predict whether HOT will be applied in 100% of cases.
+	 * It's far easier to ensure that 99%+ of all UPDATEs against a table use
+	 * HOT through careful tuning.
 	 */
 	do_bypass_optimization = false;
 	if (onecall && vacrel->rel_pages > 0)
@@ -2095,8 +2077,21 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		Assert(vacrel->do_index_vacuuming);
 		Assert(vacrel->do_index_cleanup);
 
+		/*
+		 * This crossover point at which we'll start to do index vacuuming is
+		 * expressed as a percentage of the total number of heap pages in the
+		 * table that are known to have at least one LP_DEAD item.  This is
+		 * much more important than the total number of LP_DEAD items, since
+		 * it's a proxy for the number of heap pages who visibility map bits
+		 * cannot be set on account of bypassing index and heap vacuuming.
+		 *
+		 * We apply one further precautionary test: the space currently used
+		 * to store the TIDs (TIDs that now all point to LP_DEAD items) must
+		 * not exceed 32MB.  This limits the risk that we will bypass index
+		 * vacuuming again and again until eventually there is a VACUUM whose
+		 * dead_tuples space is not resident in L3 cache.
+		 */
 		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_PAGES;
-
 		do_bypass_optimization =
 			(vacrel->lpdead_item_pages < threshold &&
 			 vacrel->lpdead_items < MAXDEADTUPLES(32L * 1024L * 1024L));
