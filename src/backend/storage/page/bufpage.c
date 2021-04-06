@@ -692,18 +692,14 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * sometimes safely remove unused line pointers, though it is only called by
  * VACUUM.
  *
- * Even then, its second pass over the heap.
- *
- * and only at the point that VACUUM sets LP_DEAD items to LP_UNUSED.
- *
- * though it can only free a group of contiguous unused line pointers at the
- * end of the page's line pointer array (.  It would probably be safe to do so
- * here
- *
  * It ought to be safe for this routine to free unused line pointers, but it's
  * not clear that it would be worth the trouble.  PageTruncateLinePointerArray
- * is called during VACUUM's second pass over the heap, so any LP_UNUSED items
- * that it sees are likely to have been LP_DEAD just before it is called.
+ * is called during VACUUM's second pass over the heap.  Any LP_UNUSED items
+ * that it sees are likely to have been set to LP_UNUSED (from LP_DEAD) right
+ * before the call; it is far more likely to encounter sizeable batches of
+ * unused items that are safe to free.  Things are rather different here,
+ * though.  HOT tends to churn through a lot of unused line pointers without
+ * this ever leading to line pointer bloat.
  *
  * Caller had better have a super-exclusive lock on page's buffer.  As a side
  * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
