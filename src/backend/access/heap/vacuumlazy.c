@@ -105,12 +105,14 @@
 
 /*
  * Threshold that controls whether we bypass index vacuuming and heap
- * vacuuming.  When we're under the threshold they're deemed unnecessary.
- * BYPASS_THRESHOLD_PAGES is applied as a multiplier on the table's rel_pages
- * for those pages known to contain one or more LP_DEAD items.
+ * vacuuming as an optimization
  */
 #define BYPASS_THRESHOLD_PAGES	0.02	/* i.e. 2% of rel_pages */
 
+/*
+ * When a table is very small (smaller than this), save cycles by not checking
+ * if the emergency fail safe mechanism needs to be triggered
+ */
 #define BYPASS_EMERGENCY_MIN_PAGES \
 	((BlockNumber) (((uint64) 4 * 1024 * 1024 * 1024) / BLCKSZ))
 
