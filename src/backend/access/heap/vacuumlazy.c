@@ -1013,6 +1013,12 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	else
 		skipping_blocks = false;
 
+	/*
+	 * Before beginning heap scan, check if it's already necessary to apply
+	 * fail safe speedup
+	 */
+	should_speedup_failsafe(vacrel);
+
 	for (blkno = 0; blkno < nblocks; blkno++)
 	{
 		Buffer		buf;
@@ -2540,9 +2546,10 @@ lazy_check_needs_freeze(Buffer buf, bool *hastup, LVRelState *vacrel)
  *
  * If the user-configurable threshold has been crossed then hurry things up:
  * Stop applying any VACUUM cost delay going forward, and remember to skip any
- * further index vacuuming (and heap vacuuming too, in the common case where
- * table has indexes but not in one-pass VACUUM case).  Return true to inform
- * caller of the emergency.  Otherwise return false.
+ * further index vacuuming (and heap vacuuming, at least in the common case
+ * where table has indexes).
+ *
+ * Return true to inform caller of the emergency.  Otherwise return false.
  *
  * Caller is expected to call here before and after vacuuming each index in
  * the case of two-pass VACUUM, or every VACUUM_FSM_EVERY_PAGES blocks in the
