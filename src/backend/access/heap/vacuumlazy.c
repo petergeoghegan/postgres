@@ -2105,12 +2105,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	if (do_bypass_optimization)
 	{
 		/*
-		 * Bypass index vacuuming.
-		 *
-		 * Since VACUUM aims to behave as if there were precisely zero index
-		 * tuples, even when there are actually slightly more than zero, we
-		 * will still do index cleanup.  This is expected to have practically
-		 * no overhead with tables where bypassing index vacuuming helps.
+		 * There are almost zero TIDs.  Behave as if there were precisely
+		 * zero:  bypass index vacuuming, but do index cleanup.
 		 */
 		vacrel->do_index_vacuuming = false;
 		ereport(elevel,
@@ -2141,6 +2137,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		 * may be required, plus other heap-related and relation-level
 		 * maintenance tasks.  But that's it.
 		 */
+		Assert(!vacrel->do_index_vacuuming);
+		Assert(!vacrel->do_index_cleanup);
 	}
 
 	/*
