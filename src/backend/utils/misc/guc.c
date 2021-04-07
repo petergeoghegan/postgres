@@ -2648,21 +2648,21 @@ static struct config_int ConfigureNamesInt[] =
 		NULL, NULL, NULL
 	},
 	{
-		{"vacuum_skip_index_age", PGC_USERSET, CLIENT_CONN_STATEMENT,
-			gettext_noop("Age at which VACUUM should skip index vacuuming."),
+		{"vacuum_failsafe_age", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Age at which VACUUM should trigger failsafe to avoid a wraparound outage."),
 			NULL
 		},
-		&vacuum_skip_index_age,
+		&vacuum_failsafe_age,
 		/* This upper-limit can be 1.05 of autovacuum_freeze_max_age */
 		1800000000, 0, 2100000000,
 		NULL, NULL, NULL
 	},
 	{
-		{"vacuum_multixact_skip_index_age", PGC_USERSET, CLIENT_CONN_STATEMENT,
-			gettext_noop("Multixact age at which VACUUM should skip index vacuuming."),
+		{"vacuum_multixact_failsafe_age", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Multixact age at which VACUUM should trigger failsafe to avoid a wraparound outage."),
 			NULL
 		},
-		&vacuum_multixact_skip_index_age,
+		&vacuum_multixact_failsafe_age,
 		/* This upper-limit can be 1.05 of autovacuum_multixact_freeze_max_age */
 		1800000000, 0, 2100000000,
 		NULL, NULL, NULL
@@ -3268,7 +3268,7 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&autovacuum_freeze_max_age,
 		/*
-		 * see pg_resetwal and vacuum_skip_index_age if you change the
+		 * see pg_resetwal and vacuum_failsafe_age if you change the
 		 * upper-limit value.
 		 */
 		200000000, 100000, 2000000000,

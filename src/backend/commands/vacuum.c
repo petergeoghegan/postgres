@@ -62,8 +62,8 @@ int			vacuum_freeze_min_age;
 int			vacuum_freeze_table_age;
 int			vacuum_multixact_freeze_min_age;
 int			vacuum_multixact_freeze_table_age;
-int			vacuum_skip_index_age;
-int			vacuum_multixact_skip_index_age;
+int			vacuum_failsafe_age;
+int			vacuum_multixact_failsafe_age;
 
 
 /* A few variables that don't seem worth passing around as parameters */
@@ -1137,7 +1137,12 @@ vacuum_set_xid_limits(Relation rel,
 }
 
 /*
- * vacuum_xid_limit_emergency() -- Handle wraparound emergencies
+ * vacuum_xid_limit_emergency() -- Used by VACUUM's fail safe emergency
+ * wraparound mechanism to determine if its table's relfrozenxid and
+ * relminmxid now are dangerously far in the past.
+ *
+ * When we return true, VACUUM caller will take extraordinary measures to
+ * avoid wraparound failure.
  *
  * Input parameters are the target relation's relfrozenxid and relminmxid.
  */
@@ -1167,7 +1172,7 @@ vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
 	 * autovacuum_freeze_max_age * 1.05, so that VACUUM always does an
 	 * aggressive scan.
 	 */
-	skip_index_vacuum = Max(vacuum_skip_index_age, autovacuum_freeze_max_age * 1.05);
+	skip_index_vacuum = Max(vacuum_failsafe_age, autovacuum_freeze_max_age * 1.05);
 
 	xid_skip_limit = ReadNextTransactionId() - skip_index_vacuum;
 	if (!TransactionIdIsNormal(xid_skip_limit))
@@ -1183,7 +1188,7 @@ vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
 	 * Similar to above, determine the index skipping age to use for multixact.
 	 * In any case not less than autovacuum_multixact_freeze_max_age * 1.05.
 	 */
-	skip_index_vacuum = Max(vacuum_multixact_skip_index_age,
+	skip_index_vacuum = Max(vacuum_multixact_failsafe_age,
 							autovacuum_multixact_freeze_max_age * 1.05);
 
 	/*
