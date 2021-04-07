@@ -583,10 +583,7 @@ heap_prune_chain(Buffer buffer, OffsetNumber rootoffnum, PruneState *prstate)
 
 		/* Some sanity checks */
 		if (offnum < FirstOffsetNumber || offnum > maxoff)
-		{
-			Assert(false);
 			break;
-		}
 
 		/* If item is already processed, stop --- it must not be same chain */
 		if (prstate->marked[offnum])
@@ -965,12 +962,9 @@ heap_get_root_tuples(Page page, OffsetNumber *root_offsets)
 		 */
 		for (;;)
 		{
-			/* Some sanity checks */
+			/* Sanity check */
 			if (nextoffnum < FirstOffsetNumber || nextoffnum > maxoff)
-			{
-				Assert(false);
 				break;
-			}
 
 			lp = PageGetItemId(page, nextoffnum);
 
