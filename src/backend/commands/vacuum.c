@@ -1173,8 +1173,7 @@ vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
 	if (!TransactionIdIsNormal(xid_skip_limit))
 		xid_skip_limit = FirstNormalTransactionId;
 
-	if (TransactionIdIsNormal(relfrozenxid) &&
-		TransactionIdPrecedes(relfrozenxid, xid_skip_limit))
+	if (TransactionIdPrecedes(relfrozenxid, xid_skip_limit))
 	{
 		/* The table's relfrozenxid is too old */
 		return true;
@@ -1196,8 +1195,7 @@ vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
 	if (multi_skip_limit < FirstMultiXactId)
 		multi_skip_limit = FirstMultiXactId;
 
-	if (MultiXactIdIsValid(relminmxid) &&
-		MultiXactIdPrecedes(relminmxid, multi_skip_limit))
+	if (MultiXactIdPrecedes(relminmxid, multi_skip_limit))
 	{
 		/* The table's relminmxid is too old */
 		return true;
