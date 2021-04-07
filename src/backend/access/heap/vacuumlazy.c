@@ -2045,6 +2045,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 
 	if (!vacrel->do_index_vacuuming)
 	{
+		Assert(!vacrel->do_index_cleanup);
 		vacrel->dead_tuples->num_tuples = 0;
 		return;
 	}
