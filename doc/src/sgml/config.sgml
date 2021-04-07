@@ -8615,21 +8615,19 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         Specifies the maximum age (in transactions) that a table's
         <structname>pg_class</structname>.<structfield>relfrozenxid</structfield>
-        field can attain before <command>VACUUM</command> operations
-        that run against the table take extraordinary measures to
-        avoid system-wide transaction ID wraparound failure.  This is
-        <command>VACUUM</command>'s strategy of last resort.
+        field can attain before <command>VACUUM</command> takes
+        extraordinary measures to avoid system-wide transaction ID
+        wraparound failure.  This is <command>VACUUM</command>'s
+        strategy of last resort.  The fail safe typically triggers
+        when an autovacuum to prevent transaction ID wraparound has
+        already been running for some time, though strictly speaking
+        it can be triggered during any <command>VACUUM</command>.
        </para>
        <para>
-        Note that all <command>VACUUM</command> operations apply the
-        fail safe, though in practice it is almost always triggered
-        during an autovacuum to prevent transaction ID wraparound.
-        <command>VACUUM</command> <emphasis>continually</emphasis>
-        evaluates if the table is at the point of triggering the fail
-        safe.  When the fail safe is triggered, any cost-based delay
-        that is in effect is no longer applied, and any further
+        When the fail safe is triggered, any cost-based delay that is
+        in effect will no longer be applied, and any further
         non-essential maintenance (such as index vacuuming) is
-        dropped.
+        bypassed.
        </para>
        <para>
         The default is 1.8 billion transactions.  Although users can
