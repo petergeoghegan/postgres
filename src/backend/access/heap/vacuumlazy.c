@@ -2219,10 +2219,10 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 
 	/*
 	 * We delete all LP_DEAD items from the first heap pass in all indexes on
-	 * each call here (except calls where we choose to do the fail safe).
-	 * This makes the next call to lazy_vacuum_heap_rel() safe (except in the
-	 * event of the fail safe triggering, which prevents the next call from
-	 * taking place).
+	 * each call here (except calls where we choose to do the fail safe). This
+	 * makes the next call to lazy_vacuum_heap_rel() safe (except in the event
+	 * of the fail safe triggering, which prevents the next call from taking
+	 * place).
 	 */
 	Assert(vacrel->num_index_scans > 0 ||
 		   vacrel->dead_tuples->num_tuples == vacrel->lpdead_items);

@@ -1150,8 +1150,8 @@ bool
 vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
 {
 	TransactionId xid_skip_limit;
-	MultiXactId	  multi_skip_limit;
-	int			  skip_index_vacuum;
+	MultiXactId multi_skip_limit;
+	int			skip_index_vacuum;
 
 	Assert(TransactionIdIsNormal(relfrozenxid));
 	Assert(MultiXactIdIsValid(relminmxid));
@@ -1185,8 +1185,9 @@ vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
 	}
 
 	/*
-	 * Similar to above, determine the index skipping age to use for multixact.
-	 * In any case not less than autovacuum_multixact_freeze_max_age * 1.05.
+	 * Similar to above, determine the index skipping age to use for
+	 * multixact. In any case not less than
+	 * autovacuum_multixact_freeze_max_age * 1.05.
 	 */
 	skip_index_vacuum = Max(vacuum_multixact_failsafe_age,
 							autovacuum_multixact_freeze_max_age * 1.05);

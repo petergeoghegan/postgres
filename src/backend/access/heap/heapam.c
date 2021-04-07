@@ -689,8 +689,8 @@ heapgettup(HeapScanDesc scan,
 		 * Only continue scanning the page while we have lines left.
 		 *
 		 * Note that this protects us from accessing line pointers past
-		 * PageGetMaxOffsetNumber(); both for forward scans when we resume
-		 * the table scan, and for when we start scanning a new page.
+		 * PageGetMaxOffsetNumber(); both for forward scans when we resume the
+		 * table scan, and for when we start scanning a new page.
 		 */
 		while (linesleft > 0)
 		{
