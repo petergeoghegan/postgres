@@ -2654,7 +2654,7 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&vacuum_failsafe_age,
 		/* This upper-limit can be 1.05 of autovacuum_freeze_max_age */
-		1800000000, 0, 2100000000,
+		1600000000, 0, 2100000000,
 		NULL, NULL, NULL
 	},
 	{
@@ -2664,7 +2664,7 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&vacuum_multixact_failsafe_age,
 		/* This upper-limit can be 1.05 of autovacuum_multixact_freeze_max_age */
-		1800000000, 0, 2100000000,
+		1600000000, 0, 2100000000,
 		NULL, NULL, NULL
 	},
 

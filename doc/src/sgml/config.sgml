@@ -8630,7 +8630,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         maintenance tasks (such as index vacuuming) are bypassed.
        </para>
        <para>
-        The default is 1.8 billion transactions.  Although users can
+        The default is 1.6 billion transactions.  Although users can
         set this value anywhere from zero to 2.1 billion,
         <command>VACUUM</command> will silently adjust the effective
         value to no less than 105% of <xref
@@ -8709,7 +8709,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         maintenance tasks (such as index vacuuming) are bypassed.
        </para>
        <para>
-        The default is 1.8 billion multixacts.  Although users can set
+        The default is 1.6 billion multixacts.  Although users can set
         this value anywhere from zero to 2.1 billion,
         <command>VACUUM</command> will silently adjust the effective
         value to no less than 105% of <xref
