@@ -816,7 +816,9 @@ PageRepairFragmentation(Page page)
  * it just set to LP_UNUSED then it should not call here).
  *
  * We avoid truncating the line pointer array to 0 items, if necessary by
- * leaving behind a single remaining LP_UNUSED item.
+ * leaving behind a single remaining LP_UNUSED item.  This is a little
+ * arbitrary, but it seems like a good idea to avoid leaving a PageIsEmpty()
+ * page behind.  That is treated as a special case by VACUUM.
  *
  * Caller can have either an exclusive lock or a super-exclusive lock on
  * page's buffer.  The page's PD_HAS_FREE_LINES hint bit will be set or unset
