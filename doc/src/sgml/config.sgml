@@ -8692,20 +8692,27 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        <command>VACUUM</command> skips index cleanup if the table's
-        <structname>pg_class</structname>.<structfield>relminmxid</structfield> field has reached
-        the age specified by this setting.   A <command>VACUUM</command> with skipping
-        index cleanup hurries finishing <command>VACUUM</command> to advance
+        Specifies the maximum age (in transactions) that a table's
         <structname>pg_class</structname>.<structfield>relminmxid</structfield>
-        as quickly as possible.  This is an equivalent behavior to setting
-        <literal>OFF</literal> to <literal>INDEX_CLEANUP</literal> option except that
-        this parameters skips index cleanup even in the middle of vacuum operation.
-        The default is 1.8 billion multixacts. Although users can set this value
-        anywhere from zero to 2.1 billion, <command>VACUUM</command> will silently
-        adjust the effective value more than 105% of
-        <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>, so that only
-        anti-wraparound autovacuums and aggressive scans have a chance to skip
-        index cleanup.
+        field can attain before <command>VACUUM</command> takes
+        extraordinary measures to avoid system-wide multixact ID
+        wraparound failure.  This is <command>VACUUM</command>'s
+        strategy of last resort.  The fail safe typically triggers
+        when an autovacuum to prevent transaction ID wraparound has
+        already been running for some time, though it's possible for
+        the fail safe to trigger during any <command>VACUUM</command>.
+       </para>
+       <para>
+        When the fail safe is triggered, any cost-based delay that is
+        in effect will no longer be applied, and further non-essential
+        maintenance tasks (such as index vacuuming) are bypassed.
+       </para>
+       <para>
+        The default is 1.8 billion multixacts.  Although users can set
+        this value anywhere from zero to 2.1 billion,
+        <command>VACUUM</command> will silently adjust the effective
+        value to no less than 105% of <xref
+         linkend="guc-autovacuum-multixact-freeze-max-age"/>.
        </para>
       </listitem>
      </varlistentry>
