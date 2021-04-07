@@ -689,19 +689,17 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * This routine is usable for heap pages only, but see PageIndexMultiDelete.
  *
  * Never removes unused line pointers.  PageTruncateLinePointerArray can
- * sometimes safely remove unused line pointers, though it is only called by
- * VACUUM.
+ * safely remove some unused line pointers.  It ought to be safe for this
+ * routine to free unused line pointers in roughly the same way, but it's not
+ * clear that that would be beneficial.
  *
- * It ought to be safe for this routine to free unused line pointers, but it's
- * not clear that it would be worth the trouble.  PageTruncateLinePointerArray
- * is called during VACUUM's second pass over the heap.  Any unused items that
- * it sees are likely to have been set to LP_UNUSED (from LP_DEAD) immediately
- * before the time it is called.  On the other hand, pruning is often far more
- * likely to occur opportunistically than during a VACUUM.  In general there
- * is a good chance that all of the unused line pointers we'll see are left
- * over from pruning away heap-only tuples.  These unused items are much more
- * likely to be reused in a steady fashion that items that originated as
- * LP_DEAD line pointers.
+ * PageTruncateLinePointerArray is only called during VACUUM's second pass
+ * over the heap.  Any unused line pointers that it sees are likely to have
+ * been set to LP_UNUSED (from LP_DEAD) immediately before the time it is
+ * called.  On the other hand, many tables have the vast majority of all
+ * required pruning performed opportunistically (not during VACUUM).  And so
+ * there is, in general, a good chance that all of the unused line pointers we
+ * see here are freed and reused almost constantly.
  *
  * Caller had better have a super-exclusive lock on page's buffer.  As a side
  * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
