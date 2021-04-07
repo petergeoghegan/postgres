@@ -767,13 +767,15 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 (long long) VacuumPageDirty);
 			if (vacrel->rel_pages > 0)
 			{
-				msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
+				if (vacrel->do_index_vacuuming)
+				{
+					msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
 
-				if (vacrel->nindexes == 0 || (vacrel->do_index_vacuuming &&
-											  vacrel->num_index_scans == 0))
-					appendStringInfo(&buf, _("index scan not needed:"));
-				else if (vacrel->do_index_vacuuming && vacrel->num_index_scans > 0)
-					appendStringInfo(&buf, _("index scan needed:"));
+					if (vacrel->nindexes == 0 || vacrel->num_index_scans == 0)
+						appendStringInfo(&buf, _("index scan not needed:"));
+					else
+						appendStringInfo(&buf, _("index scan needed:"));
+				}
 				else
 				{
 					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
@@ -929,6 +931,12 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		palloc0(vacrel->nindexes * sizeof(IndexBulkDeleteResult *));
 
 	/*
+	 * Before beginning scan, check if it's already necessary to apply fail
+	 * safe speedup
+	 */
+	should_speedup_failsafe(vacrel);
+
+	/*
 	 * Allocate the space for dead tuples.  Note that this handles parallel
 	 * VACUUM initialization as part of allocating shared memory space used
 	 * for dead_tuples.
@@ -1014,12 +1022,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		skipping_blocks = true;
 	else
 		skipping_blocks = false;
-
-	/*
-	 * Before beginning heap scan, check if it's already necessary to apply
-	 * fail safe speedup
-	 */
-	should_speedup_failsafe(vacrel);
 
 	for (blkno = 0; blkno < nblocks; blkno++)
 	{
@@ -3445,7 +3447,7 @@ lazy_space_alloc(LVRelState *vacrel, int nworkers, BlockNumber nblocks)
 	 * be used for an index, so we invoke parallelism only if there are at
 	 * least two indexes on a table.
 	 */
-	if (nworkers >= 0 && vacrel->nindexes > 1)
+	if (nworkers >= 0 && vacrel->nindexes > 1 && vacrel->do_index_vacuuming)
 	{
 		/*
 		 * Since parallel workers cannot access data in temporary tables, we
