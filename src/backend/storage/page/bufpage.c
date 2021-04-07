@@ -698,8 +698,8 @@ compactify_tuples(itemIdCompact itemidbase, int nitems, Page page, bool presorte
  * been set to LP_UNUSED (from LP_DEAD) immediately before the time it is
  * called.  On the other hand, many tables have the vast majority of all
  * required pruning performed opportunistically (not during VACUUM).  And so
- * there is, in general, a good chance that all of the unused line pointers we
- * see here are freed and reused almost constantly.
+ * there is, in general, a good chance that all of the unused line pointers
+ * we'll see on the page are ceaselessly recycled, again and again.
  *
  * Caller had better have a super-exclusive lock on page's buffer.  As a side
  * effect the page's PD_HAS_FREE_LINES hint bit will be set or unset as
