@@ -111,9 +111,9 @@
 
 /*
  * When a table is small (i.e. smaller than this), save cycles by avoiding
- * repeated emergency fail safe checks
+ * repeated fail safe checks
  */
-#define BYPASS_EMERGENCY_MIN_PAGES \
+#define BYPASS_FAILSAFE_MIN_PAGES \
 	((BlockNumber) (((uint64) 4 * 1024 * 1024 * 1024) / BLCKSZ))
 
 /*
@@ -312,7 +312,8 @@ typedef struct LVRelState
 	/* Do index vacuuming/cleanup? */
 	bool		do_index_vacuuming;
 	bool		do_index_cleanup;
-	bool		do_failsafe_speedup;
+	/* Wraparound failsafe in effect? (implies !do_index_vacuuming) */
+	bool		do_failsafe;
 
 	/* Buffer access strategy and parallel state */
 	BufferAccessStrategy bstrategy;
@@ -413,7 +414,7 @@ static int	lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
 								  Buffer buffer, int tupindex, Buffer *vmbuffer);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelState *vacrel);
-static bool should_speedup_failsafe(LVRelState *vacrel);
+static bool lazy_check_wraparound_failsafe(LVRelState *vacrel);
 static void do_parallel_lazy_vacuum_all_indexes(LVRelState *vacrel);
 static void do_parallel_lazy_cleanup_all_indexes(LVRelState *vacrel);
 static void do_parallel_vacuum_or_cleanup(LVRelState *vacrel, int nworkers);
@@ -559,7 +560,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 					 &vacrel->indrels);
 	vacrel->do_index_vacuuming = true;
 	vacrel->do_index_cleanup = true;
-	vacrel->do_failsafe_speedup = false;
+	vacrel->do_failsafe = false;
 	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
 	{
 		vacrel->do_index_vacuuming = false;
@@ -780,7 +781,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				{
 					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
 
-					if (!vacrel->do_failsafe_speedup)
+					if (!vacrel->do_failsafe)
 						appendStringInfo(&buf, _("index scan bypassed:"));
 					else
 						appendStringInfo(&buf, _("index scan bypassed due to emergency:"));
@@ -932,9 +933,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 	/*
 	 * Before beginning scan, check if it's already necessary to apply fail
-	 * safe speedup
+	 * safe
 	 */
-	should_speedup_failsafe(vacrel);
+	lazy_check_wraparound_failsafe(vacrel);
 
 	/*
 	 * Allocate the space for dead tuples.  Note that this handles parallel
@@ -1361,8 +1362,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				 * space visible on upper FSM pages.  Note we have not yet
 				 * performed FSM processing for blkno.
 				 *
-				 * This is also a good time to call should_speedup_failsafe(),
-				 * since we also don't want to do that too frequently or too
+				 * Call lazy_check_wraparound_failsafe() here, too, since we
+				 * also don't want to do that too frequently, or too
 				 * infrequently.
 				 */
 				if (blkno - next_fsm_block_to_vacuum >= VACUUM_FSM_EVERY_PAGES)
@@ -1370,7 +1371,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 					FreeSpaceMapVacuumRange(vacrel->rel, next_fsm_block_to_vacuum,
 											blkno);
 					next_fsm_block_to_vacuum = blkno;
-					should_speedup_failsafe(vacrel);
+					lazy_check_wraparound_failsafe(vacrel);
 				}
 
 				/*
@@ -2138,7 +2139,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		 * may be required, plus other heap-related and relation-level
 		 * maintenance tasks.  But that's it.
 		 */
-		Assert(vacrel->do_failsafe_speedup);
+		Assert(vacrel->do_failsafe);
 	}
 
 	/*
@@ -2168,7 +2169,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	Assert(MultiXactIdIsValid(vacrel->relminmxid));
 
 	/* Precheck for XID wraparound emergencies */
-	if (should_speedup_failsafe(vacrel))
+	if (lazy_check_wraparound_failsafe(vacrel))
 	{
 		/* Wraparound emergency -- don't even start an index scan */
 		return false;
@@ -2189,7 +2190,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 				lazy_vacuum_one_index(indrel, istat, vacrel->old_live_tuples,
 									  vacrel);
 
-			if (should_speedup_failsafe(vacrel))
+			if (lazy_check_wraparound_failsafe(vacrel))
 			{
 				/* Wraparound emergency -- end current index scan */
 				allindexes = false;
@@ -2206,7 +2207,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 		 * Do a postcheck to consider applying wraparound failsafe now.  Note
 		 * that parallel VACUUM only gets the precheck and this postcheck.
 		 */
-		if (should_speedup_failsafe(vacrel))
+		if (lazy_check_wraparound_failsafe(vacrel))
 			allindexes = false;
 	}
 
@@ -2219,7 +2220,7 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 	 */
 	Assert(vacrel->num_index_scans > 0 ||
 		   vacrel->dead_tuples->num_tuples == vacrel->lpdead_items);
-	Assert(allindexes || vacrel->do_failsafe_speedup);
+	Assert(allindexes || vacrel->do_failsafe);
 
 	/*
 	 * Increase and report the number of index scans.
@@ -2549,19 +2550,19 @@ lazy_check_needs_freeze(Buffer buf, bool *hastup, LVRelState *vacrel)
  * case of no-indexes/one-pass VACUUM.
  */
 static bool
-should_speedup_failsafe(LVRelState *vacrel)
+lazy_check_wraparound_failsafe(LVRelState *vacrel)
 {
-	/* Avoid calling vacuum_xid_limit_emergency() very frequently */
+	/* Avoid calling vacuum_xid_failsafe_check() very frequently */
 	if (vacrel->num_index_scans == 0 &&
-		vacrel->rel_pages <= BYPASS_EMERGENCY_MIN_PAGES)
+		vacrel->rel_pages <= BYPASS_FAILSAFE_MIN_PAGES)
 		return false;
 
 	/* Don't warn more than once per VACUUM */
-	if (vacrel->do_failsafe_speedup)
+	if (vacrel->do_failsafe)
 		return true;
 
-	if (unlikely(vacuum_xid_limit_emergency(vacrel->relfrozenxid,
-											vacrel->relminmxid)))
+	if (unlikely(vacuum_xid_failsafe_check(vacrel->relfrozenxid,
+										   vacrel->relminmxid)))
 	{
 		/*
 		 * Wraparound emergency -- the table's relfrozenxid or relminmxid is
@@ -2572,7 +2573,7 @@ should_speedup_failsafe(LVRelState *vacrel)
 
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
-		vacrel->do_failsafe_speedup = true;
+		vacrel->do_failsafe = true;
 
 		ereport(WARNING,
 				(errmsg("abandoned index vacuuming of table \"%s.%s.%s\" as a fail safe after %d index scans",

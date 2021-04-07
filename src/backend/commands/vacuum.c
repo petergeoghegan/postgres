@@ -1137,7 +1137,7 @@ vacuum_set_xid_limits(Relation rel,
 }
 
 /*
- * vacuum_xid_limit_emergency() -- Used by VACUUM's fail safe emergency
+ * vacuum_xid_failsafe_check() -- Used by VACUUM's fail safe emergency
  * wraparound mechanism to determine if its table's relfrozenxid and
  * relminmxid now are dangerously far in the past.
  *
@@ -1147,7 +1147,7 @@ vacuum_set_xid_limits(Relation rel,
  * Input parameters are the target relation's relfrozenxid and relminmxid.
  */
 bool
-vacuum_xid_limit_emergency(TransactionId relfrozenxid, MultiXactId relminmxid)
+vacuum_xid_failsafe_check(TransactionId relfrozenxid, MultiXactId relminmxid)
 {
 	TransactionId xid_skip_limit;
 	MultiXactId multi_skip_limit;
