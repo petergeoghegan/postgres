@@ -8625,9 +8625,8 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        </para>
        <para>
         When the fail safe is triggered, any cost-based delay that is
-        in effect will no longer be applied, and any further
-        non-essential maintenance (such as index vacuuming) is
-        bypassed.
+        in effect will no longer be applied, and further non-essential
+        maintenance tasks (such as index vacuuming) are bypassed.
        </para>
        <para>
         The default is 1.8 billion transactions.  Although users can
