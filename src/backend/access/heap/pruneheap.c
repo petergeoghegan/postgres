@@ -583,7 +583,10 @@ heap_prune_chain(Buffer buffer, OffsetNumber rootoffnum, PruneState *prstate)
 
 		/* Some sanity checks */
 		if (offnum < FirstOffsetNumber || offnum > maxoff)
+		{
+			Assert(false);
 			break;
+		}
 
 		/* If item is already processed, stop --- it must not be same chain */
 		if (prstate->marked[offnum])
@@ -962,12 +965,12 @@ heap_get_root_tuples(Page page, OffsetNumber *root_offsets)
 		 */
 		for (;;)
 		{
-			/*
-			 * Check for broken chains: Vacuum has at some point removed
-			 * never-committed hot update and has since truncate the LP array
-			 */
-			if (nextoffnum > maxoff)
+			/* Some sanity checks */
+			if (nextoffnum < FirstOffsetNumber || nextoffnum > maxoff)
+			{
+				Assert(false);
 				break;
+			}
 
 			lp = PageGetItemId(page, nextoffnum);
 
