@@ -8620,8 +8620,8 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         wraparound failure.  This is <command>VACUUM</command>'s
         strategy of last resort.  The fail safe typically triggers
         when an autovacuum to prevent transaction ID wraparound has
-        already been running for some time, though strictly speaking
-        it can be triggered during any <command>VACUUM</command>.
+        already been running for some time, though it's possible for
+        the fail safe to trigger during any <command>VACUUM</command>.
        </para>
        <para>
         When the fail safe is triggered, any cost-based delay that is
@@ -8632,7 +8632,8 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         The default is 1.8 billion transactions.  Although users can
         set this value anywhere from zero to 2.1 billion,
         <command>VACUUM</command> will silently adjust the effective
-        value more than 105% of <xref linkend="guc-autovacuum-freeze-max-age"/>.
+        value to no less than 105% of <xref
+         linkend="guc-autovacuum-freeze-max-age"/>.
        </para>
       </listitem>
      </varlistentry>
