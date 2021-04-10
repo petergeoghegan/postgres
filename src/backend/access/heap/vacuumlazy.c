@@ -1908,16 +1908,18 @@ retry:
 	{
 		FreezeLimit = vacrel->OldestXmin;
 		MultiXactCutoff = vacrel->oldestMxact;
-		elog(DEBUG1, "retry");
 		didretry = true;
 		goto retry;
 	}
+#if 0
 	if (didretry)
 	{
-		elog(DEBUG1, "all_visible %d all_frozen %d",
+		elog(WARNING, "%s blk %u all_visible %d all_frozen %d",
+			 RelationGetRelationName(rel), BufferGetBlockNumber(buf),
 			 prunestate->all_visible,
 			 prunestate->all_frozen);
 	}
+#endif
 
 	/*
 	 * We have now divided every item on the page into either an LP_DEAD item
