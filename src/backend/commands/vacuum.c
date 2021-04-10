@@ -946,6 +946,7 @@ vacuum_set_xid_limits(Relation rel,
 					  int multixact_freeze_min_age,
 					  int multixact_freeze_table_age,
 					  TransactionId *oldestXmin,
+					  MultiXactId *oldestMxact,
 					  TransactionId *freezeLimit,
 					  TransactionId *xidFullScanLimit,
 					  MultiXactId *multiXactCutoff,
@@ -956,7 +957,6 @@ vacuum_set_xid_limits(Relation rel,
 	int			effective_multixact_freeze_max_age;
 	TransactionId limit;
 	TransactionId safeLimit;
-	MultiXactId oldestMxact;
 	MultiXactId mxactLimit;
 	MultiXactId safeMxactLimit;
 
@@ -1052,8 +1052,8 @@ vacuum_set_xid_limits(Relation rel,
 	Assert(mxid_freezemin >= 0);
 
 	/* compute the cutoff multi, being careful to generate a valid value */
-	oldestMxact = GetOldestMultiXactId();
-	mxactLimit = oldestMxact - mxid_freezemin;
+	*oldestMxact = GetOldestMultiXactId();
+	mxactLimit = *oldestMxact - mxid_freezemin;
 	if (mxactLimit < FirstMultiXactId)
 		mxactLimit = FirstMultiXactId;
 
@@ -1068,13 +1068,15 @@ vacuum_set_xid_limits(Relation rel,
 				(errmsg("oldest multixact is far in the past"),
 				 errhint("Close open transactions with multixacts soon to avoid wraparound problems.")));
 		/* Use the safe limit, unless an older mxact is still running */
-		if (MultiXactIdPrecedes(oldestMxact, safeMxactLimit))
-			mxactLimit = oldestMxact;
+		if (MultiXactIdPrecedes(*oldestMxact, safeMxactLimit))
+			mxactLimit = *oldestMxact;
 		else
 			mxactLimit = safeMxactLimit;
 	}
 
 	*multiXactCutoff = mxactLimit;
+	if (*oldestMxact < FirstMultiXactId)
+		*oldestMxact = FirstMultiXactId;
 
 	if (xidFullScanLimit != NULL)
 	{

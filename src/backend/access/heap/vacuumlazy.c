@@ -328,6 +328,7 @@ typedef struct LVRelState
 
 	/* VACUUM operation's cutoff for pruning */
 	TransactionId OldestXmin;
+	MultiXactId	oldestMxact;
 	/* VACUUM operation's cutoff for freezing XIDs and MultiXactIds */
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
@@ -504,6 +505,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	PgStat_Counter startreadtime = 0;
 	PgStat_Counter startwritetime = 0;
 	TransactionId OldestXmin;
+	MultiXactId	oldestMxact;
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
 
@@ -536,7 +538,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 						  params->freeze_table_age,
 						  params->multixact_freeze_min_age,
 						  params->multixact_freeze_table_age,
-						  &OldestXmin, &FreezeLimit, &xidFullScanLimit,
+						  &OldestXmin, &oldestMxact,
+						  &FreezeLimit, &xidFullScanLimit,
 						  &MultiXactCutoff, &mxactFullScanLimit);
 
 	/*
@@ -574,6 +577,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 
 	/* Set cutoffs for entire VACUUM */
 	vacrel->OldestXmin = OldestXmin;
+	vacrel->oldestMxact = oldestMxact;
 	vacrel->FreezeLimit = FreezeLimit;
 	vacrel->MultiXactCutoff = MultiXactCutoff;
 
@@ -1675,6 +1679,8 @@ lazy_scan_prune(LVRelState *vacrel,
 	int			nfrozen;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
+	TransactionId FreezeLimit = vacrel->FreezeLimit;
+	MultiXactId MultiXactCutoff =  vacrel->MultiXactCutoff;
 
 	maxoff = PageGetMaxOffsetNumber(page);
 
@@ -1879,8 +1885,8 @@ retry:
 		if (heap_prepare_freeze_tuple(tuple.t_data,
 									  vacrel->relfrozenxid,
 									  vacrel->relminmxid,
-									  vacrel->FreezeLimit,
-									  vacrel->MultiXactCutoff,
+									  FreezeLimit,
+									  MultiXactCutoff,
 									  &frozen[nfrozen],
 									  &tuple_totally_frozen))
 		{
@@ -1894,6 +1900,14 @@ retry:
 		 */
 		if (!tuple_totally_frozen)
 			prunestate->all_frozen = false;
+	}
+
+	if (prunestate->all_visible && !prunestate->all_frozen &&
+		FreezeLimit != vacrel->OldestXmin)
+	{
+		FreezeLimit = vacrel->OldestXmin;
+		MultiXactCutoff = vacrel->oldestMxact;
+		goto retry;
 	}
 
 	/*
