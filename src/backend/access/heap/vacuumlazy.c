@@ -1681,6 +1681,7 @@ lazy_scan_prune(LVRelState *vacrel,
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 	TransactionId FreezeLimit = vacrel->FreezeLimit;
 	MultiXactId MultiXactCutoff =  vacrel->MultiXactCutoff;
+	bool didretry = false;
 
 	maxoff = PageGetMaxOffsetNumber(page);
 
@@ -1907,7 +1908,15 @@ retry:
 	{
 		FreezeLimit = vacrel->OldestXmin;
 		MultiXactCutoff = vacrel->oldestMxact;
+		elog(DEBUG1, "retry");
+		didretry = true;
 		goto retry;
+	}
+	if (didretry)
+	{
+		elog(DEBUG1, "all_visible %d all_frozen %d",
+			 prunestate->all_visible,
+			 prunestate->all_frozen);
 	}
 
 	/*
@@ -1957,7 +1966,7 @@ retry:
 		{
 			XLogRecPtr	recptr;
 
-			recptr = log_heap_freeze(vacrel->rel, buf, vacrel->FreezeLimit,
+			recptr = log_heap_freeze(vacrel->rel, buf, FreezeLimit,
 									 frozen, nfrozen);
 			PageSetLSN(page, recptr);
 		}
