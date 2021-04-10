@@ -1334,6 +1334,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 */
 		lazy_scan_prune(vacrel, buf, blkno, page, vistest, &prunestate);
 
+		Assert(!prunestate.all_visible || !prunestate.has_lpdead_items);
+		Assert(!all_visible_according_to_vm || prunestate.all_visible);
+
 		/* Remember the location of the last page with nonremovable tuples */
 		if (prunestate.hastup)
 			vacrel->nonempty_pages = blkno + 1;
@@ -1404,7 +1407,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * Handle setting visibility map bit based on what the VM said about
 		 * the page before pruning started, and using prunestate
 		 */
-		Assert(!prunestate.all_visible || !prunestate.has_lpdead_items);
 		if (!all_visible_according_to_vm && prunestate.all_visible)
 		{
 			uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
@@ -1901,9 +1903,6 @@ retry:
 	 * that will need to be vacuumed in indexes later, or a LP_NORMAL tuple
 	 * that remains and needs to be considered for freezing now (LP_UNUSED and
 	 * LP_REDIRECT items also remain, but are of no further interest to us).
-	 *
-	 * Add page level counters to caller's counts, and then actually process
-	 * LP_DEAD and LP_NORMAL items.
 	 */
 	vacrel->offnum = InvalidOffsetNumber;
 
@@ -1988,13 +1987,6 @@ retry:
 	}
 #endif
 
-	/* Add page-local counts to whole-VACUUM counts */
-	vacrel->tuples_deleted += tuples_deleted;
-	vacrel->lpdead_items += lpdead_items;
-	vacrel->new_dead_tuples += new_dead_tuples;
-	vacrel->num_tuples += num_tuples;
-	vacrel->live_tuples += live_tuples;
-
 	/*
 	 * Now save details of the LP_DEAD items from the page in the dead_tuples
 	 * array.  Also record that page has dead items in per-page prunestate.
@@ -2021,6 +2013,13 @@ retry:
 		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
 									 dead_tuples->num_tuples);
 	}
+
+	/* Finally, add page-local counts to whole-VACUUM counts */
+	vacrel->tuples_deleted += tuples_deleted;
+	vacrel->lpdead_items += lpdead_items;
+	vacrel->new_dead_tuples += new_dead_tuples;
+	vacrel->num_tuples += num_tuples;
+	vacrel->live_tuples += live_tuples;
 }
 
 /*
@@ -2147,7 +2146,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	}
 
 	/*
-	 * Forget the now-vacuumed tuples -- just press on
+	 * Forget the LP_DEAD items that we either just vacuumed or decided to not
+	 * deal with at all during the ongoing VACUUM operation
 	 */
 	vacrel->dead_tuples->num_tuples = 0;
 }
