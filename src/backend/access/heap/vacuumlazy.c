@@ -1530,7 +1530,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			Size		freespace = PageGetHeapFreeSpace(page);
 
 			UnlockReleaseBuffer(buf);
-			if (prunestate.all_visible && freespace < 3300)
+			if (prunestate.all_visible && freespace < 5000)
 				freespace = 0;
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 		}
@@ -2335,7 +2335,7 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		freespace = PageGetHeapFreeSpace(page);
 
 		UnlockReleaseBuffer(buf);
-		if (allvisible && freespace < 3300)
+		if (allvisible && freespace < 5000)
 			freespace = 0;
 		RecordPageWithFreeSpace(vacrel->rel, tblk, freespace);
 		vacuumed_pages++;
