@@ -1904,7 +1904,7 @@ retry:
 	}
 
 	if (prunestate->all_visible && !prunestate->all_frozen &&
-		FreezeLimit != vacrel->OldestXmin)
+		num_tuples > 0 && FreezeLimit != vacrel->OldestXmin)
 	{
 		FreezeLimit = vacrel->OldestXmin;
 		MultiXactCutoff = vacrel->oldestMxact;
