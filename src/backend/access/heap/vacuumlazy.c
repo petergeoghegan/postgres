@@ -412,7 +412,7 @@ static void lazy_vacuum(LVRelState *vacrel, bool onecall);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static void lazy_vacuum_heap_rel(LVRelState *vacrel);
 static int	lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
-								  Buffer buffer, int tupindex, Buffer *vmbuffer);
+								  Buffer buffer, int tupindex, Buffer *vmbuffer, bool *allvisible);
 static bool lazy_check_needs_freeze(Buffer buf, bool *hastup,
 									LVRelState *vacrel);
 static bool lazy_check_wraparound_failsafe(LVRelState *vacrel);
@@ -1355,8 +1355,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			if (prunestate.has_lpdead_items)
 			{
 				Size		freespace;
+				bool		allvisible;
 
-				lazy_vacuum_heap_page(vacrel, blkno, buf, 0, &vmbuffer);
+				lazy_vacuum_heap_page(vacrel, blkno, buf, 0, &vmbuffer,
+									  &allvisible);
 
 				/* Forget the now-vacuumed tuples */
 				dead_tuples->num_tuples = 0;
@@ -1528,6 +1530,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			Size		freespace = PageGetHeapFreeSpace(page);
 
 			UnlockReleaseBuffer(buf);
+			if (prunestate.all_visible && freespace < 3300)
+				freespace = 0;
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 		}
 	}
@@ -2314,6 +2318,7 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		Buffer		buf;
 		Page		page;
 		Size		freespace;
+		bool		allvisible = false;
 
 		vacuum_delay_point();
 
@@ -2323,13 +2328,15 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 								 vacrel->bstrategy);
 		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
 		tupindex = lazy_vacuum_heap_page(vacrel, tblk, buf, tupindex,
-										 &vmbuffer);
+										 &vmbuffer, &allvisible);
 
 		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
 
 		UnlockReleaseBuffer(buf);
+		if (allvisible && freespace < 3300)
+			freespace = 0;
 		RecordPageWithFreeSpace(vacrel->rel, tblk, freespace);
 		vacuumed_pages++;
 	}
@@ -2380,7 +2387,7 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
  */
 static int
 lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
-					  int tupindex, Buffer *vmbuffer)
+					  int tupindex, Buffer *vmbuffer, bool *allvisible)
 {
 	LVDeadTuples *dead_tuples = vacrel->dead_tuples;
 	Page		page = BufferGetPage(buffer);
@@ -2463,7 +2470,10 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 	 */
 	if (heap_page_is_all_visible(vacrel, buffer, &visibility_cutoff_xid,
 								 &all_frozen))
+	{
 		PageSetAllVisible(page);
+		*allvisible = true;
+	}
 
 	/*
 	 * All the changes to the heap page have been done. If the all-visible
