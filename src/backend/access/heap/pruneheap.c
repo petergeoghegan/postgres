@@ -14,6 +14,8 @@
  */
 #include "postgres.h"
 
+#include <unistd.h>
+
 #include "access/heapam.h"
 #include "access/heapam_xlog.h"
 #include "access/htup_details.h"
@@ -22,6 +24,8 @@
 #include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "port.h"
+#include "storage/fd.h"
 #include "storage/bufmgr.h"
 #include "utils/snapmgr.h"
 #include "utils/rel.h"
@@ -193,6 +197,54 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	}
 }
 
+static void
+page_store(Relation rel, Buffer buf)
+{
+	Page page = BufferGetPage(buf);
+	BlockNumber blkno = BufferGetBlockNumber(buf);
+	char		tmppath[MAXPGPATH];
+	__off_t		size;
+	int			fd;
+
+	/*
+	 * Write into a temp file name.
+	 */
+	snprintf(tmppath, MAXPGPATH, "%s.tmp", RelationGetRelationName(rel));
+
+	/* Now write the data into the successfully-reserved part of the file */
+	fd = OpenTransientFile(tmppath, O_RDWR | O_CREAT | PG_BINARY);
+	if (fd < 0)
+	{
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("could not create file \"%s\": %m", tmppath)));
+
+		goto error;
+	}
+
+	size = lseek(fd, 0, SEEK_END);
+	if (size >= BLCKSZ * 400)
+	{
+		goto error;
+	}
+	if (pg_pwrite(fd, page, BLCKSZ, size) != BLCKSZ)
+	{
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("could not append blk %u to file \"%s\": %m", blkno, tmppath)));
+
+		goto error;
+	}
+
+	CloseTransientFile(fd);
+
+	return;
+
+error:
+
+	if (fd >= 0)
+		CloseTransientFile(fd);
+}
 
 /*
  * Prune and repair fragmentation in the specified page.
@@ -228,6 +280,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 	OffsetNumber offnum,
 				maxoff;
 	PruneState	prstate;
+	bool		nofree = false;
 
 	/*
 	 * Our strategy is to scan the page and make lists of items to change,
@@ -370,6 +423,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 			PageClearFull(page);
 			MarkBufferDirtyHint(buffer, true);
 		}
+		nofree = true;
 	}
 
 	END_CRIT_SECTION();
@@ -381,6 +435,12 @@ heap_page_prune(Relation relation, Buffer buffer,
 	 */
 	if (report_stats && ndeleted > prstate.ndead)
 		pgstat_update_heap_dead_tuples(relation, ndeleted - prstate.ndead);
+
+	if (nofree && off_loc == NULL)
+	{
+		page_store(relation, buffer);
+	}
+
 
 	/*
 	 * XXX Should we update the FSM information of this page ?
