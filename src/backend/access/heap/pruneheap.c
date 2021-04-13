@@ -228,7 +228,6 @@ heap_page_prune(Relation relation, Buffer buffer,
 	OffsetNumber offnum,
 				maxoff;
 	PruneState	prstate;
-	bool		nofree = false;
 
 	/*
 	 * Our strategy is to scan the page and make lists of items to change,
@@ -371,7 +370,6 @@ heap_page_prune(Relation relation, Buffer buffer,
 			PageClearFull(page);
 			MarkBufferDirtyHint(buffer, true);
 		}
-		nofree = true;
 	}
 
 	END_CRIT_SECTION();
@@ -383,75 +381,6 @@ heap_page_prune(Relation relation, Buffer buffer,
 	 */
 	if (report_stats && ndeleted > prstate.ndead)
 		pgstat_update_heap_dead_tuples(relation, ndeleted - prstate.ndead);
-
-	if (nofree && off_loc == NULL)
-	{
-		Page copy = PageGetTempPage(page);
-
-		PageInit(copy, BufferGetPageSize(buffer), 0);
-
-		for (offnum = FirstOffsetNumber;
-			 offnum <= maxoff;
-			 offnum = OffsetNumberNext(offnum))
-		{
-			ItemId		itemid;
-			int			attnum;
-			int			natts = RelationGetNumberOfAttributes(relation);
-			HeapTupleHeader htup;
-			HeapTupleData tup;
-
-			itemid = PageGetItemId(page, offnum);
-			if (!ItemIdIsNormal(itemid))
-				continue;
-
-			htup = (HeapTupleHeader) PageGetItem(page, itemid);
-			tup.t_data = htup;
-			tup.t_len = ItemIdGetLength(itemid);
-			ItemPointerSet(&(tup.t_self), BufferGetBlockNumber(buffer), offnum);
-
-			if ((tup.t_data->t_infomask & HEAP_UPDATED) == 0)
-			{
-				if (PageAddItem(copy, (Item) htup, ItemIdGetLength(itemid), offnum,
-								true, true) == InvalidOffsetNumber)
-					elog(ERROR, "failed to add tuple");
-
-				continue;
-			}
-
-			if (HeapTupleHeaderIsHotUpdated(htup))
-			{
-
-			}
-
-			/* process each non-system attribute, including any dropped
-			 * columns */
-			for (attnum = 1; attnum <= natts; attnum++)
-			{
-
-				FormData_pg_attribute *attr;
-
-				attr = TupleDescAttr(relation->rd_att, attnum - 1);
-
-				if (attr->atttypid == TEXTOID)
-				{
-
-				}
-#if 0
-				/* ignore any where atthasmissing is not true */
-				if (attrtuple->atthasmissing)
-				{
-					newtuple = heap_modify_tuple(tuple, RelationGetDescr(attr_rel),
-												 repl_val, repl_null, repl_repl);
-
-					CatalogTupleUpdate(attr_rel, &newtuple->t_self, newtuple);
-
-					heap_freetuple(newtuple);
-				}
-#endif
-			}
-		}
-	}
-
 
 	/*
 	 * XXX Should we update the FSM information of this page ?
