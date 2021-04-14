@@ -3695,7 +3695,12 @@ l2:
 
 		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 		for (int i = 0; i < 5; i++)
+		{
 			heap_page_prune_opt(relation, buffer);
+			pagefree = PageGetHeapFreeSpace(page);
+			if (newtupsize <= pagefree)
+				break;
+		}
 		LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
 		goto l2;
 	}
