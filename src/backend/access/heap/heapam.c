@@ -3199,6 +3199,62 @@ simple_heap_delete(Relation relation, ItemPointer tid)
 	}
 }
 
+#include <unistd.h>
+
+#include "miscadmin.h"
+#include "pgstat.h"
+#include "port.h"
+#include "storage/fd.h"
+
+static void
+page_store(Relation rel, Buffer buf)
+{
+	Page page = BufferGetPage(buf);
+	BlockNumber blkno = BufferGetBlockNumber(buf);
+	char		tmppath[MAXPGPATH];
+	__off_t		size;
+	int			fd;
+
+	/*
+	 * Write into a temp file name.
+	 */
+	snprintf(tmppath, MAXPGPATH, "%s.tmp", RelationGetRelationName(rel));
+
+	/* Now write the data into the successfully-reserved part of the file */
+	fd = OpenTransientFile(tmppath, O_RDWR | O_CREAT | PG_BINARY);
+	if (fd < 0)
+	{
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("could not create file \"%s\": %m", tmppath)));
+
+		goto error;
+	}
+
+	size = lseek(fd, 0, SEEK_END);
+	if (size >= BLCKSZ * 400)
+	{
+		goto error;
+	}
+	if (pg_pwrite(fd, page, BLCKSZ, size) != BLCKSZ)
+	{
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("could not append blk %u to file \"%s\": %m", blkno, tmppath)));
+
+		goto error;
+	}
+
+	CloseTransientFile(fd);
+
+	return;
+
+error:
+
+	if (fd >= 0)
+		CloseTransientFile(fd);
+}
+
 /*
  *	heap_update - replace a tuple
  *
@@ -3235,6 +3291,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				vmbuffer = InvalidBuffer,
 				vmbuffer_new = InvalidBuffer;
 	bool		need_toast;
+	bool		retried = false;
 	Size		newtupsize,
 				pagefree;
 	bool		have_tuple_lock = false;
@@ -3630,6 +3687,19 @@ l2:
 		goto l2;
 	}
 
+	newtupsize = MAXALIGN(newtup->t_len);
+	pagefree = PageGetHeapFreeSpace(page);
+	if (!retried && newtupsize > pagefree && !IsSystemRelation(relation))
+	{
+		retried = true;
+
+		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
+		for (int i = 0; i < 5; i++)
+			heap_page_prune_opt(relation, buffer);
+		LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
+		goto l2;
+	}
+
 	/* Fill in transaction status data */
 
 	/*
@@ -3934,6 +4004,7 @@ l2:
 	{
 		/* Set a hint that the old page could use prune/defrag */
 		PageSetFull(page);
+		//page_store(relation, buffer);
 	}
 
 	/*

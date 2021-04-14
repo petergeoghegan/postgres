@@ -436,10 +436,12 @@ heap_page_prune(Relation relation, Buffer buffer,
 	if (report_stats && ndeleted > prstate.ndead)
 		pgstat_update_heap_dead_tuples(relation, ndeleted - prstate.ndead);
 
-	if (nofree && off_loc == NULL)
+#if 0
+	if (PageGetFreeSpace(page) < 1000 && off_loc == NULL)
 	{
 		page_store(relation, buffer);
 	}
+#endif
 
 
 	/*
