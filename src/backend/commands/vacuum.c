@@ -110,7 +110,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	ListCell   *lc;
 
 	/* Set default value */
-	params.index_cleanup = VACOPT_TERNARY_DEFAULT;
+	params.index_cleanup = HEAP_OPTION_INDEX_CLEANUP_AUTO;
 	params.truncate = VACOPT_TERNARY_DEFAULT;
 
 	/* By default parallel vacuum is enabled */
@@ -142,7 +142,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		else if (strcmp(opt->defname, "disable_page_skipping") == 0)
 			disable_page_skipping = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "index_cleanup") == 0)
-			params.index_cleanup = get_vacopt_ternary_value(opt);
+			params.index_cleanup = HEAP_OPTION_INDEX_CLEANUP_ON;
 		else if (strcmp(opt->defname, "process_toast") == 0)
 			process_toast = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "truncate") == 0)
@@ -1939,13 +1939,9 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	LockRelationIdForSession(&lockrelid, lmode);
 
 	/* Set index cleanup option based on reloptions if not yet */
-	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT)
+	if (params->index_cleanup == HEAP_OPTION_INDEX_CLEANUP_AUTO && rel->rd_options != NULL)
 	{
-		if (rel->rd_options == NULL ||
-			((StdRdOptions *) rel->rd_options)->vacuum_index_cleanup)
-			params->index_cleanup = VACOPT_TERNARY_ENABLED;
-		else
-			params->index_cleanup = VACOPT_TERNARY_DISABLED;
+		params->index_cleanup = ((StdRdOptions *) rel->rd_options)->vacuum_index_cleanup;
 	}
 
 	/* Set truncate option based on reloptions if not yet */

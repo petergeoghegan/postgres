@@ -22,6 +22,7 @@
 #include "storage/buf.h"
 #include "storage/lock.h"
 #include "utils/relcache.h"
+#include "utils/rel.h"
 
 /*
  * Flags for amparallelvacuumoptions to control the participation of bulkdelete
@@ -216,7 +217,7 @@ typedef struct VacuumParams
 	int			log_min_duration;	/* minimum execution threshold in ms at
 									 * which  verbose logs are activated, -1
 									 * to use default */
-	VacOptTernaryValue index_cleanup;	/* Do index vacuum and cleanup,
+	HeapOptIndexCleanupMode index_cleanup;	/* Do index vacuum and cleanup,
 										 * default value depends on reloptions */
 	VacOptTernaryValue truncate;	/* Truncate empty pages at the end,
 									 * default value depends on reloptions */
