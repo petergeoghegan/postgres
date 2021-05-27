@@ -307,12 +307,18 @@ typedef struct AutoVacOpts
 	float8		analyze_scale_factor;
 } AutoVacOpts;
 
-typedef enum HeapOptIndexCleanupMode
+/*
+ * A ternary value used by vacuum parameters.
+ *
+ * DEFAULT value is used to determine the value based on other
+ * configurations, e.g. reloptions.
+ */
+typedef enum VacOptTernaryValue
 {
-	HEAP_OPTION_INDEX_CLEANUP_AUTO,
-	HEAP_OPTION_INDEX_CLEANUP_ON,
-	HEAP_OPTION_INDEX_CLEANUP_OFF
-} HeapOptIndexCleanupMode;
+	VACOPT_TERNARY_DEFAULT = 0,
+	VACOPT_TERNARY_DISABLED,
+	VACOPT_TERNARY_ENABLED,
+} VacOptTernaryValue;
 
 typedef struct StdRdOptions
 {
@@ -323,7 +329,7 @@ typedef struct StdRdOptions
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
 	int			parallel_workers;	/* max number of parallel workers */
-	HeapOptIndexCleanupMode		vacuum_index_cleanup;	/* enables index vacuuming and cleanup */
+	VacOptTernaryValue vacuum_index_cleanup;	/* enables index vacuuming and cleanup */
 	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
 } StdRdOptions;
 

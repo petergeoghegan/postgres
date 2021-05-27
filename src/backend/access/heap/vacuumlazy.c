@@ -562,12 +562,12 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->do_index_cleanup = true;
 	vacrel->do_failsafe = false;
 	vacrel->do_bypass_optimization = true;
-	if (params->index_cleanup == HEAP_OPTION_INDEX_CLEANUP_OFF)
+	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
 	{
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
 	}
-	else if (params->index_cleanup == HEAP_OPTION_INDEX_CLEANUP_ON)
+	else if (params->index_cleanup == VACOPT_TERNARY_ENABLED)
 		vacrel->do_bypass_optimization = false;
 
 	vacrel->bstrategy = bstrategy;

@@ -468,13 +468,13 @@ static relopt_real realRelOpts[] =
 /* values from HeapOptIndexCleanupMode */
 relopt_enum_elt_def HeapOptIndexCleanupOptValues[] =
 {
-	{"auto", HEAP_OPTION_INDEX_CLEANUP_AUTO},
-	{"on", HEAP_OPTION_INDEX_CLEANUP_ON},
-	{"off", HEAP_OPTION_INDEX_CLEANUP_OFF},
-	{"true", HEAP_OPTION_INDEX_CLEANUP_ON},
-	{"false", HEAP_OPTION_INDEX_CLEANUP_OFF},
-	{"1", HEAP_OPTION_INDEX_CLEANUP_ON},
-	{"0", HEAP_OPTION_INDEX_CLEANUP_OFF},
+	{"auto", VACOPT_TERNARY_DEFAULT},
+	{"on", VACOPT_TERNARY_ENABLED},
+	{"off", VACOPT_TERNARY_DISABLED},
+	{"true", VACOPT_TERNARY_ENABLED},
+	{"false", VACOPT_TERNARY_DISABLED},
+	{"1", VACOPT_TERNARY_ENABLED},
+	{"0", VACOPT_TERNARY_DISABLED},
 	{(const char *) NULL}		/* list terminator */
 };
 
@@ -506,7 +506,7 @@ static relopt_enum enumRelOpts[] =
 			ShareUpdateExclusiveLock
 		},
 		HeapOptIndexCleanupOptValues,
-		HEAP_OPTION_INDEX_CLEANUP_AUTO,
+		VACOPT_TERNARY_DEFAULT,
 		gettext_noop("Valid values are \"on\", \"off\", and \"auto\".")
 	},
 	{
