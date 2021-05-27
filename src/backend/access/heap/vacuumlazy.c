@@ -507,7 +507,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	MultiXactId MultiXactCutoff;
 
 	Assert(params != NULL);
-	Assert(params->index_cleanup != VACOPT_TERNARY_DEFAULT);
 	Assert(params->truncate != VACOPT_TERNARY_DEFAULT);
 
 	/* measure elapsed time iff autovacuum logging requires it */
@@ -560,7 +559,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->do_index_vacuuming = true;
 	vacrel->do_index_cleanup = true;
 	vacrel->do_failsafe = false;
-	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
+	if (params->index_cleanup == HEAP_OPTION_INDEX_CLEANUP_OFF)
 	{
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
