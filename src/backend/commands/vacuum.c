@@ -89,6 +89,7 @@ static void vac_truncate_clog(TransactionId frozenXID,
 static bool vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params);
 static double compute_parallel_delay(void);
 static VacOptTernaryValue get_vacopt_ternary_value(DefElem *def);
+static HeapOptIndexCleanupMode get_vacopt_index_cleanup_value(DefElem *def);
 
 /*
  * Primary entry point for manual VACUUM and ANALYZE commands
@@ -142,7 +143,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		else if (strcmp(opt->defname, "disable_page_skipping") == 0)
 			disable_page_skipping = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "index_cleanup") == 0)
-			params.index_cleanup = HEAP_OPTION_INDEX_CLEANUP_ON;
+			params.index_cleanup = get_vacopt_index_cleanup_value(opt);
 		else if (strcmp(opt->defname, "process_toast") == 0)
 			process_toast = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "truncate") == 0)
@@ -2220,4 +2221,16 @@ static VacOptTernaryValue
 get_vacopt_ternary_value(DefElem *def)
 {
 	return defGetBoolean(def) ? VACOPT_TERNARY_ENABLED : VACOPT_TERNARY_DISABLED;
+}
+
+/*
+ * A wrapper function of defGetBoolean().
+ *
+ * This function returns HEAP_OPTION_INDEX_CLEANUP_ON and
+ * HEAP_OPTION_INDEX_CLEANUP_OFF instead of true and false.
+ */
+static HeapOptIndexCleanupMode
+get_vacopt_index_cleanup_value(DefElem *def)
+{
+	return defGetBoolean(def) ? HEAP_OPTION_INDEX_CLEANUP_ON : HEAP_OPTION_INDEX_CLEANUP_OFF;
 }
