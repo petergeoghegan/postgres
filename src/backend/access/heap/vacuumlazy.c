@@ -2137,9 +2137,8 @@ lazy_vacuum(LVRelState *vacrel)
 		 * expanded to cover more cases then this may need to be reconsidered.
 		 */
 		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_PAGES;
-		bypass =
-			(vacrel->lpdead_item_pages < threshold &&
-			 vacrel->lpdead_items < MAXDEADTUPLES(32L * 1024L * 1024L));
+		bypass = (vacrel->lpdead_item_pages < threshold &&
+				  vacrel->lpdead_items < MAXDEADTUPLES(32L * 1024L * 1024L));
 	}
 
 	if (bypass)
