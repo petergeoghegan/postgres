@@ -142,15 +142,6 @@ static relopt_bool boolRelOpts[] =
 	},
 	{
 		{
-			"vacuum_index_cleanup",
-			"Enables index vacuuming and index cleanup",
-			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
-			ShareUpdateExclusiveLock
-		},
-		true
-	},
-	{
-		{
 			"vacuum_truncate",
 			"Enables vacuum to truncate empty pages at the end of this table",
 			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
@@ -474,6 +465,19 @@ static relopt_real realRelOpts[] =
 	{{NULL}}
 };
 
+/* values from HeapOptIndexCleanupMode */
+relopt_enum_elt_def HeapOptIndexCleanupOptValues[] =
+{
+	{"auto", VACOPT_TERNARY_DEFAULT},
+	{"on", VACOPT_TERNARY_ENABLED},
+	{"off", VACOPT_TERNARY_DISABLED},
+	{"true", VACOPT_TERNARY_ENABLED},
+	{"false", VACOPT_TERNARY_DISABLED},
+	{"1", VACOPT_TERNARY_ENABLED},
+	{"0", VACOPT_TERNARY_DISABLED},
+	{(const char *) NULL}		/* list terminator */
+};
+
 /* values from GistOptBufferingMode */
 relopt_enum_elt_def gistBufferingOptValues[] =
 {
@@ -494,6 +498,17 @@ relopt_enum_elt_def viewCheckOptValues[] =
 
 static relopt_enum enumRelOpts[] =
 {
+	{
+		{
+			"vacuum_index_cleanup",
+			"Enables index vacuuming and index cleanup",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		HeapOptIndexCleanupOptValues,
+		VACOPT_TERNARY_DEFAULT,
+		gettext_noop("Valid values are \"on\", \"off\", and \"auto\".")
+	},
 	{
 		{
 			"buffering",

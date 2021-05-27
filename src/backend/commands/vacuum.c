@@ -1939,14 +1939,9 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	LockRelationIdForSession(&lockrelid, lmode);
 
 	/* Set index cleanup option based on reloptions if not yet */
-	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT)
-	{
-		if (rel->rd_options == NULL ||
-			((StdRdOptions *) rel->rd_options)->vacuum_index_cleanup)
-			params->index_cleanup = VACOPT_TERNARY_ENABLED;
-		else
-			params->index_cleanup = VACOPT_TERNARY_DISABLED;
-	}
+	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT && rel->rd_options != NULL)
+		params->index_cleanup =
+				((StdRdOptions *) rel->rd_options)->vacuum_index_cleanup;
 
 	/* Set truncate option based on reloptions if not yet */
 	if (params->truncate == VACOPT_TERNARY_DEFAULT)

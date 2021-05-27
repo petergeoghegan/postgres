@@ -313,6 +313,8 @@ typedef struct LVRelState
 	bool		do_index_cleanup;
 	/* Wraparound failsafe in effect? (implies !do_index_vacuuming) */
 	bool		do_failsafe;
+	/* Consider bypass optimization? */
+	bool		do_bypass_optimization;
 
 	/* Buffer access strategy and parallel state */
 	BufferAccessStrategy bstrategy;
@@ -406,7 +408,7 @@ static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							BlockNumber blkno, Page page,
 							GlobalVisState *vistest,
 							LVPagePruneState *prunestate);
-static void lazy_vacuum(LVRelState *vacrel, bool onecall);
+static void lazy_vacuum(LVRelState *vacrel);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static void lazy_vacuum_heap_rel(LVRelState *vacrel);
 static int	lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
@@ -507,7 +509,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	MultiXactId MultiXactCutoff;
 
 	Assert(params != NULL);
-	Assert(params->index_cleanup != VACOPT_TERNARY_DEFAULT);
 	Assert(params->truncate != VACOPT_TERNARY_DEFAULT);
 
 	/* measure elapsed time iff autovacuum logging requires it */
@@ -560,11 +561,15 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->do_index_vacuuming = true;
 	vacrel->do_index_cleanup = true;
 	vacrel->do_failsafe = false;
+	vacrel->do_bypass_optimization = true;
 	if (params->index_cleanup == VACOPT_TERNARY_DISABLED)
 	{
 		vacrel->do_index_vacuuming = false;
 		vacrel->do_index_cleanup = false;
 	}
+	else if (params->index_cleanup == VACOPT_TERNARY_ENABLED)
+		vacrel->do_bypass_optimization = false;
+
 	vacrel->bstrategy = bstrategy;
 	vacrel->old_rel_pages = rel->rd_rel->relpages;
 	vacrel->old_live_tuples = rel->rd_rel->reltuples;
@@ -893,8 +898,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				next_fsm_block_to_vacuum;
 	PGRUsage	ru0;
 	Buffer		vmbuffer = InvalidBuffer;
-	bool		skipping_blocks,
-				have_vacuumed_indexes = false;
+	bool		skipping_blocks;
 	StringInfoData buf;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
@@ -1167,8 +1171,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			}
 
 			/* Remove the collected garbage tuples from table and indexes */
-			lazy_vacuum(vacrel, false);
-			have_vacuumed_indexes = true;
+			vacrel->do_bypass_optimization = false;
+			lazy_vacuum(vacrel);
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
@@ -1580,7 +1584,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 	/* If any tuples need to be deleted, perform final vacuum cycle */
 	if (dead_tuples->num_tuples > 0)
-		lazy_vacuum(vacrel, !have_vacuumed_indexes);
+		lazy_vacuum(vacrel);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
@@ -2065,9 +2069,9 @@ retry:
  * wraparound.
  */
 static void
-lazy_vacuum(LVRelState *vacrel, bool onecall)
+lazy_vacuum(LVRelState *vacrel)
 {
-	bool		do_bypass_optimization;
+	bool		bypass;
 
 	/* Should not end up here with no indexes */
 	Assert(vacrel->nindexes > 0);
@@ -2100,8 +2104,8 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 	 * It's far easier to ensure that 99%+ of all UPDATEs against a table use
 	 * HOT through careful tuning.
 	 */
-	do_bypass_optimization = false;
-	if (onecall && vacrel->rel_pages > 0)
+	bypass = false;
+	if (vacrel->do_bypass_optimization && vacrel->rel_pages > 0)
 	{
 		BlockNumber threshold;
 
@@ -2133,12 +2137,11 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 		 * expanded to cover more cases then this may need to be reconsidered.
 		 */
 		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_PAGES;
-		do_bypass_optimization =
-			(vacrel->lpdead_item_pages < threshold &&
-			 vacrel->lpdead_items < MAXDEADTUPLES(32L * 1024L * 1024L));
+		bypass = (vacrel->lpdead_item_pages < threshold &&
+				  vacrel->lpdead_items < MAXDEADTUPLES(32L * 1024L * 1024L));
 	}
 
-	if (do_bypass_optimization)
+	if (bypass)
 	{
 		/*
 		 * There are almost zero TIDs.  Behave as if there were precisely
