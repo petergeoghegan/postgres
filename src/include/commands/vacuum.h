@@ -21,8 +21,8 @@
 #include "parser/parse_node.h"
 #include "storage/buf.h"
 #include "storage/lock.h"
-#include "utils/relcache.h"
 #include "utils/rel.h"
+#include "utils/relcache.h"
 
 /*
  * Flags for amparallelvacuumoptions to control the participation of bulkdelete
