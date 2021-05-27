@@ -88,8 +88,8 @@ static void vac_truncate_clog(TransactionId frozenXID,
 							  MultiXactId lastSaneMinMulti);
 static bool vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params);
 static double compute_parallel_delay(void);
-static VacOptTernaryValue get_vacopt_ternary_value(DefElem *def);
 static HeapOptIndexCleanupMode get_vacopt_index_cleanup_value(DefElem *def);
+static VacOptTernaryValue get_vacopt_ternary_value(DefElem *def);
 
 /*
  * Primary entry point for manual VACUUM and ANALYZE commands
@@ -2214,18 +2214,6 @@ compute_parallel_delay(void)
 /*
  * A wrapper function of defGetBoolean().
  *
- * This function returns VACOPT_TERNARY_ENABLED and VACOPT_TERNARY_DISABLED
- * instead of true and false.
- */
-static VacOptTernaryValue
-get_vacopt_ternary_value(DefElem *def)
-{
-	return defGetBoolean(def) ? VACOPT_TERNARY_ENABLED : VACOPT_TERNARY_DISABLED;
-}
-
-/*
- * A wrapper function of defGetBoolean().
- *
  * This function returns HEAP_OPTION_INDEX_CLEANUP_ON and
  * HEAP_OPTION_INDEX_CLEANUP_OFF instead of true and false.
  */
@@ -2233,4 +2221,16 @@ static HeapOptIndexCleanupMode
 get_vacopt_index_cleanup_value(DefElem *def)
 {
 	return defGetBoolean(def) ? HEAP_OPTION_INDEX_CLEANUP_ON : HEAP_OPTION_INDEX_CLEANUP_OFF;
+}
+
+/*
+ * A wrapper function of defGetBoolean().
+ *
+ * This function returns VACOPT_TERNARY_ENABLED and VACOPT_TERNARY_DISABLED
+ * instead of true and false.
+ */
+static VacOptTernaryValue
+get_vacopt_ternary_value(DefElem *def)
+{
+	return defGetBoolean(def) ? VACOPT_TERNARY_ENABLED : VACOPT_TERNARY_DISABLED;
 }
