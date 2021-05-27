@@ -88,7 +88,6 @@ static void vac_truncate_clog(TransactionId frozenXID,
 							  MultiXactId lastSaneMinMulti);
 static bool vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params);
 static double compute_parallel_delay(void);
-static HeapOptIndexCleanupMode get_vacopt_index_cleanup_value(DefElem *def);
 static VacOptTernaryValue get_vacopt_ternary_value(DefElem *def);
 
 /*
@@ -111,7 +110,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	ListCell   *lc;
 
 	/* Set default value */
-	params.index_cleanup = HEAP_OPTION_INDEX_CLEANUP_AUTO;
+	params.index_cleanup = VACOPT_TERNARY_DEFAULT;
 	params.truncate = VACOPT_TERNARY_DEFAULT;
 
 	/* By default parallel vacuum is enabled */
@@ -143,7 +142,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		else if (strcmp(opt->defname, "disable_page_skipping") == 0)
 			disable_page_skipping = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "index_cleanup") == 0)
-			params.index_cleanup = get_vacopt_index_cleanup_value(opt);
+			params.index_cleanup = get_vacopt_ternary_value(opt);
 		else if (strcmp(opt->defname, "process_toast") == 0)
 			process_toast = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "truncate") == 0)
@@ -1940,10 +1939,9 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	LockRelationIdForSession(&lockrelid, lmode);
 
 	/* Set index cleanup option based on reloptions if not yet */
-	if (params->index_cleanup == HEAP_OPTION_INDEX_CLEANUP_AUTO && rel->rd_options != NULL)
-	{
-		params->index_cleanup = ((StdRdOptions *) rel->rd_options)->vacuum_index_cleanup;
-	}
+	if (params->index_cleanup == VACOPT_TERNARY_DEFAULT && rel->rd_options != NULL)
+		params->index_cleanup =
+				((StdRdOptions *) rel->rd_options)->vacuum_index_cleanup;
 
 	/* Set truncate option based on reloptions if not yet */
 	if (params->truncate == VACOPT_TERNARY_DEFAULT)
@@ -2209,18 +2207,6 @@ compute_parallel_delay(void)
 	VacuumCostBalance = 0;
 
 	return msec;
-}
-
-/*
- * A wrapper function of defGetBoolean().
- *
- * This function returns HEAP_OPTION_INDEX_CLEANUP_ON and
- * HEAP_OPTION_INDEX_CLEANUP_OFF instead of true and false.
- */
-static HeapOptIndexCleanupMode
-get_vacopt_index_cleanup_value(DefElem *def)
-{
-	return defGetBoolean(def) ? HEAP_OPTION_INDEX_CLEANUP_ON : HEAP_OPTION_INDEX_CLEANUP_OFF;
 }
 
 /*
