@@ -343,7 +343,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 				saveFreeSpace = 0,
 				targetFreeSpace = 0;
 	BlockNumber targetBlock,
-				otherBlock;
+				otherBlock,
+				our_block = InvalidBlockNumber;
 	bool		needLock;
 
 	len = MAXALIGN(len);		/* be conservative */
@@ -363,8 +364,6 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	/* Compute desired extra freespace due to fillfactor option */
 	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
 												   HEAP_DEFAULT_FILLFACTOR);
-
-	saveFreeSpace = Max(saveFreeSpace, 3500);
 
 	/*
 	 * Since pages without tuples can still have line pointers, we consider
@@ -401,6 +400,11 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
 	else
 		targetBlock = RelationGetTargetBlock(relation);
+
+	if (targetBlock != InvalidBlockNumber)
+	{
+		our_block = targetBlock;
+	}
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
@@ -537,6 +541,12 @@ loop:
 			/* use this page as future insert target, too */
 			RelationSetTargetBlock(relation, targetBlock);
 			return buffer;
+		}
+
+		if (targetBlock == our_block && !PageIsFull(page))
+		{
+			PageSetFull(page);
+			RecordPageWithFreeSpace(relation, targetBlock, 0);
 		}
 
 		/*
