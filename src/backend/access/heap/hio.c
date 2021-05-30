@@ -323,8 +323,18 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *
  *	We don't fill existing pages further than the fillfactor, except for large
  *	tuples in nearly-empty pages.  This is OK since this routine is not
- *	consulted when updating a tuple and keeping it on the same page, which is
- *	the scenario fillfactor is meant to reserve space for.
+ *	consulted when updating a tuple.  We also don't care about fillfactor with
+ *	updates that cannot fit their successor version on the same heap page.
+ *
+ *	While the space left behind by fillfactor on each heap page is supposed to
+ *	be reserved for extra versions of whatever logical rows were on the page
+ *	when it first filled up, we don't stick with that strategy when it has
+ *	already started to fail.  When we cannot fit a new version, we don't just
+ *	treat it like an INSERT.  Rather, we place it on a related/nearby heap
+ *	page (with help from the FSM), which is not ideal but better than possibly
+ *	allocating a whole new heap block.  This fallback strategy can exploit
+ *	naturally occurring skew; hotter (more frequently updated) logical rows
+ *	will naturally migrate to heap blocks that start out cold.
  *
  *	ereport(ERROR) is allowed here, so this routine *must* be called
  *	before any (unlogged) changes are made in buffer pool.
@@ -374,8 +384,10 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		(MaxHeapTuplesPerPage / 8 * sizeof(ItemIdData));
 	if (len + saveFreeSpace > nearlyEmptyFreeSpace)
 		targetFreeSpace = Max(len, nearlyEmptyFreeSpace);
-	else
+	else if (otherBuffer == InvalidBuffer)
 		targetFreeSpace = len + saveFreeSpace;
+	else
+		targetFreeSpace = len;	/* UPDATEs don't need extra saveFreeSpace */
 
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
@@ -397,8 +409,10 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	 */
 	if (bistate && bistate->current_buf != InvalidBuffer)
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
-	else
+	else if (otherBuffer == InvalidBuffer)
 		targetBlock = RelationGetTargetBlock(relation);
+	else
+		targetBlock = InvalidBlockNumber;	/* UPDATEs don't use rel target block */
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
@@ -532,8 +546,24 @@ loop:
 		pageFreeSpace = PageGetHeapFreeSpace(page);
 		if (targetFreeSpace <= pageFreeSpace)
 		{
-			/* use this page as future insert target, too */
-			RelationSetTargetBlock(relation, targetBlock);
+			/*
+			 * Remember the new page as our target for future insertions.  But
+			 * only when this isn't an UPDATE -- we only set a target page (or
+			 * use an existing target page) with INSERTs.
+			 *
+			 * We must not allow concurrently executing updates to continually
+			 * confuse each other by invalidating free space information.
+			 * That's why we maintain the FSM eagerly here.
+			 */
+			if (otherBuffer == InvalidBuffer)
+				RelationSetTargetBlock(relation, targetBlock);
+			else
+			{
+				int		newspace = (int) pageFreeSpace - len;
+
+				newspace = Max(newspace, 0);
+				RecordPageWithFreeSpace(relation, targetBlock, newspace);
+			}
 			return buffer;
 		}
 
@@ -559,6 +589,9 @@ loop:
 		/*
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
+		 *
+		 * Note that this returns a targetBlock that's close to our original
+		 * target block.  This is important with UPDATE caller.
 		 */
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
@@ -707,15 +740,12 @@ loop:
 	}
 
 	/*
-	 * Remember the new page as our target for future insertions.
-	 *
-	 * XXX should we enter the new page into the free space map immediately,
-	 * or just keep it for this backend's exclusive use in the short run
-	 * (until VACUUM sees it)?	Seems to depend on whether you expect the
-	 * current backend to make more insertions or not, which is probably a
-	 * good bet most of the time.  So for now, don't add it to FSM yet.
+	 * Remember the new page as our target for future insertions.  But only
+	 * when this isn't an UPDATE -- we only set a target page (or use an
+	 * existing target page) with INSERTs.
 	 */
-	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+	if (otherBuffer == InvalidBuffer)
+		RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
 
 	return buffer;
 }
