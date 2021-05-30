@@ -166,9 +166,10 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	 */
 	minfree = RelationGetTargetPageFreeSpace(relation,
 											 HEAP_DEFAULT_FILLFACTOR);
-	minfree = 300;
+	if (PageIsFull(page))
+		minfree = 200;
 
-	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
+	if (PageGetHeapFreeSpace(page) < minfree)
 	{
 		/* OK, try to get exclusive buffer lock */
 		if (!ConditionalLockBufferForCleanup(buffer))
@@ -180,12 +181,15 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		 * prune. (We needn't recheck PageIsPrunable, since no one else could
 		 * have pruned while we hold pin.)
 		 */
-		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
+		if (PageGetHeapFreeSpace(page) < minfree)
 		{
 			/* OK to prune */
 			(void) heap_page_prune(relation, buffer, vistest,
 								   limited_xmin, limited_ts,
 								   true, NULL);
+
+			if (PageIsFull(page) && PageGetHeapFreeSpace(page) > BLCKSZ / 2)
+				PageClearFull(page);
 		}
 
 		/* And release buffer lock */
@@ -303,13 +307,6 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 */
 		((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
 
-		/*
-		 * Also clear the "page is full" flag, since there's no point in
-		 * repeating the prune/defrag process until something else happens to
-		 * the page.
-		 */
-		PageClearFull(page);
-
 		MarkBufferDirty(buffer);
 
 		/*
@@ -363,11 +360,9 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * point in repeating the prune/defrag process until something else
 		 * happens to the page.
 		 */
-		if (((PageHeader) page)->pd_prune_xid != prstate.new_prune_xid ||
-			PageIsFull(page))
+		if (((PageHeader) page)->pd_prune_xid != prstate.new_prune_xid)
 		{
 			((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
-			PageClearFull(page);
 			MarkBufferDirtyHint(buffer, true);
 		}
 	}

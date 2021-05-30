@@ -3314,7 +3314,6 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 	 * concurrently and even if that was possible, in the worst case we lose a
 	 * chance to do a HOT update.
 	 */
-	if (!PageIsFull(page))
 	{
 		interesting_attrs = bms_add_members(interesting_attrs, hot_attrs);
 		hot_attrs_checked = true;
@@ -3940,11 +3939,6 @@ l2:
 		 */
 		if (hot_attrs_checked && !bms_overlap(modified_attrs, hot_attrs))
 			use_hot_update = true;
-	}
-	else
-	{
-		/* Set a hint that the old page could use prune/defrag */
-		PageSetFull(page);
 	}
 
 	/*

@@ -375,6 +375,7 @@ PageValidateSpecialPointer(Page page)
 #define PageClearHasFreeLinePointers(page) \
 	(((PageHeader) (page))->pd_flags &= ~PD_HAS_FREE_LINES)
 
+
 #define PageIsFull(page) \
 	(((PageHeader) (page))->pd_flags & PD_PAGE_FULL)
 #define PageSetFull(page) \
