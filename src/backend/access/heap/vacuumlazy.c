@@ -1304,13 +1304,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			{
 				Size		freespace = BLCKSZ - SizeOfPageHeaderData;
 
-				if (PageIsFull(page))
-				{
-					if (freespace <= BLCKSZ / 2)
-						freespace = 0;
-					else
-						PageClearFull(page);
-				}
 				RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 			}
 			continue;
@@ -1354,7 +1347,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 			if (PageIsFull(page))
 			{
-				if (freespace <= BLCKSZ / 2)
+				if (freespace <= BLCKSZ * 0.6)
 					freespace = 0;
 				else
 					PageClearFull(page);
@@ -1425,7 +1418,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 				if (PageIsFull(page))
 				{
-					if (freespace <= BLCKSZ / 2)
+					if (freespace <= BLCKSZ * 0.6)
 						freespace = 0;
 					else
 						PageClearFull(page);
@@ -1569,7 +1562,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 
 			if (PageIsFull(page))
 			{
-				if (freespace <= BLCKSZ / 2)
+				if (freespace <= BLCKSZ * 0.6)
 					freespace = 0;
 				else
 					PageClearFull(page);
@@ -2369,7 +2362,7 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		freespace = PageGetHeapFreeSpace(page);
 		if (PageIsFull(page))
 		{
-			if (freespace <= BLCKSZ / 2)
+			if (freespace <= BLCKSZ * 0.6)
 				freespace = 0;
 			else
 				PageClearFull(page);

@@ -543,7 +543,7 @@ loop:
 			return buffer;
 		}
 
-		if (targetBlock == our_block && !PageIsFull(page))
+		if (!PageIsFull(page))
 		{
 			PageSetFull(page);
 			RecordPageWithFreeSpace(relation, targetBlock, 0);
