@@ -26,7 +26,6 @@
 #include "access/htup_details.h"
 #include "access/xlogutils.h"
 #include "miscadmin.h"
-#include "postmaster/autovacuum.h"
 #include "storage/freespace.h"
 #include "storage/fsm_internals.h"
 #include "storage/lmgr.h"
@@ -133,11 +132,8 @@ BlockNumber
 GetPageWithFreeSpace(Relation rel, Size spaceNeeded)
 {
 	uint8		min_cat = fsm_space_needed_to_cat(spaceNeeded);
-	BlockNumber res = fsm_search(rel, min_cat);
 
-	elog(LOG, "GetPageWithFreeSpace() fsm return Blocknum %u in rel %s when searching for space %zu",
-		 res, RelationGetRelationName(rel), spaceNeeded);
-	return res;
+	return fsm_search(rel, min_cat);
 }
 
 /*
@@ -158,7 +154,6 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	FSMAddress	addr;
 	uint16		slot;
 	int			search_slot;
-	BlockNumber res;
 
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(oldPage, &slot);
@@ -170,14 +165,9 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	 * Otherwise, search as usual.
 	 */
 	if (search_slot != -1)
-		res = fsm_get_heap_blk(addr, search_slot);
+		return fsm_get_heap_blk(addr, search_slot);
 	else
-		res = fsm_search(rel, search_cat);
-
-	elog(LOG, "RecordAndGetPageWithFreeSpace() fsm return Blocknum %u in rel %s when searching for space %zu",
-		 res, RelationGetRelationName(rel), spaceNeeded);
-
-	return res;
+		return fsm_search(rel, search_cat);
 }
 
 /*
@@ -197,9 +187,6 @@ RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk, Size spaceAvail)
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(heapBlk, &slot);
 
-	if (!IsAutoVacuumWorkerProcess() && spaceAvail > 0)
-		elog(LOG, "RecordPageWithFreeSpace() adds Blocknum %u in rel %s with spaceAvail %zu",
-			 heapBlk, RelationGetRelationName(rel), spaceAvail);
 	fsm_set_and_search(rel, addr, slot, new_cat, 0);
 }
 
@@ -775,11 +762,7 @@ fsm_search(Relation rel, uint8 min_cat)
 			 * valve.
 			 */
 			if (restarts++ > 10000)
-			{
-				elog(LOG, "fsm quitting in rel %s when searching for min_cat %u (space %zu)",
-					 RelationGetRelationName(rel), min_cat, fsm_space_cat_to_avail(min_cat));
 				return InvalidBlockNumber;
-			}
 
 			/* Start search all over from the root */
 			addr = FSM_ROOT_ADDRESS;
