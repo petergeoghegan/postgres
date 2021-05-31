@@ -333,7 +333,7 @@ Buffer
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
-						  Buffer *vmbuffer, Buffer *vmbuffer_other)
+						  Buffer *vmbuffer, Buffer *vmbuffer_other, bool update)
 {
 	bool		use_fsm = !(options & HEAP_INSERT_SKIP_FSM);
 	Buffer		buffer = InvalidBuffer;
@@ -543,7 +543,7 @@ loop:
 			return buffer;
 		}
 
-		if (!PageIsFull(page))
+		if (!PageIsFull(page) && !update)
 		{
 			PageSetFull(page);
 			pageFreeSpace = 0;

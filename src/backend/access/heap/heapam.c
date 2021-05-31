@@ -2091,7 +2091,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 */
 	buffer = RelationGetBufferForTuple(relation, heaptup->t_len,
 									   InvalidBuffer, options, bistate,
-									   &vmbuffer, NULL);
+									   &vmbuffer, NULL, false);
 
 
 	/*
@@ -2447,7 +2447,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		 */
 		buffer = RelationGetBufferForTuple(relation, heaptuples[ndone]->t_len,
 										   InvalidBuffer, options, bistate,
-										   &vmbuffer, NULL);
+										   &vmbuffer, NULL, false);
 		page = BufferGetPage(buffer);
 
 		starting_with_empty_page = PageGetMaxOffsetNumber(page) == 0;
@@ -3870,7 +3870,7 @@ l2:
 				/* It doesn't fit, must use RelationGetBufferForTuple. */
 				newbuf = RelationGetBufferForTuple(relation, heaptup->t_len,
 												   buffer, 0, NULL,
-												   &vmbuffer_new, &vmbuffer);
+												   &vmbuffer_new, &vmbuffer, true);
 				/* We're all done. */
 				break;
 			}
