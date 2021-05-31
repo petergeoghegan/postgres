@@ -543,7 +543,8 @@ loop:
 			return buffer;
 		}
 
-		if (!PageIsFull(page) && !update)
+		//if (!PageIsFull(page) && !update)
+		if (!PageIsFull(page))
 		{
 			PageSetFull(page);
 			pageFreeSpace = 0;
