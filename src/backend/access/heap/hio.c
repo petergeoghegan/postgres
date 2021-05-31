@@ -537,7 +537,7 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (targetFreeSpace <= pageFreeSpace && !PageIsFull(page))
+		if (targetFreeSpace <= pageFreeSpace && (!first || !PageIsFull(page)))
 		{
 			/* use this page as future insert target, too */
 			RelationSetTargetBlock(relation, targetBlock);
@@ -545,12 +545,13 @@ loop:
 		}
 
 		//if (!PageIsFull(page) && !update)
-		if (first && !PageIsFull(page))
+		if (first && targetFreeSpace > pageFreeSpace && !PageIsFull(page))
 		{
-			first = false;
 			PageSetFull(page);
 			pageFreeSpace = 0;
 		}
+
+		first = false;
 
 		/*
 		 * Not enough space, so we must give up our page locks and pin (if
