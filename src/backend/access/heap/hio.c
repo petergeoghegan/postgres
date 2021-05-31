@@ -583,14 +583,20 @@ loop:
 		else
 		{
 			BlockNumber origtargetBlock = targetBlock;
+			bool instrument = false;
 			/* avoid getting nearby space here */
 			RecordPageWithFreeSpace(relation, targetBlock, 0);
 			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
 #if 0
-			elog(WARNING, "%s origtargetbloc %u targetbloc %u",
-				 RelationGetRelationName(relation), origtargetBlock,
-				 targetBlock);
 #endif
+			instrument = (strcmp(RelationGetRelationName(relation),
+								 "bmsql_stock") == 0 ||
+						  strcmp(RelationGetRelationName(relation),
+								 "bmsql_customer") == 0);
+			if (instrument)
+				elog(WARNING, "%s origtargetbloc %u targetbloc %u",
+					 RelationGetRelationName(relation), origtargetBlock,
+					 targetBlock);
 		}
 	}
 

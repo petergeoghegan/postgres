@@ -193,7 +193,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 			{
 				Size newfreespace = PageGetHeapFreeSpace(page);
 
-				if (newfreespace > BLCKSZ * 0.7)
+				if (newfreespace > BLCKSZ * 0.51)
 				{
 					PageClearFull(page);
 					RecordPageWithFreeSpace(relation,
