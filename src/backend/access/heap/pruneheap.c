@@ -23,6 +23,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/bufmgr.h"
+#include "storage/freespace.h"
 #include "utils/snapmgr.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -91,7 +92,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	GlobalVisState *vistest;
 	TransactionId limited_xmin = InvalidTransactionId;
 	TimestampTz limited_ts = 0;
-	Size		minfree;
+	Size		targetspace, minfree;
 
 	/*
 	 * We can't write WAL in recovery mode, so there's no point trying to
@@ -164,8 +165,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	 * important than sometimes getting a wrong answer in what is after all
 	 * just a heuristic estimate.
 	 */
-	minfree = RelationGetTargetPageFreeSpace(relation,
-											 HEAP_DEFAULT_FILLFACTOR);
+	targetspace = RelationGetTargetPageFreeSpace(relation, HEAP_DEFAULT_FILLFACTOR);
+	minfree = targetspace;
 	if (PageIsFull(page))
 		minfree = 400;
 
@@ -188,8 +189,24 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 								   limited_xmin, limited_ts,
 								   true, NULL);
 
-			if (PageIsFull(page) && PageGetHeapFreeSpace(page) > BLCKSZ * 0.6)
-				PageClearFull(page);
+			if (PageIsFull(page))
+			{
+				Size newfreespace = PageGetHeapFreeSpace(page);
+
+				if (newfreespace > BLCKSZ * 0.6)
+				{
+					PageClearFull(page);
+					RecordPageWithFreeSpace(relation,
+											BufferGetBlockNumber(buffer),
+											newfreespace);
+				}
+			}
+			else if (PageGetHeapFreeSpace(page) < targetspace)
+			{
+				PageSetFull(page);
+				RecordPageWithFreeSpace(relation,
+										BufferGetBlockNumber(buffer), 0);
+			}
 		}
 
 		/* And release buffer lock */
