@@ -168,7 +168,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	targetspace = RelationGetTargetPageFreeSpace(relation, HEAP_DEFAULT_FILLFACTOR);
 	minfree = targetspace;
 	if (PageIsFull(page))
-		minfree = 4000;
+		minfree = 8000;
 
 	if (PageGetHeapFreeSpace(page) < minfree)
 	{
@@ -193,7 +193,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 			{
 				Size newfreespace = PageGetHeapFreeSpace(page);
 
-				if (newfreespace > BLCKSZ * 0.6)
+				if (newfreespace > BLCKSZ * 0.7)
 				{
 					PageClearFull(page);
 					RecordPageWithFreeSpace(relation,
