@@ -774,7 +774,7 @@ fsm_search(Relation rel, uint8 min_cat)
 			 * indefinitely is nevertheless scary, so provide an emergency
 			 * valve.
 			 */
-			if (restarts++ > 0)
+			if (restarts++ > 10000)
 			{
 				elog(LOG, "fsm quitting in rel %s when searching for min_cat %u (space %zu)",
 					 RelationGetRelationName(rel), min_cat, fsm_space_cat_to_avail(min_cat));
