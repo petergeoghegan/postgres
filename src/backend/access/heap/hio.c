@@ -346,6 +346,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 				otherBlock,
 				our_block = InvalidBlockNumber;
 	bool		needLock;
+	bool		first = true;
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -544,8 +545,9 @@ loop:
 		}
 
 		//if (!PageIsFull(page) && !update)
-		if (!PageIsFull(page))
+		if (first && !PageIsFull(page))
 		{
+			first = false;
 			PageSetFull(page);
 			pageFreeSpace = 0;
 		}
@@ -580,9 +582,15 @@ loop:
 														targetFreeSpace);
 		else
 		{
+			BlockNumber origtargetBlock = targetBlock;
 			/* avoid getting nearby space here */
 			RecordPageWithFreeSpace(relation, targetBlock, 0);
 			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+#if 0
+			elog(WARNING, "%s origtargetbloc %u targetbloc %u",
+				 RelationGetRelationName(relation), origtargetBlock,
+				 targetBlock);
+#endif
 		}
 	}
 
