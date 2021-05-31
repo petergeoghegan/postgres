@@ -573,10 +573,17 @@ loop:
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
 		 */
-		targetBlock = RecordAndGetPageWithFreeSpace(relation,
-													targetBlock,
-													pageFreeSpace,
-													targetFreeSpace);
+		if (targetFreeSpace > 0)
+			targetBlock = RecordAndGetPageWithFreeSpace(relation,
+														targetBlock,
+														pageFreeSpace,
+														targetFreeSpace);
+		else
+		{
+			/* avoid getting nearby space here */
+			RecordPageWithFreeSpace(relation, targetBlock, 0);
+			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+		}
 	}
 
 	/*
