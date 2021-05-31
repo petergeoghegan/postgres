@@ -573,7 +573,7 @@ loop:
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
 		 */
-		if (targetFreeSpace > 0)
+		if (pageFreeSpace > 0)
 			targetBlock = RecordAndGetPageWithFreeSpace(relation,
 														targetBlock,
 														pageFreeSpace,
