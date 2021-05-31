@@ -546,7 +546,7 @@ loop:
 		if (!PageIsFull(page))
 		{
 			PageSetFull(page);
-			RecordPageWithFreeSpace(relation, targetBlock, 0);
+			pageFreeSpace = 0;
 		}
 
 		/*
