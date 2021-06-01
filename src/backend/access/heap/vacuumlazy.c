@@ -346,6 +346,7 @@ typedef struct LVRelState
 	BlockNumber rel_pages;		/* total number of pages */
 	BlockNumber scanned_pages;	/* number of pages we examined */
 	BlockNumber pinskipped_pages;	/* # of pages skipped due to a pin */
+	BlockNumber skipped_pages;	/* # of pages we skipped */
 	BlockNumber frozenskipped_pages;	/* # of frozen pages we skipped */
 	BlockNumber tupcount_pages; /* pages whose tuples we counted */
 	BlockNumber pages_removed;	/* pages remove by truncation */
@@ -924,6 +925,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->rel_pages = nblocks;
 	vacrel->scanned_pages = 0;
 	vacrel->pinskipped_pages = 0;
+	vacrel->skipped_pages = 0;
 	vacrel->frozenskipped_pages = 0;
 	vacrel->tupcount_pages = 0;
 	vacrel->pages_removed = 0;
@@ -1124,6 +1126,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				 */
 				if (aggressive || VM_ALL_FROZEN(vacrel->rel, blkno, &vmbuffer))
 					vacrel->frozenskipped_pages++;
+				vacrel->skipped_pages++;
 				continue;
 			}
 			all_visible_according_to_vm = true;
@@ -1661,11 +1664,13 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 									"Skipped %u pages due to buffer pins, ",
 									vacrel->pinskipped_pages),
 					 vacrel->pinskipped_pages);
-	appendStringInfo(&buf, ngettext("%u frozen page.\n",
-									"%u frozen pages.\n",
-									vacrel->frozenskipped_pages),
-					 vacrel->frozenskipped_pages);
-	appendStringInfo(&buf, _("%s."), pg_rusage_show(&ru0));
+	appendStringInfo(&buf, ngettext("%u all-visible page",
+									"%u all-visible pages",
+									vacrel->skipped_pages),
+					 vacrel->skipped_pages);
+	appendStringInfo(&buf, ", of which %u all-frozen.\n",
+					 vacrel->frozenskipped_pages),
+			appendStringInfo(&buf, _("%s."), pg_rusage_show(&ru0));
 
 	ereport(elevel,
 			(errmsg("\"%s\": found %lld removable, %lld nonremovable row versions in %u out of %u pages",
