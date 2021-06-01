@@ -759,10 +759,11 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 vacrel->relnamespace,
 							 vacrel->relname,
 							 vacrel->num_index_scans);
-			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u skipped due to pins, %u skipped frozen\n"),
+			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u skipped due to pins, %u skipped (of which %u frozen)\n"),
 							 vacrel->pages_removed,
 							 vacrel->rel_pages,
 							 vacrel->pinskipped_pages,
+							 vacrel->skipped_pages,
 							 vacrel->frozenskipped_pages);
 			appendStringInfo(&buf,
 							 _("tuples: %lld removed, %lld remain, %lld are dead but not yet removable, oldest xmin: %u\n"),
