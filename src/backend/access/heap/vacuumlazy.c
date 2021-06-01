@@ -347,11 +347,26 @@ typedef struct LVRelState
 	 */
 	LVDeadTuples *dead_tuples;	/* items to vacuum from indexes */
 	BlockNumber rel_pages;		/* total number of pages */
-	BlockNumber scanned_pages;	/* number of pages we examined */
-	BlockNumber pinskipped_pages;	/* # of pages skipped due to a pin */
-	BlockNumber frozenskipped_pages;	/* # of frozen pages we skipped */
-	BlockNumber tupcount_pages; /* pages whose tuples we counted */
-	BlockNumber pages_removed;	/* pages remove by truncation */
+
+	/*
+	 * scanned_pages is almost the same thing as tupcount_pages.
+	 *
+	 * scanned_pages includes pages that were only scanned for freezing
+	 * purposes.  tupcount_pages includes pages whose tuples were actually
+	 * counted, that can be trusted for the purposes of estimating
+	 * new_live_tuples.
+	 */
+	BlockNumber scanned_pages;	/* # pages we examined */
+	BlockNumber tupcount_pages; /* # pages whose tuples we counted */
+	BlockNumber nocleanup_pages;	/* # pages we couldn't cleanup lock */
+
+	/*
+	 * Pages skipped using visibility map (vm bits set by a previous VACUUM)
+	 */
+	BlockNumber allvisible_pages;	/* # all-visible pages skipped */
+	BlockNumber allfrozen_pages;	/* # all-frozen pages skipped */
+
+	BlockNumber pages_removed;	/* # pages remove by truncation */
 	BlockNumber lpdead_item_pages;	/* # pages with LP_DEAD items */
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
 
@@ -369,6 +384,8 @@ typedef struct LVRelState
 									 * table */
 	int64		num_tuples;		/* total number of nonremovable tuples */
 	int64		live_tuples;	/* live tuples (reltuples estimate) */
+	BlockNumber	newly_allvisible;	/* # pages we set all-visible */
+	BlockNumber	newly_allfrozen;	/* # pages we set all-frozen */
 } LVRelState;
 
 /*
@@ -486,11 +503,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	PGRUsage	ru0;
 	TimestampTz starttime = 0;
 	WalUsage	walusage_start = pgWalUsage;
-	WalUsage	walusage = {0, 0, 0};
-	long		secs;
-	int			usecs;
-	double		read_rate,
-				write_rate;
 	bool		aggressive;		/* should we scan all unfrozen pages? */
 	bool		scanned_all_unfrozen;	/* actually scanned all such pages? */
 	char	  **indnames = NULL;
@@ -644,7 +656,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * NB: We need to check this before truncating the relation, because that
 	 * will change ->rel_pages.
 	 */
-	if ((vacrel->scanned_pages + vacrel->frozenskipped_pages)
+	if ((vacrel->scanned_pages + vacrel->allfrozen_pages)
 		< vacrel->rel_pages)
 	{
 		Assert(!aggressive);
@@ -736,22 +748,15 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 		{
 			StringInfoData buf;
 			char	   *msgfmt;
-			BlockNumber orig_rel_pages;
+			BlockNumber orig_rel_pages,
+						total_skipped;
+			long		secs;
+			int			usecs;
+			double		read_rate,
+						write_rate;
+			WalUsage	walusage;
 
 			TimestampDifference(starttime, endtime, &secs, &usecs);
-
-			memset(&walusage, 0, sizeof(WalUsage));
-			WalUsageAccumDiff(&walusage, &pgWalUsage, &walusage_start);
-
-			read_rate = 0;
-			write_rate = 0;
-			if ((secs > 0) || (usecs > 0))
-			{
-				read_rate = (double) BLCKSZ * VacuumPageMiss / (1024 * 1024) /
-					(secs + usecs / 1000000.0);
-				write_rate = (double) BLCKSZ * VacuumPageDirty / (1024 * 1024) /
-					(secs + usecs / 1000000.0);
-			}
 
 			/*
 			 * This is pretty messy, but we split it up so that we can skip
@@ -783,11 +788,16 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 vacrel->relnamespace,
 							 vacrel->relname,
 							 vacrel->num_index_scans);
-			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u skipped due to pins, %u skipped frozen\n"),
+			appendStringInfo(&buf, _("pages remaining: %u removed, %u remain\n"),
 							 vacrel->pages_removed,
-							 vacrel->rel_pages,
-							 vacrel->pinskipped_pages,
-							 vacrel->frozenskipped_pages);
+							 vacrel->rel_pages);
+			appendStringInfo(&buf, _("pages processed: %u scanned, %u cleanup lock conflicts\n"),
+							 vacrel->scanned_pages,
+							 vacrel->nocleanup_pages);
+			appendStringInfo(&buf, _("pages set in vm: %u in total, %u all-visible, %u all-frozen\n"),
+							 vacrel->newly_allvisible + vacrel->newly_allfrozen,
+							 vacrel->newly_allvisible,
+							 vacrel->newly_allfrozen);
 			appendStringInfo(&buf,
 							 _("tuples: %lld removed, %lld remain, %lld are dead but not yet removable, oldest xmin: %u\n"),
 							 (long long) vacrel->tuples_deleted,
@@ -795,6 +805,41 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 (long long) vacrel->new_dead_tuples,
 							 OldestXmin);
 			orig_rel_pages = vacrel->rel_pages + vacrel->pages_removed;
+			if (orig_rel_pages > 0 && vacrel->tupcount_pages > 0)
+			{
+				double simple_live_tuples =
+						vacrel->new_rel_tuples - vacrel->new_dead_tuples;
+
+				/*
+				 * Report tupcount_pages as scanned pages.  There is generally
+				 * no difference, but when there is (e.g., very small but
+				 * frequently updated table) it can matter.
+				 */
+				appendStringInfo(&buf, _("live row density: %.2f rows per page scanned, "),
+								 (double) vacrel->live_tuples / vacrel->tupcount_pages);
+
+				/*
+				 * XXX new_live_tuples used for new_rel_tuples estimate, and
+				 * new_live_tuples is partly extrapolated using _previous_
+				 * value of pg_class.reltuples -- see vac_estimate_reltuples()
+				 * call.  Since this pg_class.reltuples value will include the
+				 * previous VACUUM's a "dead but not yet removable tuples",
+				 * the logic here is slightly inaccurate.
+				 *
+				 * However, one goal of the project that I'm developing along
+				 * side this instrumentation patch is to avoid "dead but not
+				 * yet removable" tuples except where strictly necessary.
+				 * Hopefully this factor makes the inaccuracy issue even less
+				 * of a problem in the context of the project.
+				 */
+				appendStringInfo(&buf, _("%.2f rows per remaining page\n"),
+								 simple_live_tuples / orig_rel_pages);
+			}
+			total_skipped = vacrel->allvisible_pages + vacrel->allfrozen_pages;
+			appendStringInfo(&buf, _("skipped using vm: %u pages from table (%.2f%% of total), of which %u all-frozen\n"),
+							 total_skipped,
+							 100.0 * total_skipped / orig_rel_pages,
+							 vacrel->allfrozen_pages);
 			if (orig_rel_pages > 0)
 			{
 				if (vacrel->do_index_vacuuming)
@@ -843,6 +888,15 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				appendStringInfo(&buf, _("I/O timings: read: %.3f ms, write: %.3f ms\n"),
 								 read_ms, write_ms);
 			}
+			read_rate = 0;
+			write_rate = 0;
+			if ((secs > 0) || (usecs > 0))
+			{
+				read_rate = (double) BLCKSZ * VacuumPageMiss / (1024 * 1024) /
+					(secs + usecs / 1000000.0);
+				write_rate = (double) BLCKSZ * VacuumPageDirty / (1024 * 1024) /
+					(secs + usecs / 1000000.0);
+			}
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
 			appendStringInfo(&buf,
@@ -850,6 +904,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 (long long) VacuumPageHit,
 							 (long long) VacuumPageMiss,
 							 (long long) VacuumPageDirty);
+
+			memset(&walusage, 0, sizeof(WalUsage));
+			WalUsageAccumDiff(&walusage, &pgWalUsage, &walusage_start);
 			appendStringInfo(&buf,
 							 _("WAL usage: %lld records, %lld full page images, %llu bytes\n"),
 							 (long long) walusage.wal_records,
@@ -942,9 +999,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	next_fsm_block_to_vacuum = 0;
 	vacrel->rel_pages = nblocks;
 	vacrel->scanned_pages = 0;
-	vacrel->pinskipped_pages = 0;
-	vacrel->frozenskipped_pages = 0;
 	vacrel->tupcount_pages = 0;
+	vacrel->nocleanup_pages = 0;
+	vacrel->allvisible_pages = 0;
+	vacrel->allfrozen_pages = 0;
 	vacrel->pages_removed = 0;
 	vacrel->lpdead_item_pages = 0;
 	vacrel->nonempty_pages = 0;
@@ -956,6 +1014,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->new_dead_tuples = 0;
 	vacrel->num_tuples = 0;
 	vacrel->live_tuples = 0;
+	vacrel->newly_allvisible = 0;
+	vacrel->newly_allfrozen = 0;
 
 	vistest = GlobalVisTestFor(vacrel->rel);
 
@@ -1141,7 +1201,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				 * in this case an approximate answer is OK.
 				 */
 				if (aggressive || VM_ALL_FROZEN(vacrel->rel, blkno, &vmbuffer))
-					vacrel->frozenskipped_pages++;
+					vacrel->allfrozen_pages++;
+				else
+					vacrel->allvisible_pages++;
 				continue;
 			}
 			all_visible_according_to_vm = true;
@@ -1234,7 +1296,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			if (!aggressive && !FORCE_CHECK_PAGE())
 			{
 				ReleaseBuffer(buf);
-				vacrel->pinskipped_pages++;
+				vacrel->nocleanup_pages++;
 				continue;
 			}
 
@@ -1259,7 +1321,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			{
 				UnlockReleaseBuffer(buf);
 				vacrel->scanned_pages++;
-				vacrel->pinskipped_pages++;
+				vacrel->nocleanup_pages++;
 				if (hastup)
 					vacrel->nonempty_pages = blkno + 1;
 				continue;
@@ -1271,7 +1333,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				 * to claiming that the page contains no freezable tuples.
 				 */
 				UnlockReleaseBuffer(buf);
-				vacrel->pinskipped_pages++;
+				vacrel->nocleanup_pages++;
 				if (hastup)
 					vacrel->nonempty_pages = blkno + 1;
 				continue;
@@ -1338,6 +1400,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 */
 			if (!PageIsAllVisible(page))
 			{
+				vacrel->allfrozen_pages++;
+
 				START_CRIT_SECTION();
 
 				/* mark buffer dirty before writing a WAL record */
@@ -1451,8 +1515,14 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		{
 			uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
+			/* Don't increment both newly_allfrozen and newly_allvisible */
 			if (prunestate.all_frozen)
+			{
 				flags |= VISIBILITYMAP_ALL_FROZEN;
+				vacrel->newly_allfrozen++;
+			}
+			else
+				vacrel->newly_allvisible++;
 
 			/*
 			 * It should never be the case that the visibility map page is set
@@ -1529,6 +1599,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 			 * because setting the all-frozen bit doesn't cause recovery
 			 * conflicts.
 			 */
+			vacrel->newly_allfrozen++;
 			visibilitymap_set(vacrel->rel, blkno, buf, InvalidXLogRecPtr,
 							  vmbuffer, InvalidTransactionId,
 							  VISIBILITYMAP_ALL_FROZEN);
@@ -1652,16 +1723,15 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	appendStringInfo(&buf,
 					 _("%lld dead row versions cannot be removed yet, oldest xmin: %u\n"),
 					 (long long) vacrel->new_dead_tuples, vacrel->OldestXmin);
-	appendStringInfo(&buf, ngettext("Skipped %u page due to buffer pins, ",
-									"Skipped %u pages due to buffer pins, ",
-									vacrel->pinskipped_pages),
-					 vacrel->pinskipped_pages);
-	appendStringInfo(&buf, ngettext("%u frozen page.\n",
-									"%u frozen pages.\n",
-									vacrel->frozenskipped_pages),
-					 vacrel->frozenskipped_pages);
+	appendStringInfo(&buf, _("skipped %u all-visible pages, %u all-frozen pages\n"),
+					 vacrel->allvisible_pages,
+					 vacrel->allfrozen_pages);
 	appendStringInfo(&buf, _("%s."), pg_rusage_show(&ru0));
 
+	/*
+	 * XXX Why not show rel_pages instead of scanned_pages?  This is the
+	 * approach taken by the similar autovacuum logging.
+	 */
 	ereport(elevel,
 			(errmsg("table \"%s.%s\": found %lld removable, %lld nonremovable row versions in %u out of %u pages",
 					vacrel->relnamespace,
@@ -2501,14 +2571,26 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 	if (PageIsAllVisible(page))
 	{
 		uint8		flags = 0;
+		bool		will_set_frozen = false;
 		uint8		vm_status = visibilitymap_get_status(vacrel->rel,
 														 blkno, vmbuffer);
 
 		/* Set the VM all-frozen bit to flag, if needed */
-		if ((vm_status & VISIBILITYMAP_ALL_VISIBLE) == 0)
-			flags |= VISIBILITYMAP_ALL_VISIBLE;
 		if ((vm_status & VISIBILITYMAP_ALL_FROZEN) == 0 && all_frozen)
+		{
 			flags |= VISIBILITYMAP_ALL_FROZEN;
+			vacrel->newly_allfrozen++;
+			will_set_frozen = true;
+		}
+
+		if ((vm_status & VISIBILITYMAP_ALL_VISIBLE) == 0)
+		{
+			flags |= VISIBILITYMAP_ALL_VISIBLE;
+
+			/* Don't increment both newly_allfrozen and newly_allvisible */
+			if (!will_set_frozen)
+				vacrel->newly_allvisible++;
+		}
 
 		Assert(BufferIsValid(*vmbuffer));
 		if (flags != 0)
