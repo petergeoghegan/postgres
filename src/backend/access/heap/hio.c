@@ -551,6 +551,9 @@ loop:
 			pageFreeSpace = 0;
 		}
 
+		if (PageIsFull(page))
+			pageFreeSpace = 0;
+
 		first = false;
 
 		/*
