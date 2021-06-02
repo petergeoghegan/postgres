@@ -376,10 +376,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		targetFreeSpace = Max(len, nearlyEmptyFreeSpace);
 	else
 	{
-		targetFreeSpace = len + saveFreeSpace;
-		/* INSERTs require extra space */
-		if (otherBuffer == InvalidBuffer)
-			targetFreeSpace += 1000;
+		targetFreeSpace = (len * 3) + saveFreeSpace;
 	}
 
 	if (otherBuffer != InvalidBuffer)
