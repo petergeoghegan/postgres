@@ -335,7 +335,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 						  BulkInsertState bistate,
 						  Buffer *vmbuffer, Buffer *vmbuffer_other)
 {
-	bool		use_fsm = !(options & HEAP_INSERT_SKIP_FSM);
+	bool		use_fsm = (otherBuffer != InvalidBuffer);
 	Buffer		buffer = InvalidBuffer;
 	Page		page;
 	Size		nearlyEmptyFreeSpace,
@@ -584,9 +584,8 @@ loop:
 	 */
 	if (needLock)
 	{
-		LockRelationForExtension(relation, ExclusiveLock);
-#if 0
 		if (!use_fsm)
+			LockRelationForExtension(relation, ExclusiveLock);
 		else if (!ConditionalLockRelationForExtension(relation, ExclusiveLock))
 		{
 			/* Couldn't get the lock immediately; wait for it. */
@@ -611,7 +610,6 @@ loop:
 			/* Time to bulk-extend. */
 			RelationAddExtraBlocks(relation, bistate);
 		}
-#endif
 	}
 
 	/*
