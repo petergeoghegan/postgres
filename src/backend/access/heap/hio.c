@@ -612,8 +612,9 @@ loop:
 	 */
 	if (needLock)
 	{
+		LockRelationForExtension(relation, ExclusiveLock);
+#if 0
 		if (!use_fsm)
-			LockRelationForExtension(relation, ExclusiveLock);
 		else if (!ConditionalLockRelationForExtension(relation, ExclusiveLock))
 		{
 			/* Couldn't get the lock immediately; wait for it. */
@@ -638,6 +639,7 @@ loop:
 			/* Time to bulk-extend. */
 			RelationAddExtraBlocks(relation, bistate);
 		}
+#endif
 	}
 
 	/*

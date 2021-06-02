@@ -2159,6 +2159,7 @@ lazy_vacuum(LVRelState *vacrel, bool onecall)
 			 vacrel->lpdead_items < MAXDEADTUPLES(32L * 1024L * 1024L));
 	}
 
+	do_bypass_optimization = false;
 	if (do_bypass_optimization)
 	{
 		/*
