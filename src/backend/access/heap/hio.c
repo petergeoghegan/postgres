@@ -333,7 +333,7 @@ Buffer
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
-						  Buffer *vmbuffer, Buffer *vmbuffer_other, bool update)
+						  Buffer *vmbuffer, Buffer *vmbuffer_other)
 {
 	bool		use_fsm = !(options & HEAP_INSERT_SKIP_FSM);
 	Buffer		buffer = InvalidBuffer;
@@ -343,10 +343,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 				saveFreeSpace = 0,
 				targetFreeSpace = 0;
 	BlockNumber targetBlock,
-				otherBlock,
-				our_block = InvalidBlockNumber;
+				otherBlock;
 	bool		needLock;
-	bool		first = true;
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -401,11 +399,6 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
 	else
 		targetBlock = RelationGetTargetBlock(relation);
-
-	if (targetBlock != InvalidBlockNumber)
-	{
-		our_block = targetBlock;
-	}
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
@@ -544,14 +537,6 @@ loop:
 			return buffer;
 		}
 
-		//if (!PageIsFull(page) && !update)
-		if (first && !PageIsFull(page))
-		{
-			first = false;
-			PageSetFull(page);
-			pageFreeSpace = 0;
-		}
-
 		/*
 		 * Not enough space, so we must give up our page locks and pin (if
 		 * any) and prepare to look elsewhere.  We don't care which order we
@@ -575,23 +560,10 @@ loop:
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
 		 */
-		if (pageFreeSpace > 0)
-			targetBlock = RecordAndGetPageWithFreeSpace(relation,
-														targetBlock,
-														pageFreeSpace,
-														targetFreeSpace);
-		else
-		{
-			BlockNumber origtargetBlock = targetBlock;
-			/* avoid getting nearby space here */
-			RecordPageWithFreeSpace(relation, targetBlock, 0);
-			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
-#if 0
-			elog(WARNING, "%s origtargetbloc %u targetbloc %u",
-				 RelationGetRelationName(relation), origtargetBlock,
-				 targetBlock);
-#endif
-		}
+		targetBlock = RecordAndGetPageWithFreeSpace(relation,
+													targetBlock,
+													pageFreeSpace,
+													targetFreeSpace);
 	}
 
 	/*

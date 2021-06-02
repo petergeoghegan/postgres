@@ -1345,13 +1345,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				END_CRIT_SECTION();
 			}
 
-			if (PageIsFull(page))
-			{
-				if (freespace <= BLCKSZ * 0.6)
-					freespace = 0;
-				else
-					PageClearFull(page);
-			}
 			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 			continue;
@@ -1416,13 +1409,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 				 */
 				freespace = PageGetHeapFreeSpace(page);
 
-				if (PageIsFull(page))
-				{
-					if (freespace <= BLCKSZ * 0.6)
-						freespace = 0;
-					else
-						PageClearFull(page);
-				}
 				UnlockReleaseBuffer(buf);
 				RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 				continue;
@@ -1560,13 +1546,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		{
 			Size		freespace = PageGetHeapFreeSpace(page);
 
-			if (PageIsFull(page))
-			{
-				if (freespace <= BLCKSZ * 0.6)
-					freespace = 0;
-				else
-					PageClearFull(page);
-			}
 			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 		}
@@ -2361,13 +2340,6 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
-		if (PageIsFull(page))
-		{
-			if (freespace <= BLCKSZ * 0.6)
-				freespace = 0;
-			else
-				PageClearFull(page);
-		}
 
 		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(vacrel->rel, tblk, freespace);

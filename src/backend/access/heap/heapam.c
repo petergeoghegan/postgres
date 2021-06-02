@@ -2091,7 +2091,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 */
 	buffer = RelationGetBufferForTuple(relation, heaptup->t_len,
 									   InvalidBuffer, options, bistate,
-									   &vmbuffer, NULL, false);
+									   &vmbuffer, NULL);
 
 
 	/*
@@ -2447,7 +2447,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		 */
 		buffer = RelationGetBufferForTuple(relation, heaptuples[ndone]->t_len,
 										   InvalidBuffer, options, bistate,
-										   &vmbuffer, NULL, false);
+										   &vmbuffer, NULL);
 		page = BufferGetPage(buffer);
 
 		starting_with_empty_page = PageGetMaxOffsetNumber(page) == 0;
@@ -3314,6 +3314,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 	 * concurrently and even if that was possible, in the worst case we lose a
 	 * chance to do a HOT update.
 	 */
+	if (!PageIsFull(page))
 	{
 		interesting_attrs = bms_add_members(interesting_attrs, hot_attrs);
 		hot_attrs_checked = true;
@@ -3870,7 +3871,7 @@ l2:
 				/* It doesn't fit, must use RelationGetBufferForTuple. */
 				newbuf = RelationGetBufferForTuple(relation, heaptup->t_len,
 												   buffer, 0, NULL,
-												   &vmbuffer_new, &vmbuffer, true);
+												   &vmbuffer_new, &vmbuffer);
 				/* We're all done. */
 				break;
 			}
@@ -3939,6 +3940,11 @@ l2:
 		 */
 		if (hot_attrs_checked && !bms_overlap(modified_attrs, hot_attrs))
 			use_hot_update = true;
+	}
+	else
+	{
+		/* Set a hint that the old page could use prune/defrag */
+		PageSetFull(page);
 	}
 
 	/*

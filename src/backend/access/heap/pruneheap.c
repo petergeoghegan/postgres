@@ -23,7 +23,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/bufmgr.h"
-#include "storage/freespace.h"
 #include "utils/snapmgr.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -92,7 +91,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	GlobalVisState *vistest;
 	TransactionId limited_xmin = InvalidTransactionId;
 	TimestampTz limited_ts = 0;
-	Size		targetspace, minfree;
+	Size		minfree;
 
 	/*
 	 * We can't write WAL in recovery mode, so there's no point trying to
@@ -165,12 +164,11 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	 * important than sometimes getting a wrong answer in what is after all
 	 * just a heuristic estimate.
 	 */
-	targetspace = RelationGetTargetPageFreeSpace(relation, HEAP_DEFAULT_FILLFACTOR);
-	minfree = targetspace;
-	if (PageIsFull(page))
-		minfree = 8000;
+	minfree = RelationGetTargetPageFreeSpace(relation,
+											 HEAP_DEFAULT_FILLFACTOR);
+	minfree = Max(minfree, BLCKSZ / 10);
 
-	if (PageGetHeapFreeSpace(page) < minfree)
+	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
 		/* OK, try to get exclusive buffer lock */
 		if (!ConditionalLockBufferForCleanup(buffer))
@@ -182,31 +180,12 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		 * prune. (We needn't recheck PageIsPrunable, since no one else could
 		 * have pruned while we hold pin.)
 		 */
-		if (PageGetHeapFreeSpace(page) < minfree)
+		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 		{
 			/* OK to prune */
 			(void) heap_page_prune(relation, buffer, vistest,
 								   limited_xmin, limited_ts,
 								   true, NULL);
-
-			if (PageIsFull(page))
-			{
-				Size newfreespace = PageGetHeapFreeSpace(page);
-
-				if (newfreespace > BLCKSZ * 0.7)
-				{
-					PageClearFull(page);
-					RecordPageWithFreeSpace(relation,
-											BufferGetBlockNumber(buffer),
-											newfreespace);
-				}
-			}
-			else if (PageGetHeapFreeSpace(page) < targetspace)
-			{
-				PageSetFull(page);
-				RecordPageWithFreeSpace(relation,
-										BufferGetBlockNumber(buffer), 0);
-			}
 		}
 
 		/* And release buffer lock */
@@ -324,6 +303,13 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 */
 		((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
 
+		/*
+		 * Also clear the "page is full" flag, since there's no point in
+		 * repeating the prune/defrag process until something else happens to
+		 * the page.
+		 */
+		PageClearFull(page);
+
 		MarkBufferDirty(buffer);
 
 		/*
@@ -377,9 +363,11 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * point in repeating the prune/defrag process until something else
 		 * happens to the page.
 		 */
-		if (((PageHeader) page)->pd_prune_xid != prstate.new_prune_xid)
+		if (((PageHeader) page)->pd_prune_xid != prstate.new_prune_xid ||
+			PageIsFull(page))
 		{
 			((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
+			PageClearFull(page);
 			MarkBufferDirtyHint(buffer, true);
 		}
 	}
