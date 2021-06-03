@@ -330,6 +330,8 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	before any (unlogged) changes are made in buffer pool.
  */
 Buffer
+#define DEBUG
+//#define DEBUG_ELEVEL  WARNING
 #define DEBUG_ELEVEL  LOG
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
@@ -394,8 +396,12 @@ RelationGetBufferForTuple(Relation relation, Size len,
 			if (forwardBlock >= nblocks)
 				forwardBlock = InvalidBlockNumber;
 			else
+			{
+#ifdef DEBUG
 				elog(DEBUG_ELEVEL, "found forward block %u inside %u for relation %s",
 					 forwardBlock, otherBlock, RelationGetRelationName(relation));
+#endif
+			}
 		}
 	}
 	else
@@ -427,7 +433,11 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
-		targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+
+		if (otherBuffer == InvalidBuffer)
+			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+		else
+			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace + len * 4);
 	}
 
 	/*
@@ -549,7 +559,8 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (targetFreeSpace <= pageFreeSpace)
+		if (targetFreeSpace <= pageFreeSpace ||
+			(forwardBlock == targetBlock && len <= pageFreeSpace))
 		{
 			/*
 			 * use this page as future insert target, too
@@ -571,8 +582,10 @@ loop:
 				otherPage = BufferGetPage(otherBuffer);
 				header = (PageHeader) otherPage;
 
+#ifdef DEBUG
 				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM (was %u)",
 					 targetBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
+#endif
 				header->pd_update_block = targetBlock;
 			}
 			return buffer;
@@ -773,9 +786,11 @@ loop:
 		otherPage = BufferGetPage(otherBuffer);
 		header = (PageHeader) otherPage;
 
+#ifdef DEBUG
 		elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s by extending relation (was %u)",
 			 newUpdateBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
 		header->pd_update_block = newUpdateBlock;
+#endif
 	}
 
 	return buffer;
