@@ -571,9 +571,9 @@ loop:
 				otherPage = BufferGetPage(otherBuffer);
 				header = (PageHeader) otherPage;
 
+				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM (was %u)",
+					 targetBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
 				header->pd_update_block = targetBlock;
-				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM",
-					 targetBlock, otherBlock, RelationGetRelationName(relation));
 			}
 			return buffer;
 		}
@@ -768,13 +768,14 @@ loop:
 	{
 		Page		otherPage;
 		PageHeader	header;
+		BlockNumber newUpdateBlock = BufferGetBlockNumber(buffer);
 
 		otherPage = BufferGetPage(otherBuffer);
 		header = (PageHeader) otherPage;
-		header->pd_update_block = BufferGetBlockNumber(buffer);
 
-		elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s by extending relation",
-			 targetBlock, otherBlock, RelationGetRelationName(relation));
+		elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s by extending relation (was %u)",
+			 newUpdateBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
+		header->pd_update_block = newUpdateBlock;
 	}
 
 	return buffer;
