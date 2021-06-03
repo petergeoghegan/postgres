@@ -378,10 +378,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	if (len + saveFreeSpace > nearlyEmptyFreeSpace)
 		targetFreeSpace = Max(len, nearlyEmptyFreeSpace);
 	else
-	{
 		targetFreeSpace = len + saveFreeSpace;
-		targetFreeSpace = Min(targetFreeSpace, MaxHeapTupleSize);
-	}
 
 	if (otherBuffer != InvalidBuffer)
 	{
@@ -555,9 +552,11 @@ loop:
 		if (targetFreeSpace <= pageFreeSpace)
 		{
 			/* use this page as future insert target, too */
-			if (otherBuffer == InvalidBuffer)
-				RelationSetTargetBlock(relation, targetBlock);
-			else if (forwardBlock == InvalidBlockNumber)
+			RelationSetTargetBlock(relation, targetBlock);
+
+			/* If this is an update and no forward block set, set one now */
+			if (otherBuffer == InvalidBuffer &&
+				forwardBlock == InvalidBlockNumber)
 			{
 				Page		otherPage;
 				PageHeader	header;
@@ -750,9 +749,10 @@ loop:
 	 * current backend to make more insertions or not, which is probably a
 	 * good bet most of the time.  So for now, don't add it to FSM yet.
 	 */
-	if (otherBuffer == InvalidBuffer)
-		RelationSetTargetBlock(relation, targetBlock);
-	else if (forwardBlock == InvalidBlockNumber)
+	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+
+	/* If this is an update and no forward block set, set one now */
+	if (otherBuffer == InvalidBuffer && forwardBlock == InvalidBlockNumber)
 	{
 		Page		otherPage;
 		PageHeader	header;
