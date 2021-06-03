@@ -344,6 +344,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 				targetFreeSpace = 0;
 	BlockNumber targetBlock,
 				otherBlock;
+	BlockNumber forwardBlock = InvalidBlockNumber;
 	bool		needLock;
 
 	len = MAXALIGN(len);		/* be conservative */
@@ -376,11 +377,34 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		targetFreeSpace = Max(len, nearlyEmptyFreeSpace);
 	else
 	{
-		targetFreeSpace = (len * 3) + saveFreeSpace;
+		if (len < 1000)
+			targetFreeSpace = (len * 3) + saveFreeSpace;
+		else
+			targetFreeSpace = len + saveFreeSpace;
 	}
 
 	if (otherBuffer != InvalidBuffer)
+	{
+		Page		otherPage;
+		PageHeader	header;
 		otherBlock = BufferGetBlockNumber(otherBuffer);
+
+		otherPage = BufferGetPage(otherBuffer);
+		header = (PageHeader) otherPage;
+		if (header->pd_checksum != 0)
+		{
+#if 0
+			if (header->pd_checksum < PG_INT16_MAX)
+				forwardBlock = otherBlock - header->pd_checksum;
+			else
+				forwardBlock = otherBlock + header->pd_checksum;
+#else
+			forwardBlock = header->pd_checksum;
+			elog(WARNING, "found forward block %u inside %u for relation %s",
+				 forwardBlock, otherBlock, RelationGetRelationName(relation));
+#endif
+		}
+	}
 	else
 		otherBlock = InvalidBlockNumber;	/* just to keep compiler quiet */
 
@@ -399,6 +423,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	 */
 	if (bistate && bistate->current_buf != InvalidBuffer)
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
+	else if (forwardBlock != InvalidBlockNumber)
+		targetBlock = forwardBlock;
 	else
 		targetBlock = RelationGetTargetBlock(relation);
 
@@ -535,7 +561,20 @@ loop:
 		if (targetFreeSpace <= pageFreeSpace)
 		{
 			/* use this page as future insert target, too */
-			RelationSetTargetBlock(relation, targetBlock);
+			if (otherBuffer == InvalidBuffer)
+				RelationSetTargetBlock(relation, targetBlock);
+			else if (forwardBlock == InvalidBlockNumber && forwardBlock <= PG_UINT16_MAX)
+			{
+				Page		otherPage;
+				PageHeader	header;
+
+				otherPage = BufferGetPage(otherBuffer);
+				header = (PageHeader) otherPage;
+
+				header->pd_checksum = targetBlock;
+				elog(WARNING, "set forward block %u inside block %u for relation %s u using FSM",
+					 targetBlock, otherBlock, RelationGetRelationName(relation));
+			}
 			return buffer;
 		}
 
@@ -717,7 +756,26 @@ loop:
 	 * current backend to make more insertions or not, which is probably a
 	 * good bet most of the time.  So for now, don't add it to FSM yet.
 	 */
-	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+	if (otherBuffer == InvalidBuffer)
+		RelationSetTargetBlock(relation, targetBlock);
+	else if (forwardBlock == InvalidBlockNumber && otherBlock < PG_UINT16_MAX)
+	{
+		Page		otherPage;
+		PageHeader	header;
+
+		otherPage = BufferGetPage(otherBuffer);
+		header = (PageHeader) otherPage;
+#if 0
+		if (header->pd_checksum < PG_INT16_MAX)
+			forwardBlock = otherBlock - header->pd_checksum;
+		else
+			forwardBlock = otherBlock + header->pd_checksum;
+#endif
+		header->pd_checksum = targetBlock;
+
+		elog(WARNING, "set forward block %u inside block %u for relation %s u by extending relation",
+			 targetBlock, otherBlock, RelationGetRelationName(relation));
+	}
 
 	return buffer;
 }
