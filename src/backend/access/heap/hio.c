@@ -330,7 +330,7 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	before any (unlogged) changes are made in buffer pool.
  */
 Buffer
-#define DEBUG_ELEVEL  WARNING
+#define DEBUG_ELEVEL  LOG
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
