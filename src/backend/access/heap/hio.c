@@ -330,6 +330,7 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	before any (unlogged) changes are made in buffer pool.
  */
 Buffer
+#define DEBUG_ELEVEL  WARNING
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
@@ -390,13 +391,13 @@ RelationGetBufferForTuple(Relation relation, Size len,
 
 		otherPage = BufferGetPage(otherBuffer);
 		header = (PageHeader) otherPage;
-		if (header->pd_checksum != 0)
+		if (header->pd_update_block != 0)
 		{
-			forwardBlock = header->pd_checksum;
-			if (forwardBlock > nblocks)
+			forwardBlock = header->pd_update_block;
+			if (forwardBlock >= nblocks)
 				forwardBlock = InvalidBlockNumber;
 			else
-				elog(LOG, "found forward block %u inside %u for relation %s",
+				elog(DEBUG_ELEVEL, "found forward block %u inside %u for relation %s",
 					 forwardBlock, otherBlock, RelationGetRelationName(relation));
 		}
 	}
@@ -556,8 +557,7 @@ loop:
 			/* use this page as future insert target, too */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
-			else if (forwardBlock == InvalidBlockNumber &&
-					 forwardBlock <= PG_UINT16_MAX)
+			else if (forwardBlock == InvalidBlockNumber)
 			{
 				Page		otherPage;
 				PageHeader	header;
@@ -565,8 +565,8 @@ loop:
 				otherPage = BufferGetPage(otherBuffer);
 				header = (PageHeader) otherPage;
 
-				header->pd_checksum = targetBlock;
-				elog(LOG, "set forward block %u inside block %u for relation %s u using FSM",
+				header->pd_update_block = targetBlock;
+				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM",
 					 targetBlock, otherBlock, RelationGetRelationName(relation));
 			}
 			return buffer;
@@ -752,22 +752,16 @@ loop:
 	 */
 	if (otherBuffer == InvalidBuffer)
 		RelationSetTargetBlock(relation, targetBlock);
-	else if (forwardBlock == InvalidBlockNumber && otherBlock <= PG_UINT16_MAX)
+	else if (forwardBlock == InvalidBlockNumber)
 	{
 		Page		otherPage;
 		PageHeader	header;
 
 		otherPage = BufferGetPage(otherBuffer);
 		header = (PageHeader) otherPage;
-#if 0
-		if (header->pd_checksum < PG_INT16_MAX)
-			forwardBlock = otherBlock - header->pd_checksum;
-		else
-			forwardBlock = otherBlock + header->pd_checksum;
-#endif
-		header->pd_checksum = targetBlock;
+		header->pd_update_block = targetBlock;
 
-		elog(LOG, "set forward block %u inside block %u for relation %s u by extending relation",
+		elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s by extending relation",
 			 targetBlock, otherBlock, RelationGetRelationName(relation));
 	}
 
