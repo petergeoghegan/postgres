@@ -330,7 +330,7 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	before any (unlogged) changes are made in buffer pool.
  */
 Buffer
-#define DEBUG_ELEVEL  DEBUG1
+#define DEBUG_ELEVEL  LOG
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
@@ -562,8 +562,8 @@ loop:
 				RelationSetTargetBlock(relation, targetBlock);
 
 			/* If this is an update and no forward block set, set one now */
-			if (otherBuffer == InvalidBuffer &&
-				forwardBlock == InvalidBlockNumber)
+			if (otherBuffer != InvalidBuffer &&
+				forwardBlock != targetBlock)
 			{
 				Page		otherPage;
 				PageHeader	header;
@@ -764,14 +764,14 @@ loop:
 	}
 
 	/* If this is an update and no forward block set, set one now */
-	if (otherBuffer == InvalidBuffer && forwardBlock == InvalidBlockNumber)
+	if (otherBuffer != InvalidBuffer && forwardBlock != BufferGetBlockNumber(buffer))
 	{
 		Page		otherPage;
 		PageHeader	header;
 
 		otherPage = BufferGetPage(otherBuffer);
 		header = (PageHeader) otherPage;
-		header->pd_update_block = targetBlock;
+		header->pd_update_block = BufferGetBlockNumber(buffer);
 
 		elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s by extending relation",
 			 targetBlock, otherBlock, RelationGetRelationName(relation));
