@@ -396,7 +396,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 			if (forwardBlock > nblocks)
 				forwardBlock = InvalidBlockNumber;
 			else
-				elog(WARNING, "found forward block %u inside %u for relation %s",
+				elog(LOG, "found forward block %u inside %u for relation %s",
 					 forwardBlock, otherBlock, RelationGetRelationName(relation));
 		}
 	}
@@ -566,7 +566,7 @@ loop:
 				header = (PageHeader) otherPage;
 
 				header->pd_checksum = targetBlock;
-				elog(WARNING, "set forward block %u inside block %u for relation %s u using FSM",
+				elog(LOG, "set forward block %u inside block %u for relation %s u using FSM",
 					 targetBlock, otherBlock, RelationGetRelationName(relation));
 			}
 			return buffer;
@@ -767,7 +767,7 @@ loop:
 #endif
 		header->pd_checksum = targetBlock;
 
-		elog(WARNING, "set forward block %u inside block %u for relation %s u by extending relation",
+		elog(LOG, "set forward block %u inside block %u for relation %s u by extending relation",
 			 targetBlock, otherBlock, RelationGetRelationName(relation));
 	}
 
