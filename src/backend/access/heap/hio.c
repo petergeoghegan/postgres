@@ -329,10 +329,12 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	ereport(ERROR) is allowed here, so this routine *must* be called
  *	before any (unlogged) changes are made in buffer pool.
  */
-Buffer
-#define DEBUG
+//#define DEBUG
+
 //#define DEBUG_ELEVEL  WARNING
 #define DEBUG_ELEVEL  LOG
+
+Buffer
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
 						  BulkInsertState bistate,
@@ -794,8 +796,8 @@ loop:
 #ifdef DEBUG
 		elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s by extending relation (was %u)",
 			 newUpdateBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
-		header->pd_update_block = newUpdateBlock;
 #endif
+		header->pd_update_block = newUpdateBlock;
 	}
 
 	return buffer;
