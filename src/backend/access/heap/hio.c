@@ -346,6 +346,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 				otherBlock;
 	BlockNumber forwardBlock = InvalidBlockNumber;
 	bool		needLock;
+	BlockNumber nblocks = RelationGetNumberOfBlocks(relation);
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -393,16 +394,12 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		header = (PageHeader) otherPage;
 		if (header->pd_checksum != 0)
 		{
-#if 0
-			if (header->pd_checksum < PG_INT16_MAX)
-				forwardBlock = otherBlock - header->pd_checksum;
-			else
-				forwardBlock = otherBlock + header->pd_checksum;
-#else
 			forwardBlock = header->pd_checksum;
-			elog(WARNING, "found forward block %u inside %u for relation %s",
-				 forwardBlock, otherBlock, RelationGetRelationName(relation));
-#endif
+			if (forwardBlock > nblocks)
+				forwardBlock = InvalidBlockNumber;
+			else
+				elog(WARNING, "found forward block %u inside %u for relation %s",
+					 forwardBlock, otherBlock, RelationGetRelationName(relation));
 		}
 	}
 	else
@@ -444,8 +441,6 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	 */
 	if (targetBlock == InvalidBlockNumber)
 	{
-		BlockNumber nblocks = RelationGetNumberOfBlocks(relation);
-
 		if (nblocks > 0)
 			targetBlock = nblocks - 1;
 	}
@@ -563,7 +558,8 @@ loop:
 			/* use this page as future insert target, too */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
-			else if (forwardBlock == InvalidBlockNumber && forwardBlock <= PG_UINT16_MAX)
+			else if (forwardBlock == InvalidBlockNumber &&
+					 forwardBlock <= PG_UINT16_MAX)
 			{
 				Page		otherPage;
 				PageHeader	header;
@@ -758,7 +754,7 @@ loop:
 	 */
 	if (otherBuffer == InvalidBuffer)
 		RelationSetTargetBlock(relation, targetBlock);
-	else if (forwardBlock == InvalidBlockNumber && otherBlock < PG_UINT16_MAX)
+	else if (forwardBlock == InvalidBlockNumber && otherBlock <= PG_UINT16_MAX)
 	{
 		Page		otherPage;
 		PageHeader	header;
