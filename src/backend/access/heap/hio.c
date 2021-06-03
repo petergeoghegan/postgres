@@ -350,6 +350,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	BlockNumber forwardBlock = InvalidBlockNumber;
 	bool		needLock;
 	BlockNumber nblocks = RelationGetNumberOfBlocks(relation);
+	OffsetNumber maxoff = InvalidOffsetNumber;
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -389,6 +390,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		otherBlock = BufferGetBlockNumber(otherBuffer);
 
 		otherPage = BufferGetPage(otherBuffer);
+		maxoff = PageGetMaxOffsetNumber(otherPage);
 		header = (PageHeader) otherPage;
 		if (header->pd_update_block != 0)
 		{
@@ -437,7 +439,10 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		if (otherBuffer == InvalidBuffer)
 			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
 		else
-			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace + len * 4);
+			targetBlock = GetPageWithFreeSpace(relation,
+											   Min(targetFreeSpace +
+												   len * (maxoff / 2),
+												   MaxHeapTupleSize));
 	}
 
 	/*
