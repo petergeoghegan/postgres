@@ -551,8 +551,15 @@ loop:
 		pageFreeSpace = PageGetHeapFreeSpace(page);
 		if (targetFreeSpace <= pageFreeSpace)
 		{
-			/* use this page as future insert target, too */
-			RelationSetTargetBlock(relation, targetBlock);
+			/*
+			 * use this page as future insert target, too
+			 *
+			 * If we are going to set a new forward block then this can be our
+			 * target block going forward too.  However, we do not use the
+			 * forward block when it was set by somebody else.
+			 */
+			if (forwardBlock != targetBlock)
+				RelationSetTargetBlock(relation, targetBlock);
 
 			/* If this is an update and no forward block set, set one now */
 			if (otherBuffer == InvalidBuffer &&
@@ -749,7 +756,12 @@ loop:
 	 * current backend to make more insertions or not, which is probably a
 	 * good bet most of the time.  So for now, don't add it to FSM yet.
 	 */
-	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+	{
+		BlockNumber block = BufferGetBlockNumber(buffer);
+
+		if (block != forwardBlock)
+			RelationSetTargetBlock(relation, block);
+	}
 
 	/* If this is an update and no forward block set, set one now */
 	if (otherBuffer == InvalidBuffer && forwardBlock == InvalidBlockNumber)
