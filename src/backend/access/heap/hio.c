@@ -576,7 +576,7 @@ loop:
 			 * going forward too.  However, we do not use the forward block
 			 * when it was set by somebody else.
 			 */
-			if (otherBuffer != InvalidBuffer)
+			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
 
 			/* If this is an update and no forward block set, set one now */
@@ -779,7 +779,7 @@ loop:
 	{
 		BlockNumber block = BufferGetBlockNumber(buffer);
 
-		if (otherBuffer != InvalidBuffer)
+		if (otherBuffer == InvalidBuffer)
 			RelationSetTargetBlock(relation, block);
 	}
 
