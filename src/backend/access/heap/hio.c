@@ -587,6 +587,7 @@ loop:
 			{
 				Page		otherPage;
 				PageHeader	header;
+				int			newspace;
 
 				otherPage = BufferGetPage(otherBuffer);
 				header = (PageHeader) otherPage;
@@ -599,6 +600,8 @@ loop:
 				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM (was %u)",
 					 targetBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
 #endif
+				newspace = pageFreeSpace - (len * 4);
+				RecordPageWithFreeSpace(relation, targetBlock, Max(newspace, 0));
 				header->pd_update_block = targetBlock;
 			}
 			return buffer;
