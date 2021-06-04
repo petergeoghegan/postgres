@@ -329,7 +329,7 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	ereport(ERROR) is allowed here, so this routine *must* be called
  *	before any (unlogged) changes are made in buffer pool.
  */
-//#define DEBUG
+#define DEBUG
 
 //#define DEBUG_ELEVEL  WARNING
 #define DEBUG_ELEVEL  LOG
@@ -428,8 +428,10 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
 	else if (forwardBlock != InvalidBlockNumber)
 		targetBlock = forwardBlock;
-	else
+	else if (otherBuffer == InvalidBuffer)
 		targetBlock = RelationGetTargetBlock(relation);
+	else
+		targetBlock = InvalidBlockNumber;	/* UPDATEs don't use rel target block */
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
