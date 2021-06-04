@@ -572,11 +572,11 @@ loop:
 			/*
 			 * use this page as future insert target, too
 			 *
-			 * If we are going to set a new forward block then this can be our
-			 * target block going forward too.  However, we do not use the
-			 * forward block when it was set by somebody else.
+			 * If we are not an updater then this can be our target block
+			 * going forward too.  However, we do not use the forward block
+			 * when it was set by somebody else.
 			 */
-			if (forwardBlock != targetBlock)
+			if (otherBuffer != InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
 
 			/* If this is an update and no forward block set, set one now */
@@ -779,7 +779,7 @@ loop:
 	{
 		BlockNumber block = BufferGetBlockNumber(buffer);
 
-		if (block != forwardBlock)
+		if (otherBuffer != InvalidBuffer)
 			RelationSetTargetBlock(relation, block);
 	}
 
