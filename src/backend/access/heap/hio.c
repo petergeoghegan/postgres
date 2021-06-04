@@ -592,6 +592,10 @@ loop:
 				header = (PageHeader) otherPage;
 
 #ifdef DEBUG
+				/*
+				 * Must be from FSM because we block UPDATEs from using target
+				 * block above
+				 */
 				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM (was %u)",
 					 targetBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
 #endif
