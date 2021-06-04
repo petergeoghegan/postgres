@@ -349,10 +349,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 				targetFreeSpace = 0;
 	BlockNumber targetBlock,
 				otherBlock;
-	BlockNumber forwardBlock = InvalidBlockNumber;
 	bool		needLock;
 	BlockNumber nblocks = RelationGetNumberOfBlocks(relation);
-	OffsetNumber maxoff = InvalidOffsetNumber;
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -386,28 +384,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		targetFreeSpace = len + saveFreeSpace;
 
 	if (otherBuffer != InvalidBuffer)
-	{
-		Page		otherPage;
-		PageHeader	header;
 		otherBlock = BufferGetBlockNumber(otherBuffer);
-
-		otherPage = BufferGetPage(otherBuffer);
-		maxoff = PageGetMaxOffsetNumber(otherPage);
-		header = (PageHeader) otherPage;
-		if (header->pd_update_block != 0)
-		{
-			forwardBlock = header->pd_update_block;
-			if (forwardBlock >= nblocks)
-				forwardBlock = InvalidBlockNumber;
-			else
-			{
-#ifdef DEBUG
-				elog(DEBUG_ELEVEL, "found forward block %u inside %u for relation %s",
-					 forwardBlock, otherBlock, RelationGetRelationName(relation));
-#endif
-			}
-		}
-	}
 	else
 		otherBlock = InvalidBlockNumber;	/* just to keep compiler quiet */
 
@@ -426,8 +403,6 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	 */
 	if (bistate && bistate->current_buf != InvalidBuffer)
 		targetBlock = BufferGetBlockNumber(bistate->current_buf);
-	else if (forwardBlock != InvalidBlockNumber)
-		targetBlock = forwardBlock;
 	else if (otherBuffer == InvalidBuffer)
 		targetBlock = RelationGetTargetBlock(relation);
 	else
@@ -567,7 +542,7 @@ loop:
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
 		if (targetFreeSpace <= pageFreeSpace ||
-			(forwardBlock == targetBlock && len <= pageFreeSpace))
+			(otherBuffer != InvalidBuffer && len <= pageFreeSpace))
 		{
 			/*
 			 * use this page as future insert target, too
@@ -578,34 +553,6 @@ loop:
 			 */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
-
-			/* If this is an update and no forward block set, set one now */
-			if (otherBuffer != InvalidBuffer &&
-				forwardBlock != targetBlock)
-			{
-				Page		otherPage;
-				PageHeader	header;
-				int			newspace;
-
-				otherPage = BufferGetPage(otherBuffer);
-				header = (PageHeader) otherPage;
-
-#ifdef DEBUG
-				/*
-				 * Must be from FSM because we block UPDATEs from using target
-				 * block above
-				 */
-				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM (was %u)",
-					 targetBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
-#endif
-				newspace = pageFreeSpace - (len * (maxoff / 4));
-				RecordPageWithFreeSpace(relation, targetBlock, Max(newspace, 0));
-				header->pd_update_block = targetBlock;
-
-				/* circular link back from new page to new reserved page: */
-				header = (PageHeader) page;
-				header->pd_update_block = otherBlock;
-			}
 			return buffer;
 		}
 
@@ -792,23 +739,6 @@ loop:
 
 		if (otherBuffer == InvalidBuffer)
 			RelationSetTargetBlock(relation, block);
-	}
-
-	/* If this is an update and no forward block set, set one now */
-	if (otherBuffer != InvalidBuffer && forwardBlock != BufferGetBlockNumber(buffer))
-	{
-		Page		otherPage;
-		PageHeader	header;
-		BlockNumber newUpdateBlock = BufferGetBlockNumber(buffer);
-
-		otherPage = BufferGetPage(otherBuffer);
-		header = (PageHeader) otherPage;
-
-#ifdef DEBUG
-		elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s by extending relation (was %u)",
-			 newUpdateBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
-#endif
-		header->pd_update_block = newUpdateBlock;
 	}
 
 	return buffer;
