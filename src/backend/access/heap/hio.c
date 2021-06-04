@@ -600,7 +600,7 @@ loop:
 				elog(DEBUG_ELEVEL, "set forward block %u inside block %u for relation %s using FSM (was %u)",
 					 targetBlock, otherBlock, RelationGetRelationName(relation), header->pd_update_block);
 #endif
-				newspace = pageFreeSpace - (len * 4);
+				newspace = pageFreeSpace - (len * (maxoff / 4));
 				RecordPageWithFreeSpace(relation, targetBlock, Max(newspace, 0));
 				header->pd_update_block = targetBlock;
 			}
