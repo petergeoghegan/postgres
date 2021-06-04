@@ -419,7 +419,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
 		else
 			targetBlock = GetPageWithFreeSpace(relation,
-											   Min(len * 3, MaxHeapTupleSize));
+											   Min(len, MaxHeapTupleSize));
 	}
 
 	/*
@@ -553,6 +553,11 @@ loop:
 			 */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
+			else
+			{
+				int			newspace = pageFreeSpace - len;
+				RecordPageWithFreeSpace(relation, targetBlock, Max(newspace, 0));
+			}
 			return buffer;
 		}
 
