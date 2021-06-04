@@ -603,6 +603,10 @@ loop:
 				newspace = pageFreeSpace - (len * (maxoff / 4));
 				RecordPageWithFreeSpace(relation, targetBlock, Max(newspace, 0));
 				header->pd_update_block = targetBlock;
+
+				/* circular link back from new page to new reserved page: */
+				header = (PageHeader) page;
+				header->pd_update_block = otherBlock;
 			}
 			return buffer;
 		}
