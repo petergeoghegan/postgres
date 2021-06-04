@@ -623,7 +623,7 @@ loop:
 		 */
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
-													(otherBuffer != InvalidBuffer ? 0 : pageFreeSpace),
+													(otherBuffer != InvalidBuffer ? Min(pageFreeSpace, 2000) : pageFreeSpace),
 													targetFreeSpace);
 	}
 
