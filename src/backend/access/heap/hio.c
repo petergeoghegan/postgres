@@ -553,10 +553,10 @@ loop:
 				RelationSetTargetBlock(relation, targetBlock);
 			else
 			{
-				int		newspace = pageFreeSpace - len;
+				int		newspace = (int) pageFreeSpace - len;
 
-				RecordPageWithFreeSpace(relation, targetBlock,
-										Max(newspace, 0));
+				newspace = Max(newspace, 0);
+				RecordPageWithFreeSpace(relation, targetBlock, newspace);
 			}
 			return buffer;
 		}
