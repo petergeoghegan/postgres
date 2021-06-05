@@ -326,12 +326,14 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	consulted when updating a tuple.  We also don't care about fillfactor with
  *	updates that cannot fit their successor version on the same heap page.
  *
- *	While the space left behind by fillfactor on each heap page is reserved
- *	for whatever logical rows were originally inserted, we don't stick with
- *	that strategy when it has already started to fail.  We try to fit the new
- *	version on a related/nearby heap page instead (with help from the FSM).
- *	This works well when it can exploit any natural variation in how often
- *	logical rows are updated.  Hotter (more frequently updated) logical rows
+ *	While the space left behind by fillfactor on each heap page is supposed to
+ *	be reserved for extra versions of whatever logical rows were on the page
+ *	when it first filled up, we don't stick with that strategy when it has
+ *	already started to fail.  When we cannot fit a new version, we don't just
+ *	treat it like an INSERT.  Rather, we place it on a related/nearby heap
+ *	page (with help from the FSM), which is not ideal but better than possibly
+ *	allocating a whole new heap block.  This fallback strategy can exploit
+ *	naturally occurring skew; hotter (more frequently updated) logical rows
  *	will naturally migrate to heap blocks that start out cold.
  *
  *	ereport(ERROR) is allowed here, so this routine *must* be called
