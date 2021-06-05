@@ -540,11 +540,12 @@ loop:
 			 * Use this page as future insert target, too.  But only when this
 			 * isn't an UPDATE -- we only use target page with INSERTs.
 			 *
-			 * We remember that we consumed 'len' free space from the page
-			 * with an updater.  That way skewed updates with lots of
-			 * contention can naturally spread out the hot rows in fillfactor
-			 * empty space over time.  Hopefully the system converges on a
-			 * stable state over time this way.
+			 * We record that we consumed 'len' free space from the page in
+			 * FSM in the event of an updater.  That way skewed updates with
+			 * lots of contention can naturally relocate frequently updated
+			 * logical rows into nearby heap blocks that started out with less
+			 * frequently updated logical rows.  The system should converge on
+			 * stable behavior over time.
 			 */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
