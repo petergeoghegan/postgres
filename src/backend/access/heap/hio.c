@@ -581,6 +581,9 @@ loop:
 		/*
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
+		 *
+		 * Note that this returns a targetBlock that's close to our original
+		 * target block.  This is important with UPDATE caller.
 		 */
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
