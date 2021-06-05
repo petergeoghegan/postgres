@@ -543,9 +543,10 @@ loop:
 			 * We record that we consumed 'len' free space from the page in
 			 * FSM in the event of an updater.  That way skewed updates with
 			 * lots of contention can naturally relocate frequently updated
-			 * logical rows into nearby heap blocks that started out with less
-			 * frequently updated logical rows.  The system should converge on
-			 * stable behavior over time.
+			 * logical rows into nearby heap blocks.  The system will converge
+			 * on stable behavior over time.  Hotter (more frequently updated)
+			 * logical rows will naturally migrate to heap blocks that started
+			 * out cool.
 			 */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
