@@ -329,11 +329,6 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	ereport(ERROR) is allowed here, so this routine *must* be called
  *	before any (unlogged) changes are made in buffer pool.
  */
-#define DEBUG
-
-//#define DEBUG_ELEVEL  WARNING
-#define DEBUG_ELEVEL  LOG
-
 Buffer
 RelationGetBufferForTuple(Relation relation, Size len,
 						  Buffer otherBuffer, int options,
@@ -350,7 +345,6 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	BlockNumber targetBlock,
 				otherBlock;
 	bool		needLock;
-	BlockNumber nblocks = RelationGetNumberOfBlocks(relation);
 
 	len = MAXALIGN(len);		/* be conservative */
 
@@ -380,8 +374,10 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		(MaxHeapTuplesPerPage / 8 * sizeof(ItemIdData));
 	if (len + saveFreeSpace > nearlyEmptyFreeSpace)
 		targetFreeSpace = Max(len, nearlyEmptyFreeSpace);
-	else
+	else if (otherBuffer == InvalidBuffer)
 		targetFreeSpace = len + saveFreeSpace;
+	else
+		targetFreeSpace = len;	/* UPDATEs don't need extra saveFreeSpace */
 
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
@@ -414,12 +410,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
-
-		if (otherBuffer == InvalidBuffer)
-			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
-		else
-			targetBlock = GetPageWithFreeSpace(relation,
-											   Min(len, MaxHeapTupleSize));
+		targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
 	}
 
 	/*
@@ -429,6 +420,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	 */
 	if (targetBlock == InvalidBlockNumber)
 	{
+		BlockNumber nblocks = RelationGetNumberOfBlocks(relation);
+
 		if (nblocks > 0)
 			targetBlock = nblocks - 1;
 	}
@@ -541,22 +534,26 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (targetFreeSpace <= pageFreeSpace ||
-			(otherBuffer != InvalidBuffer && len <= pageFreeSpace))
+		if (targetFreeSpace <= pageFreeSpace)
 		{
 			/*
-			 * use this page as future insert target, too
+			 * Use this page as future insert target, too.  But only when this
+			 * isn't an UPDATE -- we only use target page with INSERTs.
 			 *
-			 * If we are not an updater then this can be our target block
-			 * going forward too.  However, we do not use the forward block
-			 * when it was set by somebody else.
+			 * We remember that we consumed 'len' free space from the page
+			 * with an updater.  That way skewed updates with lots of
+			 * contention can naturally spread out the hot rows in fillfactor
+			 * empty space over time.  Hopefully the system converges on a
+			 * stable state over time this way.
 			 */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
 			else
 			{
-				int			newspace = pageFreeSpace - len;
-				RecordPageWithFreeSpace(relation, targetBlock, Max(newspace, 0));
+				int		newspace = pageFreeSpace - len;
+
+				RecordPageWithFreeSpace(relation, targetBlock,
+										Max(newspace, 0));
 			}
 			return buffer;
 		}
@@ -731,20 +728,11 @@ loop:
 	}
 
 	/*
-	 * Remember the new page as our target for future insertions.
-	 *
-	 * XXX should we enter the new page into the free space map immediately,
-	 * or just keep it for this backend's exclusive use in the short run
-	 * (until VACUUM sees it)?	Seems to depend on whether you expect the
-	 * current backend to make more insertions or not, which is probably a
-	 * good bet most of the time.  So for now, don't add it to FSM yet.
+	 * Remember the new page as our target for future insertions.  But only
+	 * when this isn't an UPDATE -- we only use target page with INSERTs.
 	 */
-	{
-		BlockNumber block = BufferGetBlockNumber(buffer);
-
-		if (otherBuffer == InvalidBuffer)
-			RelationSetTargetBlock(relation, block);
-	}
+	if (otherBuffer == InvalidBuffer)
+		RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
 
 	return buffer;
 }
