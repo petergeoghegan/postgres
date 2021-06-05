@@ -323,8 +323,12 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *
  *	We don't fill existing pages further than the fillfactor, except for large
  *	tuples in nearly-empty pages.  This is OK since this routine is not
- *	consulted when updating a tuple and keeping it on the same page, which is
- *	the scenario fillfactor is meant to reserve space for.
+ *	consulted when updating a tuple.  We also don't care about fillfactor with
+ *	updates that cannot fit their successor version on the same heap page.  We
+ *	try to fit the new version on a related/nearby heap page instead (with
+ *	help from the FSM).  While the space left behind by fillfactor on each
+ *	heap page is reserved for whatever logical rows were originally inserted,
+ *	we don't stick with that when it has already started to fail.
  *
  *	ereport(ERROR) is allowed here, so this routine *must* be called
  *	before any (unlogged) changes are made in buffer pool.
