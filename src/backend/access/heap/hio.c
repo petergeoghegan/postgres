@@ -537,8 +537,9 @@ loop:
 		if (targetFreeSpace <= pageFreeSpace)
 		{
 			/*
-			 * Use this page as future insert target, too.  But only when this
-			 * isn't an UPDATE -- we only use target page with INSERTs.
+			 * Remember the new page as our target for future insertions.  But
+			 * only when this isn't an UPDATE -- we only set a target page (or
+			 * use an existing target page) with INSERTs.
 			 *
 			 * We record that we consumed 'len' free space from the page in
 			 * FSM in the event of an updater.  That way skewed updates with
@@ -734,7 +735,8 @@ loop:
 
 	/*
 	 * Remember the new page as our target for future insertions.  But only
-	 * when this isn't an UPDATE -- we only use target page with INSERTs.
+	 * when this isn't an UPDATE -- we only set a target page (or use an
+	 * existing target page) with INSERTs.
 	 */
 	if (otherBuffer == InvalidBuffer)
 		RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
