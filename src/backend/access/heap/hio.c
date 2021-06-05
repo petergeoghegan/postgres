@@ -324,11 +324,15 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
  *	We don't fill existing pages further than the fillfactor, except for large
  *	tuples in nearly-empty pages.  This is OK since this routine is not
  *	consulted when updating a tuple.  We also don't care about fillfactor with
- *	updates that cannot fit their successor version on the same heap page.  We
- *	try to fit the new version on a related/nearby heap page instead (with
- *	help from the FSM).  While the space left behind by fillfactor on each
- *	heap page is reserved for whatever logical rows were originally inserted,
- *	we don't stick with that when it has already started to fail.
+ *	updates that cannot fit their successor version on the same heap page.
+ *
+ *	While the space left behind by fillfactor on each heap page is reserved
+ *	for whatever logical rows were originally inserted, we don't stick with
+ *	that strategy when it has already started to fail.  We try to fit the new
+ *	version on a related/nearby heap page instead (with help from the FSM).
+ *	This works well when it can exploit any natural variation in how often
+ *	logical rows are updated.  Hotter (more frequently updated) logical rows
+ *	will naturally migrate to heap blocks that start out cold.
  *
  *	ereport(ERROR) is allowed here, so this routine *must* be called
  *	before any (unlogged) changes are made in buffer pool.
@@ -545,13 +549,9 @@ loop:
 			 * only when this isn't an UPDATE -- we only set a target page (or
 			 * use an existing target page) with INSERTs.
 			 *
-			 * We record that we consumed 'len' free space from the page in
-			 * FSM in the event of an updater.  That way skewed updates with
-			 * lots of contention can naturally relocate frequently updated
-			 * logical rows into nearby heap blocks.  The system will converge
-			 * on stable behavior over time.  Hotter (more frequently updated)
-			 * logical rows will naturally migrate to heap blocks that started
-			 * out cool.
+			 * We must not allow concurrently executing updates to continually
+			 * confuse each other by invalidating free space information.
+			 * That's why we maintain the FSM eagerly here.
 			 */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
