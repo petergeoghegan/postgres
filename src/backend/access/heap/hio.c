@@ -392,7 +392,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
 	else
-		otherBlock = InvalidBlockNumber;	/* just to keep compiler quiet */
+		otherBlock = InvalidBlockNumber;
 
 	/*
 	 * We first try to put the tuple on the same page we last inserted a tuple
@@ -419,8 +419,18 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		/*
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
+		 *
+		 * With an UPDATE we record that otherBuffer (i.e. the original page)
+		 * now has zero space in passing.  Note that the returned targetBlock
+		 * will be close to our original target block.  This keeps heap
+		 * fragmentation to a minimum when lots of UPDATEs cannot avoid row
+		 * migrations.
 		 */
-		targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+		if (otherBlock == InvalidBlockNumber)
+			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+		else
+			targetBlock = RecordAndGetPageWithFreeSpace(relation, otherBlock,
+														0, targetFreeSpace);
 	}
 
 	/*
@@ -550,20 +560,10 @@ loop:
 			 * Remember the new page as our target for future insertions.  But
 			 * only when this isn't an UPDATE -- we only set a target page (or
 			 * use an existing target page) with INSERTs.
-			 *
-			 * We must not allow concurrently executing updates to continually
-			 * confuse each other by invalidating free space information.
-			 * That's why we maintain the FSM eagerly here.
 			 */
 			if (otherBuffer == InvalidBuffer)
 				RelationSetTargetBlock(relation, targetBlock);
-			else
-			{
-				int		newspace = (int) pageFreeSpace - len;
 
-				newspace = Max(newspace, 0);
-				RecordPageWithFreeSpace(relation, targetBlock, newspace);
-			}
 			return buffer;
 		}
 
@@ -589,9 +589,6 @@ loop:
 		/*
 		 * Update FSM as to condition of this page, and ask for another page
 		 * to try.
-		 *
-		 * Note that this returns a targetBlock that's close to our original
-		 * target block.  This is important with UPDATE caller.
 		 */
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
