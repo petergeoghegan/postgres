@@ -129,10 +129,18 @@ static uint8 fsm_vacuum_page(Relation rel, FSMAddress addr,
  * extend the relation.
  */
 BlockNumber
-GetPageWithFreeSpace(Relation rel, Size spaceNeeded)
+GetPageWithFreeSpace(Relation rel, Size spaceNeeded, Size optimalSpace)
 {
-	uint8		min_cat = fsm_space_needed_to_cat(spaceNeeded);
+	uint8		min_cat;
+	BlockNumber res;
 
+	min_cat = fsm_space_needed_to_cat(optimalSpace);
+	res = fsm_search(rel, min_cat);
+
+	if (res != InvalidBlockNumber || spaceNeeded == optimalSpace)
+		return res;
+
+	min_cat = fsm_space_needed_to_cat(spaceNeeded);
 	return fsm_search(rel, min_cat);
 }
 
@@ -147,10 +155,11 @@ GetPageWithFreeSpace(Relation rel, Size spaceNeeded)
  */
 BlockNumber
 RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
-							  Size oldSpaceAvail, Size spaceNeeded)
+							  Size oldSpaceAvail, Size spaceNeeded,
+							  Size optimalSpace)
 {
 	int			old_cat = fsm_space_avail_to_cat(oldSpaceAvail);
-	int			search_cat = fsm_space_needed_to_cat(spaceNeeded);
+	int			search_cat;
 	FSMAddress	addr;
 	uint16		slot;
 	int			search_slot;
@@ -158,16 +167,20 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(oldPage, &slot);
 
+	search_cat = fsm_space_needed_to_cat(optimalSpace);
 	search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
 
 	/*
 	 * If fsm_set_and_search found a suitable new block, return that.
-	 * Otherwise, search as usual.
+	 * Otherwise, search for the minimum free space.
 	 */
 	if (search_slot != -1)
 		return fsm_get_heap_blk(addr, search_slot);
 	else
+	{
+		search_cat = fsm_space_needed_to_cat(spaceNeeded);
 		return fsm_search(rel, search_cat);
+	}
 }
 
 /*

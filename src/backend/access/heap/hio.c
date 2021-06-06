@@ -351,6 +351,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	Size		nearlyEmptyFreeSpace,
 				pageFreeSpace = 0,
 				saveFreeSpace = 0,
+				minFreeSpace = 0,
 				targetFreeSpace = 0;
 	BlockNumber targetBlock,
 				otherBlock;
@@ -383,11 +384,22 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	nearlyEmptyFreeSpace = MaxHeapTupleSize -
 		(MaxHeapTuplesPerPage / 8 * sizeof(ItemIdData));
 	if (len + saveFreeSpace > nearlyEmptyFreeSpace)
-		targetFreeSpace = Max(len, nearlyEmptyFreeSpace);
+	{
+		minFreeSpace = Max(len, nearlyEmptyFreeSpace);
+		targetFreeSpace = minFreeSpace;
+	}
 	else if (otherBuffer == InvalidBuffer)
-		targetFreeSpace = len + saveFreeSpace;
+	{
+		minFreeSpace = len + saveFreeSpace;
+		targetFreeSpace = minFreeSpace + (len * 9);
+		targetFreeSpace = Min(targetFreeSpace, MaxHeapTupleSize);
+	}
 	else
-		targetFreeSpace = len;	/* UPDATEs don't need extra saveFreeSpace */
+	{
+		minFreeSpace = len;	/* UPDATEs don't need extra saveFreeSpace */
+		targetFreeSpace = minFreeSpace + (len * 3);
+		targetFreeSpace = Min(targetFreeSpace, MaxHeapTupleSize);
+	}
 
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
@@ -420,7 +432,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
-		targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+		targetBlock = GetPageWithFreeSpace(relation, minFreeSpace,
+										   targetFreeSpace);
 	}
 
 	/*
@@ -544,7 +557,7 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (targetFreeSpace <= pageFreeSpace)
+		if (minFreeSpace <= pageFreeSpace)
 		{
 			/*
 			 * Remember the new page as our target for future insertions.  But
@@ -596,6 +609,7 @@ loop:
 		targetBlock = RecordAndGetPageWithFreeSpace(relation,
 													targetBlock,
 													pageFreeSpace,
+													minFreeSpace,
 													targetFreeSpace);
 	}
 
@@ -628,7 +642,8 @@ loop:
 			 * Check if some other backend has extended a block for us while
 			 * we were waiting on the lock.
 			 */
-			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
+			targetBlock = GetPageWithFreeSpace(relation, minFreeSpace,
+											   targetFreeSpace);
 
 			/*
 			 * If some other waiter has already extended the relation, we

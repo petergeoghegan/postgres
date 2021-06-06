@@ -20,11 +20,13 @@
 
 /* prototypes for public functions in freespace.c */
 extern Size GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk);
-extern BlockNumber GetPageWithFreeSpace(Relation rel, Size spaceNeeded);
+extern BlockNumber GetPageWithFreeSpace(Relation rel, Size spaceNeeded,
+										Size optimalSpace);
 extern BlockNumber RecordAndGetPageWithFreeSpace(Relation rel,
 												 BlockNumber oldPage,
 												 Size oldSpaceAvail,
-												 Size spaceNeeded);
+												 Size spaceNeeded,
+												 Size optimalSpace);
 extern void RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk,
 									Size spaceAvail);
 extern void XLogRecordPageWithFreeSpace(RelFileNode rnode, BlockNumber heapBlk,
