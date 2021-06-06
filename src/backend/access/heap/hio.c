@@ -450,8 +450,8 @@ RelationGetBufferForTuple(Relation relation, Size len,
 			targetBlock = nblocks - 1;
 	}
 
-	stopFreeSpace = targetFreeSpace;
 loop:
+	stopFreeSpace = targetFreeSpace;
 	while (targetBlock != InvalidBlockNumber)
 	{
 		/*

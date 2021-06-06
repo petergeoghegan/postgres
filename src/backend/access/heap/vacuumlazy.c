@@ -939,8 +939,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->num_index_scans = 0;
 	vacrel->tuples_deleted = 0;
 	vacrel->lpdead_items = 0;
-	vacrel->min_lpdead_items = 0;
-	vacrel->max_lpdead_items = MaxHeapTuplesPerPage;
+	vacrel->min_lpdead_items = MaxHeapTuplesPerPage;
+	vacrel->max_lpdead_items = 0;
 	vacrel->new_dead_tuples = 0;
 	vacrel->num_tuples = 0;
 	vacrel->live_tuples = 0;
