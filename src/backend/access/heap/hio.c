@@ -574,7 +574,7 @@ loop:
 				RelationSetTargetBlock(relation, targetBlock);
 			else
 			{
-				int		newspace = (int) pageFreeSpace - len;
+				int		newspace = (int) pageFreeSpace - (len + sizeof(ItemIdData));
 
 				newspace = Max(newspace, 0);
 				RecordPageWithFreeSpace(relation, targetBlock, newspace);
