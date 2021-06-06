@@ -363,6 +363,8 @@ typedef struct LVRelState
 	int			num_index_scans;
 	int64		tuples_deleted; /* # deleted from table */
 	int64		lpdead_items;	/* # deleted from indexes */
+	int64		min_lpdead_items;	/* min page-level # deleted from indexes */
+	int64		max_lpdead_items;	/* max page-level # deleted from indexes */
 	int64		new_dead_tuples;	/* new estimated total # of dead items in
 									 * table */
 	int64		num_tuples;		/* total number of nonremovable tuples */
@@ -780,7 +782,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 
 				if (vacrel->do_index_vacuuming)
 				{
-					msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
+					msgfmt = _(" %u pages from table (%.2f%% of total) had %lld dead item identifiers removed, min %lld max %lld\n");
 
 					if (vacrel->nindexes == 0 || vacrel->num_index_scans == 0)
 						appendStringInfo(&buf, _("index scan not needed:"));
@@ -789,7 +791,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				}
 				else
 				{
-					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
+					msgfmt = _(" %u pages from table (%.2f%% of total) have %lld dead item identifiers, min %lld max %lld\n");
 
 					if (!vacrel->do_failsafe)
 						appendStringInfo(&buf, _("index scan bypassed:"));
@@ -800,7 +802,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				appendStringInfo(&buf, msgfmt,
 								 vacrel->lpdead_item_pages,
 								 100.0 * vacrel->lpdead_item_pages / orig_rel_pages,
-								 (long long) vacrel->lpdead_items);
+								 (long long) vacrel->lpdead_items,
+								 (long long) vacrel->min_lpdead_items,
+								 (long long) vacrel->max_lpdead_items);
 			}
 			for (int i = 0; i < vacrel->nindexes; i++)
 			{
@@ -935,6 +939,8 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->num_index_scans = 0;
 	vacrel->tuples_deleted = 0;
 	vacrel->lpdead_items = 0;
+	vacrel->min_lpdead_items = 0;
+	vacrel->max_lpdead_items = MaxHeapTuplesPerPage;
 	vacrel->new_dead_tuples = 0;
 	vacrel->num_tuples = 0;
 	vacrel->live_tuples = 0;
@@ -2049,20 +2055,25 @@ retry:
 	vacrel->new_dead_tuples += new_dead_tuples;
 	vacrel->num_tuples += num_tuples;
 	vacrel->live_tuples += live_tuples;
+
+	if (lpdead_items > 0)
+		vacrel->min_lpdead_items = Min(vacrel->min_lpdead_items, lpdead_items);
+
+	vacrel->max_lpdead_items = Max(vacrel->max_lpdead_items , lpdead_items);
 }
 
 /*
- * Remove the collected garbage tuples from the table and its indexes.
- *
- * We may choose to bypass index vacuuming at this point, though only when the
- * ongoing VACUUM operation will definitely only have one index scan/round of
- * index vacuuming.  Caller indicates whether or not this is such a VACUUM
- * operation using 'onecall' argument.
- *
- * In rare emergencies, the ongoing VACUUM operation can be made to skip both
- * index vacuuming and index cleanup at the point we're called.  This avoids
- * having the whole system refuse to allocate further XIDs/MultiXactIds due to
- * wraparound.
+* Remove the collected garbage tuples from the table and its indexes.
+*
+* We may choose to bypass index vacuuming at this point, though only when the
+* ongoing VACUUM operation will definitely only have one index scan/round of
+* index vacuuming.  Caller indicates whether or not this is such a VACUUM
+* operation using 'onecall' argument.
+*
+* In rare emergencies, the ongoing VACUUM operation can be made to skip both
+* index vacuuming and index cleanup at the point we're called.  This avoids
+* having the whole system refuse to allocate further XIDs/MultiXactIds due to
+* wraparound.
  */
 static void
 lazy_vacuum(LVRelState *vacrel, bool onecall)
