@@ -686,6 +686,7 @@ fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
 	if (minValue != 0)
 	{
 		/* Search while we still hold the lock */
+		/* XXX should have both optimal and min passed down here */
 		newslot = fsm_search_avail(buf, minValue,
 								   addr.level == FSM_BOTTOM_LEVEL,
 								   true);
