@@ -635,7 +635,7 @@ loop:
 	 */
 	if (needLock)
 	{
-		if (!use_fsm || otherBuffer != InvalidBuffer)
+		if (!use_fsm)
 			LockRelationForExtension(relation, ExclusiveLock);
 		else if (!ConditionalLockRelationForExtension(relation, ExclusiveLock))
 		{
@@ -646,8 +646,8 @@ loop:
 			 * Check if some other backend has extended a block for us while
 			 * we were waiting on the lock.
 			 */
-			targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace,
-											   MaxHeapTupleSize);
+			targetBlock = GetPageWithFreeSpace(relation, minFreeSpace,
+											   targetFreeSpace);
 
 			/*
 			 * If some other waiter has already extended the relation, we
