@@ -351,7 +351,6 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	Size		nearlyEmptyFreeSpace,
 				pageFreeSpace = 0,
 				saveFreeSpace = 0,
-				stopFreeSpace = 0,
 				minFreeSpace = 0,
 				targetFreeSpace = 0;
 	BlockNumber targetBlock,
@@ -450,7 +449,6 @@ RelationGetBufferForTuple(Relation relation, Size len,
 			targetBlock = nblocks - 1;
 	}
 
-	stopFreeSpace = targetFreeSpace;
 loop:
 	while (targetBlock != InvalidBlockNumber)
 	{
@@ -559,7 +557,7 @@ loop:
 		}
 
 		pageFreeSpace = PageGetHeapFreeSpace(page);
-		if (stopFreeSpace <= pageFreeSpace)
+		if (minFreeSpace <= pageFreeSpace)
 		{
 			/*
 			 * Remember the new page as our target for future insertions.  But
@@ -581,8 +579,6 @@ loop:
 			}
 			return buffer;
 		}
-
-		stopFreeSpace = minFreeSpace;
 
 		/*
 		 * Not enough space, so we must give up our page locks and pin (if
