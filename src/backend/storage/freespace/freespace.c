@@ -179,6 +179,11 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	else
 	{
 		search_cat = fsm_space_needed_to_cat(spaceNeeded);
+
+		search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
+		if (search_slot != -1)
+			return fsm_get_heap_blk(addr, search_slot);
+
 		return fsm_search(rel, search_cat);
 	}
 }
