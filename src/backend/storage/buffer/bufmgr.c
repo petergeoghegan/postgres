@@ -3011,6 +3011,30 @@ BufferIsPermanent(Buffer buffer)
 	return (pg_atomic_read_u32(&bufHdr->state) & BM_PERMANENT) != 0;
 }
 
+bool
+BufferIsDirty(Buffer buffer)
+{
+	BufferDesc *bufHdr;
+
+	/* Local buffers are used only for temp relations. */
+	if (BufferIsLocal(buffer))
+		return true;
+
+	/* Make sure we've got a real buffer, and that we hold a pin on it. */
+	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
+
+	/*
+	 * BM_PERMANENT can't be changed while we hold a pin on the buffer, so we
+	 * need not bother with the buffer header spinlock.  Even if someone else
+	 * changes the buffer header state while we're doing this, the state is
+	 * changed atomically, so we'll read the old value or the new value, but
+	 * not random garbage.
+	 */
+	bufHdr = GetBufferDescriptor(buffer - 1);
+	return (pg_atomic_read_u32(&bufHdr->state) & BM_DIRTY) != 0;
+}
+
 /*
  * BufferGetLSNAtomic
  *		Retrieves the LSN of the buffer atomically using a buffer header lock.

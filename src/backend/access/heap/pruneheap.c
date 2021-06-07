@@ -168,6 +168,9 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 											 HEAP_DEFAULT_FILLFACTOR);
 	minfree = Max(minfree, BLCKSZ / 10);
 
+	if (!BufferIsDirty(buffer))
+		minfree = 300;
+
 	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
 		/* OK, try to get exclusive buffer lock */
