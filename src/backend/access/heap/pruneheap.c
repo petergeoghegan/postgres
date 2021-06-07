@@ -169,9 +169,6 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 											 HEAP_DEFAULT_FILLFACTOR);
 	minfree = Max(minfree, BLCKSZ / 10);
 
-	if (!BufferIsDirty(buffer))
-		minfree = 300;
-
 	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
 		/* OK, try to get exclusive buffer lock */
@@ -193,7 +190,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 								   true, NULL);
 			/* This really helps bmsql_customer hot_update_perc */
 			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (pageFreeSpace <= minfree)
+			if (pageFreeSpace <= 200 || pageFreeSpace <= minfree - 100)
 				pageFreeSpace = 0;
 			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
 									pageFreeSpace);
