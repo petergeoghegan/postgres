@@ -191,6 +191,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 			(void) heap_page_prune(relation, buffer, vistest,
 								   limited_xmin, limited_ts,
 								   true, NULL);
+			/* This really helps bmsql_customer hot_update_perc */
 			pageFreeSpace = PageGetHeapFreeSpace(page);
 			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
 									pageFreeSpace);
