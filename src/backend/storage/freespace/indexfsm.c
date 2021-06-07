@@ -37,7 +37,7 @@
 BlockNumber
 GetFreeIndexPage(Relation rel)
 {
-	BlockNumber blkno = GetPageWithFreeSpace(rel, BLCKSZ / 2);
+	BlockNumber blkno = GetPageWithFreeSpace(rel, BLCKSZ / 2, BLCKSZ / 2);
 
 	if (blkno != InvalidBlockNumber)
 		RecordUsedIndexPage(rel, blkno);
