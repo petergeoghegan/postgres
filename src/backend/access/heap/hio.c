@@ -740,12 +740,15 @@ loop:
 	}
 
 	/*
-	 * Remember the new page as our target for future insertions.  But only
-	 * when this isn't an UPDATE -- we only set a target page (or use an
-	 * existing target page) with INSERTs.
+	 * Remember the new page as our target for future insertions.
+	 *
+	 * XXX should we enter the new page into the free space map immediately,
+	 * or just keep it for this backend's exclusive use in the short run
+	 * (until VACUUM sees it)?	Seems to depend on whether you expect the
+	 * current backend to make more insertions or not, which is probably a
+	 * good bet most of the time.  So for now, don't add it to FSM yet.
 	 */
-	if (otherBuffer == InvalidBuffer)
-		RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
 
 	return buffer;
 }
