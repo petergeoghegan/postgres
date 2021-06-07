@@ -391,15 +391,15 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	else if (otherBuffer == InvalidBuffer)
 	{
 		minFreeSpace = len + saveFreeSpace;
-		targetFreeSpace = minFreeSpace + (len * 9);
-		targetFreeSpace = Min(targetFreeSpace, MaxHeapTupleSize);
+		targetFreeSpace = Max(minFreeSpace, BLCKSZ / 3);
 	}
 	else
 	{
 		minFreeSpace = len;	/* UPDATEs don't need extra saveFreeSpace */
-		targetFreeSpace = minFreeSpace + (len * 3);
-		targetFreeSpace = Min(targetFreeSpace, MaxHeapTupleSize);
+		targetFreeSpace = Max(minFreeSpace, saveFreeSpace / 2);
 	}
+
+	targetFreeSpace = Min(targetFreeSpace, MaxHeapTupleSize);
 
 	if (otherBuffer != InvalidBuffer)
 		otherBlock = BufferGetBlockNumber(otherBuffer);
