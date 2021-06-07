@@ -193,6 +193,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 								   true, NULL);
 			/* This really helps bmsql_customer hot_update_perc */
 			pageFreeSpace = PageGetHeapFreeSpace(page);
+			if (pageFreeSpace <= minfree)
+				pageFreeSpace = 0;
 			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
 									pageFreeSpace);
 		}
