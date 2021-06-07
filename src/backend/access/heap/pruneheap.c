@@ -23,6 +23,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/bufmgr.h"
+#include "storage/freespace.h"
 #include "utils/snapmgr.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -185,10 +186,14 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		 */
 		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 		{
+			Size pageFreeSpace;
 			/* OK to prune */
 			(void) heap_page_prune(relation, buffer, vistest,
 								   limited_xmin, limited_ts,
 								   true, NULL);
+			pageFreeSpace = PageGetHeapFreeSpace(page);
+			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
+									pageFreeSpace);
 		}
 
 		/* And release buffer lock */
