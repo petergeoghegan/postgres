@@ -1733,7 +1733,7 @@ retry:
 	 */
 	tuples_deleted = heap_page_prune(rel, buf, vistest,
 									 InvalidTransactionId, 0, false,
-									 &vacrel->offnum);
+									 &vacrel->offnum, NULL);
 
 	/*
 	 * Now scan the page to collect LP_DEAD items and check for tuples

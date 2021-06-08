@@ -184,13 +184,15 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 		{
 			Size pageFreeSpace;
+			int		nldpdead;
+
 			/* OK to prune */
 			(void) heap_page_prune(relation, buffer, vistest,
 								   limited_xmin, limited_ts,
-								   true, NULL);
+								   true, NULL, &nldpdead);
 			/* This really helps bmsql_customer hot_update_perc */
 			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (pageFreeSpace <= 200 || pageFreeSpace <= minfree - 100)
+			if (nldpdead > 3 && pageFreeSpace < 500)
 				pageFreeSpace = 0;
 			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
 									pageFreeSpace);
@@ -229,7 +231,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 				TransactionId old_snap_xmin,
 				TimestampTz old_snap_ts,
 				bool report_stats,
-				OffsetNumber *off_loc)
+				OffsetNumber *off_loc,
+				int *nldpdead)
 {
 	int			ndeleted = 0;
 	Page		page = BufferGetPage(buffer);
@@ -248,6 +251,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 	 * prunable, we will save the lowest relevant XID in new_prune_xid. Also
 	 * initialize the rest of our working state.
 	 */
+	if (nldpdead)
+		*nldpdead = 0;
 	prstate.new_prune_xid = InvalidTransactionId;
 	prstate.rel = relation;
 	prstate.vistest = vistest;
@@ -279,12 +284,18 @@ heap_page_prune(Relation relation, Buffer buffer,
 
 		/* Nothing to do if slot is empty or already dead */
 		itemid = PageGetItemId(page, offnum);
+
+		if (nldpdead && ItemIdIsDead(itemid))
+			(*nldpdead)++;
 		if (!ItemIdIsUsed(itemid) || ItemIdIsDead(itemid))
 			continue;
 
 		/* Process this item or chain of items */
 		ndeleted += heap_prune_chain(buffer, offnum, &prstate);
 	}
+
+	if (nldpdead)
+		(*nldpdead) += prstate.ndead;
 
 	/* Clear the offset information once we have processed the given page. */
 	if (off_loc)

@@ -187,7 +187,8 @@ extern int	heap_page_prune(Relation relation, Buffer buffer,
 							TransactionId old_snap_xmin,
 							TimestampTz old_snap_ts_ts,
 							bool report_stats,
-							OffsetNumber *off_loc);
+							OffsetNumber *off_loc,
+							int *nldpdead);
 extern void heap_page_prune_execute(Buffer buffer,
 									OffsetNumber *redirected, int nredirected,
 									OffsetNumber *nowdead, int ndead,
