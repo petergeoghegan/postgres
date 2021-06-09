@@ -171,6 +171,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 
 	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
+		Size origPageFreeSpace;
+
 		/* OK, try to get exclusive buffer lock */
 		if (!ConditionalLockBufferForCleanup(buffer))
 			return;
@@ -181,7 +183,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		 * prune. (We needn't recheck PageIsPrunable, since no one else could
 		 * have pruned while we hold pin.)
 		 */
-		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
+		origPageFreeSpace = PageGetHeapFreeSpace(page);
+		if (PageIsFull(page) || origPageFreeSpace < minfree)
 		{
 			Size pageFreeSpace;
 			int		nldpdead;
@@ -192,7 +195,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 								   true, NULL, &nldpdead);
 			/* This really helps bmsql_customer hot_update_perc */
 			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (nldpdead > 3 && pageFreeSpace < 500)
+			if (origPageFreeSpace == pageFreeSpace ||
+				(nldpdead > 3 && pageFreeSpace < 500))
 				pageFreeSpace = 0;
 			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
 									pageFreeSpace);
