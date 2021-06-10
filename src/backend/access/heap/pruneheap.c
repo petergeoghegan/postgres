@@ -195,8 +195,9 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 								   true, NULL, &nldpdead);
 			/* This really helps bmsql_customer hot_update_perc */
 			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (PageIsFull(page) || (origPageFreeSpace == pageFreeSpace &&
-									 pageFreeSpace < Max(minfree, 100) - 50))
+			if (PageIsFull(page) ||
+				(origPageFreeSpace == pageFreeSpace && pageFreeSpace < Max(minfree, 100) - 50) ||
+				(nldpdead > 0 && pageFreeSpace < Max(minfree, 100) - 50))
 				pageFreeSpace = 0;
 			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
 									pageFreeSpace);
