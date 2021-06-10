@@ -331,8 +331,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * repeating the prune/defrag process until something else happens to
 		 * the page.
 		 */
-		if (prstate.ndead > 0)
-			PageClearFull(page);
+		PageClearFull(page);
 
 		MarkBufferDirty(buffer);
 
