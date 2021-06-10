@@ -37,6 +37,7 @@ fsm_page_contents(PG_FUNCTION_ARGS)
 	bytea	   *raw_page = PG_GETARG_BYTEA_P(0);
 	StringInfoData sinfo;
 	FSMPage		fsmpage;
+	uint32		fp_next_slot;
 	int			i;
 
 	if (!superuser())
@@ -53,7 +54,8 @@ fsm_page_contents(PG_FUNCTION_ARGS)
 		if (fsmpage->fp_nodes[i] != 0)
 			appendStringInfo(&sinfo, "%d: %d\n", i, fsmpage->fp_nodes[i]);
 	}
-	appendStringInfo(&sinfo, "fp_next_slot: %d\n", fsmpage->fp_next_slot);
+	fp_next_slot = pg_atomic_read_u32(&fsmpage->fp_next_slot);
+	appendStringInfo(&sinfo, "fp_next_slot: %u\n", fp_next_slot);
 
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(sinfo.data, sinfo.len));
 }

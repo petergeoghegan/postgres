@@ -903,7 +903,11 @@ fsm_vacuum_page(Relation rel, FSMAddress addr,
 	 * relation.  We don't bother with a lock here, nor with marking the page
 	 * dirty if it wasn't already, since this is just a hint.
 	 */
-	((FSMPage) PageGetContents(page))->fp_next_slot = 0;
+	{
+		FSMPage fpage = (FSMPage) PageGetContents(page);
+
+		pg_atomic_init_u32(&fpage->fp_next_slot, 0);
+	}
 
 	ReleaseBuffer(buf);
 
