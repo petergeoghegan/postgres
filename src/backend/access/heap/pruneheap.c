@@ -331,7 +331,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * repeating the prune/defrag process until something else happens to
 		 * the page.
 		 */
-		PageClearFull(page);
+		if (prstate.ndead > 0)
+			PageClearFull(page);
 
 		MarkBufferDirty(buffer);
 
@@ -390,7 +391,6 @@ heap_page_prune(Relation relation, Buffer buffer,
 			PageIsFull(page))
 		{
 			((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
-			PageClearFull(page);
 			MarkBufferDirtyHint(buffer, true);
 		}
 	}
