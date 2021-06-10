@@ -1561,8 +1561,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		{
 			Size		freespace = PageGetHeapFreeSpace(page);
 
+#if 0
 			if (freespace <= vacrel->minfree && prunestate.all_visible)
 				freespace = 0;
+#endif
 
 			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
