@@ -331,7 +331,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * repeating the prune/defrag process until something else happens to
 		 * the page.
 		 */
-		PageClearFull(page);
+		if (prstate.new_prune_xid == InvalidTransactionId)
+			PageClearFull(page);
 
 		MarkBufferDirty(buffer);
 
