@@ -195,8 +195,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 								   true, NULL, &nldpdead);
 			/* This really helps bmsql_customer hot_update_perc */
 			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (origPageFreeSpace == pageFreeSpace &&
-				pageFreeSpace < Max(minfree, 100) - 50)
+			if (PageIsFull(page) || (origPageFreeSpace == pageFreeSpace &&
+									 pageFreeSpace < Max(minfree, 100) - 50))
 				pageFreeSpace = 0;
 			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
 									pageFreeSpace);
@@ -391,6 +391,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 			PageIsFull(page))
 		{
 			((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
+			if (((PageHeader) page)->pd_prune_xid != prstate.new_prune_xid)
+				PageClearFull(page);
 			MarkBufferDirtyHint(buffer, true);
 		}
 	}
