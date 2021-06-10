@@ -1561,11 +1561,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		{
 			Size		freespace = PageGetHeapFreeSpace(page);
 
-#if 0
-			if (freespace <= vacrel->minfree && prunestate.all_visible)
-				freespace = 0;
-#endif
-
 			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 		}
@@ -1743,7 +1738,7 @@ retry:
 	 */
 	tuples_deleted = heap_page_prune(rel, buf, vistest,
 									 InvalidTransactionId, 0, false,
-									 &vacrel->offnum, NULL);
+									 &vacrel->offnum);
 
 	/*
 	 * Now scan the page to collect LP_DEAD items and check for tuples
@@ -2366,9 +2361,6 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
-
-		if (freespace <= vacrel->minfree && PageIsAllVisible(page))
-			freespace = 0;
 
 		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(vacrel->rel, tblk, freespace);

@@ -23,7 +23,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/bufmgr.h"
-#include "storage/freespace.h"
 #include "utils/snapmgr.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -171,8 +170,6 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 
 	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
-		Size origPageFreeSpace;
-
 		/* OK, try to get exclusive buffer lock */
 		if (!ConditionalLockBufferForCleanup(buffer))
 			return;
@@ -183,24 +180,12 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		 * prune. (We needn't recheck PageIsPrunable, since no one else could
 		 * have pruned while we hold pin.)
 		 */
-		origPageFreeSpace = PageGetHeapFreeSpace(page);
-		if (PageIsFull(page) || origPageFreeSpace < minfree)
+		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 		{
-			Size pageFreeSpace;
-			int		nldpdead;
-
 			/* OK to prune */
 			(void) heap_page_prune(relation, buffer, vistest,
 								   limited_xmin, limited_ts,
-								   true, NULL, &nldpdead);
-			/* This really helps bmsql_customer hot_update_perc */
-			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (PageIsFull(page) ||
-				(origPageFreeSpace == pageFreeSpace && pageFreeSpace < Max(minfree, 100) - 50) ||
-				(nldpdead > 0 && pageFreeSpace < Max(minfree, 100) - 50))
-				pageFreeSpace = 0;
-			RecordPageWithFreeSpace(relation, BufferGetBlockNumber(buffer),
-									pageFreeSpace);
+								   true, NULL);
 		}
 
 		/* And release buffer lock */
@@ -236,8 +221,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 				TransactionId old_snap_xmin,
 				TimestampTz old_snap_ts,
 				bool report_stats,
-				OffsetNumber *off_loc,
-				int *nldpdead)
+				OffsetNumber *off_loc)
 {
 	int			ndeleted = 0;
 	Page		page = BufferGetPage(buffer);
@@ -256,8 +240,6 @@ heap_page_prune(Relation relation, Buffer buffer,
 	 * prunable, we will save the lowest relevant XID in new_prune_xid. Also
 	 * initialize the rest of our working state.
 	 */
-	if (nldpdead)
-		*nldpdead = 0;
 	prstate.new_prune_xid = InvalidTransactionId;
 	prstate.rel = relation;
 	prstate.vistest = vistest;
@@ -289,18 +271,12 @@ heap_page_prune(Relation relation, Buffer buffer,
 
 		/* Nothing to do if slot is empty or already dead */
 		itemid = PageGetItemId(page, offnum);
-
-		if (nldpdead && ItemIdIsDead(itemid))
-			(*nldpdead)++;
 		if (!ItemIdIsUsed(itemid) || ItemIdIsDead(itemid))
 			continue;
 
 		/* Process this item or chain of items */
 		ndeleted += heap_prune_chain(buffer, offnum, &prstate);
 	}
-
-	if (nldpdead)
-		(*nldpdead) += prstate.ndead;
 
 	/* Clear the offset information once we have processed the given page. */
 	if (off_loc)
@@ -332,8 +308,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * repeating the prune/defrag process until something else happens to
 		 * the page.
 		 */
-		if (prstate.new_prune_xid == InvalidTransactionId)
-			PageClearFull(page);
+		PageClearFull(page);
 
 		MarkBufferDirty(buffer);
 
@@ -392,8 +367,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 			PageIsFull(page))
 		{
 			((PageHeader) page)->pd_prune_xid = prstate.new_prune_xid;
-			if (((PageHeader) page)->pd_prune_xid != prstate.new_prune_xid)
-				PageClearFull(page);
+			PageClearFull(page);
 			MarkBufferDirtyHint(buffer, true);
 		}
 	}

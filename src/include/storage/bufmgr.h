@@ -214,7 +214,6 @@ extern void DropDatabaseBuffers(Oid dbid);
 	RelationGetNumberOfBlocksInFork(reln, MAIN_FORKNUM)
 
 extern bool BufferIsPermanent(Buffer buffer);
-extern bool BufferIsDirty(Buffer buffer);
 extern XLogRecPtr BufferGetLSNAtomic(Buffer buffer);
 
 #ifdef NOT_USED
