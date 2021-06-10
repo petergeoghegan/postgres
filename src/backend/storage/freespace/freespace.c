@@ -167,23 +167,27 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(oldPage, &slot);
 
+	/* Try to find optimal space nearby first */
 	search_cat = fsm_space_needed_to_cat(optimalSpace);
 	search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
-
-	/*
-	 * If fsm_set_and_search found a suitable new block, return that.
-	 * Otherwise, search for the minimum free space.
-	 */
 	if (search_slot != -1)
 		return fsm_get_heap_blk(addr, search_slot);
 	else
 	{
-		search_cat = fsm_space_needed_to_cat(spaceNeeded);
+		/* Could not find optimal space nearby first -- fallbacks */
 
+		/* 1. Do search for optimal space in whole FSM:  */
 		search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
 		if (search_slot != -1)
 			return fsm_get_heap_blk(addr, search_slot);
 
+		/* 2. Do search for minimal space nearby:  */
+		search_cat = fsm_space_needed_to_cat(spaceNeeded);
+		search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
+		if (search_slot != -1)
+			return fsm_get_heap_blk(addr, search_slot);
+
+		/* 3. Do search for minimal space in whole FSM:  */
 		return fsm_search(rel, search_cat);
 	}
 }
