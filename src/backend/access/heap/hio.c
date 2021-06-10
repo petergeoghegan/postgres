@@ -556,7 +556,11 @@ loop:
 			MarkBufferDirty(buffer);
 		}
 
-		pageFreeSpace = PageGetHeapFreeSpace(page);
+		if (PageIsFull(page))
+			pageFreeSpace = 0;
+		else
+			pageFreeSpace = PageGetHeapFreeSpace(page);
+
 		if (minFreeSpace <= pageFreeSpace)
 		{
 			/*

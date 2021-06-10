@@ -317,6 +317,7 @@ typedef struct LVRelState
 	/* Buffer access strategy and parallel state */
 	BufferAccessStrategy bstrategy;
 	LVParallelState *lps;
+	Size			minfree;
 
 	/* Statistics from pg_class when we start out */
 	BlockNumber old_rel_pages;	/* previous value of pg_class.relpages */
@@ -938,6 +939,10 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->nonempty_pages = 0;
 	vacrel->lock_waiter_detected = false;
 
+	vacrel->minfree = RelationGetTargetPageFreeSpace(vacrel->rel,
+													 HEAP_DEFAULT_FILLFACTOR);
+	vacrel->minfree = Max(vacrel->minfree, BLCKSZ / 20);
+
 	/* Initialize instrumentation counters */
 	vacrel->num_index_scans = 0;
 	vacrel->tuples_deleted = 0;
@@ -1555,6 +1560,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		else
 		{
 			Size		freespace = PageGetHeapFreeSpace(page);
+
+			if (freespace <= vacrel->minfree && prunestate.all_visible)
+				freespace = 0;
 
 			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
@@ -2356,6 +2364,9 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
+
+		if (freespace <= vacrel->minfree && PageIsAllVisible(page))
+			freespace = 0;
 
 		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(vacrel->rel, tblk, freespace);
