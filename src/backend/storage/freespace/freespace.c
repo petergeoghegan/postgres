@@ -491,6 +491,8 @@ fsm_get_location(BlockNumber heapblk, uint16 *slot)
 {
 	FSMAddress	addr;
 
+	pg_memory_barrier();
+
 	addr.level = FSM_BOTTOM_LEVEL;
 	addr.logpageno = heapblk / SlotsPerFSMPage;
 	*slot = heapblk % SlotsPerFSMPage;
@@ -505,6 +507,7 @@ static BlockNumber
 fsm_get_heap_blk(FSMAddress addr, uint16 slot)
 {
 	Assert(addr.level == FSM_BOTTOM_LEVEL);
+	pg_memory_barrier();
 	return ((unsigned int) addr.logpageno) * SlotsPerFSMPage + slot;
 }
 
@@ -518,6 +521,8 @@ fsm_get_parent(FSMAddress child, uint16 *slot)
 	FSMAddress	parent;
 
 	Assert(child.level < FSM_ROOT_LEVEL);
+
+	pg_memory_barrier();
 
 	parent.level = child.level + 1;
 	parent.logpageno = child.logpageno / SlotsPerFSMPage;
@@ -536,6 +541,8 @@ fsm_get_child(FSMAddress parent, uint16 slot)
 	FSMAddress	child;
 
 	Assert(parent.level > FSM_BOTTOM_LEVEL);
+
+	pg_memory_barrier();
 
 	child.level = parent.level - 1;
 	child.logpageno = parent.logpageno * SlotsPerFSMPage + slot;

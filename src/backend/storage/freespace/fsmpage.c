@@ -90,6 +90,8 @@ fsm_set_avail(Page page, int slot, uint8 value)
 		int			lchild;
 		int			rchild;
 
+		pg_memory_barrier();
+
 		nodeno = parentof(nodeno);
 		lchild = leftchild(nodeno);
 		rchild = lchild + 1;
@@ -248,7 +250,9 @@ restart:
 		 * Move to the right, wrapping around on same level if necessary, then
 		 * climb up.
 		 */
+		pg_memory_barrier();
 		nodeno = parentof(rightneighbor(nodeno));
+		pg_memory_barrier();
 	}
 
 	/*
@@ -258,9 +262,12 @@ restart:
 	 */
 	while (nodeno < NonLeafNodesPerPage)
 	{
-		int			childnodeno = leftchild(nodeno);
+		int			childnodeno;
 
 		pg_memory_barrier();
+
+		childnodeno = leftchild(nodeno);
+
 		if (childnodeno < NodesPerPage &&
 			fsmpage->fp_nodes[childnodeno] >= minvalue)
 		{
@@ -300,6 +307,7 @@ restart:
 			}
 			fsm_rebuild_page(page);
 			MarkBufferDirtyHint(buf, false);
+			pg_memory_barrier();
 			goto restart;
 		}
 	}
@@ -340,6 +348,7 @@ fsm_truncate_avail(Page page, int nslots)
 	ptr = &fsmpage->fp_nodes[NonLeafNodesPerPage + nslots];
 	for (; ptr < &fsmpage->fp_nodes[NodesPerPage]; ptr++)
 	{
+		pg_memory_barrier();
 		if (*ptr != 0)
 			changed = true;
 		*ptr = 0;
@@ -388,6 +397,7 @@ fsm_rebuild_page(Page page)
 			fsmpage->fp_nodes[nodeno] = newvalue;
 			changed = true;
 		}
+		pg_memory_barrier();
 	}
 
 	return changed;
