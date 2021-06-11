@@ -396,7 +396,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	else
 	{
 		minFreeSpace = len;	/* UPDATEs don't need extra saveFreeSpace */
-		targetFreeSpace = Max(minFreeSpace, saveFreeSpace / 4);
+		targetFreeSpace = Max(minFreeSpace, saveFreeSpace * 0.75);
 	}
 
 	targetFreeSpace = Min(targetFreeSpace, MaxHeapTupleSize);
