@@ -171,8 +171,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 	{
 		/* OK, try to get exclusive buffer lock */
-		if (!ConditionalLockBufferForCleanup(buffer))
-			return;
+		LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
 
 		/*
 		 * Now that we have buffer lock, get accurate information about the
