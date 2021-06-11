@@ -554,6 +554,9 @@ typedef struct ViewOptions
 #define RelationGetTargetBlock(relation) \
 	( (relation)->rd_smgr != NULL ? (relation)->rd_smgr->smgr_targblock : InvalidBlockNumber )
 
+#define RelationGetTargetBlock2(relation) \
+	( (relation)->rd_smgr != NULL ? (relation)->rd_smgr->smgr_targblock2 : InvalidBlockNumber )
+
 /*
  * RelationSetTargetBlock
  *		Set relation's current insertion target block.
@@ -562,6 +565,12 @@ typedef struct ViewOptions
 	do { \
 		RelationOpenSmgr(relation); \
 		(relation)->rd_smgr->smgr_targblock = (targblock); \
+	} while (0)
+
+#define RelationSetTargetBlock2(relation, targblock) \
+	do { \
+		RelationOpenSmgr(relation); \
+		(relation)->rd_smgr->smgr_targblock2 = (targblock); \
 	} while (0)
 
 /*

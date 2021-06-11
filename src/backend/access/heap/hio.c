@@ -424,7 +424,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	else if (otherBuffer == InvalidBuffer)
 		targetBlock = RelationGetTargetBlock(relation);
 	else
-		targetBlock = InvalidBlockNumber;	/* UPDATEs don't use rel target block */
+		targetBlock = RelationGetTargetBlock2(relation);
 
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
@@ -585,6 +585,7 @@ loop:
 
 				newspace = Max(newspace, 0);
 				RecordPageWithFreeSpace(relation, targetBlock, newspace);
+				RelationSetTargetBlock2(relation, targetBlock);
 			}
 			return buffer;
 		}
