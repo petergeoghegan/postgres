@@ -773,7 +773,10 @@ loop:
 	 * current backend to make more insertions or not, which is probably a
 	 * good bet most of the time.  So for now, don't add it to FSM yet.
 	 */
-	RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+	if (otherBuffer == InvalidBuffer)
+		RelationSetTargetBlock(relation, BufferGetBlockNumber(buffer));
+	else
+		RelationSetTargetBlock2(relation, BufferGetBlockNumber(buffer));
 
 	return buffer;
 }
