@@ -68,6 +68,8 @@ fsm_set_avail(Page page, int slot, uint8 value)
 
 	Assert(slot < LeafNodesPerPage);
 
+	pg_memory_barrier();
+
 	oldvalue = fsmpage->fp_nodes[nodeno];
 
 	/* If the value hasn't changed, we don't need to do anything */
@@ -75,6 +77,8 @@ fsm_set_avail(Page page, int slot, uint8 value)
 		return false;
 
 	fsmpage->fp_nodes[nodeno] = value;
+
+	pg_memory_barrier();
 
 	/*
 	 * Propagate up, until we hit the root or a node that doesn't need to be
@@ -89,6 +93,8 @@ fsm_set_avail(Page page, int slot, uint8 value)
 		nodeno = parentof(nodeno);
 		lchild = leftchild(nodeno);
 		rchild = lchild + 1;
+
+		pg_memory_barrier();
 
 		newvalue = fsmpage->fp_nodes[lchild];
 		if (rchild < NodesPerPage)
@@ -125,6 +131,8 @@ fsm_get_avail(Page page, int slot)
 
 	Assert(slot < LeafNodesPerPage);
 
+	pg_memory_barrier();
+
 	return fsmpage->fp_nodes[NonLeafNodesPerPage + slot];
 }
 
@@ -138,6 +146,8 @@ uint8
 fsm_get_max_avail(Page page)
 {
 	FSMPage		fsmpage = (FSMPage) PageGetContents(page);
+
+	pg_memory_barrier();
 
 	return fsmpage->fp_nodes[0];
 }
@@ -171,6 +181,7 @@ restart:
 	 * Check the root first, and exit quickly if there's no leaf with enough
 	 * free space
 	 */
+	pg_memory_barrier();
 	if (fsmpage->fp_nodes[0] < minvalue)
 		return -1;
 
@@ -229,6 +240,7 @@ restart:
 	nodeno = target;
 	while (nodeno > 0)
 	{
+		pg_memory_barrier();
 		if (fsmpage->fp_nodes[nodeno] >= minvalue)
 			break;
 
@@ -248,6 +260,7 @@ restart:
 	{
 		int			childnodeno = leftchild(nodeno);
 
+		pg_memory_barrier();
 		if (childnodeno < NodesPerPage &&
 			fsmpage->fp_nodes[childnodeno] >= minvalue)
 		{
@@ -323,6 +336,7 @@ fsm_truncate_avail(Page page, int nslots)
 	Assert(nslots >= 0 && nslots < LeafNodesPerPage);
 
 	/* Clear all truncated leaf nodes */
+	pg_memory_barrier();
 	ptr = &fsmpage->fp_nodes[NonLeafNodesPerPage + nslots];
 	for (; ptr < &fsmpage->fp_nodes[NodesPerPage]; ptr++)
 	{
@@ -358,6 +372,8 @@ fsm_rebuild_page(Page page)
 		int			lchild = leftchild(nodeno);
 		int			rchild = lchild + 1;
 		uint8		newvalue = 0;
+
+		pg_memory_barrier();
 
 		/* The first few nodes we examine might have zero or one child. */
 		if (lchild < NodesPerPage)
