@@ -167,7 +167,7 @@ fsm_get_max_avail(Page page)
  * slot, and if it's true, to the slot after the returned slot.
  */
 int
-fsm_search_avail(Buffer buf, uint8 minvalue, bool advancenext,
+fsm_search_avail(Buffer buf, uint8 minvalue, uint8 maxvalue, bool advancenext,
 				 bool exclusive_lock_held)
 {
 	Page		page = BufferGetPage(buf);
@@ -269,14 +269,14 @@ restart:
 		childnodeno = leftchild(nodeno);
 
 		if (childnodeno < NodesPerPage &&
-			fsmpage->fp_nodes[childnodeno] >= minvalue)
+			fsmpage->fp_nodes[childnodeno] >= maxvalue)
 		{
 			nodeno = childnodeno;
 			continue;
 		}
 		childnodeno++;			/* point to right child */
 		if (childnodeno < NodesPerPage &&
-			fsmpage->fp_nodes[childnodeno] >= minvalue)
+			fsmpage->fp_nodes[childnodeno] >= maxvalue)
 		{
 			nodeno = childnodeno;
 		}
@@ -308,6 +308,7 @@ restart:
 			fsm_rebuild_page(page);
 			MarkBufferDirtyHint(buf, false);
 			pg_memory_barrier();
+			maxvalue = minvalue;
 			goto restart;
 		}
 	}
@@ -325,7 +326,10 @@ restart:
 	 */
 	if (!pg_atomic_compare_exchange_u32(&fsmpage->fp_next_slot, &fp_next_slot,
 										slot + (advancenext ? 1 : 0)))
+	{
+		maxvalue = minvalue;
 		goto restart;
+	}
 
 	return slot;
 }

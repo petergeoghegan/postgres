@@ -106,8 +106,8 @@ static Size fsm_space_cat_to_avail(uint8 cat);
 
 /* workhorse functions for various operations */
 static int	fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
-							   uint8 newValue, uint8 minValue);
-static BlockNumber fsm_search(Relation rel, uint8 min_cat);
+							   uint8 newValue, uint8 minValue, uint8 maxvalue);
+static BlockNumber fsm_search(Relation rel, uint8 minValue, uint8 maxvalue);
 static uint8 fsm_vacuum_page(Relation rel, FSMAddress addr,
 							 BlockNumber start, BlockNumber end,
 							 bool *eof);
@@ -135,13 +135,13 @@ GetPageWithFreeSpace(Relation rel, Size spaceNeeded, Size optimalSpace)
 	BlockNumber res;
 
 	min_cat = fsm_space_needed_to_cat(optimalSpace);
-	res = fsm_search(rel, min_cat);
+	res = fsm_search(rel, min_cat, min_cat);
 
 	if (res != InvalidBlockNumber || spaceNeeded == optimalSpace)
 		return res;
 
 	min_cat = fsm_space_needed_to_cat(spaceNeeded);
-	return fsm_search(rel, min_cat);
+	return fsm_search(rel, min_cat, min_cat);
 }
 
 /*
@@ -159,37 +159,23 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
 							  Size optimalSpace)
 {
 	int			old_cat = fsm_space_avail_to_cat(oldSpaceAvail);
-	int			search_cat;
 	FSMAddress	addr;
 	uint16		slot;
 	int			search_slot;
+	uint8		minValue,
+				maxvalue;
 
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(oldPage, &slot);
 
 	/* Try to find optimal space nearby first */
-	search_cat = fsm_space_needed_to_cat(optimalSpace);
-	search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
+	minValue = fsm_space_needed_to_cat(spaceNeeded);
+	maxvalue = fsm_space_needed_to_cat(optimalSpace);
+	search_slot = fsm_set_and_search(rel, addr, slot, old_cat, minValue, maxvalue);
 	if (search_slot != -1)
 		return fsm_get_heap_blk(addr, search_slot);
 	else
-	{
-		/* Could not find optimal space nearby first -- fallbacks */
-
-		/* 1. Do search for optimal space in whole FSM:  */
-		search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
-		if (search_slot != -1)
-			return fsm_get_heap_blk(addr, search_slot);
-
-		/* 2. Do search for minimal space nearby:  */
-		search_cat = fsm_space_needed_to_cat(spaceNeeded);
-		search_slot = fsm_set_and_search(rel, addr, slot, old_cat, search_cat);
-		if (search_slot != -1)
-			return fsm_get_heap_blk(addr, search_slot);
-
-		/* 3. Do search for minimal space in whole FSM:  */
-		return fsm_search(rel, search_cat);
-	}
+		return fsm_search(rel, minValue, maxvalue);
 }
 
 /*
@@ -209,7 +195,7 @@ RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk, Size spaceAvail)
 	/* Get the location of the FSM byte representing the heap block */
 	addr = fsm_get_location(heapBlk, &slot);
 
-	fsm_set_and_search(rel, addr, slot, new_cat, 0);
+	fsm_set_and_search(rel, addr, slot, new_cat, 0, 0);
 }
 
 /*
@@ -685,7 +671,7 @@ fsm_extend(Relation rel, BlockNumber fsm_nblocks)
  */
 static int
 fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
-				   uint8 newValue, uint8 minValue)
+				   uint8 newValue, uint8 minValue, uint8 maxvalue)
 {
 	Buffer		buf;
 	Page		page;
@@ -702,7 +688,7 @@ fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
 	if (minValue != 0)
 	{
 		/* Search while we still hold the lock */
-		newslot = fsm_search_avail(buf, minValue,
+		newslot = fsm_search_avail(buf, minValue, maxvalue,
 								   addr.level == FSM_BOTTOM_LEVEL,
 								   true);
 	}
@@ -716,7 +702,7 @@ fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
  * Search the tree for a heap page with at least min_cat of free space
  */
 static BlockNumber
-fsm_search(Relation rel, uint8 min_cat)
+fsm_search(Relation rel, uint8 minValue, uint8 maxvalue)
 {
 	int			restarts = 0;
 	FSMAddress	addr = FSM_ROOT_ADDRESS;
@@ -734,7 +720,7 @@ fsm_search(Relation rel, uint8 min_cat)
 		if (BufferIsValid(buf))
 		{
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
-			slot = fsm_search_avail(buf, min_cat,
+			slot = fsm_search_avail(buf, minValue, maxvalue,
 									(addr.level == FSM_BOTTOM_LEVEL),
 									false);
 			if (slot == -1)
@@ -781,7 +767,7 @@ fsm_search(Relation rel, uint8 min_cat)
 			 * rarely, and will be fixed by the next vacuum.
 			 */
 			parent = fsm_get_parent(addr, &parentslot);
-			fsm_set_and_search(rel, parent, parentslot, max_avail, 0);
+			fsm_set_and_search(rel, parent, parentslot, max_avail, 0, 0);
 
 			/*
 			 * If the upper pages are badly out of date, we might need to loop
