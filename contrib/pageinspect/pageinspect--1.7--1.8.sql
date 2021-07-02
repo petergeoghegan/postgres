@@ -16,6 +16,15 @@ AS 'MODULE_PATHNAME', 'heap_tuple_infomask_flags'
 LANGUAGE C STRICT PARALLEL SAFE;
 
 --
+-- test_consume_xids()
+--
+CREATE FUNCTION test_consume_xids(
+       nxids integer)
+RETURNS void
+AS 'MODULE_PATHNAME', 'test_consume_xids'
+LANGUAGE C VOLATILE;
+
+--
 -- bt_metap()
 --
 DROP FUNCTION bt_metap(text);
