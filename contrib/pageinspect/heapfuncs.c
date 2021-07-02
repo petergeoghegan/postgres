@@ -27,6 +27,7 @@
 
 #include "access/htup_details.h"
 #include "access/relation.h"
+#include "access/xact.h"
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
@@ -615,4 +616,36 @@ heap_tuple_infomask_flags(PG_FUNCTION_ARGS)
 	/* Returns the record as Datum */
 	tuple = heap_form_tuple(tupdesc, values, nulls);
 	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
+}
+
+/*
+ * test_consume_xids(int4), for rapidly consuming XIDs, to test wraparound.
+ */
+PG_FUNCTION_INFO_V1(test_consume_xids);
+
+Datum
+test_consume_xids(PG_FUNCTION_ARGS)
+{
+	int32			  nxids = PG_GETARG_INT32(0);
+	FullTransactionId fullxid;
+	TransactionId	  xid;
+	TransactionId	  targetxid;
+
+	/* make sure we have a top-XID first */
+	GetCurrentTransactionId();
+
+	fullxid = ReadNextFullTransactionId();
+	xid = XidFromFullTransactionId(fullxid);
+	targetxid = xid + nxids;
+	while (targetxid < FirstNormalTransactionId)
+		targetxid++;
+
+	while (TransactionIdPrecedes(xid, targetxid))
+	{
+		elog(DEBUG1, "xid: %u", xid);
+		fullxid = GetNewTransactionId(true);
+		xid = XidFromFullTransactionId(fullxid);
+	}
+
+	PG_RETURN_VOID();
 }
