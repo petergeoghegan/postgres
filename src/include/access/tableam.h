@@ -231,7 +231,7 @@ typedef struct TM_IndexDeleteOp
 
 /* "options" flag bits for table_tuple_insert */
 /* TABLE_INSERT_SKIP_WAL was 0x0001; RelationNeedsWAL() now governs */
-#define TABLE_INSERT_SKIP_FSM		0x0002
+/* TABLE_INSERT_SKIP_FSM was 0x0002; FSM use now mandatory */
 #define TABLE_INSERT_FROZEN			0x0004
 #define TABLE_INSERT_NO_LOGICAL		0x0008
 
@@ -1339,17 +1339,11 @@ table_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
  * The options bitmask allows the caller to specify options that may change the
  * behaviour of the AM. The AM will ignore options that it does not support.
  *
- * If the TABLE_INSERT_SKIP_FSM option is specified, AMs are free to not reuse
- * free space in the relation. This can save some cycles when we know the
- * relation is new and doesn't contain useful amounts of free space.
- * TABLE_INSERT_SKIP_FSM is commonly passed directly to
- * RelationGetBufferForTuple. See that method for more information.
- *
- * TABLE_INSERT_FROZEN should only be specified for inserts into
- * relfilenodes created during the current subtransaction and when
- * there are no prior snapshots or pre-existing portals open.
- * This causes rows to be frozen, which is an MVCC violation and
- * requires explicit options chosen by user.
+ * The TABLE_INSERT_FROZEN option should only be specified for inserts into
+ * relfilenodes created during the current subtransaction and when there are
+ * no prior snapshots or pre-existing portals open.  This causes rows to be
+ * frozen, which is an MVCC violation and requires explicit options chosen by
+ * user.
  *
  * TABLE_INSERT_NO_LOGICAL force-disables the emitting of logical decoding
  * information for the tuple. This should solely be used during table rewrites
@@ -1362,6 +1356,8 @@ table_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
  * The BulkInsertState object (if any; bistate can be NULL for default
  * behavior) is also just passed through to RelationGetBufferForTuple. If
  * `bistate` is provided, table_finish_bulk_insert() needs to be called.
+ * (XXX: Really? Commit c6b92041 removed heapam_finish_bulk_insert routine
+ * completely.)
  *
  * On return the slot's tts_tid and tts_tableOid are updated to reflect the
  * insertion. But note that any toasting of fields within the slot is NOT

@@ -90,6 +90,10 @@ extern PGDLLIMPORT int NamedLWLockTrancheRequests;
 #define LOG2_NUM_PREDICATELOCK_PARTITIONS  4
 #define NUM_PREDICATELOCK_PARTITIONS  (1 << LOG2_NUM_PREDICATELOCK_PARTITIONS)
 
+/* Number of partitions the FSM tables are divided into */
+#define LOG2_NUM_FSMLOCK_PARTITIONS  4
+#define NUM_FSMLOCK_PARTITIONS    (1 << LOG2_NUM_LOCK_PARTITIONS)
+
 /* Offsets for various chunks of preallocated lwlocks. */
 #define BUFFER_MAPPING_LWLOCK_OFFSET	NUM_INDIVIDUAL_LWLOCKS
 #define LOCK_MANAGER_LWLOCK_OFFSET		\

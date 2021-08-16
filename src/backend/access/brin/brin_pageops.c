@@ -701,8 +701,10 @@ brin_getinsertbuffer(Relation irel, Buffer oldbuf, Size itemsz,
 
 	/* Choose initial target page, re-using existing target if known */
 	newblk = RelationGetTargetBlock(irel);
+#if 0
 	if (newblk == InvalidBlockNumber)
-		newblk = GetPageWithFreeSpace(irel, itemsz);
+		newblk = GetPageWithFreeSpace(irel, itemsz, NULL);
+#endif
 
 	/*
 	 * Loop until we find a page with sufficient free space.  By the time we

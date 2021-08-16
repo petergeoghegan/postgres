@@ -16,10 +16,15 @@
 
 #include "access/htup.h"
 #include "storage/buf.h"
+#include "storage/bufmgr.h"
 #include "utils/relcache.h"
 
 /*
  * state for bulk inserts --- private to heapam.c and hio.c
+ *
+ * XXX: What about freespace.h?
+ *
+ * TODO: Figure out where this C file/interface fits in.
  *
  * If current_buf isn't InvalidBuffer, then we are holding an extra pin
  * on that buffer.
@@ -35,6 +40,8 @@ typedef struct BulkInsertStateData
 
 extern void RelationPutHeapTuple(Relation relation, Buffer buffer,
 								 HeapTuple tuple, bool token);
+extern Buffer ReadBufferBI(Relation relation, BlockNumber targetBlock,
+						   ReadBufferMode mode, BulkInsertState bistate);
 extern Buffer RelationGetBufferForTuple(Relation relation, Size len,
 										Buffer otherBuffer, int options,
 										BulkInsertStateData *bistate,

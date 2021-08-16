@@ -37,12 +37,15 @@
 BlockNumber
 GetFreeIndexPage(Relation rel)
 {
-	BlockNumber blkno = GetPageWithFreeSpace(rel, BLCKSZ / 2);
+	/* FIXME */
+#if 0
+	BlockNumber blkno = GetPageWithFreeSpace(rel, BLCKSZ / 2, NULL);
 
 	if (blkno != InvalidBlockNumber)
 		RecordUsedIndexPage(rel, blkno);
+#endif
 
-	return blkno;
+	return InvalidBlockNumber;
 }
 
 /*

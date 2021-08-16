@@ -7007,7 +7007,7 @@ NOTICE:  trig_row_after(23, skidoo) AFTER ROW INSERT ON rem1
 NOTICE:  NEW: (13,"test triggered !")
   ctid  
 --------
- (0,32)
+ (1,28)
 (1 row)
 
 -- cleanup

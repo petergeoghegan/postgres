@@ -36,6 +36,7 @@
 #include "replication/walsender.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
+#include "storage/freespace.h"
 #include "storage/ipc.h"
 #include "storage/pg_shmem.h"
 #include "storage/pmsignal.h"
@@ -132,6 +133,7 @@ CreateSharedMemoryAndSemaphores(void)
 		size = add_size(size, TwoPhaseShmemSize());
 		size = add_size(size, BackgroundWorkerShmemSize());
 		size = add_size(size, MultiXactShmemSize());
+		size = add_size(size, FreeSpaceMapShmemSize());
 		size = add_size(size, LWLockShmemSize());
 		size = add_size(size, ProcArrayShmemSize());
 		size = add_size(size, BackendStatusShmemSize());
@@ -221,6 +223,7 @@ CreateSharedMemoryAndSemaphores(void)
 	CommitTsShmemInit();
 	SUBTRANSShmemInit();
 	MultiXactShmemInit();
+	FreeSpaceMapShmemInit();
 	InitBufferPool();
 
 	/*

@@ -6,6 +6,7 @@
  * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
+ * TODO: Figure out where this C file/interface fits in.
  *
  * IDENTIFICATION
  *	  src/backend/catalog/storage.c
@@ -25,6 +26,7 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "access/xlogutils.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/storage.h"
 #include "catalog/storage_xlog.h"
 #include "miscadmin.h"
@@ -276,9 +278,7 @@ RelationPreserveStorage(RelFileNode rnode, bool atCommit)
 void
 RelationTruncate(Relation rel, BlockNumber nblocks)
 {
-	bool		fsm;
 	bool		vm;
-	bool		need_fsm_vacuum = false;
 	ForkNumber	forks[MAX_FORKNUM];
 	BlockNumber blocks[MAX_FORKNUM];
 	int			nforks = 0;
@@ -290,6 +290,7 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 	 */
 	reln = RelationGetSmgr(rel);
 	reln->smgr_targblock = InvalidBlockNumber;
+	reln->smgr_targlist = PG_UINT32_MAX;
 	for (int i = 0; i <= MAX_FORKNUM; ++i)
 		reln->smgr_cached_nblocks[i] = InvalidBlockNumber;
 
@@ -297,19 +298,6 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 	forks[nforks] = MAIN_FORKNUM;
 	blocks[nforks] = nblocks;
 	nforks++;
-
-	/* Prepare for truncation of the FSM if it exists */
-	fsm = smgrexists(RelationGetSmgr(rel), FSM_FORKNUM);
-	if (fsm)
-	{
-		blocks[nforks] = FreeSpaceMapPrepareTruncateRel(rel, nblocks);
-		if (BlockNumberIsValid(blocks[nforks]))
-		{
-			forks[nforks] = FSM_FORKNUM;
-			nforks++;
-			need_fsm_vacuum = true;
-		}
-	}
 
 	/* Prepare for truncation of the visibility map too if it exists */
 	vm = smgrexists(RelationGetSmgr(rel), VISIBILITYMAP_FORKNUM);
@@ -359,7 +347,7 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 		 * with a truncated heap, but the FSM or visibility map would still
 		 * contain entries for the non-existent heap pages.
 		 */
-		if (fsm || vm)
+		if (vm)
 			XLogFlush(lsn);
 	}
 
@@ -371,8 +359,7 @@ RelationTruncate(Relation rel, BlockNumber nblocks)
 	 * important because the just-truncated pages were likely marked as
 	 * all-free, and would be preferentially selected.
 	 */
-	if (need_fsm_vacuum)
-		FreeSpaceMapVacuumRange(rel, nblocks, InvalidBlockNumber);
+	FreeSpaceMapVacuumRange(rel, nblocks, InvalidBlockNumber);
 }
 
 /*

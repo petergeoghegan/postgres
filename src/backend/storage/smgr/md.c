@@ -10,6 +10,8 @@
  * It doesn't matter whether the bits are on spinning rust or some other
  * storage technology.
  *
+ * TODO: Figure out where this C file/interface fits in.
+ *
  * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -662,7 +664,7 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	if (nbytes != BLCKSZ)
 	{
 		if (nbytes < 0)
-			ereport(ERROR,
+			ereport(PANIC,
 					(errcode_for_file_access(),
 					 errmsg("could not read block %u in file \"%s\": %m",
 							blocknum, FilePathName(v->mdfd_vfd))));
@@ -678,7 +680,7 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		if (zero_damaged_pages || InRecovery)
 			MemSet(buffer, 0, BLCKSZ);
 		else
-			ereport(ERROR,
+			ereport(PANIC,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					 errmsg("could not read block %u in file \"%s\": read only %d of %d bytes",
 							blocknum, FilePathName(v->mdfd_vfd),

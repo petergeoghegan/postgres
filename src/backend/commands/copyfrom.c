@@ -584,16 +584,6 @@ CopyFrom(CopyFromState cstate)
 	}
 
 	/*
-	 * If the target file is new-in-transaction, we assume that checking FSM
-	 * for free space is a waste of time.  This could possibly be wrong, but
-	 * it's unlikely.
-	 */
-	if (RELKIND_HAS_STORAGE(cstate->rel->rd_rel->relkind) &&
-		(cstate->rel->rd_createSubid != InvalidSubTransactionId ||
-		 cstate->rel->rd_firstRelfilenodeSubid != InvalidSubTransactionId))
-		ti_options |= TABLE_INSERT_SKIP_FSM;
-
-	/*
 	 * Optimize if new relfilenode was created in this subxact or one of its
 	 * committed children and we won't see those rows later as part of an
 	 * earlier scan or command. The subxact test ensures that if this subxact

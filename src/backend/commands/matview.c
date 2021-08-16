@@ -469,7 +469,7 @@ transientrel_startup(DestReceiver *self, int operation, TupleDesc typeinfo)
 	 */
 	myState->transientrel = transientrel;
 	myState->output_cid = GetCurrentCommandId(true);
-	myState->ti_options = TABLE_INSERT_SKIP_FSM | TABLE_INSERT_FROZEN;
+	myState->ti_options = TABLE_INSERT_FROZEN;
 	myState->bistate = GetBulkInsertState();
 
 	/*

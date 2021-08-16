@@ -23,20 +23,23 @@
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "pageinspect.h"
-#include "storage/fsm_internals.h"
+#include "storage/freespace.h"
 #include "utils/builtins.h"
 
 /*
  * Dumps the contents of a FSM page.
  */
 PG_FUNCTION_INFO_V1(fsm_page_contents);
+PG_FUNCTION_INFO_V1(fsm_mem_contents);
+PG_FUNCTION_INFO_V1(fsm_mem_dump_all);
 
 Datum
 fsm_page_contents(PG_FUNCTION_ARGS)
 {
-	bytea	   *raw_page = PG_GETARG_BYTEA_P(0);
+	/*
+	 * bytea	   *raw_page = PG_GETARG_BYTEA_P(0);
+	 */
 	StringInfoData sinfo;
-	FSMPage		fsmpage;
 	int			i;
 
 	if (!superuser())
@@ -44,16 +47,50 @@ fsm_page_contents(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("must be superuser to use raw page functions")));
 
-	fsmpage = (FSMPage) PageGetContents(VARDATA(raw_page));
-
 	initStringInfo(&sinfo);
 
-	for (i = 0; i < NodesPerPage; i++)
+	for (i = 0; i < 0; i++)
 	{
-		if (fsmpage->fp_nodes[i] != 0)
-			appendStringInfo(&sinfo, "%d: %d\n", i, fsmpage->fp_nodes[i]);
+		appendStringInfo(&sinfo, "%d: %d\n", i, 0);
 	}
-	appendStringInfo(&sinfo, "fp_next_slot: %d\n", fsmpage->fp_next_slot);
+	appendStringInfo(&sinfo, "fp_next_slot: %d\n", 0);
+
+	PG_RETURN_TEXT_P(cstring_to_text_with_len(sinfo.data, sinfo.len));
+}
+
+Datum
+fsm_mem_contents(PG_FUNCTION_ARGS)
+{
+	StringInfoData sinfo;
+	Oid			heapRelid = PG_GETARG_OID(0);
+	Relation	heapRel;
+
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to use raw page functions")));
+
+	/* Open the relation */
+	heapRel = table_open(heapRelid, AccessShareLock);
+
+	DebugFreeSpaceMapDump(heapRel, &sinfo);
+
+	table_close(heapRel, AccessShareLock);
+
+	PG_RETURN_TEXT_P(cstring_to_text_with_len(sinfo.data, sinfo.len));
+}
+
+Datum
+fsm_mem_dump_all(PG_FUNCTION_ARGS)
+{
+	StringInfoData sinfo;
+
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to use raw page functions")));
+
+	DebugFreeSpaceMapDumpAllRels(&sinfo);
 
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(sinfo.data, sinfo.len));
 }

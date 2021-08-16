@@ -19,3 +19,19 @@ CREATE FUNCTION page_header(IN page bytea,
     OUT prune_xid xid)
 AS 'MODULE_PATHNAME', 'page_header'
 LANGUAGE C STRICT PARALLEL SAFE;
+
+--
+-- fsm_mem_contents()
+--
+CREATE FUNCTION fsm_mem_contents(IN heap_oid regclass)
+RETURNS text
+AS 'MODULE_PATHNAME', 'fsm_mem_contents'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+--
+-- fsm_mem_dump_all()
+--
+CREATE FUNCTION fsm_mem_dump_all()
+RETURNS text
+AS 'MODULE_PATHNAME', 'fsm_mem_dump_all'
+LANGUAGE C STRICT PARALLEL SAFE;

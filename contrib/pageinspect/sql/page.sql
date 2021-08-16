@@ -11,9 +11,6 @@ VACUUM (DISABLE_PAGE_SKIPPING) test1;  -- set up FSM
 SELECT octet_length(get_raw_page('test1', 'main', 0)) AS main_0;
 SELECT octet_length(get_raw_page('test1', 'main', 1)) AS main_1;
 
-SELECT octet_length(get_raw_page('test1', 'fsm', 0)) AS fsm_0;
-SELECT octet_length(get_raw_page('test1', 'fsm', 1)) AS fsm_1;
-
 SELECT octet_length(get_raw_page('test1', 'vm', 0)) AS vm_0;
 SELECT octet_length(get_raw_page('test1', 'vm', 1)) AS vm_1;
 
@@ -30,8 +27,6 @@ SELECT page_checksum(get_raw_page('test1', 0), -1);
 
 SELECT tuple_data_split('test1'::regclass, t_data, t_infomask, t_infomask2, t_bits)
     FROM heap_page_items(get_raw_page('test1', 0));
-
-SELECT * FROM fsm_page_contents(get_raw_page('test1', 'fsm', 0));
 
 -- If we freeze the only tuple on test1, the infomask should
 -- always be the same in all test runs.
@@ -81,4 +76,6 @@ insert into test8(f1, f8) values (x'7f00007f'::int, 0);
 select t_bits, t_data from heap_page_items(get_raw_page('test8', 0));
 select tuple_data_split('test8'::regclass, t_data, t_infomask, t_infomask2, t_bits)
     from heap_page_items(get_raw_page('test8', 0));
+select NULL from fsm_mem_contents('test8');   -- FIXME: Test this properly later on
+select NULL from fsm_mem_dump_all();
 drop table test8;

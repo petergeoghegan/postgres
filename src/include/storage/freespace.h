@@ -14,13 +14,18 @@
 #ifndef FREESPACE_H_
 #define FREESPACE_H_
 
+#include "access/heapam.h"
 #include "storage/block.h"
 #include "storage/relfilenode.h"
 #include "utils/relcache.h"
 
 /* prototypes for public functions in freespace.c */
 extern Size GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk);
-extern BlockNumber GetPageWithFreeSpace(Relation rel, Size spaceNeeded);
+extern BlockNumber GetPageWithFreeSpace(Relation rel, Size spaceNeeded,
+										BulkInsertState bistate);
+extern Buffer FreeSpaceMapAddExtraBlocks(Relation rel,
+										 Size spaceNeeded,
+										 BulkInsertState bistate);
 extern BlockNumber RecordAndGetPageWithFreeSpace(Relation rel,
 												 BlockNumber oldPage,
 												 Size oldSpaceAvail,
@@ -35,5 +40,10 @@ extern BlockNumber FreeSpaceMapPrepareTruncateRel(Relation rel,
 extern void FreeSpaceMapVacuum(Relation rel);
 extern void FreeSpaceMapVacuumRange(Relation rel, BlockNumber start,
 									BlockNumber end);
+extern Size FreeSpaceMapShmemSize(void);
+extern void FreeSpaceMapShmemInit(void);
+extern int64 FreeSpaceMapRelationGetNumberOfBlocks(RelFileNode rfn);
+extern void DebugFreeSpaceMapDump(Relation rel, StringInfo sinfo);
+extern void DebugFreeSpaceMapDumpAllRels(StringInfo sinfo);
 
 #endif							/* FREESPACE_H_ */
