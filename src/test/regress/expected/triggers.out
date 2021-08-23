@@ -519,11 +519,11 @@ NOTICE:  trigger_func(delete_a) called: action = DELETE, when = AFTER, level = R
 NOTICE:  trigger_func(delete_when) called: action = DELETE, when = AFTER, level = STATEMENT
 UPDATE main_table SET a = 50, b = 60;
 NOTICE:  trigger_func(modified_any) called: action = UPDATE, when = BEFORE, level = ROW
+NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
+NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
+NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
+NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
 NOTICE:  trigger_func(modified_any) called: action = UPDATE, when = BEFORE, level = ROW
-NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
-NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
-NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
-NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
 NOTICE:  trigger_func(modified_a) called: action = UPDATE, when = BEFORE, level = ROW
 NOTICE:  trigger_func(after_upd_row) called: action = UPDATE, when = AFTER, level = ROW
 NOTICE:  trigger_func(after_upd_stmt) called: action = UPDATE, when = AFTER, level = STATEMENT

@@ -2649,13 +2649,16 @@ select sum(t1.c1), count(t2.c1) from ft1 t1 inner join ft2 t2 on (t1.c1 = t2.c1)
 -- GROUP BY clause having expressions
 explain (verbose, costs off)
 select c2/2, sum(c2) * (c2/2) from ft1 group by c2/2 order by c2/2;
-                                                    QUERY PLAN                                                    
-------------------------------------------------------------------------------------------------------------------
- Foreign Scan
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
+ Sort
    Output: ((c2 / 2)), ((sum(c2) * (c2 / 2)))
-   Relations: Aggregate on (public.ft1)
-   Remote SQL: SELECT (c2 / 2), (sum(c2) * (c2 / 2)) FROM "S 1"."T 1" GROUP BY 1 ORDER BY (c2 / 2) ASC NULLS LAST
-(4 rows)
+   Sort Key: ((ft1.c2 / 2))
+   ->  Foreign Scan
+         Output: ((c2 / 2)), ((sum(c2) * (c2 / 2)))
+         Relations: Aggregate on (public.ft1)
+         Remote SQL: SELECT (c2 / 2), (sum(c2) * (c2 / 2)) FROM "S 1"."T 1" GROUP BY 1
+(7 rows)
 
 select c2/2, sum(c2) * (c2/2) from ft1 group by c2/2 order by c2/2;
  ?column? | ?column? 
@@ -2783,13 +2786,16 @@ select c2, c2 from ft1 where c2 > 6 group by 1, 2 order by sum(c1);
 -- Testing HAVING clause shippability
 explain (verbose, costs off)
 select c2, sum(c1) from ft2 group by c2 having avg(c1) < 500 and sum(c1) < 49800 order by c2;
-                                                                         QUERY PLAN                                                                         
-------------------------------------------------------------------------------------------------------------------------------------------------------------
- Foreign Scan
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Sort
    Output: c2, (sum(c1))
-   Relations: Aggregate on (public.ft2)
-   Remote SQL: SELECT c2, sum("C 1") FROM "S 1"."T 1" GROUP BY 1 HAVING ((avg("C 1") < 500::numeric)) AND ((sum("C 1") < 49800)) ORDER BY c2 ASC NULLS LAST
-(4 rows)
+   Sort Key: ft2.c2
+   ->  Foreign Scan
+         Output: c2, (sum(c1))
+         Relations: Aggregate on (public.ft2)
+         Remote SQL: SELECT c2, sum("C 1") FROM "S 1"."T 1" GROUP BY 1 HAVING ((avg("C 1") < 500::numeric)) AND ((sum("C 1") < 49800))
+(7 rows)
 
 select c2, sum(c1) from ft2 group by c2 having avg(c1) < 500 and sum(c1) < 49800 order by c2;
  c2 |  sum  
@@ -6531,8 +6537,8 @@ select * from loc1;
  f1 |     f2     
 ----+------------
   1 | hi
- 10 | hi remote
   2 | bye
+ 10 | hi remote
  11 | bye remote
 (4 rows)
 
@@ -6540,8 +6546,8 @@ select * from rem1;
  f1 |     f2     
 ----+------------
   1 | hi
- 10 | hi remote
   2 | bye
+ 10 | hi remote
  11 | bye remote
 (4 rows)
 
@@ -6706,17 +6712,17 @@ NOTICE:  trigger_func(<NULL>) called: action = DELETE, when = BEFORE, level = ST
 NOTICE:  trig_row_before(23, skidoo) BEFORE ROW DELETE ON rem1
 NOTICE:  OLD: (1,hi)
 NOTICE:  trig_row_before(23, skidoo) BEFORE ROW DELETE ON rem1
-NOTICE:  OLD: (10,"hi remote")
-NOTICE:  trig_row_before(23, skidoo) BEFORE ROW DELETE ON rem1
 NOTICE:  OLD: (2,bye)
+NOTICE:  trig_row_before(23, skidoo) BEFORE ROW DELETE ON rem1
+NOTICE:  OLD: (10,"hi remote")
 NOTICE:  trig_row_before(23, skidoo) BEFORE ROW DELETE ON rem1
 NOTICE:  OLD: (11,"bye remote")
 NOTICE:  trig_row_after(23, skidoo) AFTER ROW DELETE ON rem1
 NOTICE:  OLD: (1,hi)
 NOTICE:  trig_row_after(23, skidoo) AFTER ROW DELETE ON rem1
-NOTICE:  OLD: (10,"hi remote")
-NOTICE:  trig_row_after(23, skidoo) AFTER ROW DELETE ON rem1
 NOTICE:  OLD: (2,bye)
+NOTICE:  trig_row_after(23, skidoo) AFTER ROW DELETE ON rem1
+NOTICE:  OLD: (10,"hi remote")
 NOTICE:  trig_row_after(23, skidoo) AFTER ROW DELETE ON rem1
 NOTICE:  OLD: (11,"bye remote")
 NOTICE:  trigger_func(<NULL>) called: action = DELETE, when = AFTER, level = STATEMENT
@@ -7005,9 +7011,9 @@ NOTICE:  trig_row_before(23, skidoo) BEFORE ROW INSERT ON rem1
 NOTICE:  NEW: (13,test)
 NOTICE:  trig_row_after(23, skidoo) AFTER ROW INSERT ON rem1
 NOTICE:  NEW: (13,"test triggered !")
-  ctid  
---------
- (1,28)
+ ctid  
+-------
+ (3,3)
 (1 row)
 
 -- cleanup

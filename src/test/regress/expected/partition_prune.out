@@ -2158,7 +2158,7 @@ select explain_parallel_append('select avg(ab.a) from ab inner join lprt_a a on 
 --------------------------------------------------------------------------------------------------------
  Finalize Aggregate (actual rows=N loops=N)
    ->  Gather (actual rows=N loops=N)
-         Workers Planned: 1
+         Workers Planned: 2
          Workers Launched: N
          ->  Partial Aggregate (actual rows=N loops=N)
                ->  Nested Loop (actual rows=N loops=N)
@@ -2190,7 +2190,7 @@ select explain_parallel_append('select avg(ab.a) from ab inner join lprt_a a on 
 --------------------------------------------------------------------------------------------------------
  Finalize Aggregate (actual rows=N loops=N)
    ->  Gather (actual rows=N loops=N)
-         Workers Planned: 1
+         Workers Planned: 2
          Workers Launched: N
          ->  Partial Aggregate (actual rows=N loops=N)
                ->  Nested Loop (actual rows=N loops=N)
@@ -2224,7 +2224,7 @@ select explain_parallel_append('select avg(ab.a) from ab inner join lprt_a a on 
 -------------------------------------------------------------------------------------------------
  Finalize Aggregate (actual rows=N loops=N)
    ->  Gather (actual rows=N loops=N)
-         Workers Planned: 1
+         Workers Planned: 2
          Workers Launched: N
          ->  Partial Aggregate (actual rows=N loops=N)
                ->  Nested Loop (actual rows=N loops=N)

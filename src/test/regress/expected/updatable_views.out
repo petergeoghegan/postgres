@@ -1252,8 +1252,8 @@ select * from base_tbl;
  a |   b   
 ---+-------
  2 | Row 2
- 3 | Row 3
  1 | Row 3
+ 3 | Row 3
 (3 rows)
 
 DROP VIEW rw_view1;

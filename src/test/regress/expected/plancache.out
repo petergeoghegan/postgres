@@ -311,11 +311,11 @@ select name, generic_plans, custom_plans from pg_prepared_statements
 -- force generic plan
 set plan_cache_mode to force_generic_plan;
 explain (costs off) execute test_mode_pp(2);
-         QUERY PLAN          
------------------------------
+                        QUERY PLAN                        
+----------------------------------------------------------
  Aggregate
-   ->  Seq Scan on test_mode
-         Filter: (a = $1)
+   ->  Index Only Scan using test_mode_a_idx on test_mode
+         Index Cond: (a = $1)
 (3 rows)
 
 select name, generic_plans, custom_plans from pg_prepared_statements
@@ -373,11 +373,11 @@ select name, generic_plans, custom_plans from pg_prepared_statements
 
 -- we should now get a really bad plan
 explain (costs off) execute test_mode_pp(2);
-         QUERY PLAN          
------------------------------
+                        QUERY PLAN                        
+----------------------------------------------------------
  Aggregate
-   ->  Seq Scan on test_mode
-         Filter: (a = $1)
+   ->  Index Only Scan using test_mode_a_idx on test_mode
+         Index Cond: (a = $1)
 (3 rows)
 
 -- but we can force a custom plan

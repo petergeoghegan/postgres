@@ -40,9 +40,9 @@
 /*
  * TODO: Make number of free lists configurable (storage param?)
  */
-#define FSM_MAX_BLOCKS_PER_FREELIST		1
-#define FSM_MAX_FREELISTS_PER_RELATION	1
-#define FSM_NOBULK_REL_BLOCKS			1
+#define FSM_MAX_BLOCKS_PER_FREELIST		128
+#define FSM_MAX_FREELISTS_PER_RELATION	16
+#define FSM_NOBULK_REL_BLOCKS			1024
 
 static int	fsm_max_nrelations = 10000; /* max # relations to track */
 
@@ -249,23 +249,6 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 		newnfreelists = 1;
 		blocksPerFreelist = Max(1, relfreelists->relnblocks * 2);
 		blocksPerFreelist = Min(blocksPerFreelist, 16);
-
-		if (relfreelists->relnblocks > 0 && relfreelists->relnblocks < 10000)
-		{
-			BlockNumber lastblock = relfreelists->relnblocks - 1;
-			Size		pageFreeSpace;
-
-			buffer = ReadBufferBI(rel, lastblock, RBM_NORMAL, bistate);
-			page = BufferGetPage(buffer);
-			LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
-			pageFreeSpace = PageGetHeapFreeSpace(page);
-			if (spaceNeeded <= pageFreeSpace)
-			{
-				LWLockRelease(FSMListLock);
-				RelationSetTargetBlock(rel, lastblock);
-				return buffer;
-			}
-		}
 	}
 	else
 	{
@@ -376,19 +359,10 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 
 			/* Leader must return a block for itself */
 			RelationGetSmgr(rel)->smgr_targlist = i;
-			newleaderblock = flist->blocks[flist->nextblockoff];
-			if (relfreelists->relnblocks < 10000)
-			{
-				flist->ownerpid = 0;
-				flist->ownerxid = FirstNormalFullTransactionId;
-			}
-			else
-			{
-				flist->nextblockoff++;
-				flist->nblocksconsumed++;
-				flist->ownerpid = MyProcPid;
-				flist->ownerxid = XactTopFullTransactionId;
-			}
+			newleaderblock = flist->blocks[flist->nextblockoff++];
+			flist->nblocksconsumed++;
+			flist->ownerpid = MyProcPid;
+			flist->ownerxid = XactTopFullTransactionId;
 			leaderbufferfound = true;
 		}
 	}

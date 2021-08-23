@@ -1980,8 +1980,8 @@ SELECT * FROM b1;
    8 | c9f0f895fb98ab9159f51fd0297e236d
    9 | 45c48cce2e2d7fbdea1afc51c7c6ad26
   10 | d3d9446802a44259755d38e6d163e820
-  12 | xxx
    4 | yyy
+  12 | xxx
 (21 rows)
 
 --

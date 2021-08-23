@@ -522,10 +522,10 @@ SELECT * FROM unique_tbl;
  i |   t   
 ---+-------
  3 | three
- 1 | five
- 5 | one
  4 | two
  2 | four
+ 1 | five
+ 5 | one
 (5 rows)
 
 -- should fail at commit-time
@@ -587,10 +587,10 @@ SELECT * FROM unique_tbl;
  i |   t   
 ---+-------
  3 | three
- 1 | five
- 5 | one
  4 | two
  2 | four
+ 1 | five
+ 5 | one
 (5 rows)
 
 -- test a HOT update that modifies the newly inserted tuple,
@@ -602,10 +602,10 @@ DELETE FROM unique_tbl WHERE t = 'three';
 SELECT * FROM unique_tbl;
  i |   t    
 ---+--------
- 1 | five
- 5 | one
  4 | two
  2 | four
+ 1 | five
+ 5 | one
  3 | threex
 (5 rows)
 
@@ -613,10 +613,10 @@ COMMIT;
 SELECT * FROM unique_tbl;
  i |   t    
 ---+--------
- 1 | five
- 5 | one
  4 | two
  2 | four
+ 1 | five
+ 5 | one
  3 | threex
 (5 rows)
 
