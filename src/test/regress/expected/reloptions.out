@@ -133,7 +133,7 @@ VACUUM FREEZE reloptions_test;
 SELECT pg_relation_size('reloptions_test') = 0;
  ?column? 
 ----------
- t
+ f
 (1 row)
 
 -- Test toast.* options

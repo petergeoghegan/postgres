@@ -3240,6 +3240,13 @@ should_attempt_truncation(LVRelState *vacrel)
 {
 	BlockNumber possibly_freeable;
 
+	/*
+	 * FIXME:  We cannot truncate until such time as VACUUM learns that it
+	 * should not truncate away slack pages that FSM knows about and tracks in
+	 * free lists....unless maybe it asks the FSM about it.
+	 */
+	return false;
+
 	if (!vacrel->do_rel_truncate || vacrel->failsafe_active)
 		return false;
 

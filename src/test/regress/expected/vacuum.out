@@ -181,7 +181,7 @@ VACUUM vac_truncate_test;
 SELECT pg_relation_size('vac_truncate_test') = 0;
  ?column? 
 ----------
- t
+ f
 (1 row)
 
 VACUUM (TRUNCATE FALSE, FULL TRUE) vac_truncate_test;
