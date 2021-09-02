@@ -75,6 +75,7 @@
 #include "storage/bufmgr.h"
 #include "storage/freespace.h"
 #include "storage/lmgr.h"
+#include "storage/procarray.h"
 #include "tcop/tcopprot.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -330,6 +331,10 @@ typedef struct LVRelState
 
 	/* VACUUM operation's cutoff for pruning */
 	TransactionId OldestXmin;
+	GlobalVisState *vistest;
+	int				retries;
+	int				badretries;
+
 	/* VACUUM operation's cutoff for freezing XIDs and MultiXactIds */
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
@@ -423,7 +428,6 @@ static void lazy_scan_heap(LVRelState *vacrel, VacuumParams *params,
 						   bool aggressive);
 static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							BlockNumber blkno, Page page,
-							GlobalVisState *vistest,
 							LVPagePruneState *prunestate);
 static void lazy_vacuum(LVRelState *vacrel);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
@@ -978,7 +982,6 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		PROGRESS_VACUUM_MAX_DEAD_TUPLES
 	};
 	int64		initprog_val[3];
-	GlobalVisState *vistest;
 
 	pg_rusage_init(&ru0);
 
@@ -1017,7 +1020,9 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 	vacrel->newly_allvisible = 0;
 	vacrel->newly_allfrozen = 0;
 
-	vistest = GlobalVisTestFor(vacrel->rel);
+	vacrel->vistest = GlobalVisTestFor(vacrel->rel);
+	vacrel->retries = 0;
+	vacrel->badretries = 0;
 
 	vacrel->indstats = (IndexBulkDeleteResult **)
 		palloc0(vacrel->nindexes * sizeof(IndexBulkDeleteResult *));
@@ -1442,7 +1447,7 @@ lazy_scan_heap(LVRelState *vacrel, VacuumParams *params, bool aggressive)
 		 * were pruned some time earlier.  Also considers freezing XIDs in the
 		 * tuple headers of remaining items with storage.
 		 */
-		lazy_scan_prune(vacrel, buf, blkno, page, vistest, &prunestate);
+		lazy_scan_prune(vacrel, buf, blkno, page, &prunestate);
 
 		Assert(!prunestate.all_visible || !prunestate.has_lpdead_items);
 
@@ -1768,7 +1773,6 @@ lazy_scan_prune(LVRelState *vacrel,
 				Buffer buf,
 				BlockNumber blkno,
 				Page page,
-				GlobalVisState *vistest,
 				LVPagePruneState *prunestate)
 {
 	Relation	rel = vacrel->rel;
@@ -1785,6 +1789,9 @@ lazy_scan_prune(LVRelState *vacrel,
 	int			nfrozen;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
+	bool		restarted = false;
+	bool		may_restart = (vacrel->badretries < 3 &&
+							   (vacrel->retries < 3 || vacrel->lpdead_items > 0));
 
 	maxoff = PageGetMaxOffsetNumber(page);
 
@@ -1806,7 +1813,7 @@ retry:
 	 * lpdead_items's final value can be thought of as the number of tuples
 	 * that were deleted from indexes.
 	 */
-	tuples_deleted = heap_page_prune(rel, buf, vistest,
+	tuples_deleted = heap_page_prune(rel, buf, vacrel->vistest,
 									 InvalidTransactionId, 0, false,
 									 &vacrel->offnum);
 
@@ -1940,6 +1947,8 @@ retry:
 					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
 					if (!TransactionIdPrecedes(xmin, vacrel->OldestXmin))
 					{
+						if (may_restart && !restarted)
+							goto dorestart;
 						prunestate->all_visible = false;
 						break;
 					}
@@ -2012,6 +2021,31 @@ retry:
 		 */
 		if (!tuple_totally_frozen)
 			prunestate->all_frozen = false;
+	}
+
+	if (new_dead_tuples > 0 && may_restart && !restarted)
+	{
+		TransactionId OldestXmin;
+
+dorestart:
+
+		OldestXmin = vacrel->OldestXmin;
+		GetOldestNonRemovableTransactionId(NULL);
+
+		vacrel->OldestXmin = GetOldestNonRemovableTransactionId(rel);
+		vacrel->vistest = GlobalVisTestFor(vacrel->rel);
+
+		/*
+		 * Don't allow this code to run without actually advancing OldestXmin
+		 * more that a few times
+		 */
+		if (OldestXmin == vacrel->OldestXmin)
+			vacrel->badretries++;
+
+		vacrel->retries++;
+		restarted = true;
+
+		goto retry;
 	}
 
 	/*
@@ -2245,6 +2279,24 @@ lazy_vacuum(LVRelState *vacrel)
 	}
 	else if (lazy_vacuum_all_indexes(vacrel))
 	{
+		bool		may_restart = (vacrel->badretries < 3 && vacrel->retries < 3);
+
+		if (may_restart)
+		{
+			/*
+			 * Make sure we can set any VM bits during heap vacuuming now
+			 *
+			 * heap_page_is_all_visible() needs to have the latest info there
+			 * too.
+			 */
+			GetOldestNonRemovableTransactionId(NULL);
+
+			vacrel->OldestXmin = GetOldestNonRemovableTransactionId(vacrel->rel);
+			vacrel->vistest = GlobalVisTestFor(vacrel->rel);
+
+			vacrel->retries++;
+		}
+
 		/*
 		 * We successfully completed a round of index vacuuming.  Do related
 		 * heap vacuuming now.
