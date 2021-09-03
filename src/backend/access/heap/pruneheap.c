@@ -193,6 +193,28 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	}
 }
 
+bool
+heap_page_prune_target_page_abort(Relation relation, Buffer buffer)
+{
+	GlobalVisState *vistest;
+	TransactionId limited_xmin = InvalidTransactionId;
+	TimestampTz limited_ts = 0;
+
+	if (IsCatalogRelation(relation))
+		return false;
+	if (RecentXmin <= FirstNormalTransactionId)
+		return false;
+	if (!IsBufferCleanupOK(buffer))
+		return false;
+
+	vistest = GlobalVisTestFor(relation);
+
+	(void) heap_page_prune(relation, buffer, vistest,
+						   limited_xmin, limited_ts,
+						   true, NULL);
+
+	return true;
+}
 
 /*
  * Prune and repair fragmentation in the specified page.

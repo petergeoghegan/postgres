@@ -414,6 +414,16 @@ newtarget:
 		RelationSetTargetBlock(relation, targetBlock);
 		return buffer;
 	}
+	else if (heap_page_prune_target_page_abort(relation, buffer))
+	{
+		pageFreeSpace = PageGetHeapFreeSpace(page);
+
+		if (targetFreeSpace <= pageFreeSpace)
+		{
+			RelationSetTargetBlock(relation, targetBlock);
+			return buffer;
+		}
+	}
 
 	/*
 	 * Not enough space, so we must give up our page locks and pin (if any)
