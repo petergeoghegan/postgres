@@ -29,6 +29,7 @@
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "storage/condition_variable.h"
+#include "storage/freespace.h"
 #include "storage/indexfsm.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
@@ -867,8 +868,11 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * VACUUM's newly deleted pages does not even become safe by the time the
 	 * next VACUUM comes around.  See nbtree/README.)
 	 */
-	Assert(stats->pages_deleted >= stats->pages_free);
-	num_delpages = stats->pages_deleted - stats->pages_free;
+	if (stats->pages_deleted >= stats->pages_free)
+		num_delpages = stats->pages_deleted - stats->pages_free;
+	else
+		num_delpages = 0;
+
 	_bt_set_cleanup_info(info->index, num_delpages);
 
 	/*
@@ -1016,7 +1020,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 */
 	_bt_pendingfsm_finalize(rel, &vstate);
 	if (stats->pages_free > 0)
-		IndexFreeSpaceMapVacuum(rel);
+		BTreeIndexFreeSpaceMapVacuum(rel, &vstate);
 }
 
 /*
@@ -1125,8 +1129,8 @@ backtrack:
 	if (!opaque || BTPageIsRecyclable(page))
 	{
 		/* Okay to recycle this page (which could be leaf or internal) */
-		RecordFreeIndexPage(rel, blkno);
-		stats->pages_deleted++;
+		/* RecordFreeIndexPage(rel, blkno); */
+		/* stats->pages_deleted++; */
 		stats->pages_free++;
 	}
 	else if (P_ISDELETED(opaque))

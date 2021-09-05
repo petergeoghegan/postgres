@@ -19,7 +19,6 @@
 
 extern BlockNumber GetFreeIndexPage(Relation rel);
 extern void RecordFreeIndexPage(Relation rel, BlockNumber page);
-extern void RecordUsedIndexPage(Relation rel, BlockNumber page);
 
 extern void IndexFreeSpaceMapVacuum(Relation rel);
 

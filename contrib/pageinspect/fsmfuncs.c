@@ -71,11 +71,11 @@ fsm_mem_contents(PG_FUNCTION_ARGS)
 				 errmsg("must be superuser to use raw page functions")));
 
 	/* Open the relation */
-	heapRel = table_open(heapRelid, AccessShareLock);
+	heapRel = relation_open(heapRelid, AccessShareLock);
 
 	DebugFreeSpaceMapDump(heapRel, &sinfo);
 
-	table_close(heapRel, AccessShareLock);
+	relation_close(heapRel, AccessShareLock);
 
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(sinfo.data, sinfo.len));
 }

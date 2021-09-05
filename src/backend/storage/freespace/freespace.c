@@ -22,7 +22,6 @@
 
 #include "access/heapam.h"
 #include "access/hio.h"
-#include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "storage/freespace.h"
 #include "storage/ipc.h"
@@ -40,9 +39,10 @@
 /*
  * TODO: Make number of free lists configurable (storage param?)
  */
-#define FSM_MAX_BLOCKS_PER_FREELIST		128
-#define FSM_MAX_FREELISTS_PER_RELATION	16
-#define FSM_NOBULK_REL_BLOCKS			1024
+#define FSM_MAX_SPACE_FOR_BLOCKS_PER_FREELIST		2048
+#define FSM_MAX_BLOCKS_PER_FREELIST					128
+#define FSM_MAX_FREELISTS_PER_RELATION				16
+#define FSM_NOBULK_REL_BLOCKS						1024
 
 static int	fsm_max_nrelations = 10000; /* max # relations to track */
 
@@ -60,24 +60,33 @@ typedef struct FSMSharedState
 static FSMSharedState *fsm_shared_state = NULL;
 static HTAB *fsm_hash = NULL;
 
+typedef struct FSMFreeBlock
+{
+	BlockNumber		blk;
+	bool			deleted;
+
+} FSMFreeBlock;
+
 /*
  * Individual free list -- each relation holds one or more of these in shared
  * memory
  */
 typedef struct FSMFreeList
 {
-	int16		nextblockoff;	/* Offset to next consumable block */
-	int16		nblocksalloc;	/* Space in shared mem */
+	int			nextblockoff;	/* Offset to next consumable block */
+	int			nblocks_at_last_alloc;	/* Space in shared mem */
 	int			ownerpid;
 	FullTransactionId ownerxid;
 
-	/* Stats and other info for instrumentation */
-	int64		nblocksconsumed;	/* Number of satisified block requests */
-	int64		nrefreshes;		/* # rel extension ops */
+	int64		nblocksalloced;		/* Number of blocks actually allocated on disk */
+	int64		ndelblocks;			/* Number of deleted blocks received by this list */
+	int64		nconsumedblocks;	/* Number of satisfied block requests */
+
+	int64		nrefreshes;		/* # rel extension ops _or_ VACUUM ops */
 	FullTransactionId leaderxid;	/* Just for instrumentation */
 
 	/* Consumable blocks follow (interpreted using nextblockoff) */
-	BlockNumber blocks[FSM_MAX_BLOCKS_PER_FREELIST];
+	FSMFreeBlock blocks[FSM_MAX_SPACE_FOR_BLOCKS_PER_FREELIST];
 } FSMFreeList;
 
 typedef struct FSMRelationHashKey
@@ -93,8 +102,9 @@ typedef struct FSMRelation
 
 	/* Stats and other info for instrumentation */
 	int64		relnumextensionops;
+	int64		relnumvacuumops;
 	FullTransactionId rellastleaderxid;
-	int64		dbgreltotal;	/* Just complain once */
+	int64		dbgtotalnblocksalloced;	/* Just complain once */
 
 	/* Consumable free lists follow */
 	int			nfreelists;
@@ -126,19 +136,20 @@ BlockNumber
 GetPageWithFreeSpace(Relation rel, Size spaceNeeded, BulkInsertState bistate)
 {
 	FullTransactionId XactTopFullTransactionId;
-	FSMRelation *relfreelists;
+	FSMRelation *fsmrel;
 	uint32		targetlist;
 	int			bestlist = -1;
 	FullTransactionId oldestownerxid = InvalidFullTransactionId;
 
 	XactTopFullTransactionId = GetTopFullTransactionId();
 
+	/* TODO: Handle temp tables sensibly */
 	LWLockAcquire(FSMListLock, LW_EXCLUSIVE);
 
 	/* Find FSM entry for relation */
-	relfreelists = FSMGetRelation(rel, false);
+	fsmrel = FSMGetRelation(rel, false);
 
-	if (!relfreelists)
+	if (!fsmrel)
 	{
 		/* FIXME: Currently index AMs and stuff go through here */
 		LWLockRelease(FSMListLock);
@@ -153,7 +164,7 @@ GetPageWithFreeSpace(Relation rel, Size spaceNeeded, BulkInsertState bistate)
 	if (targetlist == PG_UINT32_MAX)
 	{
 		/* Not set up yet -- use default/initial criteria */
-		targetlist = MyProcPid % relfreelists->nfreelists;
+		targetlist = MyProcPid % fsmrel->nfreelists;
 		RelationGetSmgr(rel)->smgr_targlist = targetlist;
 	}
 
@@ -165,23 +176,23 @@ GetPageWithFreeSpace(Relation rel, Size spaceNeeded, BulkInsertState bistate)
 	 * the backend.
 	 */
 retry:
-	for (int i = 0; i < relfreelists->nfreelists; i++)
+	for (int i = 0; i < fsmrel->nfreelists; i++)
 	{
-		FSMFreeList *list = relfreelists->freelists + i;
-		int			nusable_blocks = list->nblocksalloc - list->nextblockoff;
+		FSMFreeList *flist = fsmrel->freelists + i;
+		int			nusable_blocks = flist->nblocks_at_last_alloc - flist->nextblockoff;
 
 		Assert(nusable_blocks >= 0);
-		Assert(nusable_blocks <= FSM_MAX_BLOCKS_PER_FREELIST);
+		Assert(nusable_blocks <= FSM_MAX_SPACE_FOR_BLOCKS_PER_FREELIST);
 
 		if (i != targetlist)
 		{
 			if (nusable_blocks > 0 &&
-				FullTransactionIdFollows(XactTopFullTransactionId, list->ownerxid) &&
+				FullTransactionIdFollows(XactTopFullTransactionId, flist->ownerxid) &&
 				(!FullTransactionIdIsValid(oldestownerxid) ||
-				 FullTransactionIdFollows(oldestownerxid, list->ownerxid)))
+				 FullTransactionIdFollows(oldestownerxid, flist->ownerxid)))
 			{
 
-				oldestownerxid = list->ownerxid;
+				oldestownerxid = flist->ownerxid;
 				bestlist = i;
 			}
 		}
@@ -190,18 +201,24 @@ retry:
 			/*
 			 * Success!
 			 *
-			 * Found our list, which is usable by backend -- it is good for at
-			 * least one block, and likely many more
+			 * Found our flist, which is usable by backend -- it is good for
+			 * at least one block, and likely many more
 			 */
-			BlockNumber newblock = list->blocks[list->nextblockoff++];
+			FSMFreeBlock newblock = flist->blocks[flist->nextblockoff++];
 
-			list->nblocksconsumed++;
-			list->ownerpid = MyProcPid;
-			list->ownerxid = XactTopFullTransactionId;
+			flist->ownerpid = MyProcPid;
+			flist->ownerxid = XactTopFullTransactionId;
+
+			/* Do accounting */
+			flist->nconsumedblocks++;
+			if (newblock.deleted)
+				flist->ndelblocks--;
+			Assert(flist->ndelblocks >= 0);
+			Assert(flist->nconsumedblocks >= 0);
 
 			LWLockRelease(FSMListLock);
 
-			return newblock;
+			return newblock.blk;
 		}
 	}
 
@@ -223,6 +240,12 @@ retry:
 	return InvalidBlockNumber;
 }
 
+BlockNumber
+BTreeGetIndexPageWithFreeSpace(Relation rel)
+{
+	return GetPageWithFreeSpace(rel, BLCKSZ, NULL);
+}
+
 /*
  * Returns buffer for leader backend
  */
@@ -231,24 +254,27 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 						   BulkInsertState bistate)
 {
 	FullTransactionId XactTopFullTransactionId = GetTopFullTransactionId();
-	int			blocksPerFreelist;
+	int			nblocks_per_freelist_this_alloc;
 	int			newnfreelists;
-	FSMRelation *relfreelists;
-	bool		leaderbufferfound = false;
-	BlockNumber newleaderblock = InvalidBlockNumber;
+	FSMRelation *fsmrel;
+	FSMFreeBlock newleaderblock = {InvalidBlockNumber, false};
 	Buffer		buffer;
 	Page		page;
 
 	/* find freelists for rel */
+	/* TODO: Handle temp tables sensibly */
 	LWLockAcquire(FSMListLock, LW_EXCLUSIVE);
-	relfreelists = FSMGetRelation(rel, false);
+	fsmrel = FSMGetRelation(rel, false);
 
-	if (relfreelists->relnblocks < FSM_NOBULK_REL_BLOCKS &&
-		relfreelists->nfreelists <= 1)
+	if (fsmrel->relnblocks < FSM_NOBULK_REL_BLOCKS &&
+		fsmrel->nfreelists <= 1 &&
+		fsmrel->freelists[0].nblocks_at_last_alloc <= FSM_MAX_BLOCKS_PER_FREELIST)
 	{
 		newnfreelists = 1;
-		blocksPerFreelist = Max(1, relfreelists->relnblocks * 2);
-		blocksPerFreelist = Min(blocksPerFreelist, 16);
+		nblocks_per_freelist_this_alloc =
+			Max(1, fsmrel->relnblocks * 2);
+		nblocks_per_freelist_this_alloc =
+				Min(nblocks_per_freelist_this_alloc, 16);
 	}
 	else
 	{
@@ -262,20 +288,21 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 			return;
 #endif
 		newnfreelists = FSM_MAX_FREELISTS_PER_RELATION;
-		blocksPerFreelist = FSM_MAX_BLOCKS_PER_FREELIST;
+		nblocks_per_freelist_this_alloc = FSM_MAX_BLOCKS_PER_FREELIST;
 	}
 
-	relfreelists->relnumextensionops++;
-	relfreelists->rellastleaderxid = XactTopFullTransactionId;
+	fsmrel->relnumextensionops++;
+	fsmrel->rellastleaderxid = XactTopFullTransactionId;
 
 #ifdef DEBUGLOG
-	elog(DEBUGLEVEL1, "FreeSpaceMapAddExtraBlocks: rel %s newnfreelists %d blocksPerFreelist %d",
-		 RelationGetRelationName(rel), newnfreelists, blocksPerFreelist);
+	elog(DEBUGLEVEL1, "FreeSpaceMapAddExtraBlocks: rel %s newnfreelists %d nblocks_per_freelist_this_alloc %d",
+		 RelationGetRelationName(rel), newnfreelists,
+		 nblocks_per_freelist_this_alloc);
 #endif
 
 	for (int i = 0; i < newnfreelists; i++)
 	{
-		FSMFreeList *flist = relfreelists->freelists + i;
+		FSMFreeList *flist = fsmrel->freelists + i;
 
 		/*
 		 * Skip over any of the rel's free lists that are not already
@@ -284,12 +311,13 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 		 * The authoritative nfreelists from shared memory (which we test
 		 * here) will be updated below.
 		 */
-		if (i >= relfreelists->nfreelists ||
-			flist->nextblockoff == flist->nblocksalloc)
+		if (i >= fsmrel->nfreelists ||
+			flist->nextblockoff == flist->nblocks_at_last_alloc)
 		{
 			/* Reset fields for this free list */
 			flist->nextblockoff = 0;
-			flist->nblocksalloc = 0;
+			/*  nblocks_at_last_alloc might be going up or down here: */
+			flist->nblocks_at_last_alloc = nblocks_per_freelist_this_alloc;
 			flist->ownerpid = 0;
 			flist->ownerxid = FirstNormalFullTransactionId;
 
@@ -299,9 +327,9 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 			 */
 			flist->nrefreshes++;
 			flist->leaderxid = XactTopFullTransactionId;
-			for (int j = 0; j < blocksPerFreelist; j++)
+			for (int j = 0; j < nblocks_per_freelist_this_alloc; j++)
 			{
-				BlockNumber blockNum;
+				FSMFreeBlock newblock;
 
 				/*
 				 * Extend this free list by a single page.
@@ -316,8 +344,8 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 				 * RelationGetNumberOfBlocks() within shared memory.  Exact
 				 * boundaries unclear at this time.
 				 */
-				relfreelists->relnblocks++;
-				flist->nblocksalloc++;
+				fsmrel->relnblocks++;
+				flist->nblocksalloced++;
 
 				/*
 				 * This should generally match the main-line extension code in
@@ -341,29 +369,27 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 				 * we need to deal with uninitialized pages anyway, thus avoid
 				 * the potential for unnecessary writes.
 				 */
-				blockNum = BufferGetBlockNumber(buffer);
+				newblock.blk = BufferGetBlockNumber(buffer);
+				newblock.deleted = false;
 				UnlockReleaseBuffer(buffer);
-				flist->blocks[j] = blockNum;
+				flist->blocks[j] = newblock;
 
 #ifdef DEBUGLOG
-				elog(DEBUGLEVEL1, "FreeSpaceMapAddExtraBlocks loop: rel %s allocating block %u in freelist # %d relfreelists %d",
-					 RelationGetRelationName(rel), blockNum, i, j);
+				elog(DEBUGLEVEL1, "FreeSpaceMapAddExtraBlocks loop: rel %s allocating block %u in freelist # %d of fsmrel # %d",
+					 RelationGetRelationName(rel), newblock.blk, i, j);
 #endif
-
-				Assert(flist->nblocksalloc < PG_INT16_MAX);
 			}
 		}
-		if (!leaderbufferfound)
+		if (!BlockNumberIsValid(newleaderblock.blk))
 		{
-			Assert(flist->nextblockoff < flist->nblocksalloc);
+			Assert(flist->nextblockoff < flist->nblocks_at_last_alloc);
 
 			/* Leader must return a block for itself */
 			RelationGetSmgr(rel)->smgr_targlist = i;
 			newleaderblock = flist->blocks[flist->nextblockoff++];
-			flist->nblocksconsumed++;
+			flist->nconsumedblocks++;
 			flist->ownerpid = MyProcPid;
 			flist->ownerxid = XactTopFullTransactionId;
-			leaderbufferfound = true;
 		}
 	}
 
@@ -371,7 +397,7 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 	 * Update the number of freelists, which may have gone up compared to the
 	 * last call here
 	 */
-	relfreelists->nfreelists = newnfreelists;
+	fsmrel->nfreelists = newnfreelists;
 
 	/*
 	 * Return exclusively-locked buffer to leader backend -- this needs to
@@ -380,15 +406,141 @@ FreeSpaceMapAddExtraBlocks(Relation rel, Size spaceNeeded,
 	 *
 	 * XXX: Really?
 	 */
-	Assert(leaderbufferfound);
-	buffer = ReadBufferBI(rel, newleaderblock, RBM_NORMAL, bistate);
+	buffer = ReadBufferBI(rel, newleaderblock.blk, RBM_NORMAL, bistate);
 	LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
 
 	LWLockRelease(FSMListLock);
 
-	RelationSetTargetBlock(rel, newleaderblock);
-
 	return buffer;
+}
+
+void
+BTreeIndexFreeSpaceMapVacuum(Relation rel, BTVacState *vstate)
+{
+	FSMRelation *fsmrel;
+	int			freeblockn = 0;
+
+	/* find freelists for rel */
+	/* TODO: Handle temp tables sensibly */
+	LWLockAcquire(FSMListLock, LW_EXCLUSIVE);
+	fsmrel = FSMGetRelation(rel, false);
+
+	fsmrel->relnumvacuumops++;
+
+	for (int i = 0; i < fsmrel->nfreelists; i++)
+	{
+		FSMFreeList *flist = fsmrel->freelists + i;
+
+		/*
+		 * Skip over any of the rel's free lists that are not already
+		 * exhausted, except when we're initializing it for the first time.
+		 *
+		 * The authoritative nfreelists from shared memory (which we test
+		 * here) will be updated below.
+		 */
+		if (flist->nextblockoff == flist->nblocks_at_last_alloc)
+		{
+			/*
+			 * Don't expand number of blocks per free list (stick with
+			 * preexisting sizing of freelists).  Fill this empty list to that
+			 * capacity (with deleted pages) once more.
+			 */
+			for (int j = 0; j < flist->nblocks_at_last_alloc; j++)
+			{
+				FSMFreeBlock newblock;
+
+				if (vstate->npendingpages == freeblockn)
+					break;
+
+				/*
+				 * Don't increment nblocksalloced here -- this is an existing
+				 * block.  Just increment nblocksdeleted blocks received from
+				 * VACUUM like this.
+				 */
+				if (j == 0)
+				{
+					flist->nextblockoff = 0;
+					flist->ownerpid = 0;
+					flist->nrefreshes++;
+					flist->leaderxid = InvalidFullTransactionId;
+					flist->ownerxid = FirstNormalFullTransactionId;
+				}
+				newblock.blk = vstate->pendingpages[freeblockn++].target;
+				newblock.deleted = true;
+				flist->blocks[j] = newblock;
+
+				/* Do accounting */
+				flist->ndelblocks++;
+				flist->nconsumedblocks--;
+				Assert(flist->ndelblocks >= 0);
+				Assert(flist->nconsumedblocks >= 0);
+			}
+		}
+	}
+
+	if (vstate->npendingpages > freeblockn)
+	{
+		/*
+		 * We have more deleted pages than we can use to backfill the empty
+		 * lists.  So we're going to backfill non-empty lists now.
+		 *
+		 * We're even going to grow the lists considerably in the process.
+		 */
+		for (int i = 0; i < fsmrel->nfreelists; i++)
+		{
+			FSMFreeList *flist = fsmrel->freelists + i;
+
+			if (flist->nextblockoff < flist->nblocks_at_last_alloc &&
+				flist->nextblockoff > 0)
+			{
+				int numexistingblocks = flist->nblocks_at_last_alloc - flist->nextblockoff;
+				int numextrablockstoadd;
+				int nremainingdelpages = vstate->npendingpages - freeblockn;
+
+				if (nremainingdelpages == 0)
+					break;
+
+				numextrablockstoadd = FSM_MAX_SPACE_FOR_BLOCKS_PER_FREELIST -
+									  numexistingblocks;
+				numextrablockstoadd = Min(numextrablockstoadd, nremainingdelpages);
+
+				if (numextrablockstoadd == 0)
+					break;
+
+				memmove(&flist->blocks[0], &flist->blocks[flist->nextblockoff],
+						sizeof(BlockNumber) * numexistingblocks);
+				flist->nextblockoff = 0; /* This is actually the same next block logically */
+				flist->ownerxid = FirstNormalFullTransactionId;
+				flist->nblocks_at_last_alloc = FSM_MAX_SPACE_FOR_BLOCKS_PER_FREELIST;
+				flist->nrefreshes++;
+
+				for (int j = 0; j < numextrablockstoadd; j++)
+				{
+					FSMFreeBlock newblock;
+
+					if (vstate->npendingpages == freeblockn)
+						break;
+
+					newblock.blk = vstate->pendingpages[freeblockn++].target;
+					newblock.deleted = true;
+					flist->blocks[numexistingblocks + j] = newblock;
+
+					/* Do accounting */
+					flist->ndelblocks++;
+					flist->nconsumedblocks--;
+					Assert(flist->ndelblocks >= 0);
+					Assert(flist->nconsumedblocks >= 0);
+				}
+			}
+		}
+	}
+
+	if (vstate->npendingpages > freeblockn)
+		elog(WARNING, "index %s leaking %d out of %d deleted pages due to lack of shared mem",
+			 RelationGetRelationName(rel), vstate->npendingpages - freeblockn,
+			 vstate->npendingpages);
+
+	LWLockRelease(FSMListLock);
 }
 
 /*
@@ -531,43 +683,73 @@ FreeSpaceMapShmemInit(void)
 							 HASH_FIXED_SIZE);
 }
 
+/*
+ * Debugging aid
+ *
+ * Doesn't actually report blocks allocated.  Actually reports blocks consumed
+ * so far.  This is just an easy way of keeping track of what's really going
+ * on during high level testing; SQL can call pg_relation_size(oid, 'fsm') to
+ * see the number of consumed blocks.
+ *
+ * Note: FSMGetRelation() will pretend that the first list had all blocks ever
+ * allocated and consumed when we reset list for a relation (e.g., following
+ * server restart).
+ *
+ * XXX: This relies on the assumption that the number of freelists for a rel
+ * can only ever increase.  Though we still do allow nblocks_at_last_alloc to
+ * go up and down as conditions dictate.
+ */
 int64
 FreeSpaceMapRelationGetNumberOfBlocks(RelFileNode rfn)
 {
 
-	FSMRelation frelfreelists;
-	FSMRelation *relfreelists;
-	int64		totalnblocksconsumed = 0;
+	FSMRelation key;
+	FSMRelation *fsmrel;
+	int64		totalnblocksalloced = 0;
+	int64		totalnconsumedblocks = 0;
+	int64		totalndelblocks = 0;
 
-	memset(&frelfreelists.key, 0, sizeof(FSMRelationHashKey));
-	frelfreelists.key.relfilenode = rfn;
+	memset(&key.key, 0, sizeof(FSMRelationHashKey));
+	key.key.relfilenode = rfn;
 
 	LWLockAcquire(FSMListLock, LW_SHARED);
 
 	/* Find or create an entry with desired hash code */
-	relfreelists = (FSMRelation *) hash_search(fsm_hash, &frelfreelists.key,
-											   HASH_FIND, NULL);
-
-	if (relfreelists)
+	fsmrel = (FSMRelation *) hash_search(fsm_hash, &key.key, HASH_FIND, NULL);
+	if (fsmrel)
 	{
-		for (int i = 0; i < relfreelists->nfreelists; i++)
+		for (int i = 0; i < fsmrel->nfreelists; i++)
 		{
-			FSMFreeList *list = relfreelists->freelists + i;
+			FSMFreeList *flist = fsmrel->freelists + i;
 
-			totalnblocksconsumed += list->nblocksconsumed;
+			totalnblocksalloced += flist->nblocksalloced;
+			totalnconsumedblocks += flist->nconsumedblocks;
+			totalndelblocks += flist->ndelblocks;
 		}
 	}
 
 	LWLockRelease(FSMListLock);
 
-	return totalnblocksconsumed;
+
+	Assert(totalnconsumedblocks <= totalnblocksalloced);
+	Assert(totalnconsumedblocks >= totalndelblocks);
+
+	/*
+	 * The number of consumed blocks can go down when we delete a page -- it
+	 * is effectively unconsumed.  Account for this here -- show caller the
+	 * total number of blocks that have been written to at least once.
+	 *
+	 * We only leave out sparsely allocated blocks not yet consumed (much less
+	 * deleted) even once.
+	 */
+	return totalnconsumedblocks + totalndelblocks;
 }
 
 static FSMRelation *
 FSMGetRelation(Relation rel, bool reset)
 {
 	FSMRelation key;
-	FSMRelation *relfreelists;
+	FSMRelation *fsmrel;
 	bool		found;
 
 	/*
@@ -583,16 +765,17 @@ FSMGetRelation(Relation rel, bool reset)
 #endif
 
 	/* Find or create an entry with desired hash code */
-	relfreelists = (FSMRelation *) hash_search(fsm_hash, &key.key, HASH_ENTER,
-											   &found);
+	fsmrel = (FSMRelation *) hash_search(fsm_hash, &key.key, HASH_ENTER,
+										 &found);
 
 	if (!found || reset)
 	{
 		/* New entry, initialize it */
-		relfreelists->nfreelists = 1;
-		relfreelists->relnumextensionops = 0;
-		relfreelists->rellastleaderxid = InvalidFullTransactionId;
-		relfreelists->dbgreltotal = -1;
+		fsmrel->nfreelists = 1;
+		fsmrel->relnumextensionops = 0;
+		fsmrel->relnumvacuumops = 0;
+		fsmrel->rellastleaderxid = InvalidFullTransactionId;
+		fsmrel->dbgtotalnblocksalloced = -1;
 
 		/*
 		 * We track total relation size in shared memory
@@ -600,62 +783,76 @@ FSMGetRelation(Relation rel, bool reset)
 		 * FIXME: relnblocks field doesn't yet reliably agree with
 		 * RelationGetNumberOfBlocks().
 		 */
-		relfreelists->relnblocks = RelationGetNumberOfBlocks(rel);
+		fsmrel->relnblocks = RelationGetNumberOfBlocks(rel);
+
+		/*
+		 * For now just say that all alloc'd blocks were allocated using
+		 * first and only freelist -- keep debugging stuff happy this way
+		 */
+		fsmrel->freelists[0].nblocks_at_last_alloc = 0;
+		fsmrel->freelists[0].nextblockoff = 0;
+		fsmrel->freelists[0].nblocksalloced = fsmrel->relnblocks;
+		fsmrel->freelists[0].ndelblocks = 0;
+		fsmrel->freelists[0].nconsumedblocks = fsmrel->relnblocks;
 	}
 #ifdef USE_ASSERT_CHECKING
-	else
+	else if (!RelationUsesLocalBuffers(rel) &&
+			 (rel->rd_rel->relam == HEAP_TABLE_AM_OID ||
+			  rel->rd_rel->relam == BTREE_AM_OID))
 	{
-		int64		totalnblocksconsumed = 0;
+		int64		totalnblocksalloced = 0;
+		int64		totalnconsumedblocks = 0;
 		int64		totalnblocksavailnow = 0;
 		int64		nblocks = RelationGetNumberOfBlocks(rel);
-		int64		reltotal;
 
 		/* Assert(relfreelists->nfreelists >= 1); */
-		Assert(relfreelists->nfreelists <= FSM_MAX_FREELISTS_PER_RELATION);
+		Assert(fsmrel->nfreelists <= FSM_MAX_FREELISTS_PER_RELATION);
 
-		for (int i = 0; i < relfreelists->nfreelists; i++)
+		for (int i = 0; i < fsmrel->nfreelists; i++)
 		{
-			FSMFreeList *list = relfreelists->freelists + i;
+			FSMFreeList *flist = fsmrel->freelists + i;
 
 			/* Tally # of all blocks every consumed from all lists */
-			totalnblocksconsumed += list->nblocksconsumed;
-			totalnblocksavailnow += list->nblocksalloc - list->nextblockoff;
+			totalnblocksalloced  += flist->nblocksalloced;
+			totalnconsumedblocks += flist->nconsumedblocks;
+			totalnblocksavailnow += flist->nblocks_at_last_alloc - flist->nextblockoff;
 		}
-
-		reltotal = totalnblocksconsumed + totalnblocksavailnow;
 
 		/*
 		 * Pageinspect tests don't look at output, but try to catch egregious
 		 * regressions here:
 		 */
-		if (nblocks != reltotal && reltotal != relfreelists->dbgreltotal)
+		if (nblocks != totalnblocksalloced &&
+			totalnblocksalloced != fsmrel->dbgtotalnblocksalloced)
 		{
-			if (!IsCatalogRelation(rel))
-				elog(DEBUGLEVEL1, "%s leaked %lu (authoritative nblocks: %lu, reltotal: %lu)",
-					 RelationGetRelationName(rel), nblocks - reltotal,
-					 nblocks, reltotal);
+			elog(WARNING, "%s leaked %lu (authoritative nblocks: %lu, totalnblocksalloced: %lu)",
+				 RelationGetRelationName(rel), nblocks - totalnblocksalloced,
+				 nblocks, totalnblocksalloced);
 
-			relfreelists->dbgreltotal = reltotal;	/* Just complain once */
+			fsmrel->dbgtotalnblocksalloced = totalnblocksalloced;	/* Just complain once */
 		}
 	}
 #endif
 
-	return relfreelists;
+	return fsmrel;
 }
 
 static BlockNumber
 FSMRelationReset(Relation rel, BlockNumber nblocks)
 {
-	FSMRelation *relfreelists;
+	FSMRelation *fsmrel;
 
 	LWLockAcquire(FSMListLock, LW_EXCLUSIVE);
-	relfreelists = FSMGetRelation(rel, true);
-	if (relfreelists)
+	fsmrel = FSMGetRelation(rel, true);
+	if (fsmrel)
 	{
-		relfreelists->relnblocks = nblocks;
-		relfreelists->nfreelists = 1;
-		relfreelists->freelists[0].nextblockoff = relfreelists->freelists[0].nblocksalloc;
-		relfreelists->freelists[0].nblocksconsumed = nblocks;
+		fsmrel->relnblocks = nblocks;
+		fsmrel->nfreelists = 1;
+		/* XXX Change nblocks_at_last_alloc here? */
+		fsmrel->freelists[0].nextblockoff = fsmrel->freelists[0].nblocks_at_last_alloc;
+		fsmrel->freelists[0].nblocksalloced = nblocks;
+		fsmrel->freelists[0].ndelblocks = 0;
+		fsmrel->freelists[0].nconsumedblocks = nblocks;
 	}
 	LWLockRelease(FSMListLock);
 	return InvalidBlockNumber;
@@ -667,66 +864,69 @@ FSMRelationReset(Relation rel, BlockNumber nblocks)
 void
 DebugFreeSpaceMapDump(Relation rel, StringInfo sinfo)
 {
-	FSMRelation frelfreelists;
-	FSMRelation *relfreelists;
-	int64		totalnblocksconsumed = 0;
+	FSMRelation key;
+	FSMRelation *fsmrel;
+	int64		totalnblocksalloced = 0;
+	int64		totalnconsumedblocks = 0;
 	int64		totalnblocksavailnow = 0;
-	int64		nblocks = RelationGetNumberOfBlocks(rel);
+	int64		nblocks;
 
-	memset(&frelfreelists.key, 0, sizeof(FSMRelationHashKey));
-	frelfreelists.key.relfilenode = rel->rd_node;
+	memset(&key.key, 0, sizeof(FSMRelationHashKey));
+	key.key.relfilenode = rel->rd_node;
 
 	initStringInfo(sinfo);
 
 	LWLockAcquire(FSMListLock, LW_SHARED);
 
-	/* Find or create an entry with desired hash code */
-	relfreelists = (FSMRelation *) hash_search(fsm_hash, &frelfreelists.key,
-											   HASH_FIND, NULL);
+	nblocks = RelationGetNumberOfBlocks(rel);
 
-	if (relfreelists)
+	/* Find or create an entry with desired hash code */
+	fsmrel = (FSMRelation *) hash_search(fsm_hash, &key.key, HASH_FIND, NULL);
+	if (fsmrel)
 	{
-		RelFileNode relfilenode = relfreelists->key.relfilenode;
-		int64		reltotal;
+		RelFileNode relfilenode = fsmrel->key.relfilenode;
 
 		appendStringInfo(sinfo, "%u/%u/%u:\n\n",
 						 relfilenode.spcNode, relfilenode.dbNode,
 						 relfilenode.relNode);
 
-		for (int i = 0; i < relfreelists->nfreelists; i++)
+		for (int i = 0; i < fsmrel->nfreelists; i++)
 		{
-			FSMFreeList *list = relfreelists->freelists + i;
+			FSMFreeList *flist = fsmrel->freelists + i;
 
-			appendStringInfo(sinfo, "    %d - nextblockoff: %d[blk %d]/%d, ownerxid: %u:%u, nblocksconsumed: %ld, nrefreshes: %ld, lastLeader: %u:%u\n",
-							 i, list->nextblockoff, (list->nextblockoff == list->nblocksalloc ? -1 : list->blocks[list->nextblockoff]), list->nblocksalloc,
-							 EpochFromFullTransactionId(list->ownerxid),
-							 XidFromFullTransactionId(list->ownerxid),
-							 list->nblocksconsumed, list->nrefreshes,
-							 EpochFromFullTransactionId(list->leaderxid),
-							 XidFromFullTransactionId(list->leaderxid));
+			appendStringInfo(sinfo, "    %d - nextblockoff: %d[blk %d]/%d, ownerxid: %u:%u, nconsumedblocks: %ld, nrefreshes: %ld, lastLeader: %u:%u\n",
+							 i, flist->nextblockoff,
+							 (flist->nextblockoff == flist->nblocks_at_last_alloc ? -1 : flist->blocks[flist->nextblockoff].blk),
+							 flist->nblocks_at_last_alloc,
+							 EpochFromFullTransactionId(flist->ownerxid),
+							 XidFromFullTransactionId(flist->ownerxid),
+							 flist->nconsumedblocks, flist->nrefreshes,
+							 EpochFromFullTransactionId(flist->leaderxid),
+							 XidFromFullTransactionId(flist->leaderxid));
 
 			/* Tally # of all blocks every consumed from all lists */
-			totalnblocksconsumed += list->nblocksconsumed;
-			totalnblocksavailnow += list->nblocksalloc - list->nextblockoff;
+			totalnblocksalloced += flist->nblocksalloced;
+			totalnconsumedblocks += flist->nconsumedblocks;
+			totalnblocksavailnow += flist->nblocks_at_last_alloc - flist->nextblockoff;
 		}
 
-		reltotal = totalnblocksconsumed + totalnblocksavailnow;
-		appendStringInfo(sinfo, "  totalnblocksconsumed: %lu, totalnblocksavailnow: %lu (reltotal: %lu, RelationGetNumberOfBlocks()-wise leaked: %lu)\n",
-						 totalnblocksconsumed, totalnblocksavailnow,
-						 reltotal, nblocks - reltotal);
-		appendStringInfo(sinfo, "rellastleaderxid: %u:%u, relnumextensionops: %lu\n",
-						 EpochFromFullTransactionId(relfreelists->rellastleaderxid),
-						 XidFromFullTransactionId(relfreelists->rellastleaderxid),
-						 relfreelists->relnumextensionops);
-		appendStringInfo(sinfo, "RelationGetNumberOfBlocks(): %lu, relfreelists->relnblocks: %u (these should match)\n",
-						 nblocks, relfreelists->relnblocks);
+		appendStringInfo(sinfo, "  totalnconsumedblocks: %lu, totalnblocksavailnow: %lu, totalnblocksalloced : %lu, RelationGetNumberOfBlocks(): %lu\n",
+						 totalnconsumedblocks, totalnblocksavailnow,
+						 totalnblocksalloced, nblocks);
+		appendStringInfo(sinfo, "rellastleaderxid: %u:%u, relnumextensionops: %lu, fsmrel->relnumvacuumops: %lu\n",
+						 EpochFromFullTransactionId(fsmrel->rellastleaderxid),
+						 XidFromFullTransactionId(fsmrel->rellastleaderxid),
+						 fsmrel->relnumextensionops,
+						 fsmrel->relnumvacuumops);
+		appendStringInfo(sinfo, "RelationGetNumberOfBlocks(): %lu, fsmrel->relnblocks: %u (these should match)\n",
+						 nblocks, fsmrel->relnblocks);
 
 		/*
 		 * Pageinspect tests don't look at output, but try to catch egregious
 		 * regressions here:
 		 */
-		if (nblocks != reltotal)
-			elog(WARNING, "leaked %lu", nblocks - reltotal);
+		if (nblocks != fsmrel->relnblocks)
+			elog(WARNING, "leaked %lu", nblocks - fsmrel->relnblocks);
 	}
 
 	LWLockRelease(FSMListLock);
@@ -736,7 +936,7 @@ void
 DebugFreeSpaceMapDumpAllRels(StringInfo sinfo)
 {
 	HASH_SEQ_STATUS hash_seq;
-	FSMRelation *relfreelists = NULL;
+	FSMRelation *fsmrel = NULL;
 	int			n = 0;
 
 	initStringInfo(sinfo);
@@ -746,13 +946,13 @@ DebugFreeSpaceMapDumpAllRels(StringInfo sinfo)
 	Assert(fsm_hash != NULL);
 
 	hash_seq_init(&hash_seq, fsm_hash);
-	while ((relfreelists = hash_seq_search(&hash_seq)) != NULL)
+	while ((fsmrel = hash_seq_search(&hash_seq)) != NULL)
 	{
 		Relation rel = NULL;
-		RelFileNode relfilenode = relfreelists->key.relfilenode;
+		RelFileNode relfilenode = fsmrel->key.relfilenode;
 		Oid			reloid;
-		int64		reltotal;
-		int64		totalnblocksconsumed = 0;
+		int64		totalnblocksalloced = 0;
+		int64		totalnconsumedblocks = 0;
 		int64		totalnblocksavailnow = 0;
 
 		reloid = RelidByRelfilenode(relfilenode.spcNode, relfilenode.relNode);
@@ -764,7 +964,7 @@ DebugFreeSpaceMapDumpAllRels(StringInfo sinfo)
 			appendStringInfo(sinfo, "rel # %d (unknown) %u/%u/%u has %d freelists:\n",
 							 n++, relfilenode.spcNode, relfilenode.dbNode,
 							 relfilenode.relNode,
-							 relfreelists->nfreelists);
+							 fsmrel->nfreelists);
 		}
 		else
 		{
@@ -772,45 +972,47 @@ DebugFreeSpaceMapDumpAllRels(StringInfo sinfo)
 							 n++, RelationGetRelationName(rel),
 							 relfilenode.spcNode, relfilenode.dbNode,
 							 relfilenode.relNode,
-							 relfreelists->nfreelists);
+							 fsmrel->nfreelists);
 		}
 
-		for (int i = 0; i < relfreelists->nfreelists; i++)
+		for (int i = 0; i < fsmrel->nfreelists; i++)
 		{
-			FSMFreeList *list = relfreelists->freelists + i;
+			FSMFreeList *flist = fsmrel->freelists + i;
 
-			appendStringInfo(sinfo, "    %d - nextblockoff: %d[blk %d]/%d, ownerxid: %u:%u, nblocksconsumed: %ld, nrefreshes: %ld, lastLeader: %u:%u\n",
-							 i, list->nextblockoff, (list->nextblockoff == list->nblocksalloc ? -1 : list->blocks[list->nextblockoff]), list->nblocksalloc,
-							 EpochFromFullTransactionId(list->ownerxid),
-							 XidFromFullTransactionId(list->ownerxid),
-							 list->nblocksconsumed, list->nrefreshes,
-							 EpochFromFullTransactionId(list->leaderxid),
-							 XidFromFullTransactionId(list->leaderxid));
+			appendStringInfo(sinfo, "    %d - nextblockoff: %d[blk %d]/%d, ownerxid: %u:%u, nconsumedblocks: %ld, nrefreshes: %ld, lastLeader: %u:%u\n",
+							 i, flist->nextblockoff,
+							 (flist->nextblockoff == flist->nblocks_at_last_alloc ? -1 : flist->blocks[flist->nextblockoff].blk), flist->nblocks_at_last_alloc,
+							 EpochFromFullTransactionId(flist->ownerxid),
+							 XidFromFullTransactionId(flist->ownerxid),
+							 flist->nconsumedblocks, flist->nrefreshes,
+							 EpochFromFullTransactionId(flist->leaderxid),
+							 XidFromFullTransactionId(flist->leaderxid));
 
 			/* Tally # of all blocks every consumed from all lists */
-			totalnblocksconsumed += list->nblocksconsumed;
-			totalnblocksavailnow += list->nblocksalloc - list->nextblockoff;
+			totalnblocksalloced  += flist->nblocksalloced;
+			totalnconsumedblocks += flist->nconsumedblocks;
+			totalnblocksavailnow += flist->nblocks_at_last_alloc - flist->nextblockoff;
 		}
 
-		reltotal = totalnblocksconsumed + totalnblocksavailnow;
 		if (!rel)
-			appendStringInfo(sinfo, "  totalnblocksconsumed: %lu, totalnblocksavailnow: %lu (reltotal: %lu)\n",
-							 totalnblocksconsumed, totalnblocksavailnow,
-							 reltotal);
+			appendStringInfo(sinfo, "  totalnblocksalloced: %lu, totalnconsumedblocks: %lu, totalnblocksavailnow: %lu\n",
+							 totalnblocksalloced, totalnconsumedblocks,
+							 totalnblocksavailnow);
 		else
 		{
 			int64		nblocks = RelationGetNumberOfBlocks(rel);
 
-			appendStringInfo(sinfo, "  totalnblocksconsumed: %lu, totalnblocksavailnow: %lu (reltotal: %lu, relationgetnumberofblocks()-wise leaked: %lu)\n",
-							 totalnblocksconsumed, totalnblocksavailnow,
-							 reltotal, nblocks - reltotal);
-			if (nblocks != reltotal)
-				elog(DEBUG1, "leaked %lu from rel \"%s\"", nblocks - reltotal,RelationGetRelationName(rel));
+			appendStringInfo(sinfo, "  totalnblocksalloced: %lu, totalnconsumedblocks: %lu, totalnblocksavailnow: %lu (relationgetnumberofblocks()-wise leaked: %lu)\n",
+							 totalnblocksalloced, totalnconsumedblocks,
+							 totalnblocksavailnow, nblocks - totalnblocksalloced);
+			if (nblocks != totalnblocksalloced)
+				elog(WARNING, "leaked %lu from rel \"%s\"", nblocks - totalnblocksalloced, RelationGetRelationName(rel));
 		}
-		appendStringInfo(sinfo, "  rellastleaderxid: %u:%u, relnumextensionops: %lu\n\n",
-						 EpochFromFullTransactionId(relfreelists->rellastleaderxid),
-						 XidFromFullTransactionId(relfreelists->rellastleaderxid),
-						 relfreelists->relnumextensionops);
+		appendStringInfo(sinfo, "  rellastleaderxid: %u:%u, relnumextensionops: %lu, relnumvacuumops: %lu\n\n",
+						 EpochFromFullTransactionId(fsmrel->rellastleaderxid),
+						 XidFromFullTransactionId(fsmrel->rellastleaderxid),
+						 fsmrel->relnumextensionops,
+						 fsmrel->relnumvacuumops);
 
 		if (rel)
 			relation_close(rel, AccessShareLock);

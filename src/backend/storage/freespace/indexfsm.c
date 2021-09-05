@@ -38,13 +38,6 @@ BlockNumber
 GetFreeIndexPage(Relation rel)
 {
 	/* FIXME */
-#if 0
-	BlockNumber blkno = GetPageWithFreeSpace(rel, BLCKSZ / 2, NULL);
-
-	if (blkno != InvalidBlockNumber)
-		RecordUsedIndexPage(rel, blkno);
-#endif
-
 	return InvalidBlockNumber;
 }
 
@@ -54,17 +47,7 @@ GetFreeIndexPage(Relation rel)
 void
 RecordFreeIndexPage(Relation rel, BlockNumber freeBlock)
 {
-	RecordPageWithFreeSpace(rel, freeBlock, BLCKSZ - 1);
-}
-
-
-/*
- * RecordUsedIndexPage - mark a page as used in the FSM
- */
-void
-RecordUsedIndexPage(Relation rel, BlockNumber usedBlock)
-{
-	RecordPageWithFreeSpace(rel, usedBlock, 0);
+	/* FIXME */
 }
 
 /*

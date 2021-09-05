@@ -15,6 +15,7 @@
 #define FREESPACE_H_
 
 #include "access/heapam.h"
+#include "access/nbtree.h"
 #include "storage/block.h"
 #include "storage/relfilenode.h"
 #include "utils/relcache.h"
@@ -23,9 +24,11 @@
 extern Size GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk);
 extern BlockNumber GetPageWithFreeSpace(Relation rel, Size spaceNeeded,
 										BulkInsertState bistate);
+extern BlockNumber BTreeGetIndexPageWithFreeSpace(Relation rel);
 extern Buffer FreeSpaceMapAddExtraBlocks(Relation rel,
 										 Size spaceNeeded,
 										 BulkInsertState bistate);
+extern void BTreeIndexFreeSpaceMapVacuum(Relation rel, BTVacState *vstate);
 extern BlockNumber RecordAndGetPageWithFreeSpace(Relation rel,
 												 BlockNumber oldPage,
 												 Size oldSpaceAvail,
@@ -38,6 +41,7 @@ extern void XLogRecordPageWithFreeSpace(RelFileNode rnode, BlockNumber heapBlk,
 extern BlockNumber FreeSpaceMapPrepareTruncateRel(Relation rel,
 												  BlockNumber nblocks);
 extern void FreeSpaceMapVacuum(Relation rel);
+
 extern void FreeSpaceMapVacuumRange(Relation rel, BlockNumber start,
 									BlockNumber end);
 extern Size FreeSpaceMapShmemSize(void);

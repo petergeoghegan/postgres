@@ -29,6 +29,7 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
+#include "storage/freespace.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -912,9 +913,10 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 		 */
 		for (;;)
 		{
-			blkno = GetFreeIndexPage(rel);
+			blkno = BTreeGetIndexPageWithFreeSpace(rel);
 			if (blkno == InvalidBlockNumber)
 				break;
+check:
 			buf = ReadBuffer(rel, blkno);
 			if (_bt_conditionallockbuf(rel, buf))
 			{
@@ -972,12 +974,17 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 		needLock = !RELATION_IS_LOCAL(rel);
 
 		if (needLock)
+		{
 			LockRelationForExtension(rel, ExclusiveLock);
+			blkno = BTreeGetIndexPageWithFreeSpace(rel);
+			if (blkno != InvalidBlockNumber)
+			{
+				UnlockRelationForExtension(rel, ExclusiveLock);
+				goto check;
+			}
+		}
 
-		buf = ReadBuffer(rel, P_NEW);
-
-		/* Acquire buffer lock on new page */
-		_bt_lockbuf(rel, buf, BT_WRITE);
+		buf = FreeSpaceMapAddExtraBlocks(rel, BLCKSZ, NULL);
 
 		/*
 		 * Release the file-extension lock; it's now OK for someone else to
@@ -3009,8 +3016,6 @@ _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
 		RecordFreeIndexPage(rel, target);
 		stats->pages_free++;
 	}
-
-	pfree(vstate->pendingpages);
 }
 
 /*
