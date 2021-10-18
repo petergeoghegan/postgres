@@ -75,12 +75,12 @@ SELECT bt_index_check('bttest_a_idx', true);
 -- normal check outside of xact for index with included columns
 SELECT bt_index_check('bttest_multi_idx');
 -- more expansive tests for index with included columns
-SELECT bt_index_parent_check('bttest_multi_idx', true);
+SELECT bt_index_parent_check('bttest_multi_idx', true, true);
 
 -- repeat expansive tests for index built using insertions
 TRUNCATE bttest_multi;
 INSERT INTO bttest_multi SELECT i, i%2  FROM generate_series(1, 100000) as i;
-SELECT bt_index_parent_check('bttest_multi_idx', true);
+SELECT bt_index_parent_check('bttest_multi_idx', true, true);
 
 --
 -- Test for multilevel page deletion/downlink present checks, and rootdescend
