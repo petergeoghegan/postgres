@@ -144,7 +144,7 @@ typedef struct LVRelState
 	Relation   *indrels;
 	int			nindexes;
 
-	/* Aggressive VACUUM (scan all unfrozen pages)? */
+	/* Aggressive VACUUM? (must set relfrozenxid >= FreezeLimit) */
 	bool		aggressive;
 	/* Use visibility map to skip? (disabled by DISABLE_PAGE_SKIPPING) */
 	bool		skipwithvm;
@@ -173,8 +173,9 @@ typedef struct LVRelState
 	/* VACUUM operation's target cutoffs for freezing XIDs and MultiXactIds */
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
-	/* Are FreezeLimit/MultiXactCutoff still valid? */
-	bool		freeze_cutoffs_valid;
+	/* Tracks oldest extant XID/MXID for setting relfrozenxid/relminmxid */
+	TransactionId NewRelfrozenXid;
+	MultiXactId NewRelminMxid;
 
 	/* Error reporting state */
 	char	   *relnamespace;
@@ -319,17 +320,17 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				skipwithvm;
 	bool		frozenxid_updated,
 				minmulti_updated;
-	BlockNumber orig_rel_pages;
+	BlockNumber orig_rel_pages,
+				new_rel_pages,
+				new_rel_allvisible;
 	char	  **indnames = NULL;
-	BlockNumber new_rel_pages;
-	BlockNumber new_rel_allvisible;
-	double		new_live_tuples;
 	ErrorContextCallback errcallback;
 	PgStat_Counter startreadtime = 0;
 	PgStat_Counter startwritetime = 0;
-	TransactionId OldestXmin;
-	TransactionId FreezeLimit;
-	MultiXactId MultiXactCutoff;
+	TransactionId OldestXmin,
+				FreezeLimit;
+	MultiXactId OldestMxact,
+				MultiXactCutoff;
 
 	verbose = (params->options & VACOPT_VERBOSE) != 0;
 	instrument = (verbose || (IsAutoVacuumWorkerProcess() &&
@@ -351,20 +352,17 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	/*
 	 * Get OldestXmin cutoff, which is used to determine which deleted tuples
 	 * are considered DEAD, not just RECENTLY_DEAD.  Also get related cutoffs
-	 * used to determine which XIDs/MultiXactIds will be frozen.
-	 *
-	 * If this is an aggressive VACUUM, then we're strictly required to freeze
-	 * any and all XIDs from before FreezeLimit, so that we will be able to
-	 * safely advance relfrozenxid up to FreezeLimit below (we must be able to
-	 * advance relminmxid up to MultiXactCutoff, too).
+	 * used to determine which XIDs/MultiXactIds will be frozen.  If this is
+	 * an aggressive VACUUM then lazy_scan_heap cannot leave behind unfrozen
+	 * XIDs < FreezeLimit (or unfrozen MXIDs < MultiXactCutoff).
 	 */
 	aggressive = vacuum_set_xid_limits(rel,
 									   params->freeze_min_age,
 									   params->freeze_table_age,
 									   params->multixact_freeze_min_age,
 									   params->multixact_freeze_table_age,
-									   &OldestXmin, &FreezeLimit,
-									   &MultiXactCutoff);
+									   &OldestXmin, &OldestMxact,
+									   &FreezeLimit, &MultiXactCutoff);
 
 	skipwithvm = true;
 	if (params->options & VACOPT_DISABLE_PAGE_SKIPPING)
@@ -511,10 +509,11 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->vistest = GlobalVisTestFor(rel);
 	/* FreezeLimit controls XID freezing (always <= OldestXmin) */
 	vacrel->FreezeLimit = FreezeLimit;
-	/* MultiXactCutoff controls MXID freezing */
+	/* MultiXactCutoff controls MXID freezing (always <= OldestMxact) */
 	vacrel->MultiXactCutoff = MultiXactCutoff;
-	/* Track if cutoffs became invalid (possible in !aggressive case only) */
-	vacrel->freeze_cutoffs_valid = true;
+	/* Initialize state used to track oldest extant XID/XMID */
+	vacrel->NewRelfrozenXid = OldestXmin;
+	vacrel->NewRelminMxid = OldestMxact;
 
 	/*
 	 * Call lazy_scan_heap to perform all required heap pruning, index
@@ -548,16 +547,41 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	/*
 	 * Prepare to update rel's pg_class entry.
 	 *
-	 * In principle new_live_tuples could be -1 indicating that we (still)
-	 * don't know the tuple count.  In practice that probably can't happen,
-	 * since we'd surely have scanned some pages if the table is new and
-	 * nonempty.
-	 *
+	 * Aggressive VACUUMs must advance relfrozenxid to a value >= FreezeLimit,
+	 * and advance relminmxid to a value >= MultiXactCutoff.
+	 */
+	Assert(!aggressive || vacrel->NewRelfrozenXid == OldestXmin ||
+		   TransactionIdPrecedesOrEquals(FreezeLimit,
+										 vacrel->NewRelfrozenXid));
+	Assert(!aggressive || vacrel->NewRelminMxid == OldestMxact ||
+		   MultiXactIdPrecedesOrEquals(MultiXactCutoff,
+									   vacrel->NewRelminMxid));
+
+	/*
+	 * Non-aggressive VACUUMs might advance relfrozenxid to an XID that is
+	 * either older or newer than FreezeLimit (same applies to relminmxid and
+	 * MultiXactCutoff).  But the state that tracks the oldest remaining XID
+	 * and MXID cannot be trusted when any all-visible pages were skipped.
+	 */
+	Assert(vacrel->NewRelfrozenXid == OldestXmin ||
+		   TransactionIdPrecedesOrEquals(vacrel->relfrozenxid,
+										 vacrel->NewRelfrozenXid));
+	Assert(vacrel->NewRelminMxid == OldestMxact ||
+		   MultiXactIdPrecedesOrEquals(vacrel->relminmxid,
+									   vacrel->NewRelminMxid));
+	if (vacrel->scanned_pages + vacrel->frozenskipped_pages < orig_rel_pages)
+	{
+		/* Keep existing relfrozenxid and relminmxid (can't trust trackers) */
+		Assert(!aggressive);
+		vacrel->NewRelfrozenXid = InvalidTransactionId;
+		vacrel->NewRelminMxid = InvalidMultiXactId;
+	}
+
+	/*
 	 * For safety, clamp relallvisible to be not more than what we're setting
-	 * relpages to.
+	 * pg_class.relpages to
 	 */
 	new_rel_pages = vacrel->rel_pages;	/* After possible rel truncation */
-	new_live_tuples = vacrel->new_live_tuples;
 	visibilitymap_count(rel, &new_rel_allvisible, NULL);
 	if (new_rel_allvisible > new_rel_pages)
 		new_rel_allvisible = new_rel_pages;
@@ -565,33 +589,14 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	/*
 	 * Now actually update rel's pg_class entry.
 	 *
-	 * Aggressive VACUUM must reliably advance relfrozenxid (and relminmxid).
-	 * We are able to advance relfrozenxid in a non-aggressive VACUUM too,
-	 * provided we didn't skip any all-visible (not all-frozen) pages using
-	 * the visibility map, and assuming that we didn't fail to get a cleanup
-	 * lock that made it unsafe with respect to FreezeLimit (or perhaps our
-	 * MultiXactCutoff) established for VACUUM operation.
+	 * In principle new_live_tuples could be -1 indicating that we (still)
+	 * don't know the tuple count.  In practice that can't happen, since we
+	 * scan every page that isn't skipped using the visibility map.
 	 */
-	if (vacrel->scanned_pages + vacrel->frozenskipped_pages < orig_rel_pages ||
-		!vacrel->freeze_cutoffs_valid)
-	{
-		/* Cannot advance relfrozenxid/relminmxid */
-		Assert(!aggressive);
-		frozenxid_updated = minmulti_updated = false;
-		vac_update_relstats(rel, new_rel_pages, new_live_tuples,
-							new_rel_allvisible, vacrel->nindexes > 0,
-							InvalidTransactionId, InvalidMultiXactId,
-							NULL, NULL, false);
-	}
-	else
-	{
-		Assert(vacrel->scanned_pages + vacrel->frozenskipped_pages ==
-			   orig_rel_pages);
-		vac_update_relstats(rel, new_rel_pages, new_live_tuples,
-							new_rel_allvisible, vacrel->nindexes > 0,
-							FreezeLimit, MultiXactCutoff,
-							&frozenxid_updated, &minmulti_updated, false);
-	}
+	vac_update_relstats(rel, new_rel_pages, vacrel->new_live_tuples,
+						new_rel_allvisible, vacrel->nindexes > 0,
+						vacrel->NewRelfrozenXid, vacrel->NewRelminMxid,
+						&frozenxid_updated, &minmulti_updated, false);
 
 	/*
 	 * Report results to the stats collector, too.
@@ -605,7 +610,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 */
 	pgstat_report_vacuum(RelationGetRelid(rel),
 						 rel->rd_rel->relisshared,
-						 Max(new_live_tuples, 0),
+						 Max(vacrel->new_live_tuples, 0),
 						 vacrel->recently_dead_tuples +
 						 vacrel->missed_dead_tuples);
 	pgstat_progress_end_command();
@@ -674,7 +679,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 vacrel->num_index_scans);
 			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u scanned (%.2f%% of total)\n"),
 							 vacrel->removed_pages,
-							 vacrel->rel_pages,
+							 new_rel_pages,
 							 vacrel->scanned_pages,
 							 orig_rel_pages == 0 ? 100.0 :
 							 100.0 * vacrel->scanned_pages / orig_rel_pages);
@@ -694,17 +699,19 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 OldestXmin, diff);
 			if (frozenxid_updated)
 			{
-				diff = (int32) (FreezeLimit - vacrel->relfrozenxid);
+				diff = (int32) (vacrel->NewRelfrozenXid - vacrel->relfrozenxid);
+				Assert(diff > 0);
 				appendStringInfo(&buf,
 								 _("new relfrozenxid: %u, which is %d xids ahead of previous value\n"),
-								 FreezeLimit, diff);
+								 vacrel->NewRelfrozenXid, diff);
 			}
 			if (minmulti_updated)
 			{
-				diff = (int32) (MultiXactCutoff - vacrel->relminmxid);
+				diff = (int32) (vacrel->NewRelminMxid - vacrel->relminmxid);
+				Assert(diff > 0);
 				appendStringInfo(&buf,
 								 _("new relminmxid: %u, which is %d mxids ahead of previous value\n"),
-								 MultiXactCutoff, diff);
+								 vacrel->NewRelminMxid, diff);
 			}
 			if (orig_rel_pages > 0)
 			{
@@ -1584,6 +1591,8 @@ lazy_scan_prune(LVRelState *vacrel,
 				recently_dead_tuples;
 	int			nnewlpdead;
 	int			nfrozen;
+	TransactionId NewRelfrozenXid;
+	MultiXactId NewRelminMxid;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
 
@@ -1593,7 +1602,9 @@ lazy_scan_prune(LVRelState *vacrel,
 
 retry:
 
-	/* Initialize (or reset) page-level counters */
+	/* Initialize (or reset) page-level state */
+	NewRelfrozenXid = vacrel->NewRelfrozenXid;
+	NewRelminMxid = vacrel->NewRelminMxid;
 	tuples_deleted = 0;
 	lpdead_items = 0;
 	live_tuples = 0;
@@ -1800,8 +1811,8 @@ retry:
 									  vacrel->relminmxid,
 									  vacrel->FreezeLimit,
 									  vacrel->MultiXactCutoff,
-									  &frozen[nfrozen],
-									  &tuple_totally_frozen))
+									  &frozen[nfrozen], &tuple_totally_frozen,
+									  &NewRelfrozenXid, &NewRelminMxid))
 		{
 			/* Will execute freeze below */
 			frozen[nfrozen++].offset = offnum;
@@ -1815,13 +1826,16 @@ retry:
 			prunestate->all_frozen = false;
 	}
 
+	vacrel->offnum = InvalidOffsetNumber;
+
 	/*
 	 * We have now divided every item on the page into either an LP_DEAD item
 	 * that will need to be vacuumed in indexes later, or a LP_NORMAL tuple
 	 * that remains and needs to be considered for freezing now (LP_UNUSED and
 	 * LP_REDIRECT items also remain, but are of no further interest to us).
 	 */
-	vacrel->offnum = InvalidOffsetNumber;
+	vacrel->NewRelfrozenXid = NewRelfrozenXid;
+	vacrel->NewRelminMxid = NewRelminMxid;
 
 	/*
 	 * Consider the need to freeze any items with tuple storage from the page
@@ -1971,6 +1985,8 @@ lazy_scan_noprune(LVRelState *vacrel,
 				recently_dead_tuples,
 				missed_dead_tuples;
 	HeapTupleHeader tupleheader;
+	TransactionId NewRelfrozenXid = vacrel->NewRelfrozenXid;
+	MultiXactId NewRelminMxid = vacrel->NewRelminMxid;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 
 	Assert(BufferGetBlockNumber(buf) == blkno);
@@ -2015,22 +2031,37 @@ lazy_scan_noprune(LVRelState *vacrel,
 
 		*hastup = true;			/* page prevents rel truncation */
 		tupleheader = (HeapTupleHeader) PageGetItem(page, itemid);
-		if (heap_tuple_needs_freeze(tupleheader,
+		if (heap_tuple_would_freeze(tupleheader,
 									vacrel->FreezeLimit,
-									vacrel->MultiXactCutoff))
+									vacrel->MultiXactCutoff,
+									&NewRelfrozenXid, &NewRelminMxid))
 		{
+			/* Tuple with XID < FreezeLimit (or MXID < MultiXactCutoff) */
 			if (vacrel->aggressive)
 			{
-				/* Going to have to get cleanup lock for lazy_scan_prune */
+				/*
+				 * Aggressive VACUUMs must always be able to advance rel's
+				 * relfrozenxid to a value >= FreezeLimit (and be able to
+				 * advance rel's relminmxid to a value >= MultiXactCutoff).
+				 * The ongoing aggressive VACUUM won't be able to do that
+				 * unless it can freeze an XID (or XMID) from this tuple now.
+				 *
+				 * The only safe option is to have caller perform processing
+				 * of this page using lazy_scan_prune.  Caller might have to
+				 * wait a while for a cleanup lock, but it can't be helped.
+				 */
 				vacrel->offnum = InvalidOffsetNumber;
 				return false;
 			}
 
 			/*
-			 * Current non-aggressive VACUUM operation definitely won't be
-			 * able to advance relfrozenxid or relminmxid
+			 * Non-aggressive VACUUMs are under no obligation to advance
+			 * relfrozenxid (even by one XID).  We can be much laxer here.
+			 *
+			 * Currently we always just accept an older final relfrozenxid
+			 * and/or relminmxid value.  We never make caller wait or work a
+			 * little harder, even when it likely makes sense to do so.
 			 */
-			vacrel->freeze_cutoffs_valid = false;
 		}
 
 		ItemPointerSet(&(tuple.t_self), blkno, offnum);
@@ -2080,9 +2111,14 @@ lazy_scan_noprune(LVRelState *vacrel,
 	vacrel->offnum = InvalidOffsetNumber;
 
 	/*
-	 * Now save details of the LP_DEAD items from the page in vacrel (though
-	 * only when VACUUM uses two-pass strategy)
+	 * By here we know for sure that caller can put off freezing and pruning
+	 * this particular page until the next VACUUM.  Remember its details now.
+	 * (lazy_scan_prune expects a clean slate, so we have to do this last.)
 	 */
+	vacrel->NewRelfrozenXid = NewRelfrozenXid;
+	vacrel->NewRelminMxid = NewRelminMxid;
+
+	/* Save any LP_DEAD items found on the page in dead_items array */
 	if (vacrel->nindexes == 0)
 	{
 		/* Using one-pass strategy (since table has no indexes) */
