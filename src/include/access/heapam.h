@@ -112,6 +112,38 @@ typedef struct HeapTupleFreeze
 	OffsetNumber offset;
 } HeapTupleFreeze;
 
+/*
+ * State used by VACUUM to track what the oldest extant XID/MXID will become
+ * when determing whether and how to freeze a page's heap tuples via calls to
+ * heap_prepare_freeze_tuple.
+ *
+ * The relfrozenxid_out and relminmxid_out fields are the current target
+ * relfrozenxid and relminmxid for VACUUM caller's heap rel.  Any and all
+ * unfrozen XIDs or MXIDs that remain in caller's rel after VACUUM finishes
+ * _must_ have values >= the final relfrozenxid/relminmxid values in pg_class.
+ * This includes XIDs that remain as MultiXact members from any tuple's xmax.
+ * Each heap_prepare_freeze_tuple call pushes back relfrozenxid_out and/or
+ * relminmxid_out as needed to avoid unsafe values in rel's authoritative
+ * pg_class tuple.
+ *
+ * Alternative "no freeze" variants of relfrozenxid_nofreeze_out and
+ * relminmxid_nofreeze_out must also be maintained for !freeze pages.
+ */
+typedef struct HeapPageFreeze
+{
+	/* Is heap_prepare_freeze_tuple caller required to freeze page? */
+	bool		freeze;
+
+	/* Values used when page is to be frozen based on freeze plans */
+	TransactionId relfrozenxid_out;
+	MultiXactId relminmxid_out;
+
+	/* Used by caller for '!freeze' pages */
+	TransactionId relfrozenxid_nofreeze_out;
+	MultiXactId relminmxid_nofreeze_out;
+
+} HeapPageFreeze;
+
 /* ----------------
  *		function prototypes for heap access method
  *
@@ -180,17 +212,17 @@ extern void heap_inplace_update(Relation relation, HeapTuple tuple);
 extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									  TransactionId relfrozenxid, TransactionId relminmxid,
 									  TransactionId cutoff_xid, TransactionId cutoff_multi,
+									  TransactionId limit_xid, MultiXactId limit_multi,
 									  HeapTupleFreeze *frz, bool *totally_frozen,
-									  TransactionId *relfrozenxid_out,
-									  MultiXactId *relminmxid_out);
+									  HeapPageFreeze *xtrack);
 extern void heap_freeze_execute_prepared(Relation rel, Buffer buffer,
-										 TransactionId FreezeLimit,
+										 TransactionId OldestXmin,
 										 HeapTupleFreeze *tuples, int ntuples);
 extern bool heap_freeze_tuple(HeapTupleHeader tuple,
 							  TransactionId relfrozenxid, TransactionId relminmxid,
 							  TransactionId cutoff_xid, TransactionId cutoff_multi);
-extern bool heap_tuple_would_freeze(HeapTupleHeader tuple, TransactionId cutoff_xid,
-									MultiXactId cutoff_multi,
+extern bool heap_tuple_would_freeze(HeapTupleHeader tuple,
+									TransactionId limit_xid, MultiXactId limit_multi,
 									TransactionId *relfrozenxid_out,
 									MultiXactId *relminmxid_out);
 extern bool heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple);
