@@ -6431,6 +6431,12 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
  * will be totally frozen after these operations are performed and false if
  * more freezing will eventually be required.
  *
+ * Although this interface is primarily tuple-based, caller decides on whether
+ * or not to freeze the page as a whole.  We'll often help caller to prepare a
+ * complete "freeze plan" that it ultimately discards.  However, our caller
+ * doesn't always get to choose; it must execute freezing when *force_freeze
+ * was set here.  This ensures that any XIDs < limit_xid are not left behind.
+ *
  * Caller must set frz->offset itself, before heap_execute_freeze_tuple call.
  *
  * It is assumed that the caller has checked the tuple with
@@ -6444,12 +6450,10 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
  * This includes XIDs that remain as MultiXact members from any tuple's xmax.
  * Each call here pushes back *relfrozenxid_out and/or *relminmxid_out as
  * needed to avoid unsafe final values in rel's authoritative pg_class tuple.
- *
- * NB: cutoff_xid *must* be <= VACUUM's OldestXmin, to ensure that any
- * XID older than it could neither be running nor seen as running by any
- * open transaction.  This ensures that the replacement will not change
- * anyone's idea of the tuple state.
- * Similarly, cutoff_multi must be <= VACUUM's OldestMxact.
+ * The *relfrozenxid_nofreeze_out and *relminmxid_nofreeze_out arguments are
+ * used (rather than *relfrozenxid_out and *relminmxid_out) by caller when it
+ * opts to not freeze the page (the XIDs that caller decided to avoid freezing
+ * must then be taken into account using heap_tuple_would_freeze's approach).
  *
  * NB: This function has side effects: it might allocate a new MultiXactId.
  * It will be set as tuple's new xmax when our *frz output is processed within
@@ -6463,15 +6467,32 @@ bool
 heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 						  TransactionId relfrozenxid, TransactionId relminmxid,
 						  TransactionId cutoff_xid, TransactionId cutoff_multi,
-						  xl_heap_freeze_tuple *frz, bool *totally_frozen,
+						  TransactionId limit_xid, MultiXactId limit_multi,
+						  xl_heap_freeze_tuple *frz,
+						  bool *totally_frozen, bool *force_freeze,
 						  TransactionId *relfrozenxid_out,
-						  MultiXactId *relminmxid_out)
+						  MultiXactId *relminmxid_out,
+						  TransactionId *relfrozenxid_nofreeze_out,
+						  MultiXactId *relminmxid_nofreeze_out)
 {
 	bool		changed = false;
+	bool		xmin_already_frozen = false;
 	bool		xmax_already_frozen = false;
 	bool		xmin_frozen;
 	bool		freeze_xmax;
 	TransactionId xid;
+
+	/*
+	 * limit_xid *must* be <= cutoff_xid, to ensure that any XID older than it
+	 * can neither be running nor seen as running by any open transaction.
+	 * This ensures that we only freeze XIDs that are safe to freeze -- those
+	 * that are already unambiguously visible to everybody.
+	 *
+	 * VACUUM calls limit_xid "FreezeLimit", and cutoff_xid "OldestXmin".
+	 * (limit_multi is "MultiXactCutoff", and cutoff_multi "OldestMxact".)
+	 */
+	Assert(TransactionIdPrecedesOrEquals(limit_xid, cutoff_xid));
+	Assert(MultiXactIdPrecedesOrEquals(limit_multi, cutoff_multi));
 
 	frz->frzflags = 0;
 	frz->t_infomask2 = tuple->t_infomask2;
@@ -6490,7 +6511,10 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 	 */
 	xid = HeapTupleHeaderGetXmin(tuple);
 	if (!TransactionIdIsNormal(xid))
+	{
+		xmin_already_frozen = true;
 		xmin_frozen = true;
+	}
 	else
 	{
 		if (TransactionIdPrecedes(xid, relfrozenxid))
@@ -6524,7 +6548,9 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 	 * resolve a MultiXactId to its member Xids, in case some of them are
 	 * below the given cutoff for Xids.  In that case, those values might need
 	 * freezing, too.  Also, if a multi needs freezing, we cannot simply take
-	 * it out --- if there's a live updater Xid, it needs to be kept.
+	 * it out --- if there's a live updater Xid, it needs to be kept.  If we
+	 * need to allocate a new MultiXact for that purposes, we will force
+	 * caller to freeze the page.
 	 *
 	 * Make sure to keep heap_tuple_would_freeze in sync with this.
 	 */
@@ -6728,11 +6754,27 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 			Assert(!(tuple->t_infomask & HEAP_XMIN_INVALID));
 			frz->t_infomask |= HEAP_XMIN_COMMITTED;
 			changed = true;
+
+			/* Seems like a good idea to freeze early when this case is hit */
+			*force_freeze = true;
 		}
 	}
 
 	*totally_frozen = (xmin_frozen &&
 					   (freeze_xmax || xmax_already_frozen));
+
+	/*
+	 * Maintain alternative versions of relfrozenxid_out/relminmxid_out that
+	 * leave caller with the option of *not* freezing the page.  If caller has
+	 * already lost that option (e.g. when the page has an old XID that we
+	 * must force caller to freeze), then we don't waste time on this.
+	 */
+	if (!*force_freeze && (!xmin_already_frozen || !xmax_already_frozen))
+		*force_freeze = heap_tuple_would_freeze(tuple,
+												limit_xid, limit_multi,
+												relfrozenxid_nofreeze_out,
+												relminmxid_nofreeze_out);
+
 	return changed;
 }
 
@@ -6784,15 +6826,22 @@ heap_freeze_tuple(HeapTupleHeader tuple,
 {
 	xl_heap_freeze_tuple frz;
 	bool		do_freeze;
+	bool		force_freeze = true;
 	bool		tuple_totally_frozen;
 	TransactionId relfrozenxid_out = cutoff_xid;
 	MultiXactId relminmxid_out = cutoff_multi;
+	TransactionId relfrozenxid_nofreeze_out = cutoff_xid;
+	MultiXactId relminmxid_nofreeze_out = cutoff_multi;
 
 	do_freeze = heap_prepare_freeze_tuple(tuple,
 										  relfrozenxid, relminmxid,
 										  cutoff_xid, cutoff_multi,
+										  cutoff_xid, cutoff_multi,
 										  &frz, &tuple_totally_frozen,
-										  &relfrozenxid_out, &relminmxid_out);
+										  &force_freeze,
+										  &relfrozenxid_out, &relminmxid_out,
+										  &relfrozenxid_nofreeze_out,
+										  &relminmxid_nofreeze_out);
 
 	/*
 	 * Note that because this is not a WAL-logged operation, we don't need to

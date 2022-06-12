@@ -409,10 +409,15 @@ extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									  TransactionId relminmxid,
 									  TransactionId cutoff_xid,
 									  TransactionId cutoff_multi,
+									  TransactionId limit_xid,
+									  MultiXactId limit_multi,
 									  xl_heap_freeze_tuple *frz,
 									  bool *totally_frozen,
+									  bool *force_freeze,
 									  TransactionId *relfrozenxid_out,
-									  MultiXactId *relminmxid_out);
+									  MultiXactId *relminmxid_out,
+									  TransactionId *relfrozenxid_nofreeze_out,
+									  MultiXactId *relminmxid_nofreeze_out);
 extern void heap_execute_freeze_tuple(HeapTupleHeader tuple,
 									  xl_heap_freeze_tuple *xlrec_tp);
 extern XLogRecPtr log_heap_visible(RelFileLocator rlocator, Buffer heap_buffer,
