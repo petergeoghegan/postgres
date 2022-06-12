@@ -1528,8 +1528,8 @@ lazy_scan_prune(LVRelState *vacrel,
 				live_tuples,
 				recently_dead_tuples;
 	int			nnewlpdead;
-	TransactionId NewRelfrozenXid;
-	MultiXactId NewRelminMxid;
+	HeapPageFreeze pagefrz;
+	bool		freeze_all_eligible PG_USED_FOR_ASSERTS_ONLY;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	HeapTupleFreeze frozen[MaxHeapTuplesPerPage];
 
@@ -1545,8 +1545,11 @@ lazy_scan_prune(LVRelState *vacrel,
 retry:
 
 	/* Initialize (or reset) page-level state */
-	NewRelfrozenXid = vacrel->NewRelfrozenXid;
-	NewRelminMxid = vacrel->NewRelminMxid;
+	pagefrz.freeze_required = false;
+	pagefrz.NewRelfrozenXid = vacrel->NewRelfrozenXid;
+	pagefrz.NewRelminMxid = vacrel->NewRelminMxid;
+	pagefrz.NoFreezeNewRelfrozenXid = vacrel->NewRelfrozenXid;
+	pagefrz.NoFreezeNewRelminMxid = vacrel->NewRelminMxid;
 	tuples_deleted = 0;
 	tuples_frozen = 0;
 	lpdead_items = 0;
@@ -1599,27 +1602,23 @@ retry:
 			continue;
 		}
 
-		/*
-		 * LP_DEAD items are processed outside of the loop.
-		 *
-		 * Note that we deliberately don't set hastup=true in the case of an
-		 * LP_DEAD item here, which is not how count_nondeletable_pages() does
-		 * it -- it only considers pages empty/truncatable when they have no
-		 * items at all (except LP_UNUSED items).
-		 *
-		 * Our assumption is that any LP_DEAD items we encounter here will
-		 * become LP_UNUSED inside lazy_vacuum_heap_page() before we actually
-		 * call count_nondeletable_pages().  In any case our opinion of
-		 * whether or not a page 'hastup' (which is how our caller sets its
-		 * vacrel->nonempty_pages value) is inherently race-prone.  It must be
-		 * treated as advisory/unreliable, so we might as well be slightly
-		 * optimistic.
-		 */
 		if (ItemIdIsDead(itemid))
 		{
+			/*
+			 * Delay unsetting all_visible until after we have decided on
+			 * whether this page should be frozen.  We need to test "is this
+			 * page all_visible, assuming any LP_DEAD items are set LP_UNUSED
+			 * in final heap pass?" to reach a decision.  all_visible will be
+			 * unset before we return, as required by lazy_scan_heap caller.
+			 *
+			 * Deliberately don't set hastup for LP_DEAD items.  We make the
+			 * soft assumption that any LP_DEAD items encountered here will
+			 * become LP_UNUSED later on, before count_nondeletable_pages is
+			 * reached.  Whether the page 'hastup' is inherently race-prone.
+			 * It must be treated as unreliable by caller anyway, so we might
+			 * as well be slightly optimistic about it.
+			 */
 			deadoffsets[lpdead_items++] = offnum;
-			prunestate->all_visible = false;
-			prunestate->has_lpdead_items = true;
 			continue;
 		}
 
@@ -1746,9 +1745,8 @@ retry:
 		prunestate->hastup = true;	/* page makes rel truncation unsafe */
 
 		/* Tuple with storage -- consider need to freeze */
-		if (heap_prepare_freeze_tuple(tuple.t_data, &vacrel->cutoffs,
-									  &frozen[tuples_frozen], &totally_frozen,
-									  &NewRelfrozenXid, &NewRelminMxid))
+		if (heap_prepare_freeze_tuple(tuple.t_data, &vacrel->cutoffs, &pagefrz,
+									  &frozen[tuples_frozen], &totally_frozen))
 		{
 			/* Save prepared freeze plan for later */
 			frozen[tuples_frozen++].offset = offnum;
@@ -1769,23 +1767,62 @@ retry:
 	 * that will need to be vacuumed in indexes later, or a LP_NORMAL tuple
 	 * that remains and needs to be considered for freezing now (LP_UNUSED and
 	 * LP_REDIRECT items also remain, but are of no further interest to us).
+	 *
+	 * Freeze the page when heap_prepare_freeze_tuple indicates that at least
+	 * one XID/MXID from before FreezeLimit/MultiXactCutoff is present.
 	 */
-	vacrel->NewRelfrozenXid = NewRelfrozenXid;
-	vacrel->NewRelminMxid = NewRelminMxid;
+	if (pagefrz.freeze_required || tuples_frozen == 0)
+	{
+		/*
+		 * We're freezing the page.  Our final NewRelfrozenXid doesn't need to
+		 * be affected by the XIDs that are just about to be frozen anyway.
+		 *
+		 * Note: although we're freezing all eligible tuples on this page, we
+		 * might not need to freeze anything (might be zero eligible tuples).
+		 */
+		vacrel->NewRelfrozenXid = pagefrz.NewRelfrozenXid;
+		vacrel->NewRelminMxid = pagefrz.NewRelminMxid;
+		freeze_all_eligible = true;
+	}
+	else
+	{
+		/* Not freezing this page, so use alternative cutoffs */
+		vacrel->NewRelfrozenXid = pagefrz.NoFreezeNewRelfrozenXid;
+		vacrel->NewRelminMxid = pagefrz.NoFreezeNewRelminMxid;
+
+		/* Might still set page all-visible, but never all-frozen */
+		tuples_frozen = 0;
+		freeze_all_eligible = prunestate->all_frozen = false;
+	}
 
 	/*
 	 * Consider the need to freeze any items with tuple storage from the page
-	 * first (arbitrary)
 	 */
 	if (tuples_frozen > 0)
 	{
-		Assert(prunestate->hastup);
+		TransactionId snapshotConflictHorizon;
+
+		Assert(prunestate->hastup && freeze_all_eligible);
 
 		vacrel->frozen_pages++;
 
+		/*
+		 * We can use the latest xmin cutoff (which is generally used for 'VM
+		 * set' conflicts) as our cutoff for freeze conflicts when the whole
+		 * page is eligible to become all-frozen in the VM once frozen by us.
+		 * Otherwise use a conservative cutoff (just back up from OldestXmin).
+		 */
+		if (prunestate->all_visible && prunestate->all_frozen)
+			snapshotConflictHorizon = prunestate->visibility_cutoff_xid;
+		else
+		{
+			snapshotConflictHorizon = vacrel->cutoffs.OldestXmin;
+			TransactionIdRetreat(snapshotConflictHorizon);
+		}
+
 		/* Execute all freeze plans for page as a single atomic action */
 		heap_freeze_execute_prepared(vacrel->rel, buf,
-									 vacrel->cutoffs.FreezeLimit,
+									 snapshotConflictHorizon,
 									 frozen, tuples_frozen);
 	}
 
@@ -1804,7 +1841,7 @@ retry:
 	 */
 #ifdef USE_ASSERT_CHECKING
 	/* Note that all_frozen value does not matter when !all_visible */
-	if (prunestate->all_visible)
+	if (prunestate->all_visible && lpdead_items == 0)
 	{
 		TransactionId cutoff;
 		bool		all_frozen;
@@ -1812,8 +1849,7 @@ retry:
 		if (!heap_page_is_all_visible(vacrel, buf, &cutoff, &all_frozen))
 			Assert(false);
 
-		Assert(lpdead_items == 0);
-		Assert(prunestate->all_frozen == all_frozen);
+		Assert(prunestate->all_frozen == all_frozen || !freeze_all_eligible);
 
 		/*
 		 * It's possible that we froze tuples and made the page's XID cutoff
@@ -1834,9 +1870,6 @@ retry:
 		VacDeadItems *dead_items = vacrel->dead_items;
 		ItemPointerData tmp;
 
-		Assert(!prunestate->all_visible);
-		Assert(prunestate->has_lpdead_items);
-
 		vacrel->lpdead_item_pages++;
 
 		ItemPointerSetBlockNumber(&tmp, blkno);
@@ -1850,6 +1883,10 @@ retry:
 		Assert(dead_items->num_items <= dead_items->max_items);
 		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
 									 dead_items->num_items);
+
+		/* lazy_scan_heap caller expects LP_DEAD item to unset all_visible */
+		prunestate->all_visible = false;
+		prunestate->has_lpdead_items = true;
 	}
 
 	/* Finally, add page-local counts to whole-VACUUM counts */
