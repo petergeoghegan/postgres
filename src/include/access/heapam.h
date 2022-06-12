@@ -113,6 +113,40 @@ typedef struct HeapTupleFreeze
 	OffsetNumber offset;
 } HeapTupleFreeze;
 
+/*
+ * State used by VACUUM to track the details of freezing all eligible tuples
+ * on a given heap page.
+ *
+ * VACUUM prepares freeze plans for each page via heap_prepare_freeze_tuple
+ * calls (every tuple with storage gets its own call).  This page-level freeze
+ * state is updated across each call, which ultimately determines whether or
+ * not freezing the page is required. (VACUUM freezes the page via a call to
+ * heap_freeze_execute_prepared, which freezes using prepared freeze plans.)
+ *
+ * Aside from the basic question of whether or not freezing will go ahead, the
+ * state also tracks the oldest extant XID/MXID in the table as a whole, for
+ * the purposes of advancing relfrozenxid/relminmxid values in pg_class later
+ * on.  Each heap_prepare_freeze_tuple call pushes NewRelfrozenXid and/or
+ * NewRelminMxid back as required to avoid unsafe final pg_class values.  Any
+ * and all unfrozen XIDs or MXIDs that remain after VACUUM finishes _must_
+ * have values >= the final relfrozenxid/relminmxid values in pg_class.  This
+ * includes XIDs that remain as MultiXact members from any tuple's xmax.
+ */
+typedef struct HeapPageFreeze
+{
+	/* Is heap_prepare_freeze_tuple caller required to freeze page? */
+	bool		freeze_required;
+
+	/* Values used when heap_freeze_execute_prepared is called for page */
+	TransactionId NewRelfrozenXid;
+	MultiXactId NewRelminMxid;
+
+	/* "No freeze" variants used when page freezing doesn't take place */
+	TransactionId NoFreezeNewRelfrozenXid;
+	MultiXactId NoFreezeNewRelminMxid;
+
+} HeapPageFreeze;
+
 /* ----------------
  *		function prototypes for heap access method
  *
@@ -181,10 +215,9 @@ extern void heap_inplace_update(Relation relation, HeapTuple tuple);
 extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									  const struct VacuumCutoffs *cutoffs,
 									  HeapTupleFreeze *frz, bool *totally_frozen,
-									  TransactionId *NewRelFrozenXid,
-									  MultiXactId *NewRelminMxid);
+									  HeapPageFreeze *pagefrz);
 extern void heap_freeze_execute_prepared(Relation rel, Buffer buffer,
-										 TransactionId FreezeLimit,
+										 TransactionId snapshotConflictHorizon,
 										 HeapTupleFreeze *tuples, int ntuples);
 extern bool heap_freeze_tuple(HeapTupleHeader tuple,
 							  TransactionId relfrozenxid, TransactionId relminmxid,
