@@ -171,6 +171,9 @@ typedef struct LVRelState
 	bool		do_index_cleanup;
 	bool		do_rel_truncate;
 
+	/* Insist on recording space > this val in FSM, even on all-vis pages */
+	int			max_discard_space;
+
 	/* Buffer access strategy and parallel vacuum state */
 	BufferAccessStrategy bstrategy;
 	ParallelVacuumState *pvs;
@@ -478,6 +481,17 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 		/* Default/auto, make all decisions dynamically */
 		Assert(params->index_cleanup == VACOPTVALUE_AUTO);
 	}
+
+	/*
+	 * We usually don't record free space in the FSM for all-visible pages.
+	 *
+	 * However, we still do so when the amount of free space available exceeds
+	 * twice the target free space for the page (while treating relations with
+	 * no target fill factor as having a target of 95, not the default).
+	 * Never in any event allow this to exceed 60% of BLCKSZ, though.
+	 */
+	vacrel->max_discard_space = RelationGetTargetPageFreeSpace(rel, 95) * 2;
+	vacrel->max_discard_space = Min(vacrel->max_discard_space, BLCKSZ * 0.6);
 
 	vacrel->bstrategy = bstrategy;
 	vacrel->relfrozenxid = rel->rd_rel->relfrozenxid;
@@ -1194,6 +1208,14 @@ lazy_scan_heap(LVRelState *vacrel)
 				 */
 				freespace = PageGetHeapFreeSpace(page);
 
+				/*
+				 * An all-visible page should not have its free space
+				 * available from FSM (unless there is an excessive amount)
+				 */
+				if (PageIsAllVisible(page) &&
+					freespace <= vacrel->max_discard_space)
+					freespace = 0;
+
 				UnlockReleaseBuffer(buf);
 				RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 				continue;
@@ -1329,6 +1351,22 @@ lazy_scan_heap(LVRelState *vacrel)
 		else
 		{
 			Size		freespace = PageGetHeapFreeSpace(page);
+
+			/*
+			 * An all-visible page should not have its free space available
+			 * from FSM (unless there is an excessive amount)
+			 */
+			if (PageIsAllVisible(page) &&
+				freespace <= vacrel->max_discard_space)
+			{
+#if 0
+
+				elog(WARNING, "rel %s freespace %zu, max_discard_space %d",
+					 RelationGetRelationName(vacrel->rel), freespace,
+					 vacrel->max_discard_space);
+#endif
+				freespace = 0;
+			}
 
 			UnlockReleaseBuffer(buf);
 			RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
@@ -2580,6 +2618,13 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
+
+		/*
+		 * An all-visible page should not have its free space available from
+		 * FSM (unless there is an excessive amount)
+		 */
+		if (PageIsAllVisible(page) && freespace <= vacrel->max_discard_space)
+			freespace = 0;
 
 		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(vacrel->rel, tblk, freespace);
