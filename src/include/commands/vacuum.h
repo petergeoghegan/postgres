@@ -187,7 +187,7 @@ typedef struct VacAttrStats
 #define VACOPT_FULL 0x10		/* FULL (non-concurrent) vacuum */
 #define VACOPT_SKIP_LOCKED 0x20 /* skip if cannot get lock */
 #define VACOPT_PROCESS_TOAST 0x40	/* process the TOAST table, if any */
-#define VACOPT_DISABLE_PAGE_SKIPPING 0x80	/* don't skip any pages */
+#define VACOPT_DISABLE_PAGE_SKIPPING 0x80	/* don't skip using VM */
 
 /*
  * Values used by index_cleanup and truncate params.
@@ -336,7 +336,8 @@ extern void vac_update_relstats(Relation relation,
 								bool *minmulti_updated,
 								bool in_outer_xact);
 extern bool vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
-							   struct VacuumCutoffs *cutoffs);
+							   struct VacuumCutoffs *cutoffs,
+							   double *tableagefrac);
 extern bool vacuum_xid_failsafe_check(const struct VacuumCutoffs *cutoffs);
 extern void vac_update_datfrozenxid(void);
 extern void vacuum_delay_point(void);
