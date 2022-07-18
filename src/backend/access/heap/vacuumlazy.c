@@ -110,7 +110,7 @@
 
 /*
  * Threshold that controls whether non-aggressive VACUUMs will skip any
- * all-visible pages
+ * all-visible pages when using the lazy freezing strategy
  */
 #define SKIPALLVIS_THRESHOLD_PAGES	0.05	/* i.e. 5% of rel_pages */
 
@@ -150,6 +150,8 @@ typedef struct LVRelState
 	bool		skipallvis;
 	/* Skip (don't scan) all-frozen pages? */
 	bool		skipallfrozen;
+	/* Proactively freeze all tuples on pages about to be set all-visible? */
+	bool		allvis_freeze_strategy;
 	/* Wraparound failsafe has been triggered? */
 	bool		failsafe_active;
 	/* Consider index vacuuming bypass optimization? */
@@ -254,6 +256,7 @@ typedef struct LVSavedErrInfo
 /* non-export function prototypes */
 static void lazy_scan_heap(LVRelState *vacrel);
 static BlockNumber lazy_scan_strategy(LVRelState *vacrel,
+									  BlockNumber eager_threshold,
 									  BlockNumber all_visible,
 									  BlockNumber all_frozen);
 static BlockNumber lazy_scan_skip(LVRelState *vacrel,
@@ -327,6 +330,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	MultiXactId OldestMxact,
 				MultiXactCutoff;
 	BlockNumber orig_rel_pages,
+				eager_threshold,
 				all_visible,
 				all_frozen,
 				scanned_pages,
@@ -366,6 +370,10 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * used to determine which XIDs/MultiXactIds will be frozen.  If this is
 	 * an aggressive VACUUM then lazy_scan_heap cannot leave behind unfrozen
 	 * XIDs < FreezeLimit (all MXIDs < MultiXactCutoff also need to go away).
+	 *
+	 * Also determine our cutoff for applying the eager/all-visible freezing
+	 * strategy.  If rel_pages is larger than this cutoff we use the strategy,
+	 * even during non-aggressive VACUUMs.
 	 */
 	aggressive = vacuum_set_xid_limits(rel,
 									   params->freeze_min_age,
@@ -374,6 +382,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 									   params->multixact_freeze_table_age,
 									   &OldestXmin, &OldestMxact,
 									   &FreezeLimit, &MultiXactCutoff);
+	eager_threshold = params->freeze_strategy_threshold < 0 ?
+		vacuum_freeze_strategy_threshold :
+		params->freeze_strategy_threshold;
 
 	if (params->options & VACOPT_DISABLE_PAGE_SKIPPING)
 	{
@@ -526,7 +537,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 */
 	vacrel->vmsnap = visibilitymap_snap(rel, orig_rel_pages,
 										&all_visible, &all_frozen);
-	scanned_pages = lazy_scan_strategy(vacrel,
+	scanned_pages = lazy_scan_strategy(vacrel, eager_threshold,
 									   all_visible, all_frozen);
 	if (verbose)
 		ereport(INFO,
@@ -1282,17 +1293,28 @@ lazy_scan_heap(LVRelState *vacrel)
 }
 
 /*
- *	lazy_scan_strategy() -- Determine skipping strategy.
+ *	lazy_scan_strategy() -- Determine freezing/skipping strategy.
  *
- * Determines if the ongoing VACUUM operation should skip all-visible pages
- * for non-aggressive VACUUMs, where advancing relfrozenxid is optional.
+ * Our traditional/lazy freezing strategy is useful when putting off the work
+ * of freezing totally avoids work that turns out to have been unnecessary.
+ * On the other hand we eagerly freeze pages when that strategy spreads out
+ * the burden of freezing over time.  Performance stability is important; no
+ * one VACUUM operation should need to freeze disproportionately many pages.
+ * Antiwraparound VACUUMs of append-only tables should generally be avoided.
+ *
+ * Also determines if the ongoing VACUUM operation should skip all-visible
+ * pages for non-aggressive VACUUMs, where advancing relfrozenxid is optional.
+ * When VACUUM freezes eagerly it always also scans pages eagerly, since it's
+ * important that relfrozenxid advance in affected tables, which are larger.
+ * When VACUUM freezes lazily it might make sense to scan pages lazily (skip
+ * all-visible pages) or eagerly (be capable of relfrozenxid advancement),
+ * depending on the extra cost - we might need to scan only a few extra pages.
  *
  * Returns final scanned_pages for the VACUUM operation.
  */
 static BlockNumber
-lazy_scan_strategy(LVRelState *vacrel,
-				   BlockNumber all_visible,
-				   BlockNumber all_frozen)
+lazy_scan_strategy(LVRelState *vacrel, BlockNumber eager_threshold,
+				   BlockNumber all_visible, BlockNumber all_frozen)
 {
 	BlockNumber rel_pages = vacrel->rel_pages,
 				scanned_pages_skipallvis,
@@ -1325,20 +1347,47 @@ lazy_scan_strategy(LVRelState *vacrel,
 		scanned_pages_skipallfrozen++;
 
 	/*
-	 * Okay, now we have all the information we need to decide on a strategy
+	 * Okay, now we have all the information we need to decide on a strategy.
+	 *
+	 * We use the all-visible/eager freezing strategy when a threshold
+	 * controlled by the freeze_strategy_threshold GUC/reloption is crossed.
+	 * VACUUM won't accumulate any unfrozen all-visible pages over time in
+	 * tables above the threshold.  The system won't fall behind on freezing.
 	 */
 	if (!vacrel->skipallfrozen)
 	{
 		/* DISABLE_PAGE_SKIPPING makes all skipping unsafe */
 		Assert(vacrel->aggressive && !vacrel->skipallvis);
+		vacrel->allvis_freeze_strategy = true;
 		return rel_pages;
 	}
 	else if (vacrel->aggressive)
+	{
+		/* Always freeze all-visible pages during aggressive VACUUMs */
 		Assert(!vacrel->skipallvis);
+		vacrel->allvis_freeze_strategy = true;
+	}
+	else if (rel_pages >= eager_threshold)
+	{
+		/*
+		 * Non-aggressive VACUUM of table whose rel_pages now exceeds
+		 * GUC-based threshold for eager freezing.
+		 *
+		 * We always scan all-visible pages when the threshold is crossed, so
+		 * that relfrozenxid can be advanced.  There will typically be few or
+		 * no all-visible pages (only all-frozen) in the table anyway, at
+		 * least after the first VACUUM that exceeds the threshold.
+		 */
+		vacrel->allvis_freeze_strategy = true;
+		vacrel->skipallvis = false;
+	}
 	else
 	{
 		BlockNumber nextra,
 					nextra_threshold;
+
+		/* Non-aggressive VACUUM of small table -- use lazy freeze strategy */
+		vacrel->allvis_freeze_strategy = false;
 
 		/*
 		 * Decide on whether or not we'll skip all-visible pages.
@@ -1851,8 +1900,15 @@ retry:
 	 *
 	 * Freeze the page when heap_prepare_freeze_tuple indicates that at least
 	 * one XID/MXID from before FreezeLimit/MultiXactCutoff is present.
+	 *
+	 * When ongoing VACUUM opted to use the all-visible freezing strategy we
+	 * freeze any page that will become all-visible, making it all-frozen
+	 * instead. (Actually, there are edge-cases where this might not result in
+	 * marking the page all-frozen in the visibility map, but that should have
+	 * only a negligible impact.)
 	 */
-	if (xtrack.freeze || tuples_frozen == 0)
+	if (xtrack.freeze || tuples_frozen == 0 ||
+		(vacrel->allvis_freeze_strategy && prunestate->all_visible))
 	{
 		/*
 		 * We're freezing the page.  Our final NewRelfrozenXid doesn't need to

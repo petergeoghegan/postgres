@@ -9140,6 +9140,21 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-vacuum-freeze-strategy-threshold" xreflabel="vacuum_freeze_strategy_threshold">
+      <term><varname>vacuum_freeze_strategy_threshold</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>vacuum_freeze_strategy_threshold</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the cutoff size (in pages) that <command>VACUUM</command>
+        should use to decide whether to its eager freezing strategy.
+        The default is 4 gigabytes (<literal>4GB</literal>).
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-vacuum-freeze-min-age" xreflabel="vacuum_freeze_min_age">
       <term><varname>vacuum_freeze_min_age</varname> (<type>integer</type>)
       <indexterm>
@@ -9148,9 +9163,11 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        Specifies the cutoff age (in transactions) that <command>VACUUM</command>
-        should use to decide whether to freeze row versions
-        while scanning a table.
+        Specifies the cutoff age (in transactions) that
+        <command>VACUUM</command> should use to decide whether to
+        trigger freezing of pages that have an older XID.  When VACUUM
+        uses its eager freezing strategy, freezing a page can also be
+        triggered when the page contains only all-visible tuples.
         The default is 50 million transactions.  Although
         users can set this value anywhere from zero to one billion,
         <command>VACUUM</command> will silently limit the effective value to half
@@ -9227,10 +9244,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        Specifies the cutoff age (in multixacts) that <command>VACUUM</command>
-        should use to decide whether to replace multixact IDs with a newer
-        transaction ID or multixact ID while scanning a table.  The default
-        is 5 million multixacts.
+        Specifies the cutoff age (in multixacts) that
+        <command>VACUUM</command> should use to decide whether to
+        trigger freezing of pages with an older multixact ID.  The
+        default is 5 million multixacts.
         Although users can set this value anywhere from zero to one billion,
         <command>VACUUM</command> will silently limit the effective value to half
         the value of <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>,
