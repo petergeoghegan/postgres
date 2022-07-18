@@ -127,7 +127,11 @@ typedef struct HeapTupleFreeze
  * pg_class tuple.
  *
  * Alternative "no freeze" variants of relfrozenxid_nofreeze_out and
- * relminmxid_nofreeze_out must also be maintained for !freeze pages.
+ * relminmxid_nofreeze_out must also be maintained.  If vacuumlazy.c caller
+ * opts to not execute freeze plans produced by heap_prepare_freeze_tuple for
+ * its own reasons, then new relfrozenxid and relminmxid values must reflect
+ * that that choice was made.  (This is only safe when 'freeze' is still unset
+ * after the final last heap_prepare_freeze_tuple call for the page.)
  */
 typedef struct HeapPageFreeze
 {
@@ -138,7 +142,7 @@ typedef struct HeapPageFreeze
 	TransactionId relfrozenxid_out;
 	MultiXactId relminmxid_out;
 
-	/* Used by caller for '!freeze' pages */
+	/* Used by caller that opts not to freeze a '!freeze' page */
 	TransactionId relfrozenxid_nofreeze_out;
 	MultiXactId relminmxid_nofreeze_out;
 
