@@ -2504,6 +2504,17 @@ struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"vacuum_freeze_strategy_threshold", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Table size at which VACUUM freezes using eager strategy."),
+			NULL,
+			GUC_UNIT_BLOCKS
+		},
+		&vacuum_freeze_strategy_threshold,
+		(UINT64CONST(4) * 1024 * 1024 * 1024) / BLCKSZ, 0, INT_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"vacuum_defer_cleanup_age", PGC_SIGHUP, REPLICATION_PRIMARY,
 			gettext_noop("Number of transactions by which VACUUM and HOT cleanup should be deferred, if any."),
 			NULL

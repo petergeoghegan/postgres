@@ -67,6 +67,7 @@ int			vacuum_freeze_min_age;
 int			vacuum_freeze_table_age;
 int			vacuum_multixact_freeze_min_age;
 int			vacuum_multixact_freeze_table_age;
+int			vacuum_freeze_strategy_threshold;
 int			vacuum_failsafe_age;
 int			vacuum_multixact_failsafe_age;
 
@@ -262,6 +263,9 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		params.multixact_freeze_min_age = -1;
 		params.multixact_freeze_table_age = -1;
 	}
+
+	/* Determine freezing strategy later on using GUC or reloption */
+	params.freeze_strategy_threshold = -1;
 
 	/* user-invoked vacuum is never "for wraparound" */
 	params.is_wraparound = false;
@@ -943,7 +947,8 @@ vacuum_set_xid_limits(Relation rel, const VacuumParams *params,
 				multixact_freeze_min_age,
 				freeze_table_age,
 				multixact_freeze_table_age,
-				effective_multixact_freeze_max_age;
+				effective_multixact_freeze_max_age,
+				freeze_strategy_threshold;
 	TransactionId nextXID,
 				safeOldestXmin,
 				aggressiveXIDCutoff;
@@ -960,6 +965,7 @@ vacuum_set_xid_limits(Relation rel, const VacuumParams *params,
 	multixact_freeze_min_age = params->multixact_freeze_min_age;
 	freeze_table_age = params->freeze_table_age;
 	multixact_freeze_table_age = params->multixact_freeze_table_age;
+	freeze_strategy_threshold = params->freeze_strategy_threshold;
 
 	/*
 	 * Acquire OldestXmin.
@@ -1069,6 +1075,14 @@ vacuum_set_xid_limits(Relation rel, const VacuumParams *params,
 				(errmsg("cutoff for freezing multixacts is far in the past"),
 				 errhint("Close open transactions soon to avoid wraparound problems.\n"
 						 "You might also need to commit or roll back old prepared transactions, or drop stale replication slots.")));
+
+	/*
+	 * Determine the freeze_strategy_threshold to use: as specified by the
+	 * caller, or vacuum_freeze_strategy_threshold
+	 */
+	if (freeze_strategy_threshold < 0)
+		freeze_strategy_threshold = vacuum_freeze_strategy_threshold;
+	cutoffs->freeze_strategy_threshold = freeze_strategy_threshold;
 
 	/*
 	 * Assert that all cutoff invariants hold.

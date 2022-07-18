@@ -6466,7 +6466,7 @@ FreezeMultiXactId(MultiXactId multi, HeapTupleHeader tuple,
  * heap_prepare_freeze_tuple
  *
  * Check to see whether any of the XID fields of a tuple (xmin, xmax, xvac)
- * are older than the FreezeLimit and/or MultiXactCutoff cutoffs.  If so,
+ * are older than the OldestXmin and/or OldestMxact freeze cutoffs.  If so,
  * setup enough state (in the *frz output argument) to later execute and
  * WAL-log what caller needs to do for the tuple, and return true.  Return
  * false if nothing can be changed about the tuple right now.
@@ -6478,8 +6478,15 @@ FreezeMultiXactId(MultiXactId multi, HeapTupleHeader tuple,
  *
  * VACUUM caller must assemble HeapTupleFreeze freeze plan entries for every
  * tuple that we returned true for, and call heap_freeze_execute_prepared to
- * execute freezing.  Caller must initialize pagefrz fields for page as a
- * whole before first call here for each heap page.
+ * execute freezing for the page as a whole.  Caller must initialize pagefrz
+ * fields for page as a whole before first call here for each heap page.
+ *
+ * VACUUM caller decides on whether or not to freeze the page as a whole.
+ * We'll often prepare freeze plans for a page that caller just discards.
+ * However, VACUUM doesn't always get to make a choice; it must freeze when
+ * pagefrz.freeze_required is set, to ensure that any XIDs < FreezeLimit (and
+ * MXIDs < MultiXactCutoff) can never be left behind.  We make sure that
+ * VACUUM always follows that rule.
  *
  * We sometimes force freezing of xmax MultiXactId values long before it is
  * strictly necessary to do so just to ensure the FreezeLimit postcondition.
