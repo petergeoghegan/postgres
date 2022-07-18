@@ -187,7 +187,7 @@ typedef struct VacAttrStats
 #define VACOPT_FULL 0x10		/* FULL (non-concurrent) vacuum */
 #define VACOPT_SKIP_LOCKED 0x20 /* skip if cannot get lock */
 #define VACOPT_PROCESS_TOAST 0x40	/* process the TOAST table, if any */
-#define VACOPT_DISABLE_PAGE_SKIPPING 0x80	/* don't skip any pages */
+#define VACOPT_DISABLE_PAGE_SKIPPING 0x80	/* don't skip using VM */
 
 /*
  * Values used by index_cleanup and truncate params.
@@ -281,6 +281,19 @@ struct VacuumCutoffs
 	 * rel's main fork) that triggers VACUUM's eager freezing strategy
 	 */
 	BlockNumber freeze_strategy_threshold;
+
+	/*
+	 * The tableagefrac value 1.0 represents the point that autovacuum.c
+	 * scheduling (and VACUUM itself) considers relfrozenxid advancement
+	 * strictly necessary.
+	 *
+	 * Lower values provide useful context, and influence whether VACUUM will
+	 * opt to advance relfrozenxid before the point that it is strictly
+	 * necessary.  VACUUM can (and often does) opt to advance relfrozenxid
+	 * proactively.  It is especially likely with tables where the _added_
+	 * costs happen to be low.
+	 */
+	double		tableagefrac;
 };
 
 /*
