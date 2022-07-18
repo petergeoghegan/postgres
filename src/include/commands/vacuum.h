@@ -188,7 +188,7 @@ typedef struct VacAttrStats
 #define VACOPT_SKIP_LOCKED 0x20 /* skip if cannot get lock */
 #define VACOPT_PROCESS_MAIN 0x40	/* process main relation */
 #define VACOPT_PROCESS_TOAST 0x80	/* process the TOAST table, if any */
-#define VACOPT_DISABLE_PAGE_SKIPPING 0x100	/* don't skip any pages */
+#define VACOPT_DISABLE_PAGE_SKIPPING 0x100	/* don't skip using VM */
 #define VACOPT_SKIP_DATABASE_STATS 0x200	/* skip vac_update_datfrozenxid() */
 #define VACOPT_ONLY_DATABASE_STATS 0x400	/* only vac_update_datfrozenxid() */
 
@@ -289,6 +289,24 @@ struct VacuumCutoffs
 	 * tables always use eager freezing strategy.)
 	 */
 	BlockNumber freeze_strategy_threshold_pages;
+
+	/*
+	 * The tableagefrac value 1.0 represents the point that autovacuum.c
+	 * scheduling (and VACUUM itself) considers relfrozenxid/relminmxid
+	 * advancement strictly necessary.  Values near 0.0 mean that both
+	 * relfrozenxid and relminmxid are a recently allocated XID/MXID.
+	 *
+	 * We don't need separate relfrozenxid and relminmxid tableagefrac
+	 * variants.  We base tableagefrac on whichever pg_class field is closer
+	 * to the point of having autovacuum.c launch an autovacuum to advance the
+	 * field's value.
+	 *
+	 * Lower values provide useful context, and influence whether VACUUM will
+	 * opt to advance relfrozenxid before the point that it is strictly
+	 * necessary.  VACUUM can (and often does) opt to advance relfrozenxid
+	 * and/or relminmxid proactively.
+	 */
+	double		tableagefrac;
 };
 
 /*

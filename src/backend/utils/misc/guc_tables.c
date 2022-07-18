@@ -2538,11 +2538,11 @@ struct config_int ConfigureNamesInt[] =
 
 	{
 		{"vacuum_freeze_table_age", PGC_USERSET, CLIENT_CONN_STATEMENT,
-			gettext_noop("Age at which VACUUM should scan whole table to freeze tuples."),
-			NULL
+			gettext_noop("Age at which VACUUM must scan whole table to freeze tuples."),
+			gettext_noop("-1 to use autovacuum_freeze_max_age value.")
 		},
 		&vacuum_freeze_table_age,
-		150000000, 0, 2000000000,
+		-1, -1, 2000000000,
 		NULL, NULL, NULL
 	},
 
@@ -2558,11 +2558,11 @@ struct config_int ConfigureNamesInt[] =
 
 	{
 		{"vacuum_multixact_freeze_table_age", PGC_USERSET, CLIENT_CONN_STATEMENT,
-			gettext_noop("Multixact age at which VACUUM should scan whole table to freeze tuples."),
-			NULL
+			gettext_noop("Multixact age at which VACUUM must scan whole table to freeze tuples."),
+			gettext_noop("-1 to use autovacuum_multixact_freeze_max_age value.")
 		},
 		&vacuum_multixact_freeze_table_age,
-		150000000, 0, 2000000000,
+		-1, -1, 2000000000,
 		NULL, NULL, NULL
 	},
 
