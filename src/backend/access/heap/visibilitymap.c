@@ -16,6 +16,8 @@
  *		visibilitymap_pin_ok - check whether correct map page is already pinned
  *		visibilitymap_set	 - set a bit in a previously pinned page
  *		visibilitymap_get_status - get status of bits
+ *		visibilitymap_snap - get read-only snapshot of visibility map
+ *		visibilitymap_snap_status - get status of bits from vm snapshot
  *		visibilitymap_count  - count number of bits set in visibility map
  *		visibilitymap_prepare_truncate -
  *			prepare for truncation of the visibility map
@@ -52,6 +54,9 @@
  *
  * VACUUM will normally skip pages for which the visibility map bit is set;
  * such pages can't contain any dead tuples and therefore don't need vacuuming.
+ * VACUUM uses a snapshot of the visibility map to avoid scanning pages whose
+ * visibility map bit gets concurrently unset (only tuples deleted before its
+ * OldestXmin cutoff are considered dead).
  *
  * LOCKING
  *
@@ -364,6 +369,137 @@ visibilitymap_get_status(Relation rel, BlockNumber heapBlk, Buffer *buf)
 	 * here, but for performance reasons we make it the caller's job to worry
 	 * about that.
 	 */
+	result = ((map[mapByte] >> mapOffset) & VISIBILITYMAP_VALID_BITS);
+	return result;
+}
+
+/*
+ *	visibilitymap_snap - get read-only snapshot of visibility map
+ *
+ * Initializes caller's snapshot, allocating memory in caller's memory context.
+ * Caller can use visibilitymap_snapshot_status to get the status of individual
+ * heap pages at the point that we were called.
+ *
+ * Used by VACUUM to determine which pages it must scan up front.  This avoids
+ * useless scans of concurrently unset heap pages.  VACUUM prefers to leave
+ * them to be scanned during the next VACUUM operation.
+ *
+ * rel_pages is the current size of the heap relation.
+ */
+void
+visibilitymap_snap(Relation rel, vmsnapshot *snapshot, BlockNumber rel_pages)
+{
+	BlockNumber mapBlockLast;
+
+#ifdef TRACE_VISIBILITYMAP
+	elog(DEBUG1, "visibilitymap_snap %s %d", RelationGetRelationName(rel), rel_pages);
+#endif
+
+	snapshot->nvisible = 0;
+	snapshot->nfrozen = 0;
+	if (rel_pages == 0)
+	{
+		snapshot->nvmpages = 0;
+		snapshot->vmpages = NULL;
+		return;
+	}
+
+	/*
+	 * Allocate space for VM pages up to and including those required to have
+	 * bits for the would-be heap block that is just beyond rel_pages
+	 */
+	mapBlockLast = HEAPBLK_TO_MAPBLOCK(rel_pages);
+	snapshot->nvmpages = mapBlockLast + 1;
+	snapshot->vmpages = palloc(BLCKSZ * snapshot->nvmpages);
+
+	for (BlockNumber mapBlock = 0; mapBlock <= mapBlockLast; mapBlock++)
+	{
+		Page		localvmpage;
+		Buffer		mapBuffer;
+		char	   *map;
+		uint64	   *umap;
+
+		mapBuffer = vm_readbuf(rel, mapBlock, false);
+		if (!BufferIsValid(mapBuffer))
+		{
+			/*
+			 * Not all VM pages available.  Remember that, so that we'll treat
+			 * relevant heap pages as not all-visible/all-frozen when asked.
+			 */
+			snapshot->nvmpages = mapBlock;
+			break;
+		}
+
+		localvmpage = snapshot->vmpages + mapBlock * BLCKSZ;
+		LockBuffer(mapBuffer, BUFFER_LOCK_SHARE);
+		memcpy(localvmpage, BufferGetPage(mapBuffer), BLCKSZ);
+		UnlockReleaseBuffer(mapBuffer);
+
+		/*
+		 * Visibility map page copied to local buffer for caller's snapshot.
+		 * Caller requires an exact count of all-visible and all-frozen blocks
+		 * in the heap relation.  Handle that now.
+		 *
+		 * Must "truncate" our local copy of the VM to avoid incorrectly
+		 * counting heap pages >= rel_pages as all-visible/all-frozen.  Handle
+		 * this by clearing irrelevant bits on the last VM page copied.
+		 */
+		map = PageGetContents(localvmpage);
+		if (mapBlock == mapBlockLast)
+		{
+			/* byte and bit for first heap page not to be scanned by VACUUM */
+			uint32		truncByte = HEAPBLK_TO_MAPBYTE(rel_pages);
+			uint8		truncOffset = HEAPBLK_TO_OFFSET(rel_pages);
+
+			if (truncByte != 0 || truncOffset != 0)
+			{
+				/* Clear any bits set for heap pages >= rel_pages */
+				MemSet(&map[truncByte + 1], 0, MAPSIZE - (truncByte + 1));
+				map[truncByte] &= (1 << truncOffset) - 1;
+			}
+
+			/* Now it's safe to tally bits from this final VM page below */
+		}
+
+		/* Tally the all-visible and all-frozen counts from this page */
+		umap = (uint64 *) map;
+		for (int i = 0; i < MAPSIZE / sizeof(uint64); i++)
+		{
+			snapshot->nvisible += pg_popcount64(umap[i] & VISIBLE_MASK64);
+			snapshot->nfrozen += pg_popcount64(umap[i] & FROZEN_MASK64);
+		}
+	}
+}
+
+/*
+ *	visibilitymap_snap_status - get status of bits from vm snapshot
+ *
+ * Are all tuples on heapBlk visible to all or are marked frozen, according
+ * to caller's snapshot of the visibility map?
+ */
+uint8
+visibilitymap_snap_status(Relation rel, vmsnapshot *snapshot,
+						  BlockNumber heapBlk)
+{
+	BlockNumber mapBlock = HEAPBLK_TO_MAPBLOCK(heapBlk);
+	uint32		mapByte = HEAPBLK_TO_MAPBYTE(heapBlk);
+	uint8		mapOffset = HEAPBLK_TO_OFFSET(heapBlk);
+	char	   *map;
+	uint8		result;
+	Page		localvmpage;
+
+#ifdef TRACE_VISIBILITYMAP
+	elog(DEBUG1, "visibilitymap_snap_status %s %d", RelationGetRelationName(rel), heapBlk);
+#endif
+
+	/* If we didn't copy the VM page, assume heapBlk not all-visible */
+	if (mapBlock >= snapshot->nvmpages)
+		return 0;
+
+	Assert(mapBlock < snapshot->nvmpages);
+	localvmpage = ((Page) snapshot->vmpages) + mapBlock * BLCKSZ;
+	map = PageGetContents(localvmpage);
+
 	result = ((map[mapByte] >> mapOffset) & VISIBILITYMAP_VALID_BITS);
 	return result;
 }
