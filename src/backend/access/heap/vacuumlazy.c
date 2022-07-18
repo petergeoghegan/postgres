@@ -109,6 +109,21 @@
 	((BlockNumber) (((uint64) 8 * 1024 * 1024 * 1024) / BLCKSZ))
 
 /*
+ * Threshold on rel_pages that determines if target rel is large enough to
+ * need proactive page-based freezing as part of a non-aggressive VACUUM.
+ * Tables that are under the threshold only freeze pages with one or more XIDs
+ * that are older than FreezeLimit.
+ */
+#define PAGEFREEZE_STRATEGY_THRESHOLD \
+	((BlockNumber) (((uint64) 2 * 1024 * 1024 * 1024) / BLCKSZ))
+
+/*
+ * Threshold that controls whether non-aggressive VACUUMs will skip any
+ * all-visible pages (when rel_pages < PAGEFREEZE_STRATEGY_THRESHOLD)
+ */
+#define SKIPALLVIS_THRESHOLD_PAGES	0.02	/* i.e. 2% of rel_pages */
+
+/*
  * Size of the prefetch window for lazy vacuum backwards truncation scan.
  * Needs to be a power of 2.
  */
@@ -445,6 +460,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->mayskipallvis = !aggressive;
 	vacrel->mayskipallfrozen = mayskipallfrozen;
 	vacrel->freeze_when_allvis = aggressive;
+	/* Note: non-aggressive case makes final decision on strategy later */
 	vacrel->failsafe_active = false;
 	vacrel->consider_bypass_optimization = true;
 	vacrel->do_index_vacuuming = true;
@@ -535,17 +551,47 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->NewRelminMxid = OldestMxact;
 	vacrel->skippedallvis = false;
 
+	/*
+	 * Decide if we will use the all-visible freezing strategy inside
+	 * lazy_scan_prune for non-aggressive VACUUMs here.  Also decide if the
+	 * non-aggressive case will skip any existing undisturbed all-visible
+	 * pages with unfrozen tuples.
+	 */
 	if (!aggressive)
 	{
 		/*
-		 * Non-aggressive VACUUMs don't freeze a page's tuples unless at least
-		 * one XID is < FreezeLimit.
-		 *
-		 * TODO: Make non-aggressive VACUUMs do this sometimes, based on known
-		 * costs and benefits.
+		 * Don't use the all-visible freezing strategy unless rel_pages
+		 * exceeds PAGEFREEZE_STRATEGY_THRESHOLD -- avoid likely-useless early
+		 * freezing in smaller tables with constant churn.  We can easily
+		 * catch up in the next VACUUM if things go that way.
 		 */
-		vacrel->freeze_when_allvis = false;
-		vacrel->mayskipallvis = true;
+		vacrel->freeze_when_allvis = (orig_rel_pages >=
+									  PAGEFREEZE_STRATEGY_THRESHOLD);
+
+		if (vacrel->freeze_when_allvis)
+		{
+			/*
+			 * Always try to advance relfrozenxid when using the all-visible
+			 * freezing strategy.  We might well manage to avoid any future
+			 * antiwraparound autovacuums on the table, which is important
+			 * with large tables that grow continually.
+			 */
+			vacrel->mayskipallvis = false;
+		}
+		else
+		{
+			BlockNumber allvis_threshold;
+
+			/*
+			 * We're not doing all-visible freezing.  It is useful to keep the
+			 * option of advancing relfrozenxid open when it's cheap to do so.
+			 * We don't necessarily have to freeze anything to get a benefit.
+			 * The oldest tuples might turn out to have been deleted recently.
+			 */
+			allvis_threshold =
+				(double) orig_rel_pages * SKIPALLVIS_THRESHOLD_PAGES;
+			vacrel->mayskipallvis = vacrel->vmsnap.nvisible >= allvis_threshold;
+		}
 	}
 
 	/*
@@ -613,10 +659,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	{
 		/*
 		 * Must keep original relfrozenxid in a non-aggressive VACUUM that
-		 * chose to skip an all-visible page range.  The state that tracks new
-		 * values will have missed unfrozen XIDs from the pages we skipped.
+		 * opted to skip all-visible pages from a smaller table
 		 */
-		Assert(!aggressive);
+		Assert(!vacrel->aggressive && vacrel->mayskipallvis);
 		vacrel->NewRelfrozenXid = InvalidTransactionId;
 		vacrel->NewRelminMxid = InvalidMultiXactId;
 	}
@@ -1329,8 +1374,8 @@ lazy_scan_heap(LVRelState *vacrel)
  * which excludes pages treated as all-frozen here (pages >= rel_pages, too).
  *
  * There is an exception to the "scan all pages with older XIDs" rule, though:
- * non-aggressive VACUUMs will skip all-visible pages.  This makes it unsafe
- * to advance relfrozenxid, which is handled here by setting a flag.
+ * sometimes non-aggressive VACUUMs opt to skip all-visible pages.  This makes
+ * it unsafe to advance relfrozenxid, which is handled here by setting a flag.
  */
 static BlockNumber
 lazy_scan_skip(LVRelState *vacrel, BlockNumber next_block,
