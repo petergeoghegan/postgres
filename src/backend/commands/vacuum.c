@@ -63,6 +63,7 @@
 /*
  * GUC parameters
  */
+int			vacuum_freeze_strategy_threshold;
 int			vacuum_freeze_min_age;
 int			vacuum_freeze_table_age;
 int			vacuum_multixact_freeze_min_age;
@@ -250,6 +251,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	 */
 	if (params.options & VACOPT_FREEZE)
 	{
+		params.freeze_strategy_threshold = -1;
 		params.freeze_min_age = 0;
 		params.freeze_table_age = 0;
 		params.multixact_freeze_min_age = 0;
@@ -257,6 +259,7 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	}
 	else
 	{
+		params.freeze_strategy_threshold = -1;
 		params.freeze_min_age = -1;
 		params.freeze_table_age = -1;
 		params.multixact_freeze_min_age = -1;

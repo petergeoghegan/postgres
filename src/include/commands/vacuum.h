@@ -214,6 +214,9 @@ typedef enum VacOptValue
 typedef struct VacuumParams
 {
 	bits32		options;		/* bitmask of VACOPT_* */
+	int			freeze_strategy_threshold;	/* threshold to use eager
+											 * freezing, in total heap blocks,
+											 * -1 to use default */
 	int			freeze_min_age; /* min freeze age, -1 to use default */
 	int			freeze_table_age;	/* age at which to scan whole table */
 	int			multixact_freeze_min_age;	/* min multixact freeze age, -1 to
@@ -252,6 +255,7 @@ typedef struct VacDeadItems
 
 /* GUC parameters */
 extern PGDLLIMPORT int default_statistics_target;	/* PGDLLIMPORT for PostGIS */
+extern PGDLLIMPORT int vacuum_freeze_strategy_threshold;
 extern PGDLLIMPORT int vacuum_freeze_min_age;
 extern PGDLLIMPORT int vacuum_freeze_table_age;
 extern PGDLLIMPORT int vacuum_multixact_freeze_min_age;

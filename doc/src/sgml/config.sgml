@@ -9147,6 +9147,21 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-vacuum-freeze-strategy-threshold" xreflabel="vacuum_freeze_strategy_threshold">
+      <term><varname>vacuum_freeze_strategy_threshold</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>vacuum_freeze_strategy_threshold</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the cutoff size (in pages) that <command>VACUUM</command>
+        should use to decide whether to its eager freezing strategy.
+        The default is 4 gigabytes (<literal>4GB</literal>).
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-vacuum-freeze-min-age" xreflabel="vacuum_freeze_min_age">
       <term><varname>vacuum_freeze_min_age</varname> (<type>integer</type>)
       <indexterm>

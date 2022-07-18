@@ -2697,6 +2697,17 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"vacuum_freeze_strategy_threshold", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Table size at which VACUUM freezes using eager strategy."),
+			NULL,
+			GUC_UNIT_BLOCKS
+		},
+		&vacuum_freeze_strategy_threshold,
+		(UINT64CONST(4) * 1024 * 1024 * 1024) / BLCKSZ, 0, INT_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"vacuum_freeze_min_age", PGC_USERSET, CLIENT_CONN_STATEMENT,
 			gettext_noop("Minimum age at which VACUUM should freeze a table row."),
 			NULL

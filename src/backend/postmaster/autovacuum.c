@@ -146,6 +146,7 @@ static TransactionId recentXid;
 static MultiXactId recentMulti;
 
 /* Default freeze ages to use for autovacuum (varies by database) */
+static int	default_freeze_strategy_threshold;
 static int	default_freeze_min_age;
 static int	default_freeze_table_age;
 static int	default_multixact_freeze_min_age;
@@ -2002,6 +2003,7 @@ do_autovacuum(void)
 
 	if (dbForm->datistemplate || !dbForm->datallowconn)
 	{
+		default_freeze_strategy_threshold = 0;
 		default_freeze_min_age = 0;
 		default_freeze_table_age = 0;
 		default_multixact_freeze_min_age = 0;
@@ -2009,6 +2011,7 @@ do_autovacuum(void)
 	}
 	else
 	{
+		default_freeze_strategy_threshold = vacuum_freeze_strategy_threshold;
 		default_freeze_min_age = vacuum_freeze_min_age;
 		default_freeze_table_age = vacuum_freeze_table_age;
 		default_multixact_freeze_min_age = vacuum_multixact_freeze_min_age;
@@ -2793,6 +2796,7 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 	/* OK, it needs something done */
 	if (doanalyze || dovacuum)
 	{
+		int			freeze_strategy_threshold;
 		int			freeze_min_age;
 		int			freeze_table_age;
 		int			multixact_freeze_min_age;
@@ -2828,6 +2832,11 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 			: Log_autovacuum_min_duration;
 
 		/* these do not have autovacuum-specific settings */
+		freeze_strategy_threshold = (avopts &&
+									 avopts->freeze_strategy_threshold >= 0)
+			? avopts->freeze_strategy_threshold
+			: default_freeze_strategy_threshold;
+
 		freeze_min_age = (avopts && avopts->freeze_min_age >= 0)
 			? avopts->freeze_min_age
 			: default_freeze_min_age;
@@ -2864,6 +2873,8 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 		tab->at_params.truncate = VACOPTVALUE_UNSPECIFIED;
 		/* As of now, we don't support parallel vacuum for autovacuum */
 		tab->at_params.nworkers = -1;
+
+		tab->at_params.freeze_strategy_threshold = freeze_strategy_threshold;
 		tab->at_params.freeze_min_age = freeze_min_age;
 		tab->at_params.freeze_table_age = freeze_table_age;
 		tab->at_params.multixact_freeze_min_age = multixact_freeze_min_age;
