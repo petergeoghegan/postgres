@@ -67,6 +67,7 @@ int			vacuum_freeze_min_age;
 int			vacuum_freeze_table_age;
 int			vacuum_multixact_freeze_min_age;
 int			vacuum_multixact_freeze_table_age;
+int			vacuum_freeze_strategy_threshold;
 int			vacuum_failsafe_age;
 int			vacuum_multixact_failsafe_age;
 
@@ -262,6 +263,9 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		params.multixact_freeze_min_age = -1;
 		params.multixact_freeze_table_age = -1;
 	}
+
+	/* Determine freezing strategy later on using GUC or reloption */
+	params.freeze_strategy_threshold = -1;
 
 	/* user-invoked vacuum is never "for wraparound" */
 	params.is_wraparound = false;
