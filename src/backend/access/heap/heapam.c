@@ -6429,7 +6429,13 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
  * WAL-log what we would need to do, and return true.  Return false if nothing
  * is to be changed.  In addition, set *totally_frozen to true if the tuple
  * will be totally frozen after these operations are performed and false if
- * more freezing will eventually be required.
+ * more freezing will eventually be required (assuming page is to be frozen).
+ *
+ * Although this interface is primarily tuple-based, caller decides on whether
+ * or not to freeze the page as a whole.  We'll often help caller to prepare a
+ * complete "freeze plan" that it ultimately discards.  However, our caller
+ * doesn't always get to choose; it must freeze when xtrack.freeze is set
+ * here.  This ensures that any XIDs < limit_xid are never left behind.
  *
  * Caller must initialize xtrack fields for page as a whole before calling
  * here with first tuple for the page.  See page_frozenxid_tracker comments.

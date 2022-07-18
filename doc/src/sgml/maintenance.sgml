@@ -588,9 +588,9 @@
     the <structfield>relfrozenxid</structfield> column of a table's
     <structname>pg_class</structname> row contains the oldest remaining unfrozen
     XID at the end of the most recent <command>VACUUM</command> that successfully
-    advanced <structfield>relfrozenxid</structfield> (typically the most recent
-    aggressive VACUUM).  Similarly, the
-    <structfield>datfrozenxid</structfield> column of a database's
+    advanced <structfield>relfrozenxid</structfield>.  All rows inserted by
+    transactions older than this cutoff XID are guaranteed to have been frozen.
+    Similarly, the <structfield>datfrozenxid</structfield> column of a database's
     <structname>pg_database</structname> row is a lower bound on the unfrozen XIDs
     appearing in that database &mdash; it is just the minimum of the
     per-table <structfield>relfrozenxid</structfield> values within the database.
