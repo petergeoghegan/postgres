@@ -6440,7 +6440,13 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
  * WAL-log what we would need to do, and return true.  Return false if nothing
  * is to be changed.  In addition, set *totally_frozen to true if the tuple
  * will be totally frozen after these operations are performed and false if
- * more freezing will eventually be required.
+ * more freezing will eventually be required (assuming page is to be frozen).
+ *
+ * Although this interface is primarily tuple-based, caller decides on whether
+ * or not to freeze the page as a whole.  We'll often help caller to prepare a
+ * complete "freeze plan" that it ultimately discards.  However, our caller
+ * doesn't always get to choose; it must freeze when xtrack.freeze is set
+ * here.  This ensures that any XIDs < limit_xid are never left behind.
  *
  * VACUUM caller must assemble HeapTupleFreeze entries for every tuple that we
  * returned true for when called.  A later heap_freeze_execute_prepared call
@@ -6634,7 +6640,8 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 		 * Trigger page level freezing to ensure that we reliably process
 		 * MultiXacts as instructed by FreezeMultiXactId() in all cases.
 		 * There is no way to opt out of this, since FreezeMultiXactId()
-		 * doesn't provide for that.
+		 * doesn't provide for that. (It helps us with NewRelfrozenXid, not
+		 * with NoFreezeNewRelfrozenXid.)
 		 */
 		if ((flags & FRM_NOOP) == 0)
 			xtrack->FreezeRequired = true;
