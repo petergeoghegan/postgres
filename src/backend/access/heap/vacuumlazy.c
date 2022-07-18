@@ -109,10 +109,18 @@
 	((BlockNumber) (((uint64) 8 * 1024 * 1024 * 1024) / BLCKSZ))
 
 /*
- * Before we consider skipping a page that's marked as clean in
- * visibility map, we must've seen at least this many clean pages.
+ * Thresholds (expressed as a proportion of rel_pages) that influence VACUUM's
+ * choice of skipping strategy
  */
-#define SKIP_PAGES_THRESHOLD	((BlockNumber) 32)
+#define SKIPALLVIS_MIN_PAGES		0.05	/* 5% of rel_pages */
+#define SKIPALLVIS_MAX_PAGES		0.70
+
+/*
+ * tableagefrac-wise cutoffs that control when VACUUM decides on skipping
+ * using SKIPALLVIS_MIN_PAGES and SKIPALLVIS_MAX_PAGES cutoffs respectively
+ */
+#define TABLEAGEFRAC_MIDPOINT		0.5 /* half way to antiwraparound AV */
+#define TABLEAGEFRAC_HIGHPOINT		0.9
 
 /*
  * Size of the prefetch window for lazy vacuum backwards truncation scan.
@@ -150,8 +158,6 @@ typedef struct LVRelState
 
 	/* Aggressive VACUUM? (must set relfrozenxid >= FreezeLimit) */
 	bool		aggressive;
-	/* Use visibility map to skip? (disabled by DISABLE_PAGE_SKIPPING) */
-	bool		skipwithvm;
 	/* Eagerly freeze all tuples on pages about to be set all-visible? */
 	bool		eager_freeze_strategy;
 	/* Wraparound failsafe has been triggered? */
@@ -170,7 +176,9 @@ typedef struct LVRelState
 	/* Tracks oldest extant XID/MXID for setting relfrozenxid/relminmxid */
 	TransactionId NewRelfrozenXid;
 	MultiXactId NewRelminMxid;
-	bool		skippedallvis;
+	/* Immutable snapshot of visibility map (as of time that VACUUM began) */
+	vmsnapshot *vmsnap;
+	vmstrategy	vmstrat;
 
 	/* Error reporting state */
 	char	   *relnamespace;
@@ -243,11 +251,9 @@ typedef struct LVSavedErrInfo
 
 /* non-export function prototypes */
 static void lazy_scan_heap(LVRelState *vacrel);
-static void lazy_scan_strategy(LVRelState *vacrel);
-static BlockNumber lazy_scan_skip(LVRelState *vacrel, Buffer *vmbuffer,
-								  BlockNumber next_block,
-								  bool *next_unskippable_allvis,
-								  bool *skipping_current_range);
+static BlockNumber lazy_scan_strategy(LVRelState *vacrel,
+									  const VacuumParams *params,
+									  double tableagefrac);
 static bool lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf,
 								   BlockNumber blkno, Page page,
 								   bool sharelock, Buffer vmbuffer);
@@ -309,10 +315,11 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	LVRelState *vacrel;
 	bool		verbose,
 				instrument,
-				skipwithvm,
 				frozenxid_updated,
 				minmulti_updated;
+	double		tableagefrac;
 	BlockNumber orig_rel_pages,
+				scanned_pages,
 				new_rel_pages,
 				new_rel_allvisible;
 	PGRUsage	ru0;
@@ -452,43 +459,34 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * future we might want to teach lazy_scan_prune to recompute vistest from
 	 * time to time, to increase the number of dead tuples it can prune away.)
 	 */
-	vacrel->aggressive = vacuum_get_cutoffs(rel, params, &vacrel->cutoffs);
+	vacrel->aggressive = vacuum_get_cutoffs(rel, params, &vacrel->cutoffs,
+											&tableagefrac);
 	vacrel->rel_pages = orig_rel_pages = RelationGetNumberOfBlocks(rel);
 	vacrel->vistest = GlobalVisTestFor(rel);
 	/* Initialize state used to track oldest extant XID/MXID */
 	vacrel->NewRelfrozenXid = vacrel->cutoffs.OldestXmin;
 	vacrel->NewRelminMxid = vacrel->cutoffs.OldestMxact;
-	vacrel->skippedallvis = false;
-	skipwithvm = true;
-	if (params->options & VACOPT_DISABLE_PAGE_SKIPPING)
-	{
-		/*
-		 * Force aggressive mode, and disable skipping blocks using the
-		 * visibility map (even those set all-frozen)
-		 */
-		vacrel->aggressive = true;
-		skipwithvm = false;
-	}
-
-	vacrel->skipwithvm = skipwithvm;
 
 	/*
-	 * Determine freezing strategy used by VACUUM
+	 * Now determine skipping and freezing strategies used by this VACUUM.
+	 *
+	 * This process is driven in part by information from VACUUM's visibility
+	 * map snapshot, which will be acquired in passing.  lazy_scan_heap will
+	 * use the same immutable VM snapshot to determine which pages to skip.
+	 * Using an immutable structure (instead of the live visibility map) helps
+	 * VACUUM avoid scanning concurrently modified pages.  These pages can
+	 * only have deleted tuples that OldestXmin will consider RECENTLY_DEAD.
 	 */
-	lazy_scan_strategy(vacrel);
+	scanned_pages = lazy_scan_strategy(vacrel, params, tableagefrac);
 	if (verbose)
-	{
-		if (vacrel->aggressive)
-			ereport(INFO,
-					(errmsg("aggressively vacuuming \"%s.%s.%s\"",
-							get_database_name(MyDatabaseId),
-							vacrel->relnamespace, vacrel->relname)));
-		else
-			ereport(INFO,
-					(errmsg("vacuuming \"%s.%s.%s\"",
-							get_database_name(MyDatabaseId),
-							vacrel->relnamespace, vacrel->relname)));
-	}
+		ereport(INFO,
+				(errmsg("vacuuming \"%s.%s.%s\"",
+						get_database_name(MyDatabaseId),
+						vacrel->relnamespace, vacrel->relname),
+				 errdetail("Table has %u pages in total, of which %u pages (%.2f%% of total) will be scanned.",
+						   orig_rel_pages, scanned_pages,
+						   orig_rel_pages == 0 ? 100.0 :
+						   100.0 * scanned_pages / orig_rel_pages)));
 
 	/*
 	 * Allocate dead_items array memory using dead_items_alloc.  This handles
@@ -505,6 +503,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * vacuuming, and heap vacuuming (plus related processing)
 	 */
 	lazy_scan_heap(vacrel);
+	Assert(vacrel->scanned_pages == scanned_pages);
 
 	/*
 	 * Free resources managed by dead_items_alloc.  This ends parallel mode in
@@ -551,12 +550,11 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 		   MultiXactIdPrecedesOrEquals(vacrel->aggressive ? vacrel->cutoffs.MultiXactCutoff :
 									   vacrel->cutoffs.relminmxid,
 									   vacrel->NewRelminMxid));
-	if (vacrel->skippedallvis)
+	if (vacrel->vmstrat == VMSNAP_SKIP_ALL_VISIBLE)
 	{
 		/*
-		 * Must keep original relfrozenxid in a non-aggressive VACUUM that
-		 * chose to skip an all-visible page range.  The state that tracks new
-		 * values will have missed unfrozen XIDs from the pages we skipped.
+		 * Must keep original relfrozenxid when lazy_scan_strategy call
+		 * decided to skip all-visible pages
 		 */
 		Assert(!vacrel->aggressive);
 		vacrel->NewRelfrozenXid = InvalidTransactionId;
@@ -601,6 +599,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 						 vacrel->missed_dead_tuples);
 	pgstat_progress_end_command();
 
+	/* Done with rel's visibility map snapshot */
+	visibilitymap_snap_release(vacrel->vmsnap);
+
 	if (instrument)
 	{
 		TimestampTz endtime = GetCurrentTimestamp();
@@ -628,10 +629,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 			initStringInfo(&buf);
 			if (verbose)
 			{
-				/*
-				 * Aggressiveness already reported earlier, in dedicated
-				 * VACUUM VERBOSE ereport
-				 */
 				Assert(!params->is_wraparound);
 				msgfmt = _("finished vacuuming \"%s.%s.%s\": index scans: %d\n");
 			}
@@ -827,13 +824,12 @@ lazy_scan_heap(LVRelState *vacrel)
 {
 	BlockNumber rel_pages = vacrel->rel_pages,
 				blkno,
-				next_unskippable_block,
+				next_block_to_scan,
 				next_failsafe_block = 0,
 				next_fsm_block_to_vacuum = 0;
+	bool		next_all_visible;
 	VacDeadItems *dead_items = vacrel->dead_items;
 	Buffer		vmbuffer = InvalidBuffer;
-	bool		next_unskippable_allvis,
-				skipping_current_range;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
 		PROGRESS_VACUUM_TOTAL_HEAP_BLKS,
@@ -847,42 +843,29 @@ lazy_scan_heap(LVRelState *vacrel)
 	initprog_val[2] = dead_items->max_items;
 	pgstat_progress_update_multi_param(3, initprog_index, initprog_val);
 
-	/* Set up an initial range of skippable blocks using the visibility map */
-	next_unskippable_block = lazy_scan_skip(vacrel, &vmbuffer, 0,
-											&next_unskippable_allvis,
-											&skipping_current_range);
+	next_block_to_scan = visibilitymap_snap_next(vacrel->vmsnap,
+												 &next_all_visible);
 	for (blkno = 0; blkno < rel_pages; blkno++)
 	{
 		Buffer		buf;
 		Page		page;
-		bool		all_visible_according_to_vm;
+		bool		all_visible_according_to_vmsnap;
 		LVPagePruneState prunestate;
 
-		if (blkno == next_unskippable_block)
+		if (blkno < next_block_to_scan)
 		{
-			/*
-			 * Can't skip this page safely.  Must scan the page.  But
-			 * determine the next skippable range after the page first.
-			 */
-			all_visible_according_to_vm = next_unskippable_allvis;
-			next_unskippable_block = lazy_scan_skip(vacrel, &vmbuffer,
-													blkno + 1,
-													&next_unskippable_allvis,
-													&skipping_current_range);
-
-			Assert(next_unskippable_block >= blkno + 1);
+			Assert(blkno != rel_pages - 1);
+			continue;
 		}
-		else
-		{
-			/* Last page always scanned (may need to set nonempty_pages) */
-			Assert(blkno < rel_pages - 1);
 
-			if (skipping_current_range)
-				continue;
-
-			/* Current range is too small to skip -- just scan the page */
-			all_visible_according_to_vm = true;
-		}
+		/*
+		 * Determine the next page in line to be scanned according to vmsnap
+		 * before scanning this page
+		 */
+		all_visible_according_to_vmsnap = next_all_visible;
+		next_block_to_scan = visibilitymap_snap_next(vacrel->vmsnap,
+													 &next_all_visible);
+		Assert(next_block_to_scan > blkno);
 
 		vacrel->scanned_pages++;
 
@@ -1092,10 +1075,9 @@ lazy_scan_heap(LVRelState *vacrel)
 		}
 
 		/*
-		 * Handle setting visibility map bit based on information from the VM
-		 * (as of last lazy_scan_skip() call), and from prunestate
+		 * Update visibility map status of this page where required
 		 */
-		if (!all_visible_according_to_vm && prunestate.all_visible)
+		if (!all_visible_according_to_vmsnap && prunestate.all_visible)
 		{
 			uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
@@ -1123,12 +1105,10 @@ lazy_scan_heap(LVRelState *vacrel)
 		}
 
 		/*
-		 * As of PostgreSQL 9.2, the visibility map bit should never be set if
-		 * the page-level bit is clear.  However, it's possible that the bit
-		 * got cleared after lazy_scan_skip() was called, so we must recheck
-		 * with buffer lock before concluding that the VM is corrupt.
+		 * The authoritative visibility map bit should never be set if the
+		 * page-level bit is clear
 		 */
-		else if (all_visible_according_to_vm && !PageIsAllVisible(page)
+		else if (all_visible_according_to_vmsnap && !PageIsAllVisible(page)
 				 && VM_ALL_VISIBLE(vacrel->rel, blkno, &vmbuffer))
 		{
 			elog(WARNING, "page is not marked all-visible but visibility map bit is set in relation \"%s\" page %u",
@@ -1167,7 +1147,7 @@ lazy_scan_heap(LVRelState *vacrel)
 		 * mark it as all-frozen.  Note that all_frozen is only valid if
 		 * all_visible is true, so we must check both prunestate fields.
 		 */
-		else if (all_visible_according_to_vm && prunestate.all_visible &&
+		else if (all_visible_according_to_vmsnap && prunestate.all_visible &&
 				 prunestate.all_frozen &&
 				 !VM_ALL_FROZEN(vacrel->rel, blkno, &vmbuffer))
 		{
@@ -1260,128 +1240,197 @@ lazy_scan_heap(LVRelState *vacrel)
 }
 
 /*
- *	lazy_scan_strategy() -- Determine freezing strategy.
+ *	lazy_scan_strategy() -- Determine freezing/skipping strategy.
  *
  * Our traditional/lazy freezing strategy is useful when putting off the work
  * of freezing totally avoids work that turns out to have been unnecessary.
  * On the other hand we eagerly freeze pages when that strategy spreads out
  * the burden of freezing over time.
+ *
+ * Also determines if the ongoing VACUUM operation should skip all-visible
+ * pages to save work in the near term, or if we should prefer to advance
+ * relfrozenxid/relminmxid in the near term instead.
+ *
+ * Freezing and skipping strategies are structured as two independent choices,
+ * but they are not independent in any practical sense (it's just mechanical).
+ * Eager and lazy behaviors go hand in hand, since the choice of each strategy
+ * is driven by the same information, and similar considerations about the
+ * needs of the table.  Moreover, choosing eager skipping behavior is often
+ * expected to directly result in freezing many more pages, since VACUUM can
+ * only _consider_ freezing pages that it actually scans in the first place.
+ * All-visible pages are only eligible for freezing when not skipped over.
+ *
+ * The single most important justification for the eager behaviors is system
+ * level performance stability.  It is often better to freeze all-visible
+ * pages before we're truly forced to (just to advance relfrozenxid) as a way
+ * of avoiding big spikes, where VACUUM has to freeze many pages all at once.
+ *
+ * Returns final scanned_pages for the VACUUM operation.  The exact number of
+ * pages that lazy_scan_heap scans depends in part on the skipping strategy
+ * decided here.
  */
-static void
-lazy_scan_strategy(LVRelState *vacrel)
+static BlockNumber
+lazy_scan_strategy(LVRelState *vacrel, const VacuumParams *params,
+				   double tableagefrac)
 {
-	BlockNumber rel_pages = vacrel->rel_pages;
+	BlockNumber rel_pages = vacrel->rel_pages,
+				force_eager_skip_threshold,
+				scanned_pages_skipallvis,
+				scanned_pages_skipallfrozen;
 
 	Assert(vacrel->scanned_pages == 0);
 
+	/* Acquire a VM snapshot for VACUUM operation */
+	vacrel->vmsnap = visibilitymap_snap_acquire(vacrel->rel, rel_pages,
+												&scanned_pages_skipallvis,
+												&scanned_pages_skipallfrozen);
+	vacrel->vmstrat = VMSNAP_SKIP_NONE;
+
+	/*
+	 * The eager freezing strategy is used when a physical table size
+	 * threshold controlled by the freeze_strategy_threshold GUC/reloption is
+	 * crossed.  Also freeze eagerly whenever table age is close to requiring
+	 * (or is actually undergoing) an antiwraparound autovacuum.
+	 */
 	vacrel->eager_freeze_strategy =
-		rel_pages >= vacrel->cutoffs.freeze_strategy_threshold;
-}
+		(tableagefrac >= TABLEAGEFRAC_HIGHPOINT ||
+		 rel_pages >= vacrel->cutoffs.freeze_strategy_threshold);
 
-/*
- *	lazy_scan_skip() -- set up range of skippable blocks using visibility map.
- *
- * lazy_scan_heap() calls here every time it needs to set up a new range of
- * blocks to skip via the visibility map.  Caller passes the next block in
- * line.  We return a next_unskippable_block for this range.  When there are
- * no skippable blocks we just return caller's next_block.  The all-visible
- * status of the returned block is set in *next_unskippable_allvis for caller,
- * too.  Block usually won't be all-visible (since it's unskippable), but it
- * can be during aggressive VACUUMs (as well as in certain edge cases).
- *
- * Sets *skipping_current_range to indicate if caller should skip this range.
- * Costs and benefits drive our decision.  Very small ranges won't be skipped.
- *
- * Note: our opinion of which blocks can be skipped can go stale immediately.
- * It's okay if caller "misses" a page whose all-visible or all-frozen marking
- * was concurrently cleared, though.  All that matters is that caller scan all
- * pages whose tuples might contain XIDs < OldestXmin, or MXIDs < OldestMxact.
- * (Actually, non-aggressive VACUUMs can choose to skip all-visible pages with
- * older XIDs/MXIDs.  The vacrel->skippedallvis flag will be set here when the
- * choice to skip such a range is actually made, making everything safe.)
- */
-static BlockNumber
-lazy_scan_skip(LVRelState *vacrel, Buffer *vmbuffer, BlockNumber next_block,
-			   bool *next_unskippable_allvis, bool *skipping_current_range)
-{
-	BlockNumber rel_pages = vacrel->rel_pages,
-				next_unskippable_block = next_block,
-				nskippable_blocks = 0;
-	bool		skipsallvis = false;
-
-	*next_unskippable_allvis = true;
-	while (next_unskippable_block < rel_pages)
+	/*
+	 * Force the use of VMSNAP_SKIP_ALL_FROZEN when rel_pages is now at least
+	 * twice freeze_strategy_threshold.
+	 *
+	 * "Staggering" the freezing and skipping behaviors like this is intended
+	 * to give VACUUM the benefit of the lazy strategies where they are useful
+	 * (when vacuuming smaller tables), while avoiding sharp discontinuities
+	 * in the overhead of freezing when transitioning to eager behaviors.
+	 * It's useful to make a gradual transition for tables that start out
+	 * small, but continue to grow.  We can mostly avoid any large once-off
+	 * freezing spikes during one particular VACUUM operation this way.
+	 * (Recall that choosing VMSNAP_SKIP_ALL_FROZEN will often significantly
+	 * increase the number of pages frozen, independent of freezing strategy).
+	 *
+	 * force_eager_skip_threshold is useful because it is an _absolute_ cutoff
+	 * that doesn't depend on short-term costs, nor on tableagefrac.  VACUUM
+	 * thereby avoids concentrated build-ups of unfrozen pages in any table.
+	 * This is important during bulk loading, where very few transactions will
+	 * leave behind very many heap pages that we should freeze proactively.
+	 *
+	 * Laziness is only valuable when it totally avoids unnecessary freezing,
+	 * which is much less likely to work out (and much more likely to lead to
+	 * disruptive "catch-up" freezing) with a larger table.
+	 */
+	force_eager_skip_threshold = vacrel->cutoffs.freeze_strategy_threshold;
+	if (force_eager_skip_threshold < MaxBlockNumber / 2)
+		force_eager_skip_threshold *= 2;
+	if (tableagefrac >= TABLEAGEFRAC_HIGHPOINT ||
+		rel_pages >= force_eager_skip_threshold)
 	{
-		uint8		mapbits = visibilitymap_get_status(vacrel->rel,
-													   next_unskippable_block,
-													   vmbuffer);
-
-		if ((mapbits & VISIBILITYMAP_ALL_VISIBLE) == 0)
-		{
-			Assert((mapbits & VISIBILITYMAP_ALL_FROZEN) == 0);
-			*next_unskippable_allvis = false;
-			break;
-		}
+		vacrel->vmstrat = VMSNAP_SKIP_ALL_FROZEN;
+	}
+	else
+	{
+		BlockNumber nextra,
+					nextra_min_threshold,
+					nextra_max_threshold,
+					prefer_laziness_threshold;
 
 		/*
-		 * Caller must scan the last page to determine whether it has tuples
-		 * (caller must have the opportunity to set vacrel->nonempty_pages).
-		 * This rule avoids having lazy_truncate_heap() take access-exclusive
-		 * lock on rel to attempt a truncation that fails anyway, just because
-		 * there are tuples on the last page (it is likely that there will be
-		 * tuples on other nearby pages as well, but those can be skipped).
+		 * Neither tableagefrac nor rel_pages crossed the thresholds that
+		 * automatically force use of the VMSNAP_SKIP_ALL_FROZEN strategy.
+		 * Advancing relfrozenxid/relminmxid eagerly may still make sense, but
+		 * we now need to apply more information to decide what to do.
 		 *
-		 * Implement this by always treating the last block as unsafe to skip.
+		 * Determine the number of "extra" scanned_pages incurred by using
+		 * VMSNAP_SKIP_ALL_FROZEN instead of VMSNAP_SKIP_ALL_VISIBLE, which is
+		 * the "extra" cost that our eager VMSNAP_SKIP_ALL_FROZEN strategy
+		 * incurs, if we actually opt to use it.
+		 *
+		 * Also determine guideline "extra" scanned_pages thresholds.  These
+		 * represent minimum and maximum sensible thresholds for rel.
 		 */
-		if (next_unskippable_block == rel_pages - 1)
-			break;
+		nextra = scanned_pages_skipallfrozen - scanned_pages_skipallvis;
+		Assert(rel_pages >= nextra);
+		nextra_min_threshold = (double) rel_pages * SKIPALLVIS_MIN_PAGES;
+		nextra_max_threshold = (double) rel_pages * SKIPALLVIS_MAX_PAGES;
+		Assert(nextra_max_threshold >= nextra_min_threshold);
 
-		/* DISABLE_PAGE_SKIPPING makes all skipping unsafe */
-		if (!vacrel->skipwithvm)
-			break;
-
-		/*
-		 * Aggressive VACUUM caller can't skip pages just because they are
-		 * all-visible.  They may still skip all-frozen pages, which can't
-		 * contain XIDs < OldestXmin (XIDs that aren't already frozen by now).
-		 */
-		if ((mapbits & VISIBILITYMAP_ALL_FROZEN) == 0)
+		if (tableagefrac < TABLEAGEFRAC_MIDPOINT)
 		{
-			if (vacrel->aggressive)
-				break;
+			/*
+			 * The table's age is still below table age mid point, so table
+			 * age is still of only minimal concern.  We're still willing to
+			 * act eagerly when it's _very_ cheap to do so.  Specifically,
+			 * when VMSNAP_SKIP_ALL_FROZEN requires VACUUM to scan a number of
+			 * extra pages not exceeding 5% of rel_pages.
+			 */
+			prefer_laziness_threshold = nextra_min_threshold;
+		}
+		else
+		{
+			double		tableagefrac_high_delta,
+						min_scale_up;
 
 			/*
-			 * All-visible block is safe to skip in non-aggressive case.  But
-			 * remember that the final range contains such a block for later.
+			 * Our tableagefrac is some point between TABLEAGEFRAC_MIDPOINT
+			 * and TABLEAGEFRAC_HIGHPOINT.  This means that table age is
+			 * starting to become a concern, but not to the extent that we're
+			 * forced to use VMSNAP_SKIP_ALL_FROZEN strategy (not yet).  We'll
+			 * need to weigh both costs and benefits to decide on a strategy.
+			 *
+			 * If tableagefrac is only barely over the midway point, then
+			 * we'll choose an "extra blocks" threshold of ~5% of rel_pages.
+			 * The opposite extreme occurs when tableagefrac is very near to
+			 * the high point.  That will make our "extra blocks" threshold
+			 * very aggressive: we'll go with VMSNAP_SKIP_ALL_FROZEN when
+			 * doing so requires we scan a number of extra blocks as high as
+			 * ~70% of rel_pages.  Our final "extra blocks" threshold is most
+			 * likely to fall between the two extremes (when we end up here).
+			 *
+			 * Note that the "extra blocks" thresholds we'll use increases at
+			 * an accelerating rate as tableagefrac itself increases.  This
+			 * makes it unlikely that tables that require regular vacuuming
+			 * will ever get too close to TABLEAGEFRAC_HIGHPOINT.
 			 */
-			skipsallvis = true;
+			Assert(tableagefrac < TABLEAGEFRAC_HIGHPOINT);
+			tableagefrac_high_delta = TABLEAGEFRAC_HIGHPOINT - tableagefrac;
+			min_scale_up = 1.0 - (tableagefrac_high_delta /
+								  (TABLEAGEFRAC_HIGHPOINT - TABLEAGEFRAC_MIDPOINT));
+
+			prefer_laziness_threshold =
+				(nextra_min_threshold * (1.0 - min_scale_up)) +
+				(nextra_max_threshold * min_scale_up);
 		}
 
-		vacuum_delay_point();
-		next_unskippable_block++;
-		nskippable_blocks++;
+		prefer_laziness_threshold = Max(32, prefer_laziness_threshold);
+		if (nextra >= prefer_laziness_threshold)
+			vacrel->vmstrat = VMSNAP_SKIP_ALL_VISIBLE;
+		else
+			vacrel->vmstrat = VMSNAP_SKIP_ALL_FROZEN;
 	}
 
 	/*
-	 * We only skip a range with at least SKIP_PAGES_THRESHOLD consecutive
-	 * pages.  Since we're reading sequentially, the OS should be doing
-	 * readahead for us, so there's no gain in skipping a page now and then.
-	 * Skipping such a range might even discourage sequential detection.
-	 *
-	 * This test also enables more frequent relfrozenxid advancement during
-	 * non-aggressive VACUUMs.  If the range has any all-visible pages then
-	 * skipping makes updating relfrozenxid unsafe, which is a real downside.
+	 * Override choice of skipping strategy (force vmsnap to scan every page
+	 * in the range of rel_pages) in DISABLE_PAGE_SKIPPING case.  Also
+	 * defensively force all-frozen in aggressive VACUUMs.
 	 */
-	if (nskippable_blocks < SKIP_PAGES_THRESHOLD)
-		*skipping_current_range = false;
-	else
-	{
-		*skipping_current_range = true;
-		if (skipsallvis)
-			vacrel->skippedallvis = true;
-	}
+	Assert(vacrel->vmstrat != VMSNAP_SKIP_NONE);
+	if (params->options & VACOPT_DISABLE_PAGE_SKIPPING)
+		vacrel->vmstrat = VMSNAP_SKIP_NONE;
+	else if (vacrel->aggressive)
+		vacrel->vmstrat = VMSNAP_SKIP_ALL_FROZEN;
 
-	return next_unskippable_block;
+	/* Inform vmsnap infrastructure of our chosen strategy */
+	visibilitymap_snap_strategy(vacrel->vmsnap, vacrel->vmstrat);
+
+	/* Return appropriate scanned_pages for final strategy chosen */
+	if (vacrel->vmstrat == VMSNAP_SKIP_ALL_VISIBLE)
+		return scanned_pages_skipallvis;
+	if (vacrel->vmstrat == VMSNAP_SKIP_ALL_FROZEN)
+		return scanned_pages_skipallfrozen;
+
+	/* DISABLE_PAGE_SKIPPING/VMSNAP_SKIP_NONE case */
+	return rel_pages;
 }
 
 /*
@@ -2820,6 +2869,14 @@ lazy_cleanup_one_index(Relation indrel, IndexBulkDeleteResult *istat,
  * Also don't attempt it if we are doing early pruning/vacuuming, because a
  * scan which cannot find a truncated heap page cannot determine that the
  * snapshot is too old to read that page.
+ *
+ * Note that we effectively rely on visibilitymap_snap_next() having forced
+ * VACUUM to scan the final page (rel_pages - 1) in all cases.  Without that,
+ * we'd tend to needlessly acquire an AccessExclusiveLock just to attempt rel
+ * truncation that is bound to fail.  VACUUM cannot set vacrel->nonempty_pages
+ * in pages that it skips using the VM, so we must avoid interpreting skipped
+ * pages as empty pages when it makes little sense.  Observing that the final
+ * page has tuples is a simple way of avoiding pathological locking behavior.
  */
 static bool
 should_attempt_truncation(LVRelState *vacrel)
