@@ -267,8 +267,9 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 	/* Determine freezing strategy later on using GUC or reloption */
 	params.freeze_strategy_threshold = -1;
 
-	/* user-invoked vacuum is never "for wraparound" */
+	/* user-invoked vacuum is never "for wraparound" or "for inserts" */
 	params.is_wraparound = false;
+	params.is_insert = false;
 
 	/* user-invoked vacuum uses VACOPT_VERBOSE instead of log_min_duration */
 	params.log_min_duration = -1;
