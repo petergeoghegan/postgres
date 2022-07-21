@@ -265,6 +265,7 @@ typedef struct LVSavedErrInfo
 
 /* non-export function prototypes */
 static void lazy_scan_heap(LVRelState *vacrel);
+static BlockNumber lazy_scan_heap_will_scan(LVRelState *vacrel);
 static BlockNumber lazy_scan_skip(LVRelState *vacrel,
 								  BlockNumber next_block,
 								  bool *next_unskippable_allvis);
@@ -338,6 +339,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	MultiXactId OldestMxact,
 				MultiXactCutoff;
 	BlockNumber orig_rel_pages,
+				scanned_pages,
 				new_rel_pages,
 				new_rel_allvisible;
 	PGRUsage	ru0;
@@ -416,20 +418,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	errcallback.arg = vacrel;
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
-	if (verbose)
-	{
-		Assert(!IsAutoVacuumWorkerProcess());
-		if (aggressive)
-			ereport(INFO,
-					(errmsg("aggressively vacuuming \"%s.%s.%s\"",
-							get_database_name(MyDatabaseId),
-							vacrel->relnamespace, vacrel->relname)));
-		else
-			ereport(INFO,
-					(errmsg("vacuuming \"%s.%s.%s\"",
-							get_database_name(MyDatabaseId),
-							vacrel->relnamespace, vacrel->relname)));
-	}
 
 	/* Set up high level stuff about rel and its indexes */
 	vacrel->rel = rel;
@@ -594,6 +582,31 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 		}
 	}
 
+	/* Determine number of pages we'll scan using visibility map snapshot */
+	scanned_pages = lazy_scan_heap_will_scan(vacrel);
+	if (verbose)
+	{
+		Assert(!IsAutoVacuumWorkerProcess());
+		if (aggressive)
+			ereport(INFO,
+					(errmsg("aggressively vacuuming \"%s.%s.%s\"",
+							get_database_name(MyDatabaseId),
+							vacrel->relnamespace, vacrel->relname),
+					 errdetail_internal("total table size is %u pages, %u pages (%.2f%% of total) must be scanned",
+										orig_rel_pages, scanned_pages,
+										orig_rel_pages == 0 ? 100.0 :
+										100.0 * scanned_pages / orig_rel_pages)));
+		else
+			ereport(INFO,
+					(errmsg("vacuuming \"%s.%s.%s\"",
+							get_database_name(MyDatabaseId),
+							vacrel->relnamespace, vacrel->relname),
+					 errdetail_internal("total table size is %u pages, %u pages (%.2f%% of total) must be scanned",
+										orig_rel_pages, scanned_pages,
+										orig_rel_pages == 0 ? 100.0 :
+										100.0 * scanned_pages / orig_rel_pages)));
+	}
+
 	/*
 	 * Allocate dead_items array memory using dead_items_alloc.  This handles
 	 * parallel VACUUM initialization as part of allocating shared memory
@@ -609,6 +622,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * vacuuming, and heap vacuuming (plus related processing)
 	 */
 	lazy_scan_heap(vacrel);
+	Assert(vacrel->scanned_pages == scanned_pages);
 
 	/*
 	 * Free resources managed by dead_items_alloc.  This ends parallel mode in
@@ -1355,6 +1369,50 @@ lazy_scan_heap(LVRelState *vacrel)
 	/* Do final index cleanup (call each index's amvacuumcleanup routine) */
 	if (vacrel->nindexes > 0 && vacrel->do_index_cleanup)
 		lazy_cleanup_all_indexes(vacrel);
+}
+
+/*
+ *	lazy_scan_heap_will_scan() -- How many pages will lazy_scan_heap scan?
+ *
+ * Returns final scanned_pages for the VACUUM operation using the visibility
+ * map snapshot.  This is guaranteed to match lazy_scan_heap's tally.
+ *
+ * Called when VACUUM has acquired its visibility map snapshot and has
+ * established what kinds of pages are okay to skip.
+ */
+static BlockNumber
+lazy_scan_heap_will_scan(LVRelState *vacrel)
+{
+	BlockNumber rel_pages = vacrel->rel_pages,
+				scanned_pages;
+	uint8		mapbits;
+
+	/*
+	 * We must account for lazy_scan_skip's tendency to always have VACUUM
+	 * scan the last page (to set nonempty_pages as needed).
+	 */
+	Assert(rel_pages >= vacrel->vmsnap.nvisible &&
+		   vacrel->vmsnap.nvisible >= vacrel->vmsnap.nfrozen);
+	mapbits = visibilitymap_snap_status(vacrel->rel, &vacrel->vmsnap,
+										rel_pages - 1);
+	if (vacrel->mayskipallvis)
+	{
+		Assert(vacrel->mayskipallfrozen);
+
+		scanned_pages = rel_pages - vacrel->vmsnap.nvisible;
+		if (mapbits & VISIBILITYMAP_ALL_VISIBLE)
+			scanned_pages++;
+	}
+	else if (vacrel->mayskipallfrozen)
+	{
+		scanned_pages = rel_pages - vacrel->vmsnap.nfrozen;
+		if (mapbits & VISIBILITYMAP_ALL_FROZEN)
+			scanned_pages++;
+	}
+	else
+		scanned_pages = vacrel->rel_pages;
+
+	return scanned_pages;
 }
 
 /*
