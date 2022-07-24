@@ -352,6 +352,13 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				StartPageDirty = VacuumPageDirty;
 	ErrorContextCallback errcallback;
 	char	  **indnames = NULL;
+	const int	initprog_index[] = {
+		PROGRESS_VACUUM_PHASE,
+		PROGRESS_VACUUM_TOTAL_HEAP_BLKS,
+		PROGRESS_VACUUM_TOTAL_SCANNED_BLKS,
+		PROGRESS_VACUUM_MAX_DEAD_ITEMS
+	};
+	int64		initprog_val[4];
 
 	verbose = (params->options & VACOPT_VERBOSE) != 0;
 	instrument = (verbose || (IsAutoVacuumWorkerProcess() &&
@@ -616,6 +623,13 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 */
 	lazy_check_wraparound_failsafe(vacrel);
 	dead_items_alloc(vacrel, params->nworkers);
+
+	/* Report that we're scanning the heap, advertise whole-VACUUM totals */
+	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
+	initprog_val[1] = orig_rel_pages;
+	initprog_val[2] = scanned_pages;
+	initprog_val[3] = vacrel->dead_items->max_items;
+	pgstat_progress_update_multi_param(4, initprog_index, initprog_val);
 
 	/*
 	 * Call lazy_scan_heap to perform all required heap pruning, index
@@ -957,18 +971,6 @@ lazy_scan_heap(LVRelState *vacrel)
 	VacDeadItems *dead_items = vacrel->dead_items;
 	Buffer		vmbuffer = InvalidBuffer;
 	bool		next_unskippable_allvis;
-	const int	initprog_index[] = {
-		PROGRESS_VACUUM_PHASE,
-		PROGRESS_VACUUM_TOTAL_HEAP_BLKS,
-		PROGRESS_VACUUM_MAX_DEAD_TUPLES
-	};
-	int64		initprog_val[3];
-
-	/* Report that we're scanning the heap, advertising total # of blocks */
-	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
-	initprog_val[1] = rel_pages;
-	initprog_val[2] = dead_items->max_items;
-	pgstat_progress_update_multi_param(3, initprog_index, initprog_val);
 
 	/* Set up an initial range of skippable blocks using VM snapshot */
 	next_unskippable_block = lazy_scan_skip(vacrel, 0,
@@ -997,8 +999,11 @@ lazy_scan_heap(LVRelState *vacrel)
 		next_unskippable_block = lazy_scan_skip(vacrel, blkno + 1,
 												&next_unskippable_allvis);
 
-		/* Report as block scanned, update error traceback information */
-		pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
+		/* Update scanned_pages for pages < blkno, update current block */
+		pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED,
+									 vacrel->scanned_pages);
+		pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLK_PROCESSING,
+									 blkno);
 		update_vacuum_error_info(vacrel, NULL, VACUUM_ERRCB_PHASE_SCAN_HEAP,
 								 blkno, InvalidOffsetNumber);
 		vacrel->scanned_pages++;
@@ -1334,7 +1339,8 @@ lazy_scan_heap(LVRelState *vacrel)
 		ReleaseBuffer(vmbuffer);
 
 	/* report that everything is now scanned */
-	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
+	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED,
+								 vacrel->scanned_pages);
 
 	/* now we can compute the new value for pg_class.reltuples */
 	vacrel->new_live_tuples = vac_estimate_reltuples(vacrel->rel, rel_pages,
@@ -2041,7 +2047,7 @@ retry:
 		}
 
 		Assert(dead_items->num_items <= dead_items->max_items);
-		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
+		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_ITEMS,
 									 dead_items->num_items);
 
 		/* lazy_scan_heap caller expects LP_DEAD item to unset all_visible */
@@ -2272,7 +2278,7 @@ lazy_scan_noprune(LVRelState *vacrel,
 		}
 
 		Assert(dead_items->num_items <= dead_items->max_items);
-		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_TUPLES,
+		pgstat_progress_update_param(PROGRESS_VACUUM_NUM_DEAD_ITEMS,
 									 dead_items->num_items);
 
 		vacrel->lpdead_items += lpdead_items;

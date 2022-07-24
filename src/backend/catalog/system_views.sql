@@ -1161,9 +1161,10 @@ CREATE VIEW pg_stat_progress_vacuum AS
                       WHEN 5 THEN 'truncating heap'
                       WHEN 6 THEN 'performing final cleanup'
                       END AS phase,
-        S.param2 AS heap_blks_total, S.param3 AS heap_blks_scanned,
-        S.param4 AS heap_blks_vacuumed, S.param5 AS index_vacuum_count,
-        S.param6 AS max_dead_tuples, S.param7 AS num_dead_tuples
+        S.param2 AS heap_blks_total, S.param3 AS scanned_blks_total,
+        S.param4 AS heap_blks_scanned, S.param5 AS heap_blk_processing,
+        S.param6 AS heap_blks_vacuumed, S.param7 AS index_vacuum_count,
+        S.param8 AS max_dead_items, S.param9 AS num_dead_items
     FROM pg_stat_get_progress_info('VACUUM') AS S
         LEFT JOIN pg_database D ON S.datid = D.oid;
 
