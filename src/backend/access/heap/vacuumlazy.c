@@ -11,8 +11,8 @@
  * We are willing to use at most maintenance_work_mem (or perhaps
  * autovacuum_work_mem) memory space to keep track of dead TIDs.  We initially
  * allocate an array of TIDs of that size, with an upper limit that depends on
- * table size (this limit ensures we don't allocate a huge area uselessly for
- * vacuuming small tables).  If the array threatens to overflow, we must call
+ * the number of pages we'll scan (this limit ensures we don't allocate a huge
+ * area for TIDs uselessly).  If the array threatens to overflow, we must call
  * lazy_vacuum to vacuum indexes (and to vacuum the pages that we've pruned).
  * This frees up the memory space dedicated to storing dead TIDs.
  *
@@ -279,7 +279,8 @@ static bool should_attempt_truncation(LVRelState *vacrel);
 static void lazy_truncate_heap(LVRelState *vacrel);
 static BlockNumber count_nondeletable_pages(LVRelState *vacrel,
 											bool *lock_waiter_detected);
-static void dead_items_alloc(LVRelState *vacrel, int nworkers);
+static void dead_items_alloc(LVRelState *vacrel, int nworkers,
+							 BlockNumber scanned_pages);
 static void dead_items_cleanup(LVRelState *vacrel);
 static bool heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
 									 TransactionId *visibility_cutoff_xid, bool *all_frozen);
@@ -507,7 +508,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * is already dangerously old.)
 	 */
 	lazy_check_wraparound_failsafe(vacrel);
-	dead_items_alloc(vacrel, params->nworkers);
+	dead_items_alloc(vacrel, params->nworkers, scanned_pages);
 
 	/*
 	 * Call lazy_scan_heap to perform all required heap pruning, index
@@ -3146,14 +3147,13 @@ count_nondeletable_pages(LVRelState *vacrel, bool *lock_waiter_detected)
 
 /*
  * Returns the number of dead TIDs that VACUUM should allocate space to
- * store, given a heap rel of size vacrel->rel_pages, and given current
- * maintenance_work_mem setting (or current autovacuum_work_mem setting,
- * when applicable).
+ * store, given the expected scanned_pages for this VACUUM operation,
+ * and given current maintenance_work_mem/autovacuum_work_mem setting.
  *
  * See the comments at the head of this file for rationale.
  */
 static int
-dead_items_max_items(LVRelState *vacrel)
+dead_items_max_items(LVRelState *vacrel, BlockNumber scanned_pages)
 {
 	int64		max_items;
 	int			vac_work_mem = IsAutoVacuumWorkerProcess() &&
@@ -3162,15 +3162,13 @@ dead_items_max_items(LVRelState *vacrel)
 
 	if (vacrel->nindexes > 0)
 	{
-		BlockNumber rel_pages = vacrel->rel_pages;
-
 		max_items = MAXDEADITEMS(vac_work_mem * 1024L);
 		max_items = Min(max_items, INT_MAX);
 		max_items = Min(max_items, MAXDEADITEMS(MaxAllocSize));
 
 		/* curious coding here to ensure the multiplication can't overflow */
-		if ((BlockNumber) (max_items / MaxHeapTuplesPerPage) > rel_pages)
-			max_items = rel_pages * MaxHeapTuplesPerPage;
+		if ((BlockNumber) (max_items / MaxHeapTuplesPerPage) > scanned_pages)
+			max_items = scanned_pages * MaxHeapTuplesPerPage;
 
 		/* stay sane if small maintenance_work_mem */
 		max_items = Max(max_items, MaxHeapTuplesPerPage);
@@ -3192,12 +3190,12 @@ dead_items_max_items(LVRelState *vacrel)
  * DSM when required.
  */
 static void
-dead_items_alloc(LVRelState *vacrel, int nworkers)
+dead_items_alloc(LVRelState *vacrel, int nworkers, BlockNumber scanned_pages)
 {
 	VacDeadItems *dead_items;
 	int			max_items;
 
-	max_items = dead_items_max_items(vacrel);
+	max_items = dead_items_max_items(vacrel, scanned_pages);
 	Assert(max_items >= MaxHeapTuplesPerPage);
 
 	/*
