@@ -1709,13 +1709,9 @@ lazy_scan_prune(LVRelState *vacrel,
 				live_tuples,
 				recently_dead_tuples;
 	int			nnewlpdead;
-	bool		force_freeze = false;
-	TransactionId NewRelfrozenXid,
-				NoFreezeNewRelfrozenXid;
-	MultiXactId NewRelminMxid,
-				NoFreezeNewRelminMxid;
 	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
 	xl_heap_freeze_tuple frozen[MaxHeapTuplesPerPage];
+	prepare_freeze p;
 
 	Assert(BufferGetBlockNumber(buf) == blkno);
 
@@ -1729,8 +1725,10 @@ lazy_scan_prune(LVRelState *vacrel,
 retry:
 
 	/* Initialize (or reset) page-level state */
-	NewRelfrozenXid = NoFreezeNewRelfrozenXid = vacrel->NewRelfrozenXid;
-	NewRelminMxid = NoFreezeNewRelminMxid = vacrel->NewRelminMxid;
+	p.totally_frozen = false;
+	p.force_freeze = false;
+	p.relfrozenxid_out = p.relfrozenxid_nofreeze_out  = vacrel->NewRelfrozenXid;
+	p.relminmxid_out = p.relminmxid_nofreeze_out = vacrel->NewRelminMxid;
 	tuples_deleted = 0;
 	tuples_frozen = 0;
 	lpdead_items = 0;
@@ -1764,8 +1762,6 @@ retry:
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
 	{
-		bool		tuple_totally_frozen;
-
 		/*
 		 * Set the offset number so that we can display it along with any
 		 * error that occurred while processing this tuple.
@@ -1936,10 +1932,7 @@ retry:
 									  vacrel->FreezeLimit,
 									  vacrel->MultiXactCutoff,
 									  &frozen[tuples_frozen],
-									  &tuple_totally_frozen, &force_freeze,
-									  &NewRelfrozenXid, &NewRelminMxid,
-									  &NoFreezeNewRelfrozenXid,
-									  &NoFreezeNewRelminMxid))
+									  &p))
 		{
 			/* Will execute freeze below */
 			frozen[tuples_frozen++].offset = offnum;
@@ -1949,7 +1942,7 @@ retry:
 		 * If tuple is not frozen (and not about to become frozen) then caller
 		 * had better not go on to set this page's VM bit
 		 */
-		if (!tuple_totally_frozen)
+		if (!p.totally_frozen)
 			prunestate->all_frozen = false;
 	}
 
@@ -1967,20 +1960,20 @@ retry:
 	 * Also freeze the page when heap_prepare_freeze_tuple indicates that at
 	 * least one XID/XMID from before FreezeLimit/MultiXactCutoff is present.
 	 */
-	if ((vacrel->freeze_when_allvis && prunestate->all_visible) || force_freeze)
+	if ((vacrel->freeze_when_allvis && prunestate->all_visible) || p.force_freeze)
 	{
 		/*
 		 * We're freezing the page.  Our final NewRelfrozenXid doesn't need to
 		 * be affected by the XIDs that are just about to be frozen anyway.
 		 */
-		vacrel->NewRelfrozenXid = NewRelfrozenXid;
-		vacrel->NewRelminMxid = NewRelminMxid;
+		vacrel->NewRelfrozenXid = p.relfrozenxid_out;
+		vacrel->NewRelminMxid = p.relminmxid_out;
 	}
 	else
 	{
 		/* Push back NewRelfrozenXid using lazy_scan_noprune's approach */
-		vacrel->NewRelfrozenXid = NoFreezeNewRelfrozenXid;
-		vacrel->NewRelminMxid = NoFreezeNewRelminMxid;
+		vacrel->NewRelfrozenXid = p.relfrozenxid_nofreeze_out;
+		vacrel->NewRelminMxid = p.relminmxid_nofreeze_out;
 		/* Might still set page all-visible, but never all-frozen */
 		tuples_frozen = 0;
 		prunestate->all_frozen = false;
@@ -2022,7 +2015,7 @@ retry:
 		{
 			XLogRecPtr	recptr;
 
-			recptr = log_heap_freeze(rel, buf, NewRelfrozenXid,
+			recptr = log_heap_freeze(rel, buf, p.relfrozenxid_out,
 									 frozen, tuples_frozen);
 			PageSetLSN(page, recptr);
 		}

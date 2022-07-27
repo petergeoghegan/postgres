@@ -389,6 +389,18 @@ typedef struct xl_heap_rewrite_mapping
 	XLogRecPtr	start_lsn;		/* Insert LSN at begin of rewrite */
 } xl_heap_rewrite_mapping;
 
+typedef struct prepare_freeze
+{
+  bool totally_frozen;
+  bool force_freeze;
+
+  TransactionId relfrozenxid_out;
+  MultiXactId relminmxid_out;
+  TransactionId relfrozenxid_nofreeze_out;
+  MultiXactId relminmxid_nofreeze_out;
+
+} prepare_freeze;
+
 extern void HeapTupleHeaderAdvanceLatestRemovedXid(HeapTupleHeader tuple,
 												   TransactionId *latestRemovedXid);
 
@@ -412,12 +424,7 @@ extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									  TransactionId limit_xid,
 									  MultiXactId limit_multi,
 									  xl_heap_freeze_tuple *frz,
-									  bool *totally_frozen,
-									  bool *force_freeze,
-									  TransactionId *relfrozenxid_out,
-									  MultiXactId *relminmxid_out,
-									  TransactionId *relfrozenxid_nofreeze_out,
-									  MultiXactId *relminmxid_nofreeze_out);
+									  prepare_freeze *p);
 extern void heap_execute_freeze_tuple(HeapTupleHeader tuple,
 									  xl_heap_freeze_tuple *xlrec_tp);
 extern XLogRecPtr log_heap_visible(RelFileLocator rlocator, Buffer heap_buffer,
