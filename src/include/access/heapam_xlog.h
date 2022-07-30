@@ -330,6 +330,15 @@ typedef struct xl_heap_freeze_tuple
 	uint8		frzflags;
 } xl_heap_freeze_tuple;
 
+typedef struct xl_heap_freeze_plan
+{
+	TransactionId xmax;
+	uint16		ntuples;
+	uint16		t_infomask2;
+	uint16		t_infomask;
+	uint8		frzflags;
+} xl_heap_freeze_plan;
+
 /*
  * State used by VACUUM to track what the oldest extant XID/MXID will become
  * when determing whether and how to freeze a page's heap tuples via calls to
@@ -369,16 +378,15 @@ typedef struct page_frozenxid_tracker
 /*
  * This is what we need to know about a block being frozen during vacuum
  *
- * Backup block 0's data contains an array of xl_heap_freeze_tuple structs,
- * one for each tuple.
+ * Backup block 0's data contains an array of xl_heap_freeze_plan structs.
  */
 typedef struct xl_heap_freeze_page
 {
 	TransactionId cutoff_xid;
-	uint16		ntuples;
+	uint16		nplans;
 } xl_heap_freeze_page;
 
-#define SizeOfHeapFreezePage (offsetof(xl_heap_freeze_page, ntuples) + sizeof(uint16))
+#define SizeOfHeapFreezePage (offsetof(xl_heap_freeze_page, nplans) + sizeof(uint16))
 
 /*
  * This is what we need to know about setting a visibility map bit
@@ -437,6 +445,11 @@ extern void heap2_desc(StringInfo buf, XLogReaderState *record);
 extern const char *heap2_identify(uint8 info);
 extern void heap_xlog_logical_rewrite(XLogReaderState *r);
 
+extern void dedup_xl_freeze_tuple(xl_heap_freeze_plan *res,
+								  xl_heap_freeze_tuple *tuples,
+								  int ntuples,
+								  int *nplans,
+								  OffsetNumber *offsets);
 extern XLogRecPtr log_heap_freeze(Relation reln, Buffer buffer,
 								  TransactionId cutoff_xid, xl_heap_freeze_tuple *tuples,
 								  int ntuples);
