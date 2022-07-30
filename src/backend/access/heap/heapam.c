@@ -8191,6 +8191,94 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
 	return nblocksfavorable;
 }
 
+static int
+freeze_tuple_cmp(const void *arg1, const void *arg2)
+{
+	xl_heap_freeze_tuple *b1 = (xl_heap_freeze_tuple *) arg1;
+	xl_heap_freeze_tuple *b2 = (xl_heap_freeze_tuple *) arg2;
+
+	if (b1->t_infomask < b2->t_infomask)
+		return -1;
+	else if (b1->t_infomask > b2->t_infomask)
+		return 1;
+
+	if (b1->t_infomask2 < b2->t_infomask2)
+		return -1;
+	else if (b1->t_infomask2 > b2->t_infomask2)
+		return 1;
+
+	if (b1->frzflags < b2->frzflags)
+		return -1;
+	else if (b1->frzflags > b2->frzflags)
+		return 1;
+
+	if (b1->xmax < b2->xmax)
+		return -1;
+	else if (b1->xmax > b2->xmax)
+		return 1;
+
+	if (b1->offset < b2->offset)
+		return -1;
+	else if (b1->offset > b2->offset)
+		return 1;
+
+	return 0;
+}
+
+void
+dedup_xl_freeze_tuple(xl_heap_freeze_plan  *res,
+					  xl_heap_freeze_tuple *tuples,
+					  int					ntuples,
+					  int				   *nplans,
+					  OffsetNumber		   *offsets)
+{
+	xl_heap_freeze_tuple *curtuple;
+	xl_heap_freeze_plan	 *curplan = NULL;
+	int					  curoffsetnumber = 0;
+
+	qsort(tuples, ntuples, sizeof(xl_heap_freeze_tuple), freeze_tuple_cmp);
+
+	*nplans = 0;
+	for (int i = 0; i < ntuples; i++)
+	{
+		curtuple = &tuples[i];
+
+		if (i == 0)
+		{
+			curplan = &res[0];
+			(*nplans)++;
+
+			curplan->xmax = curtuple->xmax;
+			curplan->t_infomask = curtuple->t_infomask;
+			curplan->t_infomask2 = curtuple->t_infomask2;
+			curplan->frzflags = curtuple->frzflags;
+			curplan->ntuples = 1;
+			offsets[curoffsetnumber++] = curtuple->offset;
+		}
+		else if (curplan->xmax == curtuple->xmax &&
+				 curplan->t_infomask == curtuple->t_infomask &&
+				 curplan->t_infomask2 == curtuple->t_infomask2 &&
+				 curplan->frzflags == curtuple->frzflags)
+		{
+			/* match */
+			offsets[curoffsetnumber++] = curtuple->offset;
+			curplan->ntuples++;
+		}
+		else
+		{
+			curplan++;
+			(*nplans)++;
+
+			curplan->xmax = curtuple->xmax;
+			curplan->t_infomask = curtuple->t_infomask;
+			curplan->t_infomask2 = curtuple->t_infomask2;
+			curplan->frzflags = curtuple->frzflags;
+			curplan->ntuples = 1;
+			offsets[curoffsetnumber++] = curtuple->offset;
+		}
+	}
+}
+
 /*
  * Perform XLogInsert for a heap-freeze operation.  Caller must have already
  * modified the buffer and marked it dirty.
@@ -8201,14 +8289,24 @@ log_heap_freeze(Relation reln, Buffer buffer, TransactionId cutoff_xid,
 {
 	xl_heap_freeze_page xlrec;
 	XLogRecPtr	recptr;
+	/* XXX consuming too much extra stack space? */
+	xl_heap_freeze_plan plans[MaxHeapTuplesPerPage];
+	OffsetNumber		offsets[MaxHeapTuplesPerPage];
+	int					nplans;
 
 	/* Caller should not call me on a non-WAL-logged relation */
 	Assert(RelationNeedsWAL(reln));
 	/* nor when there are no tuples to freeze */
 	Assert(ntuples > 0);
 
+	dedup_xl_freeze_tuple(&plans[0], tuples, ntuples, &nplans, &offsets[0]);
+
+	Assert(nplans <= ntuples);
+
+	/* elog(WARNING, "ntuples %d, nplans %d", ntuples, nplans); */
+
 	xlrec.cutoff_xid = cutoff_xid;
-	xlrec.ntuples = ntuples;
+	xlrec.nplans = nplans;
 
 	XLogBeginInsert();
 	XLogRegisterData((char *) &xlrec, SizeOfHeapFreezePage);
@@ -8219,8 +8317,10 @@ log_heap_freeze(Relation reln, Buffer buffer, TransactionId cutoff_xid,
 	 * not be stored too.
 	 */
 	XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
-	XLogRegisterBufData(0, (char *) tuples,
-						ntuples * sizeof(xl_heap_freeze_tuple));
+	XLogRegisterBufData(0, (char *) &plans[0],
+						nplans * sizeof(xl_heap_freeze_plan));
+	XLogRegisterBufData(0, (char *) &offsets[0],
+						ntuples * sizeof(OffsetNumber));
 
 	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_FREEZE_PAGE);
 
@@ -8973,7 +9073,7 @@ heap_xlog_freeze_page(XLogReaderState *record)
 	xl_heap_freeze_page *xlrec = (xl_heap_freeze_page *) XLogRecGetData(record);
 	TransactionId cutoff_xid = xlrec->cutoff_xid;
 	Buffer		buffer;
-	int			ntup;
+	int			nplan;
 
 	/*
 	 * In Hot Standby mode, ensure that there's no queries running which still
@@ -8993,23 +9093,42 @@ heap_xlog_freeze_page(XLogReaderState *record)
 	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
 	{
 		Page		page = BufferGetPage(buffer);
-		xl_heap_freeze_tuple *tuples;
+		xl_heap_freeze_plan *plans;
+		OffsetNumber *offsets;
+		int			tottuples PG_USED_FOR_ASSERTS_ONLY = 0;
+		int			curoff = 0;
 
-		tuples = (xl_heap_freeze_tuple *) XLogRecGetBlockData(record, 0, NULL);
+		plans = (xl_heap_freeze_plan *) XLogRecGetBlockData(record, 0, NULL);
+		offsets = (OffsetNumber *) ((char *) plans + (xlrec->nplans * sizeof(xl_heap_freeze_plan)));
 
 		/* now execute freeze plan for each frozen tuple */
-		for (ntup = 0; ntup < xlrec->ntuples; ntup++)
+		for (nplan = 0; nplan < xlrec->nplans; nplan++)
 		{
-			xl_heap_freeze_tuple *xlrec_tp;
+			xl_heap_freeze_plan *xlrec_p;
 			ItemId		lp;
 			HeapTupleHeader tuple;
 
-			xlrec_tp = &tuples[ntup];
-			lp = PageGetItemId(page, xlrec_tp->offset); /* offsets are one-based */
-			tuple = (HeapTupleHeader) PageGetItem(page, lp);
+			xlrec_p = &plans[nplan];
 
-			heap_execute_freeze_tuple(tuple, xlrec_tp);
+			for (int i = 0; i < xlrec_p->ntuples; i++)
+			{
+				xl_heap_freeze_tuple xlrec_tp;
+
+				xlrec_tp.xmax = xlrec_p->xmax;
+				xlrec_tp.offset = offsets[curoff++];
+				xlrec_tp.t_infomask = xlrec_p->t_infomask;
+				xlrec_tp.t_infomask2 = xlrec_p->t_infomask2;
+				xlrec_tp.frzflags = xlrec_p->frzflags;
+
+				lp = PageGetItemId(page, xlrec_tp.offset); /* offsets are one-based */
+				tuple = (HeapTupleHeader) PageGetItem(page, lp);
+
+				heap_execute_freeze_tuple(tuple, &xlrec_tp);
+				tottuples++;
+			}
 		}
+
+		Assert(tottuples == curoff);
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(buffer);
