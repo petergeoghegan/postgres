@@ -6116,6 +6116,7 @@ static TransactionId
 FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 				  TransactionId relfrozenxid, TransactionId relminmxid,
 				  TransactionId cutoff_xid, MultiXactId cutoff_multi,
+				  TransactionId limit_xid, MultiXactId limit_multi,
 				  uint16 *flags, TransactionId *mxid_oldest_xid_out)
 {
 	TransactionId xid = InvalidTransactionId;
@@ -6140,7 +6141,6 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 	{
 		/* Ensure infomask bits are appropriately set/reset */
 		*flags |= FRM_INVALIDATE_XMAX;
-		/* XXX force freezing? */
 		return InvalidTransactionId;
 	}
 	else if (MultiXactIdPrecedes(multi, relminmxid))
@@ -6171,6 +6171,7 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 		else
 		{
 			/* replace multi by update xid */
+			*flags |= FRM_RETURN_IS_XID;
 			xid = MultiXactIdGetUpdateXid(multi, t_infomask);
 
 			/* wasn't only a lock, xid needs to be valid */
@@ -6183,22 +6184,15 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 										 xid, relfrozenxid)));
 
 			/*
-			 * If the xid is older than the cutoff, it has to have aborted,
-			 * otherwise the tuple would have gotten pruned away.
+			 * If the xid is older than the cutoff, it has to have aborted.
+			 * But if it aborted then it should have been pruned away by now.
+			 * Must assume corruption.
 			 */
 			if (TransactionIdPrecedes(xid, cutoff_xid))
-			{
-				if (TransactionIdDidCommit(xid))
-					ereport(ERROR,
-							(errcode(ERRCODE_DATA_CORRUPTED),
-							 errmsg_internal("cannot freeze committed update xid %u", xid)));
-				*flags |= FRM_INVALIDATE_XMAX;
-				xid = InvalidTransactionId;
-			}
-			else
-			{
-				*flags |= FRM_RETURN_IS_XID;
-			}
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg_internal("found update xid %u from before OldestXmin %u",
+										 xid, cutoff_xid)));
 		}
 
 		/*
@@ -6209,13 +6203,14 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 	}
 
 	/*
-	 * This multixact might have or might not have members still running, but
-	 * we know it's valid and is newer than the cutoff point for multis.
-	 * However, some member(s) of it may be below the cutoff for Xids, so we
-	 * need to walk the whole members array to figure out what to do, if
-	 * anything.
+	 * In the simplest case, there is no member older than the limit; we can
+	 * keep the existing MultiXactId as-is, avoiding a more expensive second
+	 * pass over the multi.  We use limit_xid for this (VACUUM's FreezeLimit),
+	 * rather than using cutoff_xid (VACUUM's OldestXmin).  This optimization
+	 * allows us to avoid a second pass over the multi in most cases.
 	 */
-
+	Assert(TransactionIdPrecedesOrEquals(limit_xid, cutoff_xid));
+	Assert(MultiXactIdPrecedesOrEquals(limit_multi, cutoff_multi));
 	nmembers =
 		GetMultiXactIdMembers(multi, &members, false,
 							  HEAP_XMAX_IS_LOCKED_ONLY(t_infomask));
@@ -6226,12 +6221,11 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 		return InvalidTransactionId;
 	}
 
-	/* is there anything older than the cutoff? */
 	need_replace = false;
-	temp_xid_out = *mxid_oldest_xid_out;	/* init for FRM_NOOP */
+	temp_xid_out = *mxid_oldest_xid_out;	/* init for FRM_NOOP optimization */
 	for (i = 0; i < nmembers; i++)
 	{
-		if (TransactionIdPrecedes(members[i].xid, cutoff_xid))
+		if (TransactionIdPrecedes(members[i].xid, limit_xid))
 		{
 			need_replace = true;
 			break;
@@ -6241,11 +6235,10 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 	}
 
 	/*
-	 * In the simplest case, there is no member older than the cutoff; we can
-	 * keep the existing MultiXactId as-is, avoiding a more expensive second
-	 * pass over the multi
+	 * The optimization is only safe with a multi >= limit_multi, since
+	 * vacuumlazy.c also expects that no MXID < limit_multi can ever remain
 	 */
-	if (!need_replace)
+	if (!need_replace && MultiXactIdPrecedesOrEquals(limit_multi, multi))
 	{
 		/*
 		 * When mxid_oldest_xid_out gets pushed back here it's likely that the
@@ -6261,6 +6254,9 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 	 * Do a more thorough second pass over the multi to figure out which
 	 * member XIDs actually need to be kept.  Checking the precise status of
 	 * individual members might even show that we don't need to keep anything.
+	 *
+	 * We only reach this far when replacing xmax is absolutely mandatory.
+	 * heap_tuple_would_freeze will indicate that the tuple must be frozen.
 	 */
 	nnewmembers = 0;
 	newmembers = palloc(sizeof(MultiXactMember) * nmembers);
@@ -6278,12 +6274,19 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 		{
 			TransactionId xid = members[i].xid;
 
+			/* Repeat earlier sanity checks */
 			Assert(TransactionIdIsValid(xid));
 			if (TransactionIdPrecedes(xid, relfrozenxid))
 				ereport(ERROR,
 						(errcode(ERRCODE_DATA_CORRUPTED),
 						 errmsg_internal("found update xid %u from before relfrozenxid %u",
 										 xid, relfrozenxid)));
+
+			if (TransactionIdPrecedes(xid, cutoff_xid))
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg_internal("found update xid %u from before OldestXmin %u",
+										 xid, cutoff_xid)));
 
 			/*
 			 * It's an update; should we keep it?  If the transaction is known
@@ -6323,19 +6326,6 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 			}
 
 			/*
-			 * Since the tuple wasn't totally removed when vacuum pruned, the
-			 * update Xid cannot possibly be older than the xid cutoff. The
-			 * presence of such a tuple would cause corruption, so be paranoid
-			 * and check.
-			 */
-			if (TransactionIdIsValid(update_xid) &&
-				TransactionIdPrecedes(update_xid, cutoff_xid))
-				ereport(ERROR,
-						(errcode(ERRCODE_DATA_CORRUPTED),
-						 errmsg_internal("found update xid %u from before xid cutoff %u",
-										 update_xid, cutoff_xid)));
-
-			/*
 			 * We determined that this is an Xid corresponding to an update
 			 * that must be retained -- add it to new members list for later.
 			 *
@@ -6360,7 +6350,7 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 				/*
 				 * Running locker cannot possibly be older than the cutoff.
 				 *
-				 * The cutoff is <= VACUUM's OldestXmin, which is also the
+				 * cutoff_xid is VACUUM's OldestXmin, which is also the
 				 * initial value used for top-level relfrozenxid_out tracking
 				 * state.  A running locker cannot be older than VACUUM's
 				 * OldestXmin, either, so we don't need a temp_xid_out step.
@@ -6417,6 +6407,9 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 	}
 
 	pfree(newmembers);
+
+	/* FRM_NOOP optimization only used when second pass could be avoided */
+	Assert((*flags & FRM_NOOP) == 0);
 
 	return xid;
 }
@@ -6542,13 +6535,19 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 	/*
 	 * Process xmax.  To thoroughly examine the current Xmax value we need to
 	 * resolve a MultiXactId to its member Xids, in case some of them are
-	 * below the given cutoff for Xids.  In that case, those values might need
+	 * below the given limit for Xids.  In that case, those values might need
 	 * freezing, too.  Also, if a multi needs freezing, we cannot simply take
-	 * it out --- if there's a live updater Xid, it needs to be kept.  If we
-	 * need to allocate a new MultiXact for that purposes, we will force
-	 * caller to freeze the page.
+	 * it out --- if there's a live updater Xid, it needs to be kept.
 	 *
-	 * Make sure to keep heap_tuple_would_freeze in sync with this.
+	 * FreezeMultiXactId chooses the least expensive approach to processing
+	 * MultiXacts.  It will usually remove multis early, including multis that
+	 * are far newer than limit_multi.  Occasionally it will delay removal of
+	 * a multi to avoid allocating a new MultiXactId to replace existing one.
+	 *
+	 * In any case we must never violate vacuumlazy.c's expectation that we'll
+	 * always remove all XIDs < limit_xid and all MXIDs < limit_multi.  This
+	 * is something that FreezeMultiXactId helps with (it understands when our
+	 * later call to heap_tuple_would_freeze is going to force freezing).
 	 */
 	xid = HeapTupleHeaderGetRawXmax(tuple);
 
@@ -6561,6 +6560,7 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 		newxmax = FreezeMultiXactId(xid, tuple->t_infomask,
 									relfrozenxid, relminmxid,
 									cutoff_xid, cutoff_multi,
+									limit_xid, limit_multi,
 									&flags, &mxid_oldest_xid_out);
 
 		freeze_xmax = (flags & FRM_INVALIDATE_XMAX);
@@ -6601,12 +6601,18 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 			 * MultiXactId, to carry forward two or more original member XIDs.
 			 * Might have to ratchet back relfrozenxid_out here, though never
 			 * relminmxid_out.
+			 *
+			 * We only do this when we have no choice; heap_tuple_would_freeze
+			 * will definitely force the page to be frozen below.
 			 */
 			Assert(!freeze_xmax);
 			Assert(MultiXactIdIsValid(newxmax));
 			Assert(!MultiXactIdPrecedes(newxmax, p->relminmxid_out));
 			Assert(TransactionIdPrecedesOrEquals(mxid_oldest_xid_out,
 												 p->relfrozenxid_out));
+			Assert(heap_tuple_would_freeze(tuple, limit_xid, limit_multi,
+										   &p->relfrozenxid_nofreeze_out,
+										   &p->relminmxid_nofreeze_out));
 			p->relfrozenxid_out = mxid_oldest_xid_out;
 
 			/*
@@ -6758,10 +6764,9 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 						 (freeze_xmax || xmax_already_frozen));
 
 	/*
-	 * Maintain alternative versions of relfrozenxid_out/relminmxid_out that
-	 * leave caller with the option of *not* freezing the page.  If caller has
-	 * already lost that option (e.g. when the page has an old XID that we
-	 * must force caller to freeze), then we don't waste time on this.
+	 * Force vacuumlazy.c to freeze page when avoiding it would violate the
+	 * rules that XIDs < limit_xid (and MXIDs < limit_multi) can never be left
+	 * behind
 	 */
 	if (!p->force_freeze && (!xmin_already_frozen || !xmax_already_frozen))
 		p->force_freeze = heap_tuple_would_freeze(tuple,
