@@ -142,12 +142,14 @@ int			MaxBackends = 0;
 int			VacuumCostPageHit = 1;	/* GUC parameters for vacuum */
 int			VacuumCostPageMiss = 2;
 int			VacuumCostPageDirty = 20;
+int			VacuumCostPageFPW = 800;
 int			VacuumCostLimit = 200;
 double		VacuumCostDelay = 0;
 
 int64		VacuumPageHit = 0;
 int64		VacuumPageMiss = 0;
 int64		VacuumPageDirty = 0;
+/* Deliberately omit a VacuumPageFPW */
 
 int			VacuumCostBalance = 0;	/* working state for vacuum */
 bool		VacuumCostActive = false;

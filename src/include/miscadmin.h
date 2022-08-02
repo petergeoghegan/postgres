@@ -266,6 +266,7 @@ extern PGDLLIMPORT int max_parallel_maintenance_workers;
 extern PGDLLIMPORT int VacuumCostPageHit;
 extern PGDLLIMPORT int VacuumCostPageMiss;
 extern PGDLLIMPORT int VacuumCostPageDirty;
+extern PGDLLIMPORT int VacuumCostPageFPW;
 extern PGDLLIMPORT int VacuumCostLimit;
 extern PGDLLIMPORT double VacuumCostDelay;
 

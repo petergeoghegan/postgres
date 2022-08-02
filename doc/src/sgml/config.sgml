@@ -2250,6 +2250,19 @@ include_dir 'conf.d'
        </listitem>
       </varlistentry>
 
+      <varlistentry id="guc-vacuum-cost-page-fpw" xreflabel="vacuum_cost_page_fpw">
+       <term><varname>vacuum_cost_page_fpw</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_cost_page_fpw</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         TODO docs. The default value is 800.
+        </para>
+       </listitem>
+      </varlistentry>
+
       <varlistentry id="guc-vacuum-cost-limit" xreflabel="vacuum_cost_limit">
        <term><varname>vacuum_cost_limit</varname> (<type>integer</type>)
        <indexterm>

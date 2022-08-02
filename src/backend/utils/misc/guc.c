@@ -2585,6 +2585,16 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"vacuum_cost_page_fpw", PGC_USERSET, RESOURCES_VACUUM_DELAY,
+			gettext_noop("Vacuum cost for a full page write by vacuum."),
+			NULL
+		},
+		&VacuumCostPageFPW,
+		800, 0, 10000,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"vacuum_cost_limit", PGC_USERSET, RESOURCES_VACUUM_DELAY,
 			gettext_noop("Vacuum cost amount available before napping."),
 			NULL

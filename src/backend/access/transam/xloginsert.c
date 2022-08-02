@@ -692,10 +692,15 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
 			 * If WAL consistency checking is enabled for the resource manager
 			 * of this WAL record, a full-page image is included in the record
 			 * for the block modified. During redo, the full-page is replayed
-			 * only if BKPIMAGE_APPLY is set.
+			 * only if BKPIMAGE_APPLY is set because we have a "true" full page
+			 * write.  (Also don't apply a cost delay unless it's a true FPW.)
 			 */
 			if (needs_backup)
+			{
 				bimg.bimg_info |= BKPIMAGE_APPLY;
+				if (VacuumCostActive)
+					VacuumCostBalance += VacuumCostPageFPW;
+			}
 
 			if (is_compressed)
 			{
