@@ -1420,7 +1420,12 @@ lazy_scan_strategy(LVRelState *vacrel, BlockNumber eager_threshold,
 			vacrel->skipallvis = false;
 			vacrel->allvis_freeze_strategy = true;
 		}
+		elog(LOG, "details of non-aggressive skipping strategy are: nextra_threshold: %u, scanned_pages_skipallfrozen: %u, scanned_pages_skipallvis: %u, nextra: %u",
+			 nextra_threshold, scanned_pages_skipallfrozen,
+			 scanned_pages_skipallvis, nextra);
 	}
+	elog(LOG, "final details: vacrel->allvis_freeze_strategy: %d, vacrel->skipallvis: %d, vacrel->skipallfrozen: %d",
+		 (int) vacrel->allvis_freeze_strategy, (int) vacrel->skipallvis, (int) vacrel->skipallfrozen);
 
 	/* Return the appropriate variant of scanned_pages */
 	if (vacrel->skipallvis)
@@ -1618,6 +1623,143 @@ lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
 
 	/* page isn't new or empty -- keep lock and pin */
 	return false;
+}
+
+static char *
+GetHeapFlags(uint16 t_infomask, uint16 t_infomask2, bool isInfomask2)
+{
+	char	   *flagString = NULL;
+
+	flagString = palloc(512);
+
+	/*
+	 * Place readable versions of the tuple info mask into a buffer. Assume
+	 * that the string can not expand beyond 512 bytes.
+	 */
+	flagString[0] = '\0';
+	if (!isInfomask2)
+	{
+		strcat(flagString, "t_infomask (");
+
+		if (t_infomask & HEAP_HASNULL)
+			strcat(flagString, "HEAP_HASNULL|");
+		if (t_infomask & HEAP_HASVARWIDTH)
+			strcat(flagString, "HEAP_HASVARWIDTH|");
+		if (t_infomask & HEAP_HASEXTERNAL)
+			strcat(flagString, "HEAP_HASEXTERNAL|");
+		if (t_infomask & HEAP_XMAX_KEYSHR_LOCK)
+			strcat(flagString, "HEAP_XMAX_KEYSHR_LOCK|");
+		if (t_infomask & HEAP_COMBOCID)
+			strcat(flagString, "HEAP_COMBOCID|");
+		if (t_infomask & HEAP_XMAX_EXCL_LOCK)
+			strcat(flagString, "HEAP_XMAX_EXCL_LOCK|");
+		if (t_infomask & HEAP_XMAX_LOCK_ONLY)
+			strcat(flagString, "HEAP_XMAX_LOCK_ONLY|");
+		if (t_infomask & HEAP_XMIN_COMMITTED)
+			strcat(flagString, "HEAP_XMIN_COMMITTED|");
+		if (t_infomask & HEAP_XMIN_INVALID)
+			strcat(flagString, "HEAP_XMIN_INVALID|");
+		if (t_infomask & HEAP_XMAX_COMMITTED)
+			strcat(flagString, "HEAP_XMAX_COMMITTED|");
+		if (t_infomask & HEAP_XMAX_INVALID)
+			strcat(flagString, "HEAP_XMAX_INVALID|");
+		if (t_infomask & HEAP_XMAX_IS_MULTI)
+			strcat(flagString, "HEAP_XMAX_IS_MULTI|");
+		if (t_infomask & HEAP_UPDATED)
+			strcat(flagString, "HEAP_UPDATED|");
+		if (t_infomask & HEAP_MOVED_OFF)
+			strcat(flagString, "HEAP_MOVED_OFF|");
+		if (t_infomask & HEAP_MOVED_IN)
+			strcat(flagString, "HEAP_MOVED_IN|");
+
+		if (strlen(flagString))
+			flagString[strlen(flagString) - 1] = '\0';
+		strcat(flagString, ")");
+	}
+	else
+	{
+		sprintf(flagString, "t_infomask2 HeapTupleHeaderGetNatts(): %d ",
+				(t_infomask2 & HEAP_NATTS_MASK));
+
+		if (t_infomask2 & ~HEAP_NATTS_MASK)
+			strcat(flagString, "(");
+
+
+		if (t_infomask2 & HEAP_KEYS_UPDATED)
+			strcat(flagString, "HEAP_KEYS_UPDATED|");
+		if (t_infomask2 & HEAP_HOT_UPDATED)
+			strcat(flagString, "HEAP_HOT_UPDATED|");
+		if (t_infomask2 & HEAP_ONLY_TUPLE)
+			strcat(flagString, "HEAP_ONLY_TUPLE|");
+
+		if (strlen(flagString))
+			flagString[strlen(flagString) - 1] = '\0';
+		if (t_infomask2 & ~HEAP_NATTS_MASK)
+			strcat(flagString, ")");
+	}
+
+	return flagString;
+}
+
+static char *
+GetHeapTupleHeaderFlags(HeapTupleHeader htup, bool isInfomask2)
+{
+	return GetHeapFlags(htup->t_infomask, htup->t_infomask2, isInfomask2);
+}
+
+static void
+debug_freeze_plans(LVRelState *vacrel,
+				   int tuples_frozen,
+				   xl_heap_freeze_tuple *frozen,
+				   Page page)
+{
+	TransactionId NewRelfrozenXid = vacrel->NewRelfrozenXid;
+	MultiXactId NewRelminMxid = vacrel->NewRelminMxid;
+
+	for (int i = 0; i < tuples_frozen; i++)
+	{
+		ItemId		itemid;
+		HeapTupleHeader htup;
+		xl_heap_freeze_tuple *frz;
+		char	   *infomasktup;
+		char	   *infomask2tup;
+		char	   *infomaskwal;
+		char	   *infomask2wal;
+
+		itemid = PageGetItemId(page, frozen[i].offset);
+		htup = (HeapTupleHeader) PageGetItem(page, itemid);
+		infomasktup = GetHeapTupleHeaderFlags(htup, false);
+		infomask2tup = GetHeapTupleHeaderFlags(htup, true);
+
+		frz = frozen + i;
+		infomaskwal = GetHeapFlags(frz->t_infomask, frz->t_infomask2, false);
+		infomask2wal = GetHeapFlags(frz->t_infomask, frz->t_infomask2, true);
+
+		if (!heap_tuple_would_freeze(htup, vacrel->FreezeLimit,
+									 vacrel->MultiXactCutoff,
+									 &NewRelfrozenXid, &NewRelminMxid))
+			elog(WARNING, "%d. frzflags %u not before FreezeLimit",
+				 i, frz->frzflags);
+		else
+			elog(WARNING, "%d. frzflags %u before FreezeLimit",
+				 i, frz->frzflags);
+
+		elog(WARNING, "%d. tup [%s, %s]",
+			 i, infomasktup, infomask2tup);
+		elog(WARNING, "%d. wal [%s, %s]",
+			 i, infomaskwal, infomask2wal);
+
+		pfree(infomasktup);
+		pfree(infomask2tup);
+		pfree(infomaskwal);
+		pfree(infomask2wal);
+#if 0
+		elog(WARNING,
+			 "%s   limit_xid: %u, cutoff_xid: %u, limit_multi: %u, cutoff_multi: %u",
+			 multi_string, limit_xid, cutoff_xid, limit_multi, cutoff_multi);
+#endif
+	}
+
 }
 
 /*
@@ -1931,12 +2073,23 @@ retry:
 		vacrel->NewRelfrozenXid = xtrack.relfrozenxid_out;
 		vacrel->NewRelminMxid = xtrack.relminmxid_out;
 		freeze_all_eligible = true;
+
+		if (tuples_frozen > 0)
+		{
+			elog(WARNING, "execute for \"%s\" blkno %u with %d tuples_frozen out of %u:",
+				 RelationGetRelationName(rel), blkno, tuples_frozen, maxoff);
+			debug_freeze_plans(vacrel, tuples_frozen, frozen, page);
+		}
 	}
 	else
 	{
 		/* Not freezing this page, so use alternative cutoffs */
 		vacrel->NewRelfrozenXid = xtrack.relfrozenxid_nofreeze_out;
 		vacrel->NewRelminMxid = xtrack.relminmxid_nofreeze_out;
+
+		elog(WARNING, "skip for \"%s\" blkno %u with %d tuples_frozen out of %u:",
+			 RelationGetRelationName(rel), blkno, tuples_frozen, maxoff);
+		debug_freeze_plans(vacrel, tuples_frozen, frozen, page);
 
 		/* Might still set page all-visible, but never all-frozen */
 		tuples_frozen = 0;
