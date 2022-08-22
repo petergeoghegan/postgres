@@ -1451,7 +1451,13 @@ lazy_scan_strategy(LVRelState *vacrel, BlockNumber eager_threshold,
 		nextra_threshold = Max(32, nextra_threshold);
 
 		vacrel->skipallvis = nextra >= nextra_threshold;
+
+		elog(LOG, "details of non-aggressive skipping strategy are: nextra_threshold: %u, scanned_pages_skipallfrozen: %u, scanned_pages_skipallvis: %u, nextra: %u",
+			 nextra_threshold, scanned_pages_skipallfrozen,
+			 scanned_pages_skipallvis, nextra);
 	}
+	elog(LOG, "final details: vacrel->allvis_freeze_strategy: %d, vacrel->skipallvis: %d, vacrel->skipallfrozen: %d",
+		 (int) vacrel->allvis_freeze_strategy, (int) vacrel->skipallvis, (int) vacrel->skipallfrozen);
 
 	/* Return the appropriate variant of scanned_pages */
 	if (vacrel->skipallvis)

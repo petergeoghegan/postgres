@@ -6261,6 +6261,9 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
 		 * When mxid_oldest_xid_out gets pushed back here it's likely that the
 		 * update Xid was the oldest member, but we don't rely on that
 		 */
+		elog(LOG,
+			 "limit_xid: %u, cutoff_xid: %u, limit_multi: %u, cutoff_multi: %u",
+			 limit_xid, cutoff_xid, limit_multi, cutoff_multi);
 		*flags |= FRM_NOOP;
 		*mxid_oldest_xid_out = temp_xid_out;
 		pfree(members);
