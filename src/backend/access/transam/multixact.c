@@ -322,18 +322,20 @@ typedef struct mXactCacheEnt
 static dclist_head MXactCache = DCLIST_STATIC_INIT(MXactCache);
 static MemoryContext MXactContext = NULL;
 
+#define DEBUG_ELEVEL LOG
+
 #ifdef MULTIXACT_DEBUG
-#define debug_elog2(a,b) elog(a,b)
-#define debug_elog3(a,b,c) elog(a,b,c)
-#define debug_elog4(a,b,c,d) elog(a,b,c,d)
-#define debug_elog5(a,b,c,d,e) elog(a,b,c,d,e)
-#define debug_elog6(a,b,c,d,e,f) elog(a,b,c,d,e,f)
+#define debug_elog2(a) elog(DEBUG_ELEVEL, a)
+#define debug_elog3(a,b) elog(DEBUG_ELEVEL, a, b)
+#define debug_elog4(a,b,c) elog(DEBUG_ELEVEL, a, b, c)
+#define debug_elog5(a,b,c,d) elog(DEBUG_ELEVEL, a, b, c, d)
+#define debug_elog6(a,b,c,d,e) elog(DEBUG_ELEVEL, a, b, c, d, e)
 #else
-#define debug_elog2(a,b)
-#define debug_elog3(a,b,c)
-#define debug_elog4(a,b,c,d)
-#define debug_elog5(a,b,c,d,e)
-#define debug_elog6(a,b,c,d,e,f)
+#define debug_elog2(a)
+#define debug_elog3(a,b)
+#define debug_elog4(a,b,c)
+#define debug_elog5(a,b,c,d)
+#define debug_elog6(a,b,c,d,e)
 #endif
 
 /* internal MultiXactId management */
@@ -409,7 +411,7 @@ MultiXactIdCreate(TransactionId xid1, MultiXactStatus status1,
 
 	newMulti = MultiXactIdCreateFromMembers(2, members);
 
-	debug_elog3(DEBUG2, "Create: %s",
+	debug_elog3("Create: %s",
 				mxid_to_string(newMulti, 2, members));
 
 	return newMulti;
@@ -450,7 +452,7 @@ MultiXactIdExpand(MultiXactId multi, TransactionId xid, MultiXactStatus status)
 	/* MultiXactIdSetOldestMember() must have been called already. */
 	Assert(MultiXactIdIsValid(OldestMemberMXactId[MyBackendId]));
 
-	debug_elog5(DEBUG2, "Expand: received multi %u, xid %u status %s",
+	debug_elog5("Expand: received multi %u, xid %u status %s",
 				multi, xid, mxstatus_to_string(status));
 
 	/*
@@ -475,7 +477,7 @@ MultiXactIdExpand(MultiXactId multi, TransactionId xid, MultiXactStatus status)
 		member.status = status;
 		newMulti = MultiXactIdCreateFromMembers(1, &member);
 
-		debug_elog4(DEBUG2, "Expand: %u has no members, create singleton %u",
+		debug_elog4("Expand: %u has no members, create singleton %u",
 					multi, newMulti);
 		return newMulti;
 	}
@@ -489,7 +491,7 @@ MultiXactIdExpand(MultiXactId multi, TransactionId xid, MultiXactStatus status)
 		if (TransactionIdEquals(members[i].xid, xid) &&
 			(members[i].status == status))
 		{
-			debug_elog4(DEBUG2, "Expand: %u is already a member of %u",
+			debug_elog4("Expand: %u is already a member of %u",
 						xid, multi);
 			pfree(members);
 			return multi;
@@ -530,7 +532,7 @@ MultiXactIdExpand(MultiXactId multi, TransactionId xid, MultiXactStatus status)
 	pfree(members);
 	pfree(newMembers);
 
-	debug_elog3(DEBUG2, "Expand: returning new multi %u", newMulti);
+	debug_elog3("Expand: returning new multi %u", newMulti);
 
 	return newMulti;
 }
@@ -553,7 +555,7 @@ MultiXactIdIsRunning(MultiXactId multi, bool isLockOnly)
 	int			nmembers;
 	int			i;
 
-	debug_elog3(DEBUG2, "IsRunning %u?", multi);
+	debug_elog3("IsRunning %u?", multi);
 
 	/*
 	 * "false" here means we assume our callers have checked that the given
@@ -563,7 +565,7 @@ MultiXactIdIsRunning(MultiXactId multi, bool isLockOnly)
 
 	if (nmembers <= 0)
 	{
-		debug_elog2(DEBUG2, "IsRunning: no members");
+		debug_elog2("IsRunning: no members");
 		return false;
 	}
 
@@ -578,7 +580,7 @@ MultiXactIdIsRunning(MultiXactId multi, bool isLockOnly)
 	{
 		if (TransactionIdIsCurrentTransactionId(members[i].xid))
 		{
-			debug_elog3(DEBUG2, "IsRunning: I (%d) am running!", i);
+			debug_elog3("IsRunning: I (%d) am running!", i);
 			pfree(members);
 			return true;
 		}
@@ -593,7 +595,7 @@ MultiXactIdIsRunning(MultiXactId multi, bool isLockOnly)
 	{
 		if (TransactionIdIsInProgress(members[i].xid))
 		{
-			debug_elog4(DEBUG2, "IsRunning: member %d (%u) is running",
+			debug_elog4("IsRunning: member %d (%u) is running",
 						i, members[i].xid);
 			pfree(members);
 			return true;
@@ -602,7 +604,7 @@ MultiXactIdIsRunning(MultiXactId multi, bool isLockOnly)
 
 	pfree(members);
 
-	debug_elog3(DEBUG2, "IsRunning: %u is not running", multi);
+	debug_elog3("IsRunning: %u is not running", multi);
 
 	return false;
 }
@@ -656,8 +658,8 @@ MultiXactIdSetOldestMember(void)
 
 		LWLockRelease(MultiXactGenLock);
 
-		debug_elog4(DEBUG2, "MultiXact: setting OldestMember[%d] = %u",
-					MyBackendId, nextMXact);
+		elog(DEBUG1, "MultiXact: setting OldestMember[%d] = %u",
+			 MyBackendId, nextMXact);
 	}
 }
 
@@ -709,7 +711,7 @@ MultiXactIdSetOldestVisible(void)
 
 		LWLockRelease(MultiXactGenLock);
 
-		debug_elog4(DEBUG2, "MultiXact: setting OldestVisible[%d] = %u",
+		debug_elog4("MultiXact: setting OldestVisible[%d] = %u",
 					MyBackendId, oldestMXact);
 	}
 }
@@ -769,7 +771,7 @@ MultiXactIdCreateFromMembers(int nmembers, MultiXactMember *members)
 	MultiXactOffset offset;
 	xl_multixact_create xlrec;
 
-	debug_elog3(DEBUG2, "Create: %s",
+	debug_elog3("Create: %s",
 				mxid_to_string(InvalidMultiXactId, nmembers, members));
 
 	/*
@@ -785,7 +787,7 @@ MultiXactIdCreateFromMembers(int nmembers, MultiXactMember *members)
 	multi = mXactCacheGetBySet(nmembers, members);
 	if (MultiXactIdIsValid(multi))
 	{
-		debug_elog2(DEBUG2, "Create: in cache!");
+		debug_elog2("Create: in cache!");
 		return multi;
 	}
 
@@ -845,7 +847,7 @@ MultiXactIdCreateFromMembers(int nmembers, MultiXactMember *members)
 	/* Store the new MultiXactId in the local cache, too */
 	mXactCachePut(multi, nmembers, members);
 
-	debug_elog2(DEBUG2, "Create: all done");
+	debug_elog2("Create: all done");
 
 	return multi;
 }
@@ -957,7 +959,7 @@ GetNewMultiXactId(int nmembers, MultiXactOffset *offset)
 	MultiXactId result;
 	MultiXactOffset nextOffset;
 
-	debug_elog3(DEBUG2, "GetNew: for %d xids", nmembers);
+	debug_elog3("GetNew: for %d xids", nmembers);
 
 	/* safety check, we should never get this far in a HS standby */
 	if (RecoveryInProgress())
@@ -1187,7 +1189,7 @@ GetNewMultiXactId(int nmembers, MultiXactOffset *offset)
 
 	LWLockRelease(MultiXactGenLock);
 
-	debug_elog4(DEBUG2, "GetNew: returning %u offset %u", result, *offset);
+	debug_elog4("GetNew: returning %u offset %u", result, *offset);
 	return result;
 }
 
@@ -1237,7 +1239,7 @@ GetMultiXactIdMembers(MultiXactId multi, MultiXactMember **members,
 	MultiXactOffset nextOffset;
 	MultiXactMember *ptr;
 
-	debug_elog3(DEBUG2, "GetMembers: asked for %u", multi);
+	debug_elog3("GetMembers: asked for %u", multi);
 
 	if (!MultiXactIdIsValid(multi) || from_pgupgrade)
 	{
@@ -1249,7 +1251,7 @@ GetMultiXactIdMembers(MultiXactId multi, MultiXactMember **members,
 	length = mXactCacheGetById(multi, members);
 	if (length >= 0)
 	{
-		debug_elog3(DEBUG2, "GetMembers: found %s in the cache",
+		debug_elog3("GetMembers: found %s in the cache",
 					mxid_to_string(multi, length, *members));
 		return length;
 	}
@@ -1265,7 +1267,7 @@ GetMultiXactIdMembers(MultiXactId multi, MultiXactMember **members,
 	if (isLockOnly &&
 		MultiXactIdPrecedes(multi, OldestVisibleMXactId[MyBackendId]))
 	{
-		debug_elog2(DEBUG2, "GetMembers: a locker-only multi is too old");
+		debug_elog2("GetMembers: a locker-only multi is too old");
 		*members = NULL;
 		return -1;
 	}
@@ -1449,7 +1451,7 @@ retry:
 	 */
 	mXactCachePut(multi, truelength, ptr);
 
-	debug_elog3(DEBUG2, "GetMembers: no cache for %s",
+	debug_elog3("GetMembers: no cache for %s",
 				mxid_to_string(multi, truelength, ptr));
 	*members = ptr;
 	return truelength;
@@ -1497,7 +1499,7 @@ mXactCacheGetBySet(int nmembers, MultiXactMember *members)
 {
 	dlist_iter	iter;
 
-	debug_elog3(DEBUG2, "CacheGet: looking for %s",
+	debug_elog3("CacheGet: looking for %s",
 				mxid_to_string(InvalidMultiXactId, nmembers, members));
 
 	/* sort the array so comparison is easy */
@@ -1517,13 +1519,13 @@ mXactCacheGetBySet(int nmembers, MultiXactMember *members)
 		 */
 		if (memcmp(members, entry->members, nmembers * sizeof(MultiXactMember)) == 0)
 		{
-			debug_elog3(DEBUG2, "CacheGet: found %u", entry->multi);
+			debug_elog3("CacheGet: found %u", entry->multi);
 			dclist_move_head(&MXactCache, iter.cur);
 			return entry->multi;
 		}
 	}
 
-	debug_elog2(DEBUG2, "CacheGet: not found :-(");
+	debug_elog2("CacheGet: not found :-(");
 	return InvalidMultiXactId;
 }
 
@@ -1540,7 +1542,7 @@ mXactCacheGetById(MultiXactId multi, MultiXactMember **members)
 {
 	dlist_iter	iter;
 
-	debug_elog3(DEBUG2, "CacheGet: looking for %u", multi);
+	debug_elog3("CacheGet: looking for %u", multi);
 
 	dclist_foreach(iter, &MXactCache)
 	{
@@ -1557,7 +1559,7 @@ mXactCacheGetById(MultiXactId multi, MultiXactMember **members)
 
 			memcpy(ptr, entry->members, size);
 
-			debug_elog3(DEBUG2, "CacheGet: found %s",
+			debug_elog3("CacheGet: found %s",
 						mxid_to_string(multi,
 									   entry->nmembers,
 									   entry->members));
@@ -1574,7 +1576,7 @@ mXactCacheGetById(MultiXactId multi, MultiXactMember **members)
 		}
 	}
 
-	debug_elog2(DEBUG2, "CacheGet: not found");
+	debug_elog2("CacheGet: not found");
 	return -1;
 }
 
@@ -1587,13 +1589,13 @@ mXactCachePut(MultiXactId multi, int nmembers, MultiXactMember *members)
 {
 	mXactCacheEnt *entry;
 
-	debug_elog3(DEBUG2, "CachePut: storing %s",
+	debug_elog3("CachePut: storing %s",
 				mxid_to_string(multi, nmembers, members));
 
 	if (MXactContext == NULL)
 	{
 		/* The cache only lives as long as the current transaction */
-		debug_elog2(DEBUG2, "CachePut: initializing memory context");
+		debug_elog2("CachePut: initializing memory context");
 		MXactContext = AllocSetContextCreate(TopTransactionContext,
 											 "MultiXact cache context",
 											 ALLOCSET_SMALL_SIZES);
@@ -1620,7 +1622,7 @@ mXactCachePut(MultiXactId multi, int nmembers, MultiXactMember *members)
 		dclist_delete_from(&MXactCache, node);
 
 		entry = dclist_container(mXactCacheEnt, node, node);
-		debug_elog3(DEBUG2, "CachePut: pruning cached multi %u",
+		debug_elog3("CachePut: pruning cached multi %u",
 					entry->multi);
 
 		pfree(entry);
@@ -1842,7 +1844,7 @@ MultiXactShmemInit(void)
 {
 	bool		found;
 
-	debug_elog2(DEBUG2, "Shared Memory Init for MultiXact");
+	debug_elog2("Shared Memory Init for MultiXact");
 
 	MultiXactOffsetCtl->PagePrecedes = MultiXactOffsetPagePrecedes;
 	MultiXactMemberCtl->PagePrecedes = MultiXactMemberPagePrecedes;
@@ -2140,8 +2142,7 @@ MultiXactGetCheckptMulti(bool is_shutdown,
 	*oldestMultiDB = MultiXactState->oldestMultiXactDB;
 	LWLockRelease(MultiXactGenLock);
 
-	debug_elog6(DEBUG2,
-				"MultiXact: checkpoint is nextMulti %u, nextOffset %u, oldestMulti %u in DB %u",
+	debug_elog6("MultiXact: checkpoint is nextMulti %u, nextOffset %u, oldestMulti %u in DB %u",
 				*nextMulti, *nextMultiOffset, *oldestMulti, *oldestMultiDB);
 }
 
@@ -2176,7 +2177,7 @@ void
 MultiXactSetNextMXact(MultiXactId nextMulti,
 					  MultiXactOffset nextMultiOffset)
 {
-	debug_elog4(DEBUG2, "MultiXact: setting next multi to %u offset %u",
+	debug_elog4("MultiXact: setting next multi to %u offset %u",
 				nextMulti, nextMultiOffset);
 	LWLockAcquire(MultiXactGenLock, LW_EXCLUSIVE);
 	MultiXactState->nextMXact = nextMulti;
@@ -2362,12 +2363,12 @@ MultiXactAdvanceNextMXact(MultiXactId minMulti,
 	LWLockAcquire(MultiXactGenLock, LW_EXCLUSIVE);
 	if (MultiXactIdPrecedes(MultiXactState->nextMXact, minMulti))
 	{
-		debug_elog3(DEBUG2, "MultiXact: setting next multi to %u", minMulti);
+		debug_elog3("MultiXact: setting next multi to %u", minMulti);
 		MultiXactState->nextMXact = minMulti;
 	}
 	if (MultiXactOffsetPrecedes(MultiXactState->nextOffset, minMultiOffset))
 	{
-		debug_elog3(DEBUG2, "MultiXact: setting next offset to %u",
+		debug_elog3("MultiXact: setting next offset to %u",
 					minMultiOffset);
 		MultiXactState->nextOffset = minMultiOffset;
 	}
