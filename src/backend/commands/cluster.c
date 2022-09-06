@@ -823,9 +823,12 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	TupleDesc	oldTupDesc PG_USED_FOR_ASSERTS_ONLY;
 	TupleDesc	newTupDesc PG_USED_FOR_ASSERTS_ONLY;
 	TransactionId OldestXmin,
-				FreezeXid;
+				FreezeXid,
+				MinXid;
 	MultiXactId OldestMxact,
-				MultiXactCutoff;
+				MultiXactCutoff,
+				MinMulti;
+	double		antiwrapfrac;
 	bool		use_sort;
 	double		num_tuples = 0,
 				tups_vacuumed = 0,
@@ -914,7 +917,8 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	 * not to be aggressive about this.
 	 */
 	vacuum_set_xid_limits(OldHeap, 0, 0, 0, 0, &OldestXmin, &OldestMxact,
-						  &FreezeXid, &MultiXactCutoff);
+						  &FreezeXid, &MultiXactCutoff, &MinXid, &MinMulti,
+						  &antiwrapfrac);
 
 	/*
 	 * FreezeXid will become the table's new relfrozenxid, and that mustn't go
