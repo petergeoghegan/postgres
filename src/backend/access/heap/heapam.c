@@ -6291,7 +6291,7 @@ FreezeMultiXactId(MultiXactId multi, HeapTupleHeader tuple,
 		 * for this multi as best we can
 		 */
 		xmin = HeapTupleHeaderGetXmin(tuple);
-		Assert(!heap_tuple_should_freeze(tuple, cutoffs, &axid, &amxid) ||
+		Assert(!heap_tuple_should_freeze(tuple, cutoffs, false, &axid, &amxid) ||
 			   TransactionIdPrecedes(xmin, cutoffs->FreezeLimit) ||
 			   (tuple->t_infomask & HEAP_MOVED) != 0);
 
@@ -6315,7 +6315,7 @@ FreezeMultiXactId(MultiXactId multi, HeapTupleHeader tuple,
 	 * We only reach this far when replacing xmax is absolutely mandatory.
 	 * heap_tuple_should_freeze will indicate that the tuple should be frozen.
 	 */
-	Assert(heap_tuple_should_freeze(tuple, cutoffs, &axid, &amxid));
+	Assert(heap_tuple_should_freeze(tuple, cutoffs, false, &axid, &amxid));
 
 	nnewmembers = 0;
 	newmembers = palloc(sizeof(MultiXactMember) * nmembers);
@@ -6780,7 +6780,7 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									   xmax_already_frozen))
 	{
 		pagefrz->freeze_required =
-			heap_tuple_should_freeze(tuple, cutoffs,
+			heap_tuple_should_freeze(tuple, cutoffs, false,
 									 &pagefrz->NoFreezeNewRelfrozenXid,
 									 &pagefrz->NoFreezeNewRelminMxid);
 	}
@@ -7346,13 +7346,19 @@ heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple)
  * We must also deal with dead tuples here, since (xmin, xmax, xvac) fields
  * could be processed by pruning away the whole tuple instead of freezing.
  *
+ * Callers that specify 'MinCutoffs=false' have us apply the same FreezeLimit
+ * and MultiXactCutoff cutoffs used in heap_prepare_freeze_tuple.  Otherwise
+ * we use MinXid and MinMulti cutoffs, which are earlier cutoffs that VACUUM
+ * must always advance relfrozenxid/relminmxid up to, even when that means
+ * that it has to wait on a cleanup lock.
+ *
  * The *NewRelfrozenXid and *NewRelminMxid input/output arguments work just
  * like the similar fields from the FreezeCutoffs struct.  We never freeze
  * here, which makes tracking the oldest extant XID/MXID simple.
  */
 bool
 heap_tuple_should_freeze(HeapTupleHeader tuple,
-						 const struct VacuumCutoffs *cutoffs,
+						 const struct VacuumCutoffs *cutoffs, bool MinCutoffs,
 						 TransactionId *NewRelfrozenXid,
 						 MultiXactId *NewRelminMxid)
 {
@@ -7362,8 +7368,16 @@ heap_tuple_should_freeze(HeapTupleHeader tuple,
 	MultiXactId multi;
 	bool		freeze = false;
 
-	MustFreezeLimit = cutoffs->FreezeLimit;
-	MustFreezeMultiLimit = cutoffs->MultiXactCutoff;
+	if (!MinCutoffs)
+	{
+		MustFreezeLimit = cutoffs->FreezeLimit;
+		MustFreezeMultiLimit = cutoffs->MultiXactCutoff;
+	}
+	else
+	{
+		MustFreezeLimit = cutoffs->MinXid;
+		MustFreezeMultiLimit = cutoffs->MinMulti;
+	}
 
 	/* First deal with xmin */
 	xid = HeapTupleHeaderGetXmin(tuple);

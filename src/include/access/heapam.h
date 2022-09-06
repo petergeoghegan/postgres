@@ -229,7 +229,7 @@ extern bool heap_freeze_tuple(HeapTupleHeader tuple,
 							  TransactionId relfrozenxid, TransactionId relminmxid,
 							  TransactionId FreezeLimit, TransactionId MultiXactCutoff);
 extern bool heap_tuple_should_freeze(HeapTupleHeader tuple,
-									 const struct VacuumCutoffs *cutoffs,
+									 const struct VacuumCutoffs *cutoffs, bool MinCutoffs,
 									 TransactionId *NewRelfrozenXid,
 									 MultiXactId *NewRelminMxid);
 extern bool heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple);
