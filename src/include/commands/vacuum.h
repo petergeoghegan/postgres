@@ -282,6 +282,13 @@ struct VacuumCutoffs
 	MultiXactId MultiXactCutoff;
 
 	/*
+	 * Earliest permissible NewRelfrozenXid/NewRelminMxid values that can be
+	 * set in pg_class at the end of VACUUM.
+	 */
+	TransactionId MinXid;
+	MultiXactId MinMulti;
+
+	/*
 	 * Threshold that triggers VACUUM's eager freezing strategy
 	 */
 	BlockNumber freeze_strategy_threshold_pages;
@@ -357,7 +364,7 @@ extern void vac_update_relstats(Relation relation,
 								bool *frozenxid_updated,
 								bool *minmulti_updated,
 								bool in_outer_xact);
-extern bool vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
+extern void vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
 							   struct VacuumCutoffs *cutoffs);
 extern bool vacuum_xid_failsafe_check(const struct VacuumCutoffs *cutoffs);
 extern void vac_update_datfrozenxid(void);

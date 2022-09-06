@@ -525,19 +525,13 @@
     will skip pages that don't have any dead row versions even if those pages
     might still have row versions with old XID values.  Therefore, normal
     <command>VACUUM</command>s won't always freeze every old row version in the table.
-    When that happens, <command>VACUUM</command> will eventually need to perform an
-    <firstterm>aggressive vacuum</firstterm>, which will freeze all eligible unfrozen
-    XID and MXID values, including those from all-visible but not all-frozen pages.
-    In practice most tables require periodic aggressive vacuuming.
    </para>
 
    <para>
     The maximum time that a table can go unvacuumed is two billion
     transactions minus the <varname>vacuum_freeze_min_age</varname> value at
-    the time of the last aggressive vacuum. If it were to go
-    unvacuumed for longer than
-    that, data loss could result.  To ensure that this does not happen,
-    autovacuum is invoked on any table that might contain unfrozen rows with
+    the time of the last vacuum that advanced <structfield>relfrozenxid</structfield>.
+    Autovacuum is invoked on any table that might contain unfrozen rows with
     XIDs older than the age specified by the configuration parameter <xref
     linkend="guc-autovacuum-freeze-max-age"/>.  (This will happen even if
     autovacuum is disabled.)
@@ -595,8 +589,7 @@
     the <structfield>relfrozenxid</structfield> column of a table's
     <structname>pg_class</structname> row contains the oldest remaining unfrozen
     XID at the end of the most recent <command>VACUUM</command> that successfully
-    advanced <structfield>relfrozenxid</structfield> (typically the most recent
-    aggressive VACUUM).  Similarly, the
+    advanced <structfield>relfrozenxid</structfield>.  Similarly, the
     <structfield>datfrozenxid</structfield> column of a database's
     <structname>pg_database</structname> row is a lower bound on the unfrozen XIDs
     appearing in that database &mdash; it is just the minimum of the
@@ -753,22 +746,14 @@ HINT:  Stop the postmaster and vacuum that database in single-user mode.
     </para>
 
     <para>
-     Aggressive <command>VACUUM</command>s, regardless of what causes
-     them, are <emphasis>guaranteed</emphasis> to be able to advance
-     the table's <structfield>relminmxid</structfield>.
-     Eventually, as all tables in all databases are scanned and their
-     oldest multixact values are advanced, on-disk storage for older
-     multixacts can be removed.
-    </para>
-
-    <para>
-     As a safety device, an aggressive vacuum scan will
-     occur for any table whose multixact-age is greater than <xref
-     linkend="guc-autovacuum-multixact-freeze-max-age"/>.  Also, if the
-     storage occupied by multixacts members exceeds 2GB, aggressive vacuum
-     scans will occur more often for all tables, starting with those that
-     have the oldest multixact-age.  Both of these kinds of aggressive
-     scans will occur even if autovacuum is nominally disabled.
+     As a safety device, a vacuum to advance
+     <structfield>relminmxid</structfield> will occur for any table
+     whose multixact-age is greater than <xref
+      linkend="guc-autovacuum-multixact-freeze-max-age"/>.
+     Also, if the storage occupied by multixacts members exceeds 2GB,
+     vacuum scans will occur more often for all tables, starting with those that
+     have the oldest multixact-age.  This will occur even if
+     autovacuum is nominally disabled.
     </para>
    </sect3>
   </sect2>
