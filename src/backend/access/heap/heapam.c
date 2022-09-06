@@ -6305,7 +6305,7 @@ FreezeMultiXactId(MultiXactId multi, HeapTupleHeader tuple,
 	 * We only reach this far when replacing xmax is absolutely mandatory.
 	 * heap_tuple_should_freeze will indicate that the tuple should be frozen.
 	 */
-	Assert(heap_tuple_should_freeze(tuple, cutoffs, &axid, &amxid));
+	Assert(heap_tuple_should_freeze(tuple, cutoffs, false, &axid, &amxid));
 
 	nnewmembers = 0;
 	newmembers = palloc(sizeof(MultiXactMember) * nmembers);
@@ -6765,7 +6765,7 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									   xmax_already_frozen))
 	{
 		pagefrz->freeze_required =
-			heap_tuple_should_freeze(tuple, cutoffs,
+			heap_tuple_should_freeze(tuple, cutoffs, false,
 									 &pagefrz->NoFreezePageRelfrozenXid,
 									 &pagefrz->NoFreezePageRelminMxid);
 	}
@@ -7331,6 +7331,11 @@ heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple)
  * force freezing of the page containing tuple.  This happens whenever the
  * tuple contains XID/MXID fields with values < FreezeLimit/MultiXactCutoff.
  *
+ * Callers that pass 'MinCutoffs=true' have us apply earlier cutoffs instead:
+ * the MinXid and MinMulti cutoffs.  VACUUM never sets relfrozenxid/relminmxid
+ * to values < MinXid/MinMulti, even when following that rule forces VACUUM to
+ * wait for a heap page cleanup lock indefinitely.
+ *
  * The *NoFreezePageRelfrozenXid and *NoFreezePageRelminMxid input/output
  * arguments help VACUUM track the oldest extant XID/MXID remaining in rel.
  * Our working assumption is that caller won't decide to freeze this tuple.
@@ -7339,7 +7344,7 @@ heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple)
  */
 bool
 heap_tuple_should_freeze(HeapTupleHeader tuple,
-						 const struct VacuumCutoffs *cutoffs,
+						 const struct VacuumCutoffs *cutoffs, bool MinCutoffs,
 						 TransactionId *NoFreezePageRelfrozenXid,
 						 MultiXactId *NoFreezePageRelminMxid)
 {
@@ -7348,6 +7353,13 @@ heap_tuple_should_freeze(HeapTupleHeader tuple,
 	TransactionId xid;
 	MultiXactId multi;
 	bool		freeze = false;
+
+	if (MinCutoffs)
+	{
+		/* Use earlier cleanup lock cutoffs */
+		MustFreezeLimit = cutoffs->MinXid;
+		MustFreezeMultiLimit = cutoffs->MinMulti;
+	}
 
 	/* First deal with xmin */
 	xid = HeapTupleHeaderGetXmin(tuple);
