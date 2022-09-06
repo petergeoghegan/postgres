@@ -210,7 +210,7 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
       there are many dead tuples in the table.  This may be useful
       when it is necessary to make <command>VACUUM</command> run as
       quickly as possible to avoid imminent transaction ID wraparound
-      (see <xref linkend="vacuum-for-wraparound"/>).  However, the
+      (see <xref linkend="vacuum-xid-space"/>).  However, the
       wraparound failsafe mechanism controlled by <xref
        linkend="guc-vacuum-failsafe-age"/>  will generally trigger
       automatically to avoid transaction ID wraparound failure, and
