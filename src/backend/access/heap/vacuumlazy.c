@@ -157,8 +157,6 @@ typedef struct LVRelState
 	BufferAccessStrategy bstrategy;
 	ParallelVacuumState *pvs;
 
-	/* Aggressive VACUUM? (must set relfrozenxid >= FreezeLimit) */
-	bool		aggressive;
 	/* Eagerly freeze all tuples on pages about to be set all-visible? */
 	bool		eager_freeze_strategy;
 	/* Wraparound failsafe has been triggered? */
@@ -262,7 +260,8 @@ static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							LVPagePruneState *prunestate);
 static bool lazy_scan_noprune(LVRelState *vacrel, Buffer buf,
 							  BlockNumber blkno, Page page,
-							  bool *hastup, bool *recordfreespace);
+							  bool *hastup, bool *recordfreespace,
+							  Size *freespace);
 static void lazy_vacuum(LVRelState *vacrel);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static void lazy_vacuum_heap_rel(LVRelState *vacrel);
@@ -459,7 +458,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * future we might want to teach lazy_scan_prune to recompute vistest from
 	 * time to time, to increase the number of dead tuples it can prune away.)
 	 */
-	vacrel->aggressive = vacuum_get_cutoffs(rel, params, &vacrel->cutoffs);
+	vacuum_get_cutoffs(rel, params, &vacrel->cutoffs);
 	vacrel->rel_pages = orig_rel_pages = RelationGetNumberOfBlocks(rel);
 	vacrel->vistest = GlobalVisTestFor(rel);
 	/* Initialize state used to track oldest extant XID/MXID */
@@ -539,17 +538,14 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	/*
 	 * Prepare to update rel's pg_class entry.
 	 *
-	 * Aggressive VACUUMs must always be able to advance relfrozenxid to a
-	 * value >= FreezeLimit, and relminmxid to a value >= MultiXactCutoff.
-	 * Non-aggressive VACUUMs may advance them by any amount, or not at all.
+	 * VACUUM can only advance relfrozenxid to a value >= MinXid, and
+	 * relminmxid to a value >= MinMulti.
 	 */
 	Assert(vacrel->NewRelfrozenXid == vacrel->cutoffs.OldestXmin ||
-		   TransactionIdPrecedesOrEquals(vacrel->aggressive ? vacrel->cutoffs.FreezeLimit :
-										 vacrel->cutoffs.relfrozenxid,
+		   TransactionIdPrecedesOrEquals(vacrel->cutoffs.MinXid,
 										 vacrel->NewRelfrozenXid));
 	Assert(vacrel->NewRelminMxid == vacrel->cutoffs.OldestMxact ||
-		   MultiXactIdPrecedesOrEquals(vacrel->aggressive ? vacrel->cutoffs.MultiXactCutoff :
-									   vacrel->cutoffs.relminmxid,
+		   MultiXactIdPrecedesOrEquals(vacrel->cutoffs.MinMulti,
 									   vacrel->NewRelminMxid));
 	if (vacrel->vmstrat == VMSNAP_SCAN_LAZY)
 	{
@@ -557,7 +553,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 		 * Must keep original relfrozenxid/relminmxid when lazy_scan_strategy
 		 * decided to skip all-visible pages containing unfrozen XIDs/MXIDs
 		 */
-		Assert(!vacrel->aggressive);
 		vacrel->NewRelfrozenXid = InvalidTransactionId;
 		vacrel->NewRelminMxid = InvalidMultiXactId;
 	}
@@ -626,33 +621,14 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 			TimestampDifference(starttime, endtime, &secs_dur, &usecs_dur);
 			memset(&walusage, 0, sizeof(WalUsage));
 			WalUsageAccumDiff(&walusage, &pgWalUsage, &startwalusage);
-
 			initStringInfo(&buf);
+
 			if (verbose)
-			{
-				Assert(!params->is_wraparound);
 				msgfmt = _("finished vacuuming \"%s.%s.%s\": index scans: %d\n");
-			}
 			else if (params->is_wraparound)
-			{
-				/*
-				 * While it's possible for a VACUUM to be both is_wraparound
-				 * and !aggressive, that's just a corner-case -- is_wraparound
-				 * implies aggressive.  Produce distinct output for the corner
-				 * case all the same, just in case.
-				 */
-				if (vacrel->aggressive)
-					msgfmt = _("automatic aggressive vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
-				else
-					msgfmt = _("automatic vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
-			}
+				msgfmt = _("automatic vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
 			else
-			{
-				if (vacrel->aggressive)
-					msgfmt = _("automatic aggressive vacuum of table \"%s.%s.%s\": index scans: %d\n");
-				else
-					msgfmt = _("automatic vacuum of table \"%s.%s.%s\": index scans: %d\n");
-			}
+				msgfmt = _("automatic vacuum of table \"%s.%s.%s\": index scans: %d\n");
 			appendStringInfo(&buf, msgfmt,
 							 get_database_name(MyDatabaseId),
 							 vacrel->relnamespace,
@@ -944,6 +920,7 @@ lazy_scan_heap(LVRelState *vacrel)
 		{
 			bool		hastup,
 						recordfreespace;
+			Size		freespace;
 
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
 
@@ -957,10 +934,8 @@ lazy_scan_heap(LVRelState *vacrel)
 
 			/* Collect LP_DEAD items in dead_items array, count tuples */
 			if (lazy_scan_noprune(vacrel, buf, blkno, page, &hastup,
-								  &recordfreespace))
+								  &recordfreespace, &freespace))
 			{
-				Size		freespace = 0;
-
 				/*
 				 * Processed page successfully (without cleanup lock) -- just
 				 * need to perform rel truncation and FSM steps, much like the
@@ -970,20 +945,13 @@ lazy_scan_heap(LVRelState *vacrel)
 				if (hastup)
 					vacrel->nonempty_pages = blkno + 1;
 				if (recordfreespace)
-					freespace = PageGetHeapFreeSpace(page);
-				UnlockReleaseBuffer(buf);
-				if (recordfreespace)
 					RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
+
+				/* lock and pin released by lazy_scan_noprune */
 				continue;
 			}
 
-			/*
-			 * lazy_scan_noprune could not do all required processing.  Wait
-			 * for a cleanup lock, and call lazy_scan_prune in the usual way.
-			 */
-			Assert(vacrel->aggressive);
-			LockBuffer(buf, BUFFER_LOCK_UNLOCK);
-			LockBufferForCleanup(buf);
+			/* cleanup lock acquired by lazy_scan_noprune */
 		}
 
 		/* Check for new or empty pages before lazy_scan_prune call */
@@ -1431,8 +1399,6 @@ lazy_scan_strategy(LVRelState *vacrel, bool force_scan_all)
 	 */
 	if (force_scan_all)
 		vacrel->vmstrat = VMSNAP_SCAN_ALL;
-
-	Assert(!vacrel->aggressive || vacrel->vmstrat != VMSNAP_SCAN_LAZY);
 
 	/* Inform vmsnap infrastructure of our chosen strategy */
 	visibilitymap_snap_strategy(vacrel->vmsnap, vacrel->vmstrat);
@@ -2014,17 +1980,32 @@ retry:
  * lazy_scan_prune, which requires a full cleanup lock.  While pruning isn't
  * performed here, it's quite possible that an earlier opportunistic pruning
  * operation left LP_DEAD items behind.  We'll at least collect any such items
- * in the dead_items array for removal from indexes.
+ * in the dead_items array for removal from indexes (assuming caller's page
+ * can be processed successfully here).
  *
- * For aggressive VACUUM callers, we may return false to indicate that a full
- * cleanup lock is required for processing by lazy_scan_prune.  This is only
- * necessary when the aggressive VACUUM needs to freeze some tuple XIDs from
- * one or more tuples on the page.  We always return true for non-aggressive
- * callers.
+ * We return true to indicate that processing succeeded, in which case we'll
+ * have dropped the lock and pin on buf/page.  Else returns false, indicating
+ * that page must be processed by lazy_scan_prune in the usual way after all.
+ * Acquires a cleanup lock on buf/page for caller before returning false.
+ *
+ * We go to considerable trouble to get a cleanup lock on any page that has
+ * XIDs/MXIDs that need to be frozen in order for VACUUM to be able to set
+ * relfrozenxid/relminmxid to values >= FreezeLimit/MultiXactCutoff cutoffs.
+ * But we don't strictly guarantee it; we only guarantee that final values
+ * will be >= MinXid/MinMulti cutoffs in the worst case.
+ *
+ * We prefer to "under promise and over deliver" like this because a strong
+ * guarantee has the potential to make a bad situation even worse.  VACUUM
+ * should avoid waiting for a cleanup lock for an indefinitely long time until
+ * it has already exhausted every available alternative.  It's quite possible
+ * (and perhaps even likely) that the problem will go away on its own.  But
+ * even when it doesn't, our approach at least makes it likely that the first
+ * VACUUM that encounters the issue will catch up on whatever freezing may
+ * still be required for every other page in the target rel.
  *
  * See lazy_scan_prune for an explanation of hastup return flag.
  * recordfreespace flag instructs caller on whether or not it should do
- * generic FSM processing for page.
+ * generic FSM processing for page, using *freespace value set here.
  */
 static bool
 lazy_scan_noprune(LVRelState *vacrel,
@@ -2032,7 +2013,8 @@ lazy_scan_noprune(LVRelState *vacrel,
 				  BlockNumber blkno,
 				  Page page,
 				  bool *hastup,
-				  bool *recordfreespace)
+				  bool *recordfreespace,
+				  Size *freespace)
 {
 	OffsetNumber offnum,
 				maxoff;
@@ -2040,6 +2022,7 @@ lazy_scan_noprune(LVRelState *vacrel,
 				live_tuples,
 				recently_dead_tuples,
 				missed_dead_tuples;
+	bool		should_freeze = false;
 	HeapTupleHeader tupleheader;
 	TransactionId NoFreezePageRelfrozenXid = vacrel->NewRelfrozenXid;
 	MultiXactId NoFreezePageRelminMxid = vacrel->NewRelminMxid;
@@ -2049,6 +2032,7 @@ lazy_scan_noprune(LVRelState *vacrel,
 
 	*hastup = false;			/* for now */
 	*recordfreespace = false;	/* for now */
+	*freespace = PageGetHeapFreeSpace(page);
 
 	lpdead_items = 0;
 	live_tuples = 0;
@@ -2090,34 +2074,7 @@ lazy_scan_noprune(LVRelState *vacrel,
 		if (heap_tuple_should_freeze(tupleheader, &vacrel->cutoffs,
 									 &NoFreezePageRelfrozenXid,
 									 &NoFreezePageRelminMxid))
-		{
-			/* Tuple with XID < FreezeLimit (or MXID < MultiXactCutoff) */
-			if (vacrel->aggressive)
-			{
-				/*
-				 * Aggressive VACUUMs must always be able to advance rel's
-				 * relfrozenxid to a value >= FreezeLimit (and be able to
-				 * advance rel's relminmxid to a value >= MultiXactCutoff).
-				 * The ongoing aggressive VACUUM won't be able to do that
-				 * unless it can freeze an XID (or MXID) from this tuple now.
-				 *
-				 * The only safe option is to have caller perform processing
-				 * of this page using lazy_scan_prune.  Caller might have to
-				 * wait a while for a cleanup lock, but it can't be helped.
-				 */
-				vacrel->offnum = InvalidOffsetNumber;
-				return false;
-			}
-
-			/*
-			 * Non-aggressive VACUUMs are under no obligation to advance
-			 * relfrozenxid (even by one XID).  We can be much laxer here.
-			 *
-			 * Currently we always just accept an older final relfrozenxid
-			 * and/or relminmxid value.  We never make caller wait or work a
-			 * little harder, even when it likely makes sense to do so.
-			 */
-		}
+			should_freeze = true;
 
 		ItemPointerSet(&(tuple.t_self), blkno, offnum);
 		tuple.t_data = (HeapTupleHeader) PageGetItem(page, itemid);
@@ -2166,10 +2123,98 @@ lazy_scan_noprune(LVRelState *vacrel,
 	vacrel->offnum = InvalidOffsetNumber;
 
 	/*
-	 * By here we know for sure that caller can put off freezing and pruning
-	 * this particular page until the next VACUUM.  Remember its details now.
-	 * (lazy_scan_prune expects a clean slate, so we have to do this last.)
+	 * Release lock (but not pin) on page now.  Then consider if we should
+	 * back out of accepting reduced processing for this page.
+	 *
+	 * Our caller's initial inability to get a cleanup lock will often turn
+	 * out to have been nothing more than a momentary blip, and it would be a
+	 * shame if relfrozenxid/relminmxid values < FreezeLimit/MultiXactCutoff
+	 * were used without good reason.  For example, the checkpointer might
+	 * have been writing out this page a moment ago, in which case its buffer
+	 * pin might have already been released by now.
+	 *
+	 * It's also possible that the conflicting buffer pin will continue to
+	 * block cleanup lock acquisition on the buffer for an extended period.
+	 * For example, it isn't uncommon for heap_lock_tuple to sleep while
+	 * holding a buffer pin, in which case a conflicting pin could easily be
+	 * held for much longer than VACUUM can reasonably be expected to wait.
+	 * There are also truly pathological cases to worry about.  For example,
+	 * the case where buggy application code holds open a cursor forever.
 	 */
+	LockBuffer(buf, BUFFER_LOCK_UNLOCK);
+	if (should_freeze)
+	{
+		/*
+		 * If page has tuple with a dangerously old XID/MXID (an XID < MinXid,
+		 * or an MXID < MinMulti), then we wait for however long it takes to
+		 * get a cleanup lock.
+		 *
+		 * Check for that first (get it out of the way).
+		 */
+		if (TransactionIdPrecedes(NoFreezePageRelfrozenXid,
+								  vacrel->cutoffs.MinXid) ||
+			MultiXactIdPrecedes(NoFreezePageRelminMxid,
+								vacrel->cutoffs.MinMulti))
+		{
+			/*
+			 * MinXid/MinMulti are considered to be only barely adequate final
+			 * values, so we only expect to end up here when previous VACUUMs
+			 * put off processing by lazy_scan_prune in the hope that it would
+			 * never come to this.  That hasn't worked out, so we must wait.
+			 */
+			LockBufferForCleanup(buf);
+			return false;
+		}
+
+		/*
+		 * Page has tuple with XID < FreezeLimit, or MXID < MultiXactCutoff,
+		 * but they're not so old that we're _strictly_ obligated to freeze.
+		 *
+		 * We are willing to go to the trouble of waiting for a cleanup lock
+		 * for a short while for such a page -- just not indefinitely long.
+		 * This avoids squandering opportunities to advance relfrozenxid or
+		 * relminmxid by the target amount during any one VACUUM, which is
+		 * particularly important with larger tables that only get vacuumed
+		 * when autovacuum.c is concerned about table age.  It would not be
+		 * okay if the number of autovacuums such a table ended up requiring
+		 * noticeably exceeded the expected autovacuum_freeze_max_age cadence.
+		 *
+		 * We are willing to wait and try again a total of 3 times.  If that
+		 * doesn't work then we just give up.  We only wait here when it is
+		 * actually expected to preserve current NewRelfrozenXid/NewRelminMxid
+		 * tracker values, and when trackers will actually be used to update
+		 * pg_class later on.  This also tends to limit the impact of waiting
+		 * for VACUUMs that experience relatively many cleanup lock conflicts.
+		 */
+		if (vacrel->vmstrat != VMSNAP_SCAN_LAZY &&
+			(TransactionIdPrecedes(NoFreezePageRelfrozenXid,
+								   vacrel->NewRelfrozenXid) ||
+			 MultiXactIdPrecedes(NoFreezePageRelminMxid,
+								 vacrel->NewRelminMxid)))
+		{
+			/* wait 10ms, then 20ms, then 30ms, then give up */
+			for (int i = 1; i <= 3; i++)
+			{
+				CHECK_FOR_INTERRUPTS();
+
+				pg_usleep(1000L * 10L * i);
+				if (ConditionalLockBufferForCleanup(buf))
+				{
+					/* Go process page in lazy_scan_prune after all */
+					return false;
+				}
+			}
+		}
+
+		/* Accept reduced processing for this page after all */
+	}
+
+	/*
+	 * By here we know for sure that caller will put off freezing and pruning
+	 * this particular page until the next VACUUM.  Remember its details now.
+	 * Also drop the buffer pin that we held onto during cleanup lock steps.
+	 */
+	ReleaseBuffer(buf);
 	vacrel->NewRelfrozenXid = NoFreezePageRelfrozenXid;
 	vacrel->NewRelminMxid = NoFreezePageRelminMxid;
 
