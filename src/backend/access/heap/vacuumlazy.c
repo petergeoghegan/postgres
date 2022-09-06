@@ -109,10 +109,11 @@
 	((BlockNumber) (((uint64) 8 * 1024 * 1024 * 1024) / BLCKSZ))
 
 /*
- * Threshold that controls whether non-aggressive VACUUMs will skip any
- * all-visible pages when using the lazy freezing strategy
+ * Thresholds that control whether VACUUM will skip any all-visible pages when
+ * using the lazy freezing strategy
  */
 #define SKIPALLVIS_THRESHOLD_PAGES	0.05	/* i.e. 5% of rel_pages */
+#define SKIPALLVIS_MIDPOINT_THRESHOLD_PAGES	0.15
 
 /*
  * Size of the prefetch window for lazy vacuum backwards truncation scan.
@@ -148,9 +149,7 @@ typedef struct LVRelState
 	BufferAccessStrategy bstrategy;
 	ParallelVacuumState *pvs;
 
-	/* Aggressive VACUUM? (must set relfrozenxid >= FreezeLimit) */
-	bool		aggressive;
-	/* Skip (don't scan) all-visible pages? (must be !aggressive) */
+	/* Skip (don't scan) all-visible pages? */
 	bool		skipallvis;
 	/* Skip (don't scan) all-frozen pages? */
 	bool		skipallfrozen;
@@ -246,7 +245,7 @@ typedef struct LVSavedErrInfo
 
 /* non-export function prototypes */
 static void lazy_scan_heap(LVRelState *vacrel);
-static BlockNumber lazy_scan_strategy(LVRelState *vacrel,
+static BlockNumber lazy_scan_strategy(LVRelState *vacrel, double antiwrapfrac,
 									  BlockNumber all_visible,
 									  BlockNumber all_frozen);
 static BlockNumber lazy_scan_skip(LVRelState *vacrel,
@@ -312,10 +311,10 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	LVRelState *vacrel;
 	bool		verbose,
 				instrument,
-				aggressive,
 				frozenxid_updated,
 				minmulti_updated;
 	struct VacuumCutoffs cutoffs;
+	double		antiwrapfrac;
 	BlockNumber orig_rel_pages,
 				all_visible,
 				all_frozen,
@@ -354,7 +353,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * Get cutoffs that determine which deleted tuples are considered DEAD,
 	 * not just RECENTLY_DEAD, and which XIDs/MXIDs to freeze
 	 */
-	aggressive = vacuum_set_xid_limits(rel, params, &cutoffs);
+	vacuum_set_xid_limits(rel, params, &cutoffs, &antiwrapfrac);
 
 	/*
 	 * Setup error traceback support for ereport() first.  The idea is to set
@@ -404,7 +403,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	Assert(params->index_cleanup != VACOPTVALUE_UNSPECIFIED);
 	Assert(params->truncate != VACOPTVALUE_UNSPECIFIED &&
 		   params->truncate != VACOPTVALUE_AUTO);
-	vacrel->aggressive = aggressive;
 	vacrel->skipallvis = false; /* arbitrary initial value */
 	/* skipallfrozen indicates DISABLE_PAGE_SKIPPING to lazy_scan_strategy */
 	vacrel->skipallfrozen = (params->options & VACOPT_DISABLE_PAGE_SKIPPING) == 0;
@@ -489,7 +487,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 */
 	vacrel->vmsnap = visibilitymap_snap(rel, orig_rel_pages,
 										&all_visible, &all_frozen);
-	scanned_pages = lazy_scan_strategy(vacrel, all_visible, all_frozen);
+	scanned_pages = lazy_scan_strategy(vacrel, antiwrapfrac,
+									   all_visible, all_frozen);
 	if (verbose)
 		ereport(INFO,
 				(errmsg("vacuuming \"%s.%s.%s\"",
@@ -550,25 +549,21 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	/*
 	 * Prepare to update rel's pg_class entry.
 	 *
-	 * Aggressive VACUUMs must always be able to advance relfrozenxid to a
-	 * value >= FreezeLimit, and relminmxid to a value >= MultiXactCutoff.
-	 * Non-aggressive VACUUMs may advance them by any amount, or not at all.
+	 * VACUUM can only advance relfrozenxid to a value >= MinXid, and
+	 * relminmxid to a value >= MinMulti.
 	 */
 	Assert(vacrel->NewRelfrozenXid == cutoffs.OldestXmin ||
-		   TransactionIdPrecedesOrEquals(aggressive ? cutoffs.FreezeLimit :
-										 vacrel->cutoffs.relfrozenxid,
+		   TransactionIdPrecedesOrEquals(cutoffs.MinXid,
 										 vacrel->NewRelfrozenXid));
 	Assert(vacrel->NewRelminMxid == cutoffs.OldestMxact ||
-		   MultiXactIdPrecedesOrEquals(aggressive ? cutoffs.MultiXactCutoff :
-									   vacrel->cutoffs.relminmxid,
+		   MultiXactIdPrecedesOrEquals(cutoffs.MinMulti,
 									   vacrel->NewRelminMxid));
 	if (vacrel->skipallvis)
 	{
 		/*
-		 * Must keep original relfrozenxid in a non-aggressive VACUUM whose
-		 * lazy_scan_strategy call determined it would skip all-visible pages
+		 * Must keep original relfrozenxid when lazy_scan_strategy call
+		 * decided to skip all-visible pages
 		 */
-		Assert(!aggressive);
 		vacrel->NewRelfrozenXid = InvalidTransactionId;
 		vacrel->NewRelminMxid = InvalidMultiXactId;
 	}
@@ -644,23 +639,11 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				Assert(!params->is_wraparound);
 				msgfmt = _("finished vacuuming \"%s.%s.%s\": index scans: %d\n");
 			}
-			else if (params->is_wraparound)
-			{
-				/*
-				 * While it's possible for a VACUUM to be both is_wraparound
-				 * and !aggressive, that's just a corner-case -- is_wraparound
-				 * implies aggressive.  Produce distinct output for the corner
-				 * case all the same, just in case.
-				 */
-				if (aggressive)
-					msgfmt = _("automatic aggressive vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
-				else
-					msgfmt = _("automatic vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
-			}
 			else
 			{
-				if (aggressive)
-					msgfmt = _("automatic aggressive vacuum of table \"%s.%s.%s\": index scans: %d\n");
+				Assert(IsAutoVacuumWorkerProcess());
+				if (params->is_wraparound)
+					msgfmt = _("automatic vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
 				else
 					msgfmt = _("automatic vacuum of table \"%s.%s.%s\": index scans: %d\n");
 			}
@@ -994,7 +977,6 @@ lazy_scan_heap(LVRelState *vacrel)
 			 * lazy_scan_noprune could not do all required processing.  Wait
 			 * for a cleanup lock, and call lazy_scan_prune in the usual way.
 			 */
-			Assert(vacrel->aggressive);
 			LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 			LockBufferForCleanup(buf);
 		}
@@ -1255,19 +1237,16 @@ lazy_scan_heap(LVRelState *vacrel)
  * one VACUUM operation should need to freeze disproportionately many pages.
  *
  * Also determines if the ongoing VACUUM operation should skip all-visible
- * pages when advancing relfrozenxid is optional.  When VACUUM freezes eagerly
- * it always also scans pages eagerly, since it's important that relfrozenxid
- * advance in affected tables, which are larger.  When VACUUM freezes lazily
- * it might make sense to scan pages lazily (skip all-visible pages) or
- * eagerly (be capable of relfrozenxid advancement), depending on the extra
- * cost - we might need to scan only a few extra pages.
+ * pages when advancing relfrozenxid is still optional (before target rel has
+ * attained an age that forces an antiwraparound autovacuum).  Decision is
+ * based in part on caller's antiwrapfrac argument, which represents how close
+ * the table age is to forcing antiwraparound autovacuum.
  *
  * Returns final scanned_pages for the VACUUM operation.
  */
 static BlockNumber
-lazy_scan_strategy(LVRelState *vacrel,
-				   BlockNumber all_visible,
-				   BlockNumber all_frozen)
+lazy_scan_strategy(LVRelState *vacrel, double antiwrapfrac,
+				   BlockNumber all_visible, BlockNumber all_frozen)
 {
 	BlockNumber rel_pages = vacrel->rel_pages,
 				scanned_pages_skipallvis,
@@ -1326,9 +1305,6 @@ lazy_scan_strategy(LVRelState *vacrel,
 		BlockNumber nextra,
 					nextra_threshold;
 
-		/* VACUUM of small table -- use lazy freeze strategy */
-		vacrel->eager_freeze_strategy = false;
-
 		/*
 		 * Decide on whether or not we'll skip all-visible pages.
 		 *
@@ -1342,21 +1318,51 @@ lazy_scan_strategy(LVRelState *vacrel,
 		 * that way, so be lazy (just skip) unless the added cost is very low.
 		 * We opt for a skipallfrozen-only VACUUM when the number of extra
 		 * pages (extra scanned pages that are all-visible but not all-frozen)
-		 * is less than 5% of rel_pages (or 32 pages when rel_pages is small).
+		 * is less than 5% of rel_pages (or 32 pages when rel_pages is small)
+		 * if relfrozenxid has yet to attain an age that uses 50% of the XID
+		 * space available before the GUC cutoff for antiwraparound
+		 * autovacuum.  A more aggressive threshold of 15% is used when
+		 * relfrozenxid is older than that.
 		 */
 		nextra = scanned_pages_skipallfrozen - scanned_pages_skipallvis;
-		nextra_threshold = (double) rel_pages * SKIPALLVIS_THRESHOLD_PAGES;
+
+		if (antiwrapfrac < 0.5)
+			nextra_threshold = (double) rel_pages *
+				SKIPALLVIS_THRESHOLD_PAGES;
+		else
+			nextra_threshold = (double) rel_pages *
+				SKIPALLVIS_MIDPOINT_THRESHOLD_PAGES;
+
 		nextra_threshold = Max(32, nextra_threshold);
 
-		/* Only skipallvis when DISABLE_PAGE_SKIPPING not in use */
-		vacrel->skipallvis = nextra >= nextra_threshold &&
-			vacrel->skipallfrozen && !vacrel->aggressive;
+		/*
+		 * We must advance relfrozenxid when it already attained an age that
+		 * consumes >= 90% of the available XID space (or MXID space) before
+		 * the crossover point for antiwraparound autovacuum.
+		 *
+		 * Also use eager freezing strategy when we're past the "90% towards
+		 * wraparound" point, even though the table size is below the usual
+		 * eager_threshold table size cutoff.  The added cost is usually not
+		 * too great.  We may be able to fall into a pattern of continually
+		 * advancing relfrozenxid this way.
+		 */
+		if (antiwrapfrac < 0.9)
+		{
+			/* Only skipallvis when DISABLE_PAGE_SKIPPING not in use */
+			vacrel->skipallvis = nextra >= nextra_threshold &&
+				vacrel->skipallfrozen;
+			vacrel->eager_freeze_strategy = false;
+		}
+		else
+		{
+			vacrel->skipallvis = false;
+			vacrel->eager_freeze_strategy = true;
+		}
 	}
 
 	/* Return the appropriate variant of scanned_pages */
 	if (vacrel->skipallvis)
 	{
-		Assert(!vacrel->aggressive);
 		Assert(vacrel->skipallfrozen);
 		return scanned_pages_skipallvis;
 	}
@@ -1983,11 +1989,13 @@ retry:
  * operation left LP_DEAD items behind.  We'll at least collect any such items
  * in the dead_items array for removal from indexes.
  *
- * For aggressive VACUUM callers, we may return false to indicate that a full
- * cleanup lock is required for processing by lazy_scan_prune.  This is only
- * necessary when the aggressive VACUUM needs to freeze some tuple XIDs from
- * one or more tuples on the page.  We always return true for non-aggressive
- * callers.
+ * We may return false to indicate that a full cleanup lock is required for
+ * processing by lazy_scan_prune.  This is only necessary when VACUUM needs to
+ * freeze some tuple XIDs from one or more tuples on the page.  This should
+ * only happen when multiple successive VACUUM operations all fail to get a
+ * cleanup lock on the same heap page (assuming default or at least typical
+ * freeze settings).  Waiting for a cleanup lock should be avoided unless it's
+ * the only way to advance relfrozenxid by enough to satisfy autovacuum.c.
  *
  * See lazy_scan_prune for an explanation of hastup return flag.
  * recordfreespace flag instructs caller on whether or not it should do
@@ -2054,35 +2062,24 @@ lazy_scan_noprune(LVRelState *vacrel,
 
 		*hastup = true;			/* page prevents rel truncation */
 		tupleheader = (HeapTupleHeader) PageGetItem(page, itemid);
-		if (heap_tuple_should_freeze(tupleheader, &vacrel->cutoffs,
+		if (heap_tuple_should_freeze(tupleheader, &vacrel->cutoffs, true,
 									 &NewRelfrozenXid, &NewRelminMxid))
 		{
-			/* Tuple with XID < FreezeLimit (or MXID < MultiXactCutoff) */
-			if (vacrel->aggressive)
-			{
-				/*
-				 * Aggressive VACUUMs must always be able to advance rel's
-				 * relfrozenxid to a value >= FreezeLimit (and be able to
-				 * advance rel's relminmxid to a value >= MultiXactCutoff).
-				 * The ongoing aggressive VACUUM won't be able to do that
-				 * unless it can freeze an XID (or MXID) from this tuple now.
-				 *
-				 * The only safe option is to have caller perform processing
-				 * of this page using lazy_scan_prune.  Caller might have to
-				 * wait a while for a cleanup lock, but it can't be helped.
-				 */
-				vacrel->offnum = InvalidOffsetNumber;
-				return false;
-			}
-
 			/*
-			 * Non-aggressive VACUUMs are under no obligation to advance
-			 * relfrozenxid (even by one XID).  We can be much laxer here.
+			 * Tuple with XID < MinXid (or MXID < MinMulti)
 			 *
-			 * Currently we always just accept an older final relfrozenxid
-			 * and/or relminmxid value.  We never make caller wait or work a
-			 * little harder, even when it likely makes sense to do so.
+			 * VACUUM must always be able to advance rel's relfrozenxid and
+			 * relminmxid to minimum values.  The ongoing VACUUM won't be able
+			 * to do that unless it can freeze an XID (or MXID) from this
+			 * tuple now.
+			 *
+			 * The only safe option is to have caller perform processing of
+			 * this page using lazy_scan_prune.  Caller might have to wait a
+			 * long time for a cleanup lock, which can be very disruptive, but
+			 * it can't be helped.
 			 */
+			vacrel->offnum = InvalidOffsetNumber;
+			return false;
 		}
 
 		ItemPointerSet(&(tuple.t_self), blkno, offnum);

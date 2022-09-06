@@ -825,6 +825,7 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	TupleDesc	newTupDesc PG_USED_FOR_ASSERTS_ONLY;
 	VacuumParams params;
 	struct VacuumCutoffs cutoffs;
+	double		antiwrapfrac;
 	bool		use_sort;
 	double		num_tuples = 0,
 				tups_vacuumed = 0,
@@ -913,7 +914,7 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	 * not to be aggressive about this.
 	 */
 	memset(&params, 0, sizeof(VacuumParams));
-	vacuum_set_xid_limits(OldHeap, &params, &cutoffs);
+	vacuum_set_xid_limits(OldHeap, &params, &cutoffs, &antiwrapfrac);
 
 	/*
 	 * FreezeXid will become the table's new relfrozenxid, and that mustn't go

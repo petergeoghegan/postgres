@@ -119,14 +119,14 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
     <term><literal>FREEZE</literal></term>
     <listitem>
      <para>
-      Selects aggressive <quote>freezing</quote> of tuples.
-      Specifying <literal>FREEZE</literal> is equivalent to performing
-      <command>VACUUM</command> with the
-      <xref linkend="guc-vacuum-freeze-min-age"/> and
-      <xref linkend="guc-vacuum-freeze-table-age"/> parameters
-      set to zero.  Aggressive freezing is always performed when the
-      table is rewritten, so this option is redundant when <literal>FULL</literal>
-      is specified.
+      Selects eager <quote>freezing</quote> of tuples.  Specifying
+      <literal>FREEZE</literal> is equivalent to performing
+      <command>VACUUM</command> with the <xref
+       linkend="guc-vacuum-freeze-min-age"/> and <xref
+       linkend="guc-vacuum-freeze-strategy-threshold"/> parameters set
+      to zero.  Eager freezing is always performed when the table is
+      rewritten, so this option is redundant when
+      <literal>FULL</literal> is specified.
      </para>
     </listitem>
    </varlistentry>
@@ -210,7 +210,7 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
       there are many dead tuples in the table.  This may be useful
       when it is necessary to make <command>VACUUM</command> run as
       quickly as possible to avoid imminent transaction ID wraparound
-      (see <xref linkend="vacuum-for-wraparound"/>).  However, the
+      (see <xref linkend="vacuum-xid-space"/>).  However, the
       wraparound failsafe mechanism controlled by <xref
        linkend="guc-vacuum-failsafe-age"/>  will generally trigger
       automatically to avoid transaction ID wraparound failure, and
