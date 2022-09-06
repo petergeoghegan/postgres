@@ -112,7 +112,7 @@
  * Threshold that controls whether non-aggressive VACUUMs will skip any
  * all-visible pages when using the lazy freezing strategy
  */
-#define SKIPALLVIS_THRESHOLD_PAGES	0.05	/* i.e. 5% of rel_pages */
+#define MIN_SKIPALLVIS_THRESHOLD_PAGES	0.05	/* i.e. 5% of rel_pages */
 
 /*
  * Size of the prefetch window for lazy vacuum backwards truncation scan.
@@ -258,7 +258,8 @@ static void lazy_scan_heap(LVRelState *vacrel);
 static BlockNumber lazy_scan_strategy(LVRelState *vacrel,
 									  BlockNumber eager_threshold,
 									  BlockNumber all_visible,
-									  BlockNumber all_frozen);
+									  BlockNumber all_frozen,
+									  double aggressiveFrac);
 static BlockNumber lazy_scan_skip(LVRelState *vacrel,
 								  BlockNumber next_block, bool *all_visible);
 static bool lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf,
@@ -330,6 +331,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				FreezeLimit;
 	MultiXactId OldestMxact,
 				MultiXactCutoff;
+	double		aggressiveFrac;
 	BlockNumber orig_rel_pages,
 				eager_threshold,
 				all_visible,
@@ -382,7 +384,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 									   params->freeze_table_age,
 									   params->multixact_freeze_table_age,
 									   &OldestXmin, &OldestMxact,
-									   &FreezeLimit, &MultiXactCutoff);
+									   &FreezeLimit, &MultiXactCutoff,
+									   &aggressiveFrac);
 	eager_threshold = params->freeze_strategy_threshold < 0 ?
 		vacuum_freeze_strategy_threshold :
 		params->freeze_strategy_threshold;
@@ -541,7 +544,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->vmsnap = visibilitymap_snap(rel, orig_rel_pages,
 										&all_visible, &all_frozen);
 	scanned_pages = lazy_scan_strategy(vacrel, eager_threshold,
-									   all_visible, all_frozen);
+									   all_visible, all_frozen,
+									   aggressiveFrac);
 	if (verbose)
 	{
 		char	   *msgfmt;
@@ -1330,12 +1334,16 @@ lazy_scan_heap(LVRelState *vacrel)
  * When VACUUM freezes lazily it might make sense to scan pages lazily (skip
  * all-visible pages) or eagerly (be capable of relfrozenxid advancement),
  * depending on the extra cost - we might need to scan only a few extra pages.
+ * Decision is based in part on caller's aggressiveFrac argument, which is a
+ * value from 0.0 - 1.0 that represents how close the table age is to needing
+ * an aggressive VACUUM.
  *
  * Returns final scanned_pages for the VACUUM operation.
  */
 static BlockNumber
 lazy_scan_strategy(LVRelState *vacrel, BlockNumber eager_threshold,
-				   BlockNumber all_visible, BlockNumber all_frozen)
+				   BlockNumber all_visible, BlockNumber all_frozen,
+				   double aggressiveFrac)
 {
 	BlockNumber rel_pages = vacrel->rel_pages,
 				scanned_pages_skipallvis,
@@ -1426,10 +1434,14 @@ lazy_scan_strategy(LVRelState *vacrel, BlockNumber eager_threshold,
 		 * is less than 5% of rel_pages (or 32 pages when rel_pages is small).
 		 */
 		nextra = scanned_pages_skipallfrozen - scanned_pages_skipallvis;
-		nextra_threshold = (double) rel_pages * SKIPALLVIS_THRESHOLD_PAGES;
+		aggressiveFrac = Max(aggressiveFrac, MIN_SKIPALLVIS_THRESHOLD_PAGES);
+		nextra_threshold = (double) rel_pages * aggressiveFrac;
 		nextra_threshold = Max(32, nextra_threshold);
 
-		vacrel->skipallvis = nextra >= nextra_threshold;
+		if (aggressiveFrac < 0.9)
+			vacrel->skipallvis = nextra >= nextra_threshold;
+		else
+			vacrel->skipallvis = false;
 	}
 
 	/* Return the appropriate variant of scanned_pages */

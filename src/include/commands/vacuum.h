@@ -298,7 +298,8 @@ extern bool vacuum_set_xid_limits(Relation rel,
 								  TransactionId *oldestXmin,
 								  MultiXactId *oldestMxact,
 								  TransactionId *freezeLimit,
-								  MultiXactId *multiXactCutoff);
+								  MultiXactId *multiXactCutoff,
+								  double *aggressiveFrac);
 extern bool vacuum_xid_failsafe_check(TransactionId relfrozenxid,
 									  MultiXactId relminmxid);
 extern void vac_update_datfrozenxid(void);
