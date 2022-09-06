@@ -1071,13 +1071,8 @@ get_all_vacuum_rels(MemoryContext vac_context, int options)
  * The target relation and VACUUM parameters are our inputs.
  *
  * Output parameters are the cutoffs that VACUUM caller should use.
- *
- * Return value indicates if vacuumlazy.c caller should make its VACUUM
- * operation aggressive.  An aggressive VACUUM must advance relfrozenxid up to
- * FreezeLimit (at a minimum), and relminmxid up to MultiXactCutoff (at a
- * minimum).
  */
-bool
+void
 vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
 				   struct VacuumCutoffs *cutoffs)
 {
@@ -1259,6 +1254,39 @@ vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
 	Assert(multixact_freeze_table_age >= 0);
 
 	/*
+	 * Determine the cutoffs used by VACUUM to decide on whether to wait for a
+	 * cleanup lock on a page (that it can't cleanup lock right away).  These
+	 * are the MinXid and MinMulti cutoffs.  They are related to the cutoffs
+	 * for freezing (FreezeLimit and MultiXactCutoff), and are only applied on
+	 * pages that we cannot freeze right away.  See vacuumlazy.c for details.
+	 *
+	 * VACUUM can ratchet back NewRelfrozenXid and/or NewRelminMxid instead of
+	 * waiting indefinitely for a cleanup lock in almost all cases.  The high
+	 * level goal is to create as many opportunities as possible to freeze
+	 * (across many successive VACUUM operations), while avoiding waiting for
+	 * a cleanup lock whenever possible.  Any time spent waiting is time spent
+	 * not freezing other eligible pages, which is typically a bad trade-off.
+	 *
+	 * As a consequence of all this, MinXid and MinMulti also act as limits on
+	 * the oldest acceptable values that can ever be set in pg_class by VACUUM
+	 * (though this is only relevant when they have already attained XID/XMID
+	 * ages that approach freeze_table_age and/or multixact_freeze_table_age).
+	 */
+	cutoffs->MinXid = nextXID - (freeze_table_age * 0.95);
+	if (!TransactionIdIsNormal(cutoffs->MinXid))
+		cutoffs->MinXid = FirstNormalTransactionId;
+	/* MinXid must always be <= FreezeLimit */
+	if (TransactionIdPrecedes(cutoffs->FreezeLimit, cutoffs->MinXid))
+		cutoffs->MinXid = cutoffs->FreezeLimit;
+
+	cutoffs->MinMulti = nextMXID - (multixact_freeze_table_age * 0.95);
+	if (cutoffs->MinMulti < FirstMultiXactId)
+		cutoffs->MinMulti = FirstMultiXactId;
+	/* MinMulti must always be <= MultiXactCutoff */
+	if (MultiXactIdPrecedes(cutoffs->MultiXactCutoff, cutoffs->MinMulti))
+		cutoffs->MinMulti = cutoffs->MultiXactCutoff;
+
+	/*
 	 * Finally, set tableagefrac for VACUUM.  This can come from either XID or
 	 * XMID table age (whichever is greater currently).
 	 */
@@ -1275,8 +1303,6 @@ vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
 	 */
 	if (params->is_wraparound)
 		cutoffs->tableagefrac = 1.0;
-
-	return (cutoffs->tableagefrac >= 1.0);
 }
 
 /*
