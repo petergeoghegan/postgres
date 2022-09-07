@@ -3353,6 +3353,7 @@ dead_items_alloc(LVRelState *vacrel, int nworkers)
 
 	/* Serial VACUUM case */
 	dead_items = (VacDeadItems *) palloc(vac_max_items_to_alloc_size(max_items));
+	dead_items->vmsnap = vacrel->vmsnap;
 	dead_items->max_items = max_items;
 	dead_items->num_items = 0;
 

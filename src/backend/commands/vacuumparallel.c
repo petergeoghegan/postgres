@@ -371,6 +371,7 @@ parallel_vacuum_init(Relation rel, Relation *indrels, int nindexes,
 	/* Prepare the dead_items space */
 	dead_items = (VacDeadItems *) shm_toc_allocate(pcxt->toc,
 												   est_dead_items_len);
+	dead_items->vmsnap = NULL;
 	dead_items->max_items = max_items;
 	dead_items->num_items = 0;
 	MemSet(dead_items->items, 0, sizeof(ItemPointerData) * max_items);

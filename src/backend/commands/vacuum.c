@@ -33,6 +33,7 @@
 #include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/transam.h"
+#include "access/visibilitymap.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/index.h"
@@ -47,7 +48,9 @@
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "postmaster/bgworker_internals.h"
+#include "storage/block.h"
 #include "storage/bufmgr.h"
+#include "storage/itemptr.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -2387,6 +2390,16 @@ vac_tid_reaped(ItemPointer itemptr, void *state)
 				ritem,
 				item;
 	ItemPointer res;
+
+	if (dead_items->vmsnap)
+	{
+		uint8		mapbits;
+		BlockNumber heapBlk = ItemPointerGetBlockNumber(itemptr);
+
+		mapbits = visibilitymap_snap_status(dead_items->vmsnap, heapBlk);
+		if (mapbits & VISIBILITYMAP_ALL_VISIBLE)
+			return false;
+	}
 
 	litem = itemptr_encode(&dead_items->items[0]);
 	ritem = itemptr_encode(&dead_items->items[dead_items->num_items - 1]);

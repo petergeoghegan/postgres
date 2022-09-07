@@ -17,6 +17,7 @@
 #include "access/htup.h"
 #include "access/genam.h"
 #include "access/parallel.h"
+#include "access/visibilitymap.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_type.h"
@@ -243,6 +244,7 @@ typedef struct VacuumParams
  */
 typedef struct VacDeadItems
 {
+	vmsnapshot *vmsnap;
 	int			max_items;		/* # slots allocated in array */
 	int			num_items;		/* current # of entries */
 
