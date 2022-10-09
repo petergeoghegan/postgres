@@ -6707,18 +6707,29 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 				xtrack->relfrozenxid_out = xid;
 		}
 	}
-	else if ((tuple->t_infomask & HEAP_XMAX_INVALID) ||
-			 !TransactionIdIsValid(HeapTupleHeaderGetRawXmax(tuple)))
+	else
 	{
+		/*
+		 * "Already frozen" xmax -- raw xmax is InvalidTransactionId.  Note
+		 * that just setting HEAP_XMAX_INVALID doesn't count, since we need to
+		 * do this via a WAL-logged operation.
+		 */
+		Assert(xid == InvalidTransactionId);
+
 		freeze_xmax = false;
 		xmax_already_frozen = true;
+
+		/*
+		 * Optimization: redundantly freeze "already-frozen" xmax if we're
+		 * going to freeze xmin already.  This tends to result in a more
+		 * homogeneous set of freeze plans for the page as a whole, which
+		 * helps with deduplicating freeze plans in WAL records.
+		 */
+		if (changed)
+			freeze_xmax = true;
+
 		/* No need for relfrozenxid_out handling for already-frozen xmax */
 	}
-	else
-		ereport(ERROR,
-				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg_internal("found xmax %u (infomask 0x%04x) not frozen, not multi, not normal",
-								 xid, tuple->t_infomask)));
 
 	if (freeze_xmin)
 	{
@@ -6727,9 +6738,9 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 	}
 	if (freeze_xmax)
 	{
-		Assert(!xmax_already_frozen);
-
 		frz->xmax = InvalidTransactionId;
+		if (xmin_already_frozen)
+			frz->t_infomask |= HEAP_XMIN_FROZEN;
 
 		/*
 		 * The tuple might be marked either XMAX_INVALID or XMAX_COMMITTED +
