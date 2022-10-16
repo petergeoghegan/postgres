@@ -2151,9 +2151,9 @@ lazy_scan_noprune(LVRelState *vacrel,
 			 * to do that unless it can freeze an XID (or MXID) from this
 			 * tuple now.
 			 *
-			 * The only safe option is to have caller perform processing
-			 * of this page using lazy_scan_prune.  Caller might have to
-			 * wait a while for a cleanup lock, but it can't be helped.
+			 * The only safe option is to have caller perform processing of
+			 * this page using lazy_scan_prune.  Caller might have to wait a
+			 * while for a cleanup lock, but it can't be helped.
 			 */
 			vacrel->offnum = InvalidOffsetNumber;
 			return false;
