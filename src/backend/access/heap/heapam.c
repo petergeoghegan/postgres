@@ -6285,11 +6285,6 @@ FreezeMultiXactId(MultiXactId multi, HeapTupleHeader tuple,
 		 * Might have to ratchet back NewRelminMxid, NewRelfrozenXid, or both
 		 * together.
 		 */
-		char	   *multi_string = mxid_to_string(multi, nmembers, members);
-
-		elog(WARNING,
-			 "%s   limit_xid: %u, cutoff_xid: %u, limit_multi: %u, cutoff_multi: %u",
-			 multi_string, limit_xid, cutoff_xid, limit_multi, cutoff_multi);
 		*flags |= FRM_NOOP;
 		pagefrz->NewRelfrozenXid = NewRelfrozenXid;
 		if (MultiXactIdPrecedes(multi, pagefrz->NewRelminMxid))
