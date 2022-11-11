@@ -275,13 +275,13 @@ BuildIndexValueDescription(Relation indexRelation,
 }
 
 /*
- * Get the latestRemovedXid from the table entries pointed at by the index
+ * Get the latestCommittedXid from the table entries pointed at by the index
  * tuples being deleted using an AM-generic approach.
  *
  * This is a table_index_delete_tuples() shim used by index AMs that have
  * simple requirements.  These callers only need to consult the tableam to get
- * a latestRemovedXid value, and only expect to delete tuples that are already
- * known deletable.  When a latestRemovedXid value isn't needed in index AM's
+ * a latestCommittedXid value, and only expect to delete tuples that are already
+ * known deletable.  When a latestCommittedXid value isn't needed in index AM's
  * deletion WAL record, it is safe for it to skip calling here entirely.
  *
  * We assume that caller index AM uses the standard IndexTuple representation,
@@ -297,7 +297,7 @@ index_compute_xid_horizon_for_tuples(Relation irel,
 									 int nitems)
 {
 	TM_IndexDeleteOp delstate;
-	TransactionId latestRemovedXid = InvalidTransactionId;
+	TransactionId latestCommittedXid = InvalidTransactionId;
 	Page		ipage = BufferGetPage(ibuf);
 	IndexTuple	itup;
 
@@ -333,7 +333,7 @@ index_compute_xid_horizon_for_tuples(Relation irel,
 	}
 
 	/* determine the actual xid horizon */
-	latestRemovedXid = table_index_delete_tuples(hrel, &delstate);
+	latestCommittedXid = table_index_delete_tuples(hrel, &delstate);
 
 	/* assert tableam agrees that all items are deletable */
 	Assert(delstate.ndeltids == nitems);
@@ -341,7 +341,7 @@ index_compute_xid_horizon_for_tuples(Relation irel,
 	pfree(delstate.deltids);
 	pfree(delstate.status);
 
-	return latestRemovedXid;
+	return latestCommittedXid;
 }
 
 

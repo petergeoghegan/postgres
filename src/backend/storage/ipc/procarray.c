@@ -3337,12 +3337,14 @@ GetCurrentVirtualXIDs(TransactionId limitXmin, bool excludeXmin0,
  * GetConflictingVirtualXIDs -- returns an array of currently active VXIDs.
  *
  * Usage is limited to conflict resolution during recovery on standby servers.
- * limitXmin is supplied as either latestRemovedXid, or InvalidTransactionId
- * in cases where we cannot accurately determine a value for latestRemovedXid.
+ * limitXmin is supplied as either latestCommittedXid, or InvalidTransactionId
+ * in cases where we cannot accurately determine a value for latestCommittedXid.
  *
  * If limitXmin is InvalidTransactionId then we want to kill everybody,
  * so we're not worried if they have a snapshot or not, nor does it really
- * matter what type of lock we hold.
+ * matter what type of lock we hold.  (Caller must avoid this with XIDs that
+ * use latestCommittedXid conventions, where InvalidTransactionId is interpreted
+ * as "never generate recovery conflict" instead.)
  *
  * All callers that are checking xmins always now supply a valid and useful
  * value for limitXmin. The limitXmin is always lower than the lowest

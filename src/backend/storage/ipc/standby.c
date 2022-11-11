@@ -464,8 +464,26 @@ ResolveRecoveryConflictWithVirtualXIDs(VirtualTransactionId *waitlist,
 	}
 }
 
+/*
+ * Generate whatever recovery conflicts are needed to eliminate snapshots that
+ * don't consider all XIDs <= latestCommittedXid committed.
+ *
+ * In the case of heapam's PRUNE records, which physically prune away deleted
+ * records, value comes from the latest xmax among all removed heap tuples.
+ * It's only safe for REDO routine to replay the PRUNE record when the xmax
+ * xid is unambiguously considered committed by everybody.  Frozen XIDs must
+ * be seen as committed by everybody for similar reasons.
+ *
+ * There is a duality between latestCommittedXid values and "oldest XID" based
+ * values such as VACUUM's OldestXmin cutoff.  The former describes the latest
+ * XID whose effects are visible to every possible MVCC snapshot, while the
+ * latter describes the earliest/oldest XID whose effects cannot be assumed to
+ * be visible to every possible MVCC snapshot.  In other words the former is
+ * concerned with an event that has happened already, while the latter is
+ * concerned with something that has yet to happen.
+ */
 void
-ResolveRecoveryConflictWithSnapshot(TransactionId latestRemovedXid, RelFileLocator locator)
+ResolveRecoveryConflictWithSnapshot(TransactionId latestCommittedXid, RelFileLocator locator)
 {
 	VirtualTransactionId *backends;
 
@@ -480,12 +498,10 @@ ResolveRecoveryConflictWithSnapshot(TransactionId latestRemovedXid, RelFileLocat
 	 * which is sufficient for the deletion operation must take place before
 	 * replay of the deletion record itself).
 	 */
-	if (!TransactionIdIsValid(latestRemovedXid))
+	if (!TransactionIdIsValid(latestCommittedXid))
 		return;
 
-	backends = GetConflictingVirtualXIDs(latestRemovedXid,
-										 locator.dbOid);
-
+	backends = GetConflictingVirtualXIDs(latestCommittedXid, locator.dbOid);
 	ResolveRecoveryConflictWithVirtualXIDs(backends,
 										   PROCSIG_RECOVERY_CONFLICT_SNAPSHOT,
 										   WAIT_EVENT_RECOVERY_CONFLICT_SNAPSHOT,
@@ -497,7 +513,7 @@ ResolveRecoveryConflictWithSnapshot(TransactionId latestRemovedXid, RelFileLocat
  * FullTransactionId values
  */
 void
-ResolveRecoveryConflictWithSnapshotFullXid(FullTransactionId latestRemovedFullXid,
+ResolveRecoveryConflictWithSnapshotFullXid(FullTransactionId latestCommittedXid,
 										   RelFileLocator locator)
 {
 	/*
@@ -510,13 +526,12 @@ ResolveRecoveryConflictWithSnapshotFullXid(FullTransactionId latestRemovedFullXi
 	uint64		diff;
 
 	diff = U64FromFullTransactionId(nextXid) -
-		U64FromFullTransactionId(latestRemovedFullXid);
+		U64FromFullTransactionId(latestCommittedXid);
 	if (diff < MaxTransactionId / 2)
 	{
-		TransactionId latestRemovedXid;
+		TransactionId truncated = XidFromFullTransactionId(latestCommittedXid);
 
-		latestRemovedXid = XidFromFullTransactionId(latestRemovedFullXid);
-		ResolveRecoveryConflictWithSnapshot(latestRemovedXid, locator);
+		ResolveRecoveryConflictWithSnapshot(truncated, locator);
 	}
 }
 

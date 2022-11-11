@@ -1665,10 +1665,10 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 
 	if (ndeletable > 0)
 	{
-		TransactionId latestRemovedXid = InvalidTransactionId;
+		TransactionId latestCommittedXid = InvalidTransactionId;
 
 		if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
-			latestRemovedXid =
+			latestCommittedXid =
 				index_compute_xid_horizon_for_tuples(rel, heapRel, buffer,
 													 deletable, ndeletable);
 
@@ -1694,7 +1694,7 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 
 			recptr = gistXLogDelete(buffer,
 									deletable, ndeletable,
-									latestRemovedXid);
+									latestCommittedXid);
 
 			PageSetLSN(page, recptr);
 		}
