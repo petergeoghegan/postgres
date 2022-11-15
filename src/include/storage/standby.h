@@ -29,9 +29,9 @@ extern PGDLLIMPORT bool log_recovery_conflict_waits;
 extern void InitRecoveryTransactionEnvironment(void);
 extern void ShutdownRecoveryTransactionEnvironment(void);
 
-extern void ResolveRecoveryConflictWithSnapshot(TransactionId latestCommittedXid,
+extern void ResolveRecoveryConflictWithSnapshot(TransactionId latestRemovedXid,
 												RelFileLocator locator);
-extern void ResolveRecoveryConflictWithSnapshotFullXid(FullTransactionId latestCommittedXid,
+extern void ResolveRecoveryConflictWithSnapshotFullXid(FullTransactionId latestRemovedFullXid,
 													   RelFileLocator locator);
 extern void ResolveRecoveryConflictWithTablespace(Oid tsid);
 extern void ResolveRecoveryConflictWithDatabase(Oid dbid);

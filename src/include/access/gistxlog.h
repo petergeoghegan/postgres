@@ -49,7 +49,7 @@ typedef struct gistxlogPageUpdate
  */
 typedef struct gistxlogDelete
 {
-	TransactionId latestCommittedXid;
+	TransactionId latestRemovedXid;
 	uint16		ntodelete;		/* number of deleted offsets */
 
 	/*
@@ -99,10 +99,10 @@ typedef struct gistxlogPageReuse
 {
 	RelFileLocator locator;
 	BlockNumber block;
-	FullTransactionId latestCommittedXid;
+	FullTransactionId latestRemovedFullXid;
 } gistxlogPageReuse;
 
-#define SizeOfGistxlogPageReuse	(offsetof(gistxlogPageReuse, latestCommittedXid) + sizeof(FullTransactionId))
+#define SizeOfGistxlogPageReuse	(offsetof(gistxlogPageReuse, latestRemovedFullXid) + sizeof(FullTransactionId))
 
 extern void gist_redo(XLogReaderState *record);
 extern void gist_desc(StringInfo buf, XLogReaderState *record);

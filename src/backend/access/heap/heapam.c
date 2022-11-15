@@ -6815,21 +6815,21 @@ heap_freeze_execute_prepared(Relation rel, Buffer buffer,
 		int			nplans;
 		xl_heap_freeze_page xlrec;
 		XLogRecPtr	recptr;
-		TransactionId latestCommittedXid;
+		TransactionId latestRemovedXid;
 
 		/* Prepare deduplicated representation for use in WAL record */
 		nplans = heap_xlog_freeze_plan(tuples, ntuples, plans, offsets);
 
 		/*
-		 * latestCommittedXid describes the latest processed XID, whereas
+		 * latestRemovedXid describes the latest processed XID, whereas
 		 * FreezeLimit is (approximately) the first XID not frozen by VACUUM.
 		 * Back up caller's FreezeLimit to avoid false conflicts when
 		 * FreezeLimit is precisely equal to VACUUM's OldestXmin cutoff.
 		 */
-		latestCommittedXid = FreezeLimit;
-		TransactionIdRetreat(latestCommittedXid);
+		latestRemovedXid = FreezeLimit;
+		TransactionIdRetreat(latestRemovedXid);
 
-		xlrec.latestCommittedXid = latestCommittedXid;
+		xlrec.latestRemovedXid = latestRemovedXid;
 		xlrec.nplans = nplans;
 
 		XLogBeginInsert();
@@ -7401,15 +7401,15 @@ heap_tuple_would_freeze(HeapTupleHeader tuple, TransactionId cutoff_xid,
 }
 
 /*
- * If 'tuple' contains any visible XID greater than latestCommittedXid,
- * ratchet forwards latestCommittedXid to the greatest one found.
+ * If 'tuple' contains any visible XID greater than latestRemovedXid,
+ * ratchet forwards latestRemovedXid to the greatest one found.
  * This is used as the basis for generating Hot Standby conflicts, so
  * if a tuple was never visible then removing it should not conflict
  * with queries.
  */
 void
-HeapTupleHeaderAdvanceLatestCommittedXid(HeapTupleHeader tuple,
-										 TransactionId *latestCommittedXid)
+HeapTupleHeaderAdvanceLatestRemovedXid(HeapTupleHeader tuple,
+									   TransactionId *latestRemovedXid)
 {
 	TransactionId xmin = HeapTupleHeaderGetXmin(tuple);
 	TransactionId xmax = HeapTupleHeaderGetUpdateXid(tuple);
@@ -7417,8 +7417,8 @@ HeapTupleHeaderAdvanceLatestCommittedXid(HeapTupleHeader tuple,
 
 	if (tuple->t_infomask & HEAP_MOVED)
 	{
-		if (TransactionIdPrecedes(*latestCommittedXid, xvac))
-			*latestCommittedXid = xvac;
+		if (TransactionIdPrecedes(*latestRemovedXid, xvac))
+			*latestRemovedXid = xvac;
 	}
 
 	/*
@@ -7431,11 +7431,11 @@ HeapTupleHeaderAdvanceLatestCommittedXid(HeapTupleHeader tuple,
 		(!HeapTupleHeaderXminInvalid(tuple) && TransactionIdDidCommit(xmin)))
 	{
 		if (xmax != xmin &&
-			TransactionIdFollows(xmax, *latestCommittedXid))
-			*latestCommittedXid = xmax;
+			TransactionIdFollows(xmax, *latestRemovedXid))
+			*latestRemovedXid = xmax;
 	}
 
-	/* *latestCommittedXid may still be invalid at end */
+	/* *latestRemovedXid may still be invalid at end */
 }
 
 #ifdef USE_PREFETCH
@@ -7558,7 +7558,7 @@ TransactionId
 heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 {
 	/* Initial assumption is that earlier pruning took care of conflict */
-	TransactionId latestCommittedXid = InvalidTransactionId;
+	TransactionId latestRemovedXid = InvalidTransactionId;
 	BlockNumber blkno = InvalidBlockNumber;
 	Buffer		buf = InvalidBuffer;
 	Page		page = NULL;
@@ -7769,7 +7769,7 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 		}
 
 		/*
-		 * Maintain latestCommittedXid value for deletion operation as a whole
+		 * Maintain latestRemovedXid value for deletion operation as a whole
 		 * by advancing current value using heap tuple headers.  This is
 		 * loosely based on the logic for pruning a HOT chain.
 		 */
@@ -7805,11 +7805,11 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 			 * LP_DEAD item.  This is okay because the earlier pruning
 			 * operation that made the line pointer LP_DEAD in the first place
 			 * must have considered the original tuple header as part of
-			 * generating its own latestCommittedXid value.
+			 * generating its own latestRemovedXid value.
 			 *
 			 * Relying on XLOG_HEAP2_PRUNE records like this is the same
 			 * strategy that index vacuuming uses in all cases.  Index VACUUM
-			 * WAL records don't even have a latestCommittedXid field of their
+			 * WAL records don't even have a latestRemovedXid field of their
 			 * own for this reason.
 			 */
 			if (!ItemIdIsNormal(lp))
@@ -7824,7 +7824,7 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 				!TransactionIdEquals(HeapTupleHeaderGetXmin(htup), priorXmax))
 				break;
 
-			HeapTupleHeaderAdvanceLatestCommittedXid(htup, &latestCommittedXid);
+			HeapTupleHeaderAdvanceLatestRemovedXid(htup, &latestRemovedXid);
 
 			/*
 			 * If the tuple is not HOT-updated, then we are at the end of this
@@ -7856,7 +7856,7 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 	Assert(finalndeltids > 0 || delstate->bottomup);
 	delstate->ndeltids = finalndeltids;
 
-	return latestCommittedXid;
+	return latestRemovedXid;
 }
 
 /*
@@ -8232,17 +8232,12 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
  * corresponding visibility map block.  Both should have already been modified
  * and dirtied.
  *
- * latestCommittedXid comes from the largest xmin on the page being marked
- * all-visible.  REDO routines uses it as a latestCommittedXid to generate
- * recovery conflicts in the standard way (even though nothing has been
- * removed).  Passed to visibilitymap_set() as cutoff_xid argument by VACUUM.
- *
  * If checksums are enabled, we also generate a full-page image of
  * heap_buffer, if necessary.
  */
 XLogRecPtr
 log_heap_visible(RelFileLocator rlocator, Buffer heap_buffer, Buffer vm_buffer,
-				 TransactionId latestCommittedXid, uint8 vmflags)
+				 TransactionId cutoff_xid, uint8 vmflags)
 {
 	xl_heap_visible xlrec;
 	XLogRecPtr	recptr;
@@ -8251,7 +8246,7 @@ log_heap_visible(RelFileLocator rlocator, Buffer heap_buffer, Buffer vm_buffer,
 	Assert(BufferIsValid(heap_buffer));
 	Assert(BufferIsValid(vm_buffer));
 
-	xlrec.latestCommittedXid = latestCommittedXid;
+	xlrec.cutoff_xid = cutoff_xid;
 	xlrec.flags = vmflags;
 	XLogBeginInsert();
 	XLogRegisterData((char *) &xlrec, SizeOfHeapVisible);
@@ -8686,7 +8681,7 @@ heap_xlog_prune(XLogReaderState *record)
 	 * no queries running for which the removed tuples are still visible.
 	 */
 	if (InHotStandby)
-		ResolveRecoveryConflictWithSnapshot(xlrec->latestCommittedXid, rlocator);
+		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, rlocator);
 
 	/*
 	 * If we have a full-page image, restore it (using a cleanup lock) and
@@ -8854,7 +8849,7 @@ heap_xlog_visible(XLogReaderState *record)
 	 * rather than killing the transaction outright.
 	 */
 	if (InHotStandby)
-		ResolveRecoveryConflictWithSnapshot(xlrec->latestCommittedXid, rlocator);
+		ResolveRecoveryConflictWithSnapshot(xlrec->cutoff_xid, rlocator);
 
 	/*
 	 * Read the heap page, if it still exists. If the heap file has dropped or
@@ -8940,7 +8935,7 @@ heap_xlog_visible(XLogReaderState *record)
 		visibilitymap_pin(reln, blkno, &vmbuffer);
 
 		visibilitymap_set(reln, blkno, InvalidBuffer, lsn, vmbuffer,
-						  xlrec->latestCommittedXid, xlrec->flags);
+						  xlrec->cutoff_xid, xlrec->flags);
 
 		ReleaseBuffer(vmbuffer);
 		FreeFakeRelcacheEntry(reln);
@@ -9106,7 +9101,7 @@ heap_xlog_freeze_page(XLogReaderState *record)
 		RelFileLocator rlocator;
 
 		XLogRecGetBlockTag(record, 0, &rlocator, NULL, NULL);
-		ResolveRecoveryConflictWithSnapshot(xlrec->latestCommittedXid, rlocator);
+		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, rlocator);
 	}
 
 	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)

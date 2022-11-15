@@ -113,9 +113,9 @@ hash_desc(StringInfo buf, XLogReaderState *record)
 			{
 				xl_hash_vacuum_one_page *xlrec = (xl_hash_vacuum_one_page *) rec;
 
-				appendStringInfo(buf, "ntuples %d, latestCommittedXid %u",
+				appendStringInfo(buf, "ntuples %d, latestRemovedXid %u",
 								 xlrec->ntuples,
-								 xlrec->latestCommittedXid);
+								 xlrec->latestRemovedXid);
 				break;
 			}
 	}

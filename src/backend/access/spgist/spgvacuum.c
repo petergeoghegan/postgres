@@ -504,7 +504,7 @@ vacuumRedirectAndPlaceholder(Relation index, Buffer buffer)
 	GlobalVisState *vistest;
 
 	xlrec.nToPlaceholder = 0;
-	xlrec.latestCommittedXid = InvalidTransactionId;
+	xlrec.newestRedirectXid = InvalidTransactionId;
 
 	/* XXX: providing heap relation would allow more pruning */
 	vistest = GlobalVisTestFor(NULL);
@@ -533,9 +533,9 @@ vacuumRedirectAndPlaceholder(Relation index, Buffer buffer)
 			opaque->nPlaceholder++;
 
 			/* remember newest XID among the removed redirects */
-			if (!TransactionIdIsValid(xlrec.latestCommittedXid) ||
-				TransactionIdPrecedes(xlrec.latestCommittedXid, dt->xid))
-				xlrec.latestCommittedXid = dt->xid;
+			if (!TransactionIdIsValid(xlrec.newestRedirectXid) ||
+				TransactionIdPrecedes(xlrec.newestRedirectXid, dt->xid))
+				xlrec.newestRedirectXid = dt->xid;
 
 			ItemPointerSetInvalid(&dt->pointer);
 

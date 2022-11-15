@@ -875,11 +875,14 @@ spgRedoVacuumRedirect(XLogReaderState *record)
 	 */
 	if (InHotStandby)
 	{
-		RelFileLocator locator;
+		if (TransactionIdIsValid(xldata->newestRedirectXid))
+		{
+			RelFileLocator locator;
 
-		XLogRecGetBlockTag(record, 0, &locator, NULL, NULL);
-		ResolveRecoveryConflictWithSnapshot(xldata->latestCommittedXid,
-											locator);
+			XLogRecGetBlockTag(record, 0, &locator, NULL, NULL);
+			ResolveRecoveryConflictWithSnapshot(xldata->newestRedirectXid,
+												locator);
+		}
 	}
 
 	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)

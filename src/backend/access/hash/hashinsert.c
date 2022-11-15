@@ -360,9 +360,9 @@ _hash_vacuum_one_page(Relation rel, Relation hrel, Buffer metabuf, Buffer buf)
 
 	if (ndeletable > 0)
 	{
-		TransactionId latestCommittedXid;
+		TransactionId latestRemovedXid;
 
-		latestCommittedXid =
+		latestRemovedXid =
 			index_compute_xid_horizon_for_tuples(rel, hrel, buf,
 												 deletable, ndeletable);
 
@@ -399,7 +399,7 @@ _hash_vacuum_one_page(Relation rel, Relation hrel, Buffer metabuf, Buffer buf)
 			xl_hash_vacuum_one_page xlrec;
 			XLogRecPtr	recptr;
 
-			xlrec.latestCommittedXid = latestCommittedXid;
+			xlrec.latestRemovedXid = latestRemovedXid;
 			xlrec.ntuples = ndeletable;
 
 			XLogBeginInsert();
@@ -408,7 +408,7 @@ _hash_vacuum_one_page(Relation rel, Relation hrel, Buffer metabuf, Buffer buf)
 
 			/*
 			 * We need the target-offsets array whether or not we store the
-			 * whole buffer, to allow us to find the latestCommittedXid on a
+			 * whole buffer, to allow us to find the latestRemovedXid on a
 			 * standby server.
 			 */
 			XLogRegisterData((char *) deletable,

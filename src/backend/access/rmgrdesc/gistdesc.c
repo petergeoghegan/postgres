@@ -26,18 +26,18 @@ out_gistxlogPageUpdate(StringInfo buf, gistxlogPageUpdate *xlrec)
 static void
 out_gistxlogPageReuse(StringInfo buf, gistxlogPageReuse *xlrec)
 {
-	appendStringInfo(buf, "rel %u/%u/%u; blk %u; latestCommittedXid %u:%u",
+	appendStringInfo(buf, "rel %u/%u/%u; blk %u; latestRemovedXid %u:%u",
 					 xlrec->locator.spcOid, xlrec->locator.dbOid,
 					 xlrec->locator.relNumber, xlrec->block,
-					 EpochFromFullTransactionId(xlrec->latestCommittedXid),
-					 XidFromFullTransactionId(xlrec->latestCommittedXid));
+					 EpochFromFullTransactionId(xlrec->latestRemovedFullXid),
+					 XidFromFullTransactionId(xlrec->latestRemovedFullXid));
 }
 
 static void
 out_gistxlogDelete(StringInfo buf, gistxlogDelete *xlrec)
 {
-	appendStringInfo(buf, "delete: latestCommittedXid %u, nitems: %u",
-					 xlrec->latestCommittedXid, xlrec->ntodelete);
+	appendStringInfo(buf, "delete: latestRemovedXid %u, nitems: %u",
+					 xlrec->latestRemovedXid, xlrec->ntodelete);
 }
 
 static void

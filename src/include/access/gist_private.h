@@ -441,7 +441,7 @@ extern XLogRecPtr gistXLogPageDelete(Buffer buffer,
 									 OffsetNumber downlinkOffset);
 
 extern void gistXLogPageReuse(Relation rel, BlockNumber blkno,
-							  FullTransactionId latestCommittedXid);
+							  FullTransactionId latestRemovedXid);
 
 extern XLogRecPtr gistXLogUpdate(Buffer buffer,
 								 OffsetNumber *todelete, int ntodelete,
@@ -449,7 +449,7 @@ extern XLogRecPtr gistXLogUpdate(Buffer buffer,
 								 Buffer leftchildbuf);
 
 extern XLogRecPtr gistXLogDelete(Buffer buffer, OffsetNumber *todelete,
-								 int ntodelete, TransactionId latestCommittedXid);
+								 int ntodelete, TransactionId latestRemovedXid);
 
 extern XLogRecPtr gistXLogSplit(bool page_is_leaf,
 								SplitedPageLayout *dist,
