@@ -238,6 +238,21 @@ typedef struct VacuumParams
 	int			nworkers;
 } VacuumParams;
 
+struct VacuumCutoffs
+{
+	/* Existing pg_class fields at start of VACUUM */
+	TransactionId relfrozenxid;
+	MultiXactId relminmxid;
+
+	/* Oldest non-removable transaction ID and MultiXactId */
+	TransactionId OldestXmin;
+	MultiXactId OldestMxact;
+
+	/* XIDs/MXIDs that are < these limits must be frozen */
+	TransactionId FreezeLimit;
+	MultiXactId MultiXactCutoff;
+};
+
 /*
  * VacDeadItems stores TIDs whose index tuples are deleted by index vacuuming.
  */
@@ -295,10 +310,7 @@ extern void vacuum_set_xid_limits(Relation rel,
 								  int multixact_freeze_min_age,
 								  int freeze_table_age,
 								  int multixact_freeze_table_age,
-								  TransactionId *oldestXmin,
-								  MultiXactId *oldestMxact,
-								  TransactionId *freezeLimit,
-								  MultiXactId *multiXactCutoff,
+								  struct VacuumCutoffs *cutoffs,
 								  TransactionId *minXid,
 								  MultiXactId *minMulti,
 								  double *antiwrapfrac);

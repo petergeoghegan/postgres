@@ -823,12 +823,9 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	Form_pg_class relform;
 	TupleDesc	oldTupDesc PG_USED_FOR_ASSERTS_ONLY;
 	TupleDesc	newTupDesc PG_USED_FOR_ASSERTS_ONLY;
-	TransactionId OldestXmin,
-				FreezeXid,
-				MinXid;
-	MultiXactId OldestMxact,
-				MultiXactCutoff,
-				MinMulti;
+	struct VacuumCutoffs cutoffs;
+	TransactionId MinXid;
+	MultiXactId MinMulti;
 	double		antiwrapfrac;
 	bool		use_sort;
 	double		num_tuples = 0,
@@ -917,8 +914,7 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	 * Since we're going to rewrite the whole table anyway, there's no reason
 	 * not to be aggressive about this.
 	 */
-	vacuum_set_xid_limits(OldHeap, 0, 0, 0, 0, &OldestXmin, &OldestMxact,
-						  &FreezeXid, &MultiXactCutoff, &MinXid, &MinMulti,
+	vacuum_set_xid_limits(OldHeap, 0, 0, 0, 0, &cutoffs, &MinXid, &MinMulti,
 						  &antiwrapfrac);
 
 	/*
@@ -926,15 +922,15 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	 * backwards, so take the max.
 	 */
 	if (TransactionIdIsValid(OldHeap->rd_rel->relfrozenxid) &&
-		TransactionIdPrecedes(FreezeXid, OldHeap->rd_rel->relfrozenxid))
-		FreezeXid = OldHeap->rd_rel->relfrozenxid;
+		TransactionIdPrecedes(cutoffs.FreezeLimit, OldHeap->rd_rel->relfrozenxid))
+		cutoffs.FreezeLimit = OldHeap->rd_rel->relfrozenxid;
 
 	/*
 	 * MultiXactCutoff, similarly, shouldn't go backwards either.
 	 */
 	if (MultiXactIdIsValid(OldHeap->rd_rel->relminmxid) &&
-		MultiXactIdPrecedes(MultiXactCutoff, OldHeap->rd_rel->relminmxid))
-		MultiXactCutoff = OldHeap->rd_rel->relminmxid;
+		MultiXactIdPrecedes(cutoffs.MultiXactCutoff, OldHeap->rd_rel->relminmxid))
+		cutoffs.MultiXactCutoff = OldHeap->rd_rel->relminmxid;
 
 	/*
 	 * Decide whether to use an indexscan or seqscan-and-optional-sort to scan
@@ -973,13 +969,14 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	 * values (e.g. because the AM doesn't use freezing).
 	 */
 	table_relation_copy_for_cluster(OldHeap, NewHeap, OldIndex, use_sort,
-									OldestXmin, &FreezeXid, &MultiXactCutoff,
+									cutoffs.OldestXmin, &cutoffs.FreezeLimit,
+									&cutoffs.MultiXactCutoff,
 									&num_tuples, &tups_vacuumed,
 									&tups_recently_dead);
 
 	/* return selected values to caller, get set as relfrozenxid/minmxid */
-	*pFreezeXid = FreezeXid;
-	*pCutoffMulti = MultiXactCutoff;
+	*pFreezeXid = cutoffs.FreezeLimit;
+	*pCutoffMulti = cutoffs.MultiXactCutoff;
 
 	/* Reset rd_toastoid just to be tidy --- it shouldn't be looked at again */
 	NewHeap->rd_toastoid = InvalidOid;

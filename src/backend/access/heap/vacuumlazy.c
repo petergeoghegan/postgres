@@ -165,18 +165,14 @@ typedef struct LVRelState
 	BufferAccessStrategy bstrategy;
 	ParallelVacuumState *pvs;
 
-	/* rel's initial relfrozenxid and relminmxid */
-	TransactionId relfrozenxid;
-	MultiXactId relminmxid;
-	double		old_live_tuples;	/* previous value of pg_class.reltuples */
+	/* previous value of pg_class.reltuples */
+	double		old_live_tuples;
 
-	/* VACUUM operation's cutoffs for freezing and pruning */
-	TransactionId OldestXmin;
-	MultiXactId OldestMxact;
-	GlobalVisState *vistest;
 	/* Limits on the age of the oldest unfrozen XID and MXID */
-	TransactionId FreezeLimit;
-	MultiXactId MultiXactCutoff;
+	struct VacuumCutoffs cutoffs;
+	/* VACUUM operation's cutoffs for freezing and pruning */
+	GlobalVisState *vistest;
+
 	/* Earliest permissible NewRelfrozenXid/NewRelminMxid values */
 	TransactionId MinXid;
 	MultiXactId MinMulti;
@@ -328,12 +324,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				instrument,
 				frozenxid_updated,
 				minmulti_updated;
-	TransactionId OldestXmin,
-				FreezeLimit,
-				MinXid;
-	MultiXactId OldestMxact,
-				MultiXactCutoff,
-				MinMulti;
+	struct VacuumCutoffs cutoffs;
+	TransactionId MinXid;
+	MultiXactId MinMulti;
 	double		antiwrapfrac;
 	BlockNumber orig_rel_pages,
 				eager_threshold,
@@ -383,9 +376,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 						  params->multixact_freeze_min_age,
 						  params->freeze_table_age,
 						  params->multixact_freeze_table_age,
-						  &OldestXmin, &OldestMxact,
-						  &FreezeLimit, &MultiXactCutoff,
-						  &MinXid, &MinMulti, &antiwrapfrac);
+						  &cutoffs, &MinXid, &MinMulti, &antiwrapfrac);
 	eager_threshold = params->freeze_strategy_threshold < 0 ?
 		vacuum_freeze_strategy_threshold :
 		params->freeze_strategy_threshold;
@@ -474,8 +465,6 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	}
 
 	vacrel->bstrategy = bstrategy;
-	vacrel->relfrozenxid = rel->rd_rel->relfrozenxid;
-	vacrel->relminmxid = rel->rd_rel->relminmxid;
 	vacrel->old_live_tuples = rel->rd_rel->reltuples;
 
 	/* Initialize page counters explicitly (be tidy) */
@@ -513,20 +502,17 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * time to time, to increase the number of dead tuples it can prune away.)
 	 */
 	vacrel->rel_pages = orig_rel_pages = RelationGetNumberOfBlocks(rel);
-	vacrel->OldestXmin = OldestXmin;
-	vacrel->OldestMxact = OldestMxact;
+	vacrel->cutoffs = cutoffs;
 	vacrel->vistest = GlobalVisTestFor(rel);
 	/* FreezeLimit controls XID freezing (always <= OldestXmin) */
-	vacrel->FreezeLimit = FreezeLimit;
 	/* MultiXactCutoff controls MXID freezing (always <= OldestMxact) */
-	vacrel->MultiXactCutoff = MultiXactCutoff;
 	/* MinXid limits final relfrozenxid's age (always <= FreezeLimit) */
 	vacrel->MinXid = MinXid;
 	/* MinMulti limits final relminmxid's age (always <= MultiXactCutoff) */
 	vacrel->MinMulti = MinMulti;
 	/* Initialize state used to track oldest extant XID/MXID */
-	vacrel->NewRelfrozenXid = OldestXmin;
-	vacrel->NewRelminMxid = OldestMxact;
+	vacrel->NewRelfrozenXid = cutoffs.OldestXmin;
+	vacrel->NewRelminMxid = cutoffs.OldestMxact;
 
 	/*
 	 * VACUUM must scan all pages that might have XIDs < OldestXmin in tuple
@@ -612,9 +598,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * VACUUM can only advance relfrozenxid to a value >= MinXid, and
 	 * relminmxid to a value >= MinMulti.
 	 */
-	Assert(vacrel->NewRelfrozenXid == OldestXmin ||
+	Assert(vacrel->NewRelfrozenXid == cutoffs.OldestXmin ||
 		   TransactionIdPrecedesOrEquals(MinXid, vacrel->NewRelfrozenXid));
-	Assert(vacrel->NewRelminMxid == OldestMxact ||
+	Assert(vacrel->NewRelminMxid == cutoffs.OldestMxact ||
 		   MultiXactIdPrecedesOrEquals(MinMulti, vacrel->NewRelminMxid));
 	if (vacrel->skipallvis)
 	{
@@ -726,20 +712,22 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 								 _("tuples missed: %lld dead from %u pages not removed due to cleanup lock contention\n"),
 								 (long long) vacrel->missed_dead_tuples,
 								 vacrel->missed_dead_pages);
-			diff = (int32) (ReadNextTransactionId() - OldestXmin);
+			diff = (int32) (ReadNextTransactionId() - cutoffs.OldestXmin);
 			appendStringInfo(&buf,
 							 _("removable cutoff: %u, which was %d XIDs old when operation ended\n"),
-							 OldestXmin, diff);
+							 cutoffs.OldestXmin, diff);
 			if (frozenxid_updated)
 			{
-				diff = (int32) (vacrel->NewRelfrozenXid - vacrel->relfrozenxid);
+				diff = (int32) (vacrel->NewRelfrozenXid -
+								vacrel->cutoffs.relfrozenxid);
 				appendStringInfo(&buf,
 								 _("new relfrozenxid: %u, which is %d XIDs ahead of previous value\n"),
 								 vacrel->NewRelfrozenXid, diff);
 			}
 			if (minmulti_updated)
 			{
-				diff = (int32) (vacrel->NewRelminMxid - vacrel->relminmxid);
+				diff = (int32) (vacrel->NewRelminMxid -
+								vacrel->cutoffs.relminmxid);
 				appendStringInfo(&buf,
 								 _("new relminmxid: %u, which is %d MXIDs ahead of previous value\n"),
 								 vacrel->NewRelminMxid, diff);
@@ -1766,7 +1754,7 @@ retry:
 		 * since heap_page_prune() looked.  Handle that here by restarting.
 		 * (See comments at the top of function for a full explanation.)
 		 */
-		res = HeapTupleSatisfiesVacuum(&tuple, vacrel->OldestXmin, buf);
+		res = HeapTupleSatisfiesVacuum(&tuple, vacrel->cutoffs.OldestXmin, buf);
 
 		if (unlikely(res == HEAPTUPLE_DEAD))
 			goto retry;
@@ -1823,7 +1811,8 @@ retry:
 					 * that everyone sees it as committed?
 					 */
 					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
-					if (!TransactionIdPrecedes(xmin, vacrel->OldestXmin))
+					if (!TransactionIdPrecedes(xmin,
+											   vacrel->cutoffs.OldestXmin))
 					{
 						prunestate->all_visible = false;
 						break;
@@ -1875,12 +1864,7 @@ retry:
 
 		/* Tuple with storage -- consider need to freeze */
 		if (heap_prepare_freeze_tuple(tuple.t_data,
-									  vacrel->relfrozenxid,
-									  vacrel->relminmxid,
-									  vacrel->OldestXmin,
-									  vacrel->OldestMxact,
-									  vacrel->FreezeLimit,
-									  vacrel->MultiXactCutoff,
+									  &vacrel->cutoffs,
 									  &frozen[tuples_frozen],
 									  &tuple_totally_frozen,
 									  &xtrack))
@@ -1950,7 +1934,8 @@ retry:
 		vacrel->frozen_pages++;
 
 		/* Execute all freeze plans for page as a single atomic action */
-		heap_freeze_execute_prepared(vacrel->rel, buf, vacrel->OldestXmin,
+		heap_freeze_execute_prepared(vacrel->rel, buf,
+									 vacrel->cutoffs.OldestXmin,
 									 frozen, tuples_frozen);
 	}
 
@@ -2128,7 +2113,9 @@ lazy_scan_noprune(LVRelState *vacrel,
 		tuple.t_len = ItemIdGetLength(itemid);
 		tuple.t_tableOid = RelationGetRelid(vacrel->rel);
 
-		switch (HeapTupleSatisfiesVacuum(&tuple, vacrel->OldestXmin, buf))
+		switch (HeapTupleSatisfiesVacuum(&tuple,
+										 vacrel->cutoffs.OldestXmin,
+										 buf))
 		{
 			case HEAPTUPLE_DELETE_IN_PROGRESS:
 			case HEAPTUPLE_LIVE:
@@ -2699,15 +2686,15 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 static bool
 lazy_check_wraparound_failsafe(LVRelState *vacrel)
 {
-	Assert(TransactionIdIsNormal(vacrel->relfrozenxid));
-	Assert(MultiXactIdIsValid(vacrel->relminmxid));
+	Assert(TransactionIdIsNormal(vacrel->cutoffs.relfrozenxid));
+	Assert(MultiXactIdIsValid(vacrel->cutoffs.relminmxid));
 
 	/* Don't warn more than once per VACUUM */
 	if (vacrel->failsafe_active)
 		return true;
 
-	if (unlikely(vacuum_xid_failsafe_check(vacrel->relfrozenxid,
-										   vacrel->relminmxid)))
+	if (unlikely(vacuum_xid_failsafe_check(vacrel->cutoffs.relfrozenxid,
+										   vacrel->cutoffs.relminmxid)))
 	{
 		vacrel->failsafe_active = true;
 
@@ -3361,7 +3348,9 @@ heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
 		tuple.t_len = ItemIdGetLength(itemid);
 		tuple.t_tableOid = RelationGetRelid(vacrel->rel);
 
-		switch (HeapTupleSatisfiesVacuum(&tuple, vacrel->OldestXmin, buf))
+		switch (HeapTupleSatisfiesVacuum(&tuple,
+										 vacrel->cutoffs.OldestXmin,
+										 buf))
 		{
 			case HEAPTUPLE_LIVE:
 				{
@@ -3380,7 +3369,8 @@ heap_page_is_all_visible(LVRelState *vacrel, Buffer buf,
 					 * that everyone sees it as committed?
 					 */
 					xmin = HeapTupleHeaderGetXmin(tuple.t_data);
-					if (!TransactionIdPrecedes(xmin, vacrel->OldestXmin))
+					if (!TransactionIdPrecedes(xmin,
+											   vacrel->cutoffs.OldestXmin))
 					{
 						all_visible = false;
 						*all_frozen = false;
