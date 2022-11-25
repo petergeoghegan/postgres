@@ -131,6 +131,12 @@ typedef struct HeapTupleFreeze
  * and all unfrozen XIDs or MXIDs that remain after VACUUM finishes _must_
  * have values >= the final relfrozenxid/relminmxid values in pg_class.  This
  * includes XIDs that remain as MultiXact members from any tuple's xmax.
+ *
+ * When 'freeze_required' flag isn't set after all tuples are examined, the
+ * final choice on freezing is made by VACUUM itself.  We keep open the option
+ * to freeze or not freeze (a decision that VACUUM makes based on performance
+ * considerations) by maintaining an alternative set of "no freeze" variants
+ * of our relfrozenxid/relminmxid trackers in heap_prepare_freeze_tuple.
  */
 typedef struct HeapPageFreeze
 {
@@ -243,7 +249,7 @@ extern int	heap_page_prune(Relation relation, Buffer buffer,
 							struct GlobalVisState *vistest,
 							TransactionId old_snap_xmin,
 							TimestampTz old_snap_ts,
-							int *nnewlpdead,
+							int *nnewlpdead, bool *prune_fpi,
 							OffsetNumber *off_loc);
 extern void heap_page_prune_execute(Buffer buffer,
 									OffsetNumber *redirected, int nredirected,
