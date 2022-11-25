@@ -222,6 +222,9 @@ typedef struct VacuumParams
 											 * use default */
 	int			multixact_freeze_table_age; /* multixact age at which to scan
 											 * whole table */
+	int			freeze_strategy_threshold;	/* threshold to use eager
+											 * freezing, in total heap blocks,
+											 * -1 to use default */
 	bool		is_wraparound;	/* force a for-wraparound vacuum */
 	int			log_min_duration;	/* minimum execution threshold in ms at
 									 * which autovacuum is logged, -1 to use
@@ -274,6 +277,12 @@ struct VacuumCutoffs
 	 */
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
+
+	/*
+	 * Threshold cutoff point (expressed in # of physical heap rel blocks in
+	 * rel's main fork) that triggers VACUUM's eager freezing strategy
+	 */
+	BlockNumber freeze_strategy_threshold;
 };
 
 /*
@@ -297,6 +306,7 @@ extern PGDLLIMPORT int vacuum_freeze_min_age;
 extern PGDLLIMPORT int vacuum_freeze_table_age;
 extern PGDLLIMPORT int vacuum_multixact_freeze_min_age;
 extern PGDLLIMPORT int vacuum_multixact_freeze_table_age;
+extern PGDLLIMPORT int vacuum_freeze_strategy_threshold;
 extern PGDLLIMPORT int vacuum_failsafe_age;
 extern PGDLLIMPORT int vacuum_multixact_failsafe_age;
 
