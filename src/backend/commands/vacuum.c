@@ -263,8 +263,9 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 		params.multixact_freeze_table_age = -1;
 	}
 
-	/* user-invoked vacuum is never "for wraparound" */
+	/* user-invoked vacuum never uses these autovacuum-only flags */
 	params.is_wraparound = false;
+	params.trigger = AUTOVACUUM_NONE;
 
 	/* user-invoked vacuum uses VACOPT_VERBOSE instead of log_min_duration */
 	params.log_min_duration = -1;
@@ -1826,7 +1827,8 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 		 *
 		 * We also set the VACUUM_FOR_WRAPAROUND flag, which is passed down by
 		 * autovacuum; it's used to avoid canceling a vacuum that was invoked
-		 * in an emergency.
+		 * because no earlier vacuum (in particular no earlier "table age"
+		 * autovacuum) ran and advanced relfrozenxid/relminmxid.
 		 *
 		 * Note: these flags remain set until CommitTransaction or
 		 * AbortTransaction.  We don't want to clear them until we reset
@@ -1838,7 +1840,10 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 		LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 		MyProc->statusFlags |= PROC_IN_VACUUM;
 		if (params->is_wraparound)
+		{
+			Assert(params->trigger == AUTOVACUUM_TABLEAGE);
 			MyProc->statusFlags |= PROC_VACUUM_FOR_WRAPAROUND;
+		}
 		ProcGlobal->statusFlags[MyProc->pgxactoff] = MyProc->statusFlags;
 		LWLockRelease(ProcArrayLock);
 	}
