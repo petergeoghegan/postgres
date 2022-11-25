@@ -327,15 +327,17 @@ static void FreeWorkerInfo(int code, Datum arg);
 static autovac_table *table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 											TupleDesc pg_class_desc,
 											int effective_multixact_freeze_max_age);
-static void recheck_relation_needs_vacanalyze(Oid relid, AutoVacOpts *avopts,
-											  Form_pg_class classForm,
-											  int effective_multixact_freeze_max_age,
-											  bool *dovacuum, bool *doanalyze, bool *wraparound);
-static void relation_needs_vacanalyze(Oid relid, AutoVacOpts *relopts,
-									  Form_pg_class classForm,
-									  PgStat_StatTabEntry *tabentry,
-									  int effective_multixact_freeze_max_age,
-									  bool *dovacuum, bool *doanalyze, bool *wraparound);
+static AutoVacType recheck_relation_needs_vacanalyze(Oid relid, AutoVacOpts *avopts,
+													 Form_pg_class classForm,
+													 int effective_multixact_freeze_max_age,
+													 bool *dovacuum, bool *doanalyze,
+													 bool *wraparound);
+static AutoVacType relation_needs_vacanalyze(Oid relid, AutoVacOpts *relopts,
+											 Form_pg_class classForm,
+											 PgStat_StatTabEntry *tabentry,
+											 int effective_multixact_freeze_max_age,
+											 bool *dovacuum, bool *doanalyze,
+											 bool *wraparound);
 
 static void autovacuum_do_vac_analyze(autovac_table *tab,
 									  BufferAccessStrategy bstrategy);
@@ -1626,7 +1628,7 @@ AutoVacWorkerMain(int argc, char *argv[])
 	/*
 	 * Force synchronous replication off to allow regular maintenance even if
 	 * we are waiting for standbys to connect. This is important to ensure we
-	 * aren't blocked from performing anti-wraparound tasks.
+	 * aren't blocked from performing table age tasks.
 	 */
 	if (synchronous_commit > SYNCHRONOUS_COMMIT_LOCAL_FLUSH)
 		SetConfigOption("synchronous_commit", "local",
@@ -2767,6 +2769,7 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 	autovac_table *tab = NULL;
 	bool		wraparound;
 	AutoVacOpts *avopts;
+	AutoVacType trigger;
 
 	/* fetch the relation's relcache entry */
 	classTup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relid));
@@ -2790,9 +2793,10 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 			avopts = &hentry->ar_reloptions;
 	}
 
-	recheck_relation_needs_vacanalyze(relid, avopts, classForm,
-									  effective_multixact_freeze_max_age,
-									  &dovacuum, &doanalyze, &wraparound);
+	trigger = recheck_relation_needs_vacanalyze(relid, avopts, classForm,
+												effective_multixact_freeze_max_age,
+												&dovacuum, &doanalyze,
+												&wraparound);
 
 	/* OK, it needs something done */
 	if (doanalyze || dovacuum)
@@ -2873,6 +2877,7 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 		tab->at_params.multixact_freeze_min_age = multixact_freeze_min_age;
 		tab->at_params.multixact_freeze_table_age = multixact_freeze_table_age;
 		tab->at_params.is_wraparound = wraparound;
+		tab->at_params.trigger = trigger;
 		tab->at_params.log_min_duration = log_min_duration;
 		tab->at_vacuum_cost_limit = vac_cost_limit;
 		tab->at_vacuum_cost_delay = vac_cost_delay;
@@ -2901,7 +2906,7 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
  * Fetch the pgstat of a relation and recheck whether a relation
  * needs to be vacuumed or analyzed.
  */
-static void
+static AutoVacType
 recheck_relation_needs_vacanalyze(Oid relid,
 								  AutoVacOpts *avopts,
 								  Form_pg_class classForm,
@@ -2911,18 +2916,21 @@ recheck_relation_needs_vacanalyze(Oid relid,
 								  bool *wraparound)
 {
 	PgStat_StatTabEntry *tabentry;
+	AutoVacType trigger;
 
 	/* fetch the pgstat table entry */
 	tabentry = pgstat_fetch_stat_tabentry_ext(classForm->relisshared,
 											  relid);
 
-	relation_needs_vacanalyze(relid, avopts, classForm, tabentry,
-							  effective_multixact_freeze_max_age,
-							  dovacuum, doanalyze, wraparound);
+	trigger = relation_needs_vacanalyze(relid, avopts, classForm, tabentry,
+										effective_multixact_freeze_max_age,
+										dovacuum, doanalyze, wraparound);
 
 	/* ignore ANALYZE for toast tables */
 	if (classForm->relkind == RELKIND_TOASTVALUE)
 		*doanalyze = false;
+
+	return trigger;
 }
 
 /*
@@ -2948,8 +2956,8 @@ recheck_relation_needs_vacanalyze(Oid relid,
  * the number of tuples (both live and dead) that there were as of the last
  * analyze.  This is asymmetric to the VACUUM case.
  *
- * We also force vacuum if the table's relfrozenxid is more than freeze_max_age
- * transactions back, and if its relminmxid is more than
+ * We also force tableage vacuum if the table's relfrozenxid is more than
+ * freeze_max_age transactions back, and if its relminmxid is more than
  * multixact_freeze_max_age multixacts back.
  *
  * A table whose autovacuum_enabled option is false is
@@ -2961,8 +2969,17 @@ recheck_relation_needs_vacanalyze(Oid relid,
  * autovacuum_vacuum_threshold GUC variable.  Similarly, a vac_scale_factor
  * value < 0 is substituted with the value of
  * autovacuum_vacuum_scale_factor GUC variable.  Ditto for analyze.
+ *
+ * Return value is the condition that triggered autovacuum to run VACUUM
+ * (useful only when *dovacuum is set).  There can only be exactly one
+ * triggering condition, even when multiple thresholds happened to be crossed
+ * at the same time.  We prefer to return "table XID age" in the event of such
+ * a conflict, after which we prefer "table MXID age" as the criteria, then
+ * "dead tuples", with "inserted tuples" placed last.  The rules are mostly
+ * arbitrary, though we do need to make sure that antiwraparound autovacuums
+ * are always triggered by either table XID age or table MXID age.
  */
-static void
+static AutoVacType
 relation_needs_vacanalyze(Oid relid,
 						  AutoVacOpts *relopts,
 						  Form_pg_class classForm,
@@ -2973,6 +2990,9 @@ relation_needs_vacanalyze(Oid relid,
 						  bool *doanalyze,
 						  bool *wraparound)
 {
+	TransactionId relfrozenxid = classForm->relfrozenxid;
+	MultiXactId relminmxid = classForm->relminmxid;
+	AutoVacType trigger = AUTOVACUUM_DEAD_TUPLES;
 	bool		force_vacuum;
 	bool		av_enabled;
 	float4		reltuples;		/* pg_class.reltuples */
@@ -3046,40 +3066,76 @@ relation_needs_vacanalyze(Oid relid,
 
 	av_enabled = (relopts ? relopts->enabled : true);
 
-	/* Force vacuum if table is at risk of wraparound */
+	/* Force vacuum if table age exceeds cutoff */
 	xidForceLimit = recentXid - freeze_max_age;
 	if (xidForceLimit < FirstNormalTransactionId)
 		xidForceLimit -= FirstNormalTransactionId;
-	force_vacuum = (TransactionIdIsNormal(classForm->relfrozenxid) &&
-					TransactionIdPrecedes(classForm->relfrozenxid,
-										  xidForceLimit));
-	if (!force_vacuum)
+	multiForceLimit = recentMulti - multixact_freeze_max_age;
+	if (multiForceLimit < FirstMultiXactId)
+		multiForceLimit -= FirstMultiXactId;
+
+	force_vacuum = true;
+	if (TransactionIdIsNormal(relfrozenxid) &&
+		TransactionIdPrecedes(relfrozenxid, xidForceLimit))
+		trigger = AUTOVACUUM_TABLE_XID_AGE;
+	else if (MultiXactIdIsValid(relminmxid) &&
+			 MultiXactIdPrecedes(relminmxid, multiForceLimit))
+		trigger = AUTOVACUUM_TABLE_MXID_AGE;
+	else
+		force_vacuum = false;
+
+	/*
+	 * If we're forcing table age autovacuum, are we at the point where it has
+	 * to be an antiwraparound autovacuum?
+	 *
+	 * A antiwraparound autovacuum is the same as a standard forced/table age
+	 * autovacuum as far as vacuumlazy.c is concerned.  Antiwraparound is an
+	 * emergency mechanism used when everything else (including standard table
+	 * age autovacuums) failed to advance relfrozenxid/relminmxid before now.
+	 * Antiwraparound autovacuums are different to other autovacuums in that
+	 * they cannot be automatically canceled, and are advertised as a distinct
+	 * kind of VACUUM operation in pg_stat_activity.
+	 */
+	*wraparound = false;		/* for now */
+	if (force_vacuum)
 	{
+		freeze_max_age = Min(freeze_max_age * 2, vacuum_failsafe_age / 2);
+		multixact_freeze_max_age = Min(multixact_freeze_max_age * 2,
+									   vacuum_multixact_failsafe_age / 2);
+
+		xidForceLimit = recentXid - freeze_max_age;
+		if (xidForceLimit < FirstNormalTransactionId)
+			xidForceLimit -= FirstNormalTransactionId;
 		multiForceLimit = recentMulti - multixact_freeze_max_age;
 		if (multiForceLimit < FirstMultiXactId)
 			multiForceLimit -= FirstMultiXactId;
-		force_vacuum = MultiXactIdIsValid(classForm->relminmxid) &&
-			MultiXactIdPrecedes(classForm->relminmxid, multiForceLimit);
+
+		*wraparound = ((TransactionIdIsNormal(relfrozenxid) &&
+						TransactionIdPrecedes(relfrozenxid, xidForceLimit)) ||
+					   (MultiXactIdIsValid(relminmxid) &&
+						MultiXactIdPrecedes(relminmxid, multiForceLimit)));
 	}
-	*wraparound = force_vacuum;
 
 	/* User disabled it in pg_class.reloptions?  (But ignore if at risk) */
 	if (!av_enabled && !force_vacuum)
 	{
 		*doanalyze = false;
 		*dovacuum = false;
-		return;
+		return trigger;
 	}
 
 	/*
 	 * If we found stats for the table, and autovacuum is currently enabled,
 	 * make a threshold-based decision whether to vacuum and/or analyze.  If
-	 * autovacuum is currently disabled, we must be here for anti-wraparound
+	 * autovacuum is currently disabled, we must be here for forced table age
 	 * vacuuming only, so don't vacuum (or analyze) anything that's not being
 	 * forced.
 	 */
 	if (PointerIsValid(tabentry) && AutoVacuumingActive())
 	{
+		bool		is_deadtuple,
+					is_insert;
+
 		reltuples = classForm->reltuples;
 		vactuples = tabentry->dead_tuples;
 		instuples = tabentry->ins_since_vacuum;
@@ -3108,15 +3164,20 @@ relation_needs_vacanalyze(Oid relid,
 				 vactuples, vacthresh, anltuples, anlthresh);
 
 		/* Determine if this table needs vacuum or analyze. */
-		*dovacuum = force_vacuum || (vactuples > vacthresh) ||
-			(vac_ins_base_thresh >= 0 && instuples > vacinsthresh);
+		is_deadtuple = (vactuples > vacthresh);
+		is_insert = (vac_ins_base_thresh >= 0 && instuples > vacinsthresh);
+		*dovacuum = (force_vacuum || is_deadtuple || is_insert);
 		*doanalyze = (anltuples > anlthresh);
+
+		/* See header comments about return value */
+		if (!force_vacuum && !is_deadtuple && is_insert)
+			trigger = AUTOVACUUM_INSERTED_TUPLES;
 	}
 	else
 	{
 		/*
 		 * Skip a table not found in stat hash, unless we have to force vacuum
-		 * for anti-wrap purposes.  If it's not acted upon, there's no need to
+		 * for table age purposes.  If it's not acted upon, there's no need to
 		 * vacuum it.
 		 */
 		*dovacuum = force_vacuum;
@@ -3126,6 +3187,8 @@ relation_needs_vacanalyze(Oid relid,
 	/* ANALYZE refuses to work with pg_statistic */
 	if (relid == StatisticRelationId)
 		*doanalyze = false;
+
+	return trigger;
 }
 
 /*

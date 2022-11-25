@@ -1384,8 +1384,8 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 			LWLockRelease(ProcArrayLock);
 
 			/*
-			 * Only do it if the worker is not working to protect against Xid
-			 * wraparound.
+			 * Only do it if the worker is not an antiwraparound autovacuum, a
+			 * special type of autovacuum that is only used in emergencies
 			 */
 			if ((statusFlags & PROC_IS_AUTOVACUUM) &&
 				!(statusFlags & PROC_VACUUM_FOR_WRAPAROUND))
