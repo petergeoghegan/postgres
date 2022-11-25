@@ -9225,6 +9225,21 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-vacuum-freeze-strategy-threshold" xreflabel="vacuum_freeze_strategy_threshold">
+      <term><varname>vacuum_freeze_strategy_threshold</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>vacuum_freeze_strategy_threshold</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the cutoff size (in megabytes) that <command>VACUUM</command>
+        should use to decide whether to apply its eager freezing strategy.
+        The default is 4096 megabytes (equivalent to <literal>4GB</literal>).
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-vacuum-freeze-table-age" xreflabel="vacuum_freeze_table_age">
       <term><varname>vacuum_freeze_table_age</varname> (<type>integer</type>)
       <indexterm>
@@ -9260,7 +9275,9 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         Specifies the cutoff age (in transactions) that
         <command>VACUUM</command> should use to decide whether to
-        trigger freezing of pages that have an older XID.
+        trigger freezing of pages that have an older XID.  When VACUUM
+        uses its eager freezing strategy, freezing a page can also be
+        triggered when the page contains only all-visible tuples.
         The default is 50 million transactions.  Although
         users can set this value anywhere from zero to one billion,
         <command>VACUUM</command> will silently limit the effective value to half

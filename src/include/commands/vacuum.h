@@ -191,6 +191,9 @@ typedef struct VacAttrStats
 #define VACOPT_SKIP_DATABASE_STATS 0x100	/* skip vac_update_datfrozenxid() */
 #define VACOPT_ONLY_DATABASE_STATS 0x200	/* only vac_update_datfrozenxid() */
 
+/* Absolute maximum of VacuumParams->freeze_strategy_threshold is 512TB */
+#define MAX_VACUUM_THRESHOLD 536870912
+
 /*
  * Values used by index_cleanup and truncate params.
  *
@@ -222,6 +225,9 @@ typedef struct VacuumParams
 											 * use default */
 	int			multixact_freeze_table_age; /* multixact age at which to scan
 											 * whole table */
+	int			freeze_strategy_threshold;	/* threshold to use eager
+											 * freezing, in megabytes,
+											 * -1 to use default */
 	bool		is_wraparound;	/* force a for-wraparound vacuum */
 	int			log_min_duration;	/* minimum execution threshold in ms at
 									 * which autovacuum is logged, -1 to use
@@ -274,6 +280,11 @@ struct VacuumCutoffs
 	 */
 	TransactionId FreezeLimit;
 	MultiXactId MultiXactCutoff;
+
+	/*
+	 * Threshold that triggers VACUUM's eager freezing strategy
+	 */
+	BlockNumber freeze_strategy_threshold_pages;
 };
 
 /*
@@ -297,6 +308,7 @@ extern PGDLLIMPORT int vacuum_freeze_min_age;
 extern PGDLLIMPORT int vacuum_freeze_table_age;
 extern PGDLLIMPORT int vacuum_multixact_freeze_min_age;
 extern PGDLLIMPORT int vacuum_multixact_freeze_table_age;
+extern PGDLLIMPORT int vacuum_freeze_strategy_threshold;
 extern PGDLLIMPORT int vacuum_failsafe_age;
 extern PGDLLIMPORT int vacuum_multixact_failsafe_age;
 

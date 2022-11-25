@@ -478,14 +478,46 @@
    </note>
 
    <para>
-    <xref linkend="guc-vacuum-freeze-min-age"/>
-    controls how old an XID value has to be before rows bearing that XID will be
-    frozen.  Increasing this setting may avoid unnecessary work if the
-    rows that would otherwise be frozen will soon be modified again,
-    but decreasing this setting increases
-    the number of transactions that can elapse before the table must be
-    vacuumed again.
+    <xref linkend="guc-vacuum-freeze-strategy-threshold"/> controls
+    <command>VACUUM</command>'s freezing strategy.  The
+    <firstterm>eager freezing strategy</firstterm> freezes all tuples
+    on a page when they are considered visible to all current
+    transactions.  The goal is to freeze pages in batch earlier to
+    spread out the overhead of freezing over time, improving system
+    level performance stability.  The <firstterm>lazy freezing
+     strategy</firstterm> determines whether each page is to be frozen
+    largely on the basis of the age of the oldest extant XID on the
+    page.  The goal is to avoid wholly unnecessary freezing.
+    Increasing <xref linkend="guc-vacuum-freeze-strategy-threshold"/>
+    may avoid unnecessary work if the pages that would otherwise be
+    frozen will soon be modified again, but decreasing this setting
+    increases the risk of an eventual <command>VACUUM</command> that
+    must perform an excessive amount of <quote>catch up</quote>
+    freezing.
    </para>
+
+   <para>
+    <xref linkend="guc-vacuum-freeze-min-age"/> controls how old an
+    XID value has to be before pages with rows bearing that XID are
+    frozen.  This setting is an additional trigger criteria for
+    freezing a page's tuples, used by both freezing strategies.
+    Unlogged relations always use eager freezing strategy.  There is
+    also an optimization that makes <command>VACUUM</command> trigger
+    freezing pages whenever a full page image is logged (see <xref
+     linkend="wal-reliability"/>), which aims to avoid another full
+    page image for the same page later on.
+    </para>
+
+   <note>
+    <para>
+     In <productname>PostgreSQL</productname> versions before 16, all
+     freezing was triggered by
+     <varname>vacuum_freeze_min_age</varname>.  Newer versions trigger
+     freezing with the goal of finding the most opportune time to
+     freeze, spreading out the cost over multiple
+     <command>VACUUM</command> operations.
+    </para>
+   </note>
 
    <para>
     <command>VACUUM</command> uses the <link linkend="storage-vm">visibility map</link>
@@ -837,8 +869,8 @@ vacuum insert threshold = vacuum base insert threshold + vacuum insert scale fac
     For tables which receive <command>INSERT</command> operations but no or
     almost no <command>UPDATE</command>/<command>DELETE</command> operations,
     it may be beneficial to lower the table's
-    <xref linkend="reloption-autovacuum-freeze-min-age"/> as this may allow
-    tuples to be frozen by earlier vacuums.  The number of obsolete tuples and
+    <xref linkend="reloption-autovacuum-freeze-strategy-threshold"/>
+    to allow freezing to take place proactively.  The number of obsolete tuples and
     the number of inserted tuples are obtained from the cumulative statistics system;
     it is a semi-accurate count updated by each <command>UPDATE</command>,
     <command>DELETE</command> and <command>INSERT</command> operation.  (It is
