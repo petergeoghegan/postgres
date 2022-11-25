@@ -192,6 +192,21 @@ typedef struct VacAttrStats
 #define VACOPT_ONLY_DATABASE_STATS 0x200	/* only vac_update_datfrozenxid() */
 
 /*
+ * Values used by autovacuum.c to tell vacuumlazy.c about the specific
+ * threshold type that triggered an autovacuum worker.
+ *
+ * AUTOVACUUM_NONE is used when VACUUM isn't running in an autovacuum worker.
+ */
+typedef enum AutoVacType
+{
+	AUTOVACUUM_NONE = 0,
+	AUTOVACUUM_TABLE_XID_AGE,
+	AUTOVACUUM_TABLE_MXID_AGE,
+	AUTOVACUUM_DEAD_TUPLES,
+	AUTOVACUUM_INSERTED_TUPLES,
+} AutoVacType;
+
+/*
  * Values used by index_cleanup and truncate params.
  *
  * VACOPTVALUE_UNSPECIFIED is used as an initial placeholder when VACUUM
@@ -222,7 +237,8 @@ typedef struct VacuumParams
 											 * use default */
 	int			multixact_freeze_table_age; /* multixact age at which to scan
 											 * whole table */
-	bool		is_wraparound;	/* force a for-wraparound vacuum */
+	bool		is_wraparound;	/* antiwraparound autovacuum? */
+	AutoVacType	trigger;		/* Autovacuum trigger condition, if any */
 	int			log_min_duration;	/* minimum execution threshold in ms at
 									 * which autovacuum is logged, -1 to use
 									 * default */

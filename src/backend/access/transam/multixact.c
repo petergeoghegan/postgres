@@ -2553,8 +2553,8 @@ GetOldestMultiXactId(void)
  * info in MultiXactState, where it can be used to prevent overrun of old data
  * in the members SLRU area.
  *
- * The return value is true if emergency autovacuum is required and false
- * otherwise.
+ * The return value is true if emergency offset autovacuum (which appears as a
+ * table MXID age autovacuum to users) is required, and false otherwise.
  */
 static bool
 SetOffsetVacuumLimit(bool is_startup)

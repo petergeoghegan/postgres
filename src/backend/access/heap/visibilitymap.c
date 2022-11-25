@@ -26,8 +26,9 @@
  * per heap page. A set all-visible bit means that all tuples on the page are
  * known visible to all transactions, and therefore the page doesn't need to
  * be vacuumed. A set all-frozen bit means that all tuples on the page are
- * completely frozen, and therefore the page doesn't need to be vacuumed even
- * if whole table scanning vacuum is required (e.g. anti-wraparound vacuum).
+ * completely frozen.  VACUUM doesn't give up the right to advance the rel's
+ * relfrozenxid/relminmxid just by skipping its all-frozen pages; it need only
+ * scan those pages that might have remaining unfrozen XIDs or MultiXactIds.
  * The all-frozen bit must be set only when the page is already all-visible.
  *
  * The map is conservative in the sense that we make sure that whenever a bit

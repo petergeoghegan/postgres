@@ -639,6 +639,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				 * implies aggressive.  Produce distinct output for the corner
 				 * case all the same, just in case.
 				 */
+				Assert(params->trigger == AUTOVACUUM_TABLE_XID_AGE ||
+					   params->trigger == AUTOVACUUM_TABLE_MXID_AGE);
 				if (vacrel->aggressive)
 					msgfmt = _("automatic aggressive vacuum to prevent wraparound of table \"%s.%s.%s\": index scans: %d\n");
 				else
@@ -656,6 +658,18 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 vacrel->relnamespace,
 							 vacrel->relname,
 							 vacrel->num_index_scans);
+			if (!verbose)
+			{
+				Assert(params->trigger != AUTOVACUUM_NONE);
+				if (params->trigger == AUTOVACUUM_TABLE_XID_AGE)
+					appendStringInfo(&buf, _("autovacuum trigger: table XID age threshold\n"));
+				else if (params->trigger == AUTOVACUUM_TABLE_MXID_AGE)
+					appendStringInfo(&buf, _("autovacuum trigger: table MultiXactId age threshold\n"));
+				else if (params->trigger == AUTOVACUUM_DEAD_TUPLES)
+					appendStringInfo(&buf, _("autovacuum trigger: dead tuples threshold\n"));
+				else if (params->trigger == AUTOVACUUM_INSERTED_TUPLES)
+					appendStringInfo(&buf, _("autovacuum trigger: inserted tuples threshold\n"));
+			}
 			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u scanned (%.2f%% of total)\n"),
 							 vacrel->removed_pages,
 							 new_rel_pages,
