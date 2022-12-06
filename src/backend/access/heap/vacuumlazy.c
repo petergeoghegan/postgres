@@ -1381,6 +1381,10 @@ lazy_scan_strategy(LVRelState *vacrel, const VacuumParams *params,
 			prefer_laziness_threshold =
 				(nextra_min_threshold * (1.0 - min_scale_up)) +
 				(nextra_max_threshold * min_scale_up);
+#if 0
+			elog(ERROR, "tableagefrac: %f, tableagefrac_high_delta: %f min_scale_up: %f, prefer_laziness_threshold: %u",
+				 tableagefrac, tableagefrac_high_delta, min_scale_up, prefer_laziness_threshold);
+#endif
 		}
 
 		prefer_laziness_threshold = Max(32, prefer_laziness_threshold);
@@ -1389,6 +1393,7 @@ lazy_scan_strategy(LVRelState *vacrel, const VacuumParams *params,
 		else
 			vacrel->vmstrat = VMSNAP_SKIP_ALL_FROZEN;
 	}
+	/* elog(ERROR, "ff"); */
 
 	/*
 	 * Override choice of skipping strategy (force vmsnap to scan every page
