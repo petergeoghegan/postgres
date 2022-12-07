@@ -1046,15 +1046,12 @@ vm_snap_stage_blocks(vmsnapshot *vmsnap)
 				next_block = vmsnap->next_block;
 	bool		all_visible;
 
-	while (vmsnap->nblocks_staged < VMSNAP_NBLOCK)
+	while (next_block < rel_pages)
 	{
 		vmsnapblock saved_block;
 
-		if (next_block >= rel_pages)
-			break;
-
 		all_visible = true;		/* for now */
-		while (next_block < rel_pages)
+		for (;;)
 		{
 			uint8		mapbits = vm_snap_get_status(vmsnap, next_block);
 
@@ -1065,7 +1062,10 @@ vm_snap_stage_blocks(vmsnapshot *vmsnap)
 				break;
 			}
 
-			/* Handle last heap page special case */
+			/*
+			 * Handle last heap page special case.  Also terminates inner loop
+			 * when nothing else will.
+			 */
 			if (next_block == rel_pages - 1)
 				break;
 
