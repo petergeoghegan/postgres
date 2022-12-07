@@ -1092,6 +1092,9 @@ vm_snap_stage_blocks(vmsnapshot *vmsnap)
 
 		/* Move on to next block */
 		next_block++;
+
+		if (vmsnap->nblocks_staged == VMSNAP_NBLOCK)
+			break;
 	}
 
 	vmsnap->next_block = next_block;
