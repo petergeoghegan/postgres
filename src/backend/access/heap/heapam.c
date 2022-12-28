@@ -6524,7 +6524,8 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									 xid, cutoffs->relfrozenxid)));
 
 		freeze_xmin = TransactionIdPrecedes(xid, cutoffs->OldestXmin);
-		if (freeze_xmin && !TransactionIdDidCommit(xid))
+		if (freeze_xmin && !HeapTupleHeaderXminCommitted(tuple) &&
+			!TransactionIdDidCommit(xid))
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					 errmsg_internal("uncommitted xmin %u from before xid cutoff %u needs to be frozen",
@@ -6674,6 +6675,7 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 		 * lock).
 		 */
 		if (freeze_xmax && !HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask) &&
+			(tuple->t_infomask & HEAP_XMAX_INVALID) == 0 &&
 			TransactionIdDidCommit(xid))
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
