@@ -260,7 +260,7 @@ static void lazy_vacuum(LVRelState *vacrel);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static void lazy_vacuum_heap_rel(LVRelState *vacrel);
 static int	lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
-								  Buffer buffer, int index, Buffer *vmbuffer);
+								  Buffer buffer, int index, Buffer vmbuffer);
 static bool lazy_check_wraparound_failsafe(LVRelState *vacrel);
 static void lazy_cleanup_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -1040,7 +1040,7 @@ lazy_scan_heap(LVRelState *vacrel)
 			{
 				Size		freespace;
 
-				lazy_vacuum_heap_page(vacrel, blkno, buf, 0, &vmbuffer);
+				lazy_vacuum_heap_page(vacrel, blkno, buf, 0, vmbuffer);
 
 				/* Forget the LP_DEAD items that we just vacuumed */
 				dead_items->num_items = 0;
@@ -1165,11 +1165,13 @@ lazy_scan_heap(LVRelState *vacrel)
 		{
 			/*
 			 * We can pass InvalidTransactionId as the cutoff XID here,
-			 * because setting the all-frozen bit doesn't cause recovery
-			 * conflicts.
+			 * because setting the all-frozen bit doesn't need any recovery
+			 * conflicts (heap_freeze_execute_prepared does all we need).
+			 * Also make sure that the all-visible bit is still set.
 			 */
 			visibilitymap_set(vacrel->rel, blkno, buf, InvalidXLogRecPtr,
 							  vmbuffer, InvalidTransactionId,
+							  VISIBILITYMAP_ALL_VISIBLE	|
 							  VISIBILITYMAP_ALL_FROZEN);
 		}
 
@@ -2394,8 +2396,8 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 static void
 lazy_vacuum_heap_rel(LVRelState *vacrel)
 {
-	int			index;
-	BlockNumber vacuumed_pages;
+	int			index = 0;
+	BlockNumber vacuumed_pages = 0;
 	Buffer		vmbuffer = InvalidBuffer;
 	LVSavedErrInfo saved_err_info;
 
@@ -2412,42 +2414,42 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 							 VACUUM_ERRCB_PHASE_VACUUM_HEAP,
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
-	vacuumed_pages = 0;
-
-	index = 0;
 	while (index < vacrel->dead_items->num_items)
 	{
-		BlockNumber tblk;
+		BlockNumber blkno;
 		Buffer		buf;
 		Page		page;
 		Size		freespace;
 
 		vacuum_delay_point();
 
-		tblk = ItemPointerGetBlockNumber(&vacrel->dead_items->items[index]);
-		vacrel->blkno = tblk;
-		buf = ReadBufferExtended(vacrel->rel, MAIN_FORKNUM, tblk, RBM_NORMAL,
+		blkno = ItemPointerGetBlockNumber(&vacrel->dead_items->items[index]);
+		vacrel->blkno = blkno;
+
+		/*
+		 * Pin the visibility map page in case we need to mark the page
+		 * all-visible.  In most cases this will be very cheap, because we'll
+		 * already have the correct page pinned anyway.
+		 */
+		visibilitymap_pin(vacrel->rel, blkno, &vmbuffer);
+
+		buf = ReadBufferExtended(vacrel->rel, MAIN_FORKNUM, blkno, RBM_NORMAL,
 								 vacrel->bstrategy);
 		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
-		index = lazy_vacuum_heap_page(vacrel, tblk, buf, index, &vmbuffer);
+		index = lazy_vacuum_heap_page(vacrel, blkno, buf, index, vmbuffer);
 
 		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
 
 		UnlockReleaseBuffer(buf);
-		RecordPageWithFreeSpace(vacrel->rel, tblk, freespace);
+		RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 		vacuumed_pages++;
 	}
 
-	/* Clear the block number information */
 	vacrel->blkno = InvalidBlockNumber;
-
 	if (BufferIsValid(vmbuffer))
-	{
 		ReleaseBuffer(vmbuffer);
-		vmbuffer = InvalidBuffer;
-	}
 
 	/*
 	 * We set all LP_DEAD items from the first heap pass to LP_UNUSED during
@@ -2471,7 +2473,8 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
  *						  vacrel->dead_items array.
  *
  * Caller must have an exclusive buffer lock on the buffer (though a full
- * cleanup lock is also acceptable).
+ * cleanup lock is also acceptable).  vmbuffer must be valid and already have
+ * a pin on blkno's visibility map page.
  *
  * index is an offset into the vacrel->dead_items array for the first listed
  * LP_DEAD item on the page.  The return value is the first index immediately
@@ -2479,12 +2482,12 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
  */
 static int
 lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
-					  int index, Buffer *vmbuffer)
+					  int index, Buffer vmbuffer)
 {
 	VacDeadItems *dead_items = vacrel->dead_items;
 	Page		page = BufferGetPage(buffer);
 	OffsetNumber unused[MaxHeapTuplesPerPage];
-	int			uncnt = 0;
+	int			nunused = 0;
 	TransactionId visibility_cutoff_xid;
 	bool		all_frozen;
 	LVSavedErrInfo saved_err_info;
@@ -2514,10 +2517,10 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 
 		Assert(ItemIdIsDead(itemid) && !ItemIdHasStorage(itemid));
 		ItemIdSetUnused(itemid);
-		unused[uncnt++] = toff;
+		unused[nunused++] = toff;
 	}
 
-	Assert(uncnt > 0);
+	Assert(nunused > 0);
 
 	/* Attempt to truncate line pointer array now */
 	PageTruncateLinePointerArray(page);
@@ -2533,13 +2536,13 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 		xl_heap_vacuum xlrec;
 		XLogRecPtr	recptr;
 
-		xlrec.nunused = uncnt;
+		xlrec.nunused = nunused;
 
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, SizeOfHeapVacuum);
 
 		XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
-		XLogRegisterBufData(0, (char *) unused, uncnt * sizeof(OffsetNumber));
+		XLogRegisterBufData(0, (char *) unused, nunused * sizeof(OffsetNumber));
 
 		recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_VACUUM);
 
@@ -2560,31 +2563,19 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 	 * dirty, exclusively locked, and, if needed, a full page image has been
 	 * emitted.
 	 */
+	Assert(!PageIsAllVisible(page));
 	if (heap_page_is_all_visible(vacrel, buffer, &visibility_cutoff_xid,
 								 &all_frozen))
-		PageSetAllVisible(page);
-
-	/*
-	 * All the changes to the heap page have been done. If the all-visible
-	 * flag is now set, also set the VM all-visible bit (and, if possible, the
-	 * all-frozen bit) unless this has already been done previously.
-	 */
-	if (PageIsAllVisible(page))
 	{
-		uint8		flags = 0;
-		uint8		vm_status = visibilitymap_get_status(vacrel->rel,
-														 blkno, vmbuffer);
+		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
-		/* Set the VM all-frozen bit to flag, if needed */
-		if ((vm_status & VISIBILITYMAP_ALL_VISIBLE) == 0)
-			flags |= VISIBILITYMAP_ALL_VISIBLE;
-		if ((vm_status & VISIBILITYMAP_ALL_FROZEN) == 0 && all_frozen)
+		if (all_frozen)
 			flags |= VISIBILITYMAP_ALL_FROZEN;
 
-		Assert(BufferIsValid(*vmbuffer));
-		if (flags != 0)
-			visibilitymap_set(vacrel->rel, blkno, buffer, InvalidXLogRecPtr,
-							  *vmbuffer, visibility_cutoff_xid, flags);
+		PageSetAllVisible(page);
+
+		visibilitymap_set(vacrel->rel, blkno, buffer, InvalidXLogRecPtr,
+						  vmbuffer, visibility_cutoff_xid, flags);
 	}
 
 	/* Revert to the previous phase information for error traceback */
