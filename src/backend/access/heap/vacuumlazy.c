@@ -1788,13 +1788,13 @@ retry:
 		if (tuples_frozen == 0)
 		{
 			/*
-			 * We're freezing all eligible tuples on the page, but have no
-			 * freeze plans to execute.  This is structured as a case where
-			 * the page is nominally frozen so that we set pages all-frozen
-			 * whenever no freeze plans need to be executed to make it safe.
-			 * If this was handled via "no freeze" processing instead then
-			 * VACUUM would senselessly waste certain opportunities to set
-			 * pages all-frozen (not just all-visible) at no added cost.
+			 * We have no freeze plans to execute, so there's no added cost
+			 * from following the freeze path.  That's why it was chosen.
+			 * This is important in the case where the page only contains
+			 * totally frozen tuples at this point (perhaps only following
+			 * pruning).  Such pages can be marked all-frozen in the VM by our
+			 * caller, even though none of its tuples were newly frozen here
+			 * (note that the "no freeze" path never sets pages all-frozen).
 			 *
 			 * We never increment the frozen_pages instrumentation counter
 			 * here, since it only counts pages with newly frozen tuples
