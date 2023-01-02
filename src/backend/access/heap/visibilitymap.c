@@ -110,8 +110,6 @@
 
 /*#define TRACE_VISIBILITYMAP */
 
-#define DEBUG_ELOG DEBUG1
-
 /*
  * Size of the bitmap on each visibility map page, in bytes. There's no
  * extra headers, so the whole page minus the standard page header is
@@ -233,7 +231,7 @@ visibilitymap_clear(Relation rel, BlockNumber heapBlk, Buffer vmbuf, uint8 flags
 	Assert(flags & VISIBILITYMAP_VALID_BITS);
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG_ELOG, "vm_clear %s %d", RelationGetRelationName(rel), heapBlk);
+	elog(DEBUG1, "vm_clear %s %d", RelationGetRelationName(rel), heapBlk);
 #endif
 
 	if (!BufferIsValid(vmbuf) || BufferGetBlockNumber(vmbuf) != mapBlock)
@@ -336,7 +334,7 @@ visibilitymap_set(Relation rel, BlockNumber heapBlk, Buffer heapBuf,
 	uint8	   *map;
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG2, "vm_set %s %d", RelationGetRelationName(rel), heapBlk);
+	elog(DEBUG1, "vm_set %s %d", RelationGetRelationName(rel), heapBlk);
 #endif
 
 	Assert(InRecovery || XLogRecPtrIsInvalid(recptr));
@@ -426,7 +424,7 @@ visibilitymap_get_status(Relation rel, BlockNumber heapBlk, Buffer *vmbuf)
 	uint8		result;
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG_ELOG, "vm_get_status %s %d", RelationGetRelationName(rel), heapBlk);
+	elog(DEBUG1, "vm_get_status %s %d", RelationGetRelationName(rel), heapBlk);
 #endif
 
 	/* Reuse the old pinned buffer if possible */
@@ -485,7 +483,7 @@ visibilitymap_snap_acquire(Relation rel, BlockNumber rel_pages,
 	vmsnapshot *vmsnap;
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG_ELOG, "visibilitymap_snap_acquire %s %u",
+	elog(DEBUG1, "visibilitymap_snap_acquire %s %u",
 		 RelationGetRelationName(rel), rel_pages);
 #endif
 
@@ -678,7 +676,7 @@ visibilitymap_snap_strategy(vmsnapshot *vmsnap, vmstrategy strat)
 	vmsnap->scanned_pages_to_prefetch = vmsnap->scanned_pages_to_return;
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG_ELOG, "visibilitymap_snap_strategy %s %d %u",
+	elog(DEBUG1, "visibilitymap_snap_strategy %s %d %u",
 		 RelationGetRelationName(vmsnap->rel), (int) strat,
 		 vmsnap->scanned_pages_to_return);
 #endif
@@ -695,8 +693,6 @@ visibilitymap_snap_strategy(vmsnapshot *vmsnap, vmstrategy strat)
 #ifdef USE_PREFETCH
 	for (int i = 0; i < nprefetch; i++)
 	{
-		elog(DEBUG_ELOG, "init prefetch block: %u", vmsnap->staged[i]);
-
 		PrefetchBuffer(vmsnap->rel, MAIN_FORKNUM, vmsnap->staged[i]);
 	}
 #endif
@@ -775,9 +771,6 @@ visibilitymap_snap_next(vmsnapshot *vmsnap)
 		BlockNumber prefetch = vmsnap->staged[vmsnap->next_prefetch_idx++];
 
 		PrefetchBuffer(vmsnap->rel, MAIN_FORKNUM, prefetch);
-
-		elog(DEBUG_ELOG, "scan prefetch block: %u (just about to return next block %u to vacuum)",
-			 prefetch, next_block_to_scan);
 #else
 		vmsnap->next_prefetch_idx++;
 #endif
@@ -787,13 +780,11 @@ visibilitymap_snap_next(vmsnapshot *vmsnap)
 	}
 	else
 	{
-		elog(DEBUG_ELOG, "return next block %u to vacuum without prefetch",
-			 next_block_to_scan);
 		Assert(vmsnap->scanned_pages_to_prefetch == 0);
 	}
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG_ELOG, "visibilitymap_snap_next %s %u",
+	elog(DEBUG1, "visibilitymap_snap_next %s %u",
 		 RelationGetRelationName(vmsnap->rel), next_block_to_scan);
 #endif
 
@@ -899,7 +890,7 @@ visibilitymap_prepare_truncate(Relation rel, BlockNumber nheapblocks)
 	uint8		truncOffset = HEAPBLK_TO_OFFSET(nheapblocks);
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG_ELOG, "vm_truncate %s %d", RelationGetRelationName(rel), nheapblocks);
+	elog(DEBUG1, "vm_truncate %s %d", RelationGetRelationName(rel), nheapblocks);
 #endif
 
 	/*
@@ -1188,7 +1179,7 @@ vm_snap_get_status(vmsnapshot *vmsnap, BlockNumber heapBlk)
 	uint8		mapOffset = HEAPBLK_TO_OFFSET(heapBlk);
 
 #ifdef TRACE_VISIBILITYMAP
-	elog(DEBUG_ELOG, "vm_snap_get_status %u", heapBlk);
+	elog(DEBUG1, "vm_snap_get_status %u", heapBlk);
 #endif
 
 	/*
