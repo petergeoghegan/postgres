@@ -1863,12 +1863,6 @@ retry:
 		if (!heap_page_is_all_visible(vacrel, buf, &cutoff, &all_frozen))
 			Assert(false);
 
-		/*
-		 * It's possible that we froze tuples and made the page's XID cutoff
-		 * (for recovery conflict purposes) FrozenTransactionId.  This is okay
-		 * because visibility_cutoff_xid will be logged by our caller in a
-		 * moment.
-		 */
 		Assert(!TransactionIdIsValid(cutoff) ||
 			   cutoff == prunestate->visibility_cutoff_xid);
 	}
