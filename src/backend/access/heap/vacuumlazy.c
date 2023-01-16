@@ -259,9 +259,8 @@ static bool lazy_scan_noprune(LVRelState *vacrel, Buffer buf,
 static void lazy_vacuum(LVRelState *vacrel);
 static bool lazy_vacuum_all_indexes(LVRelState *vacrel);
 static void lazy_vacuum_heap_rel(LVRelState *vacrel);
-static int	lazy_vacuum_heap_page(LVRelState *vacrel, Buffer buf,
-								  BlockNumber blkno, Page page,
-								  int index, Buffer vmbuffer);
+static int	lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno,
+								  Buffer buffer, int index, Buffer vmbuffer);
 static bool lazy_check_wraparound_failsafe(LVRelState *vacrel);
 static void lazy_cleanup_all_indexes(LVRelState *vacrel);
 static IndexBulkDeleteResult *lazy_vacuum_one_index(Relation indrel,
@@ -1039,7 +1038,7 @@ lazy_scan_heap(LVRelState *vacrel)
 			{
 				Size		freespace;
 
-				lazy_vacuum_heap_page(vacrel, buf, blkno, page, 0, vmbuffer);
+				lazy_vacuum_heap_page(vacrel, blkno, buf, 0, vmbuffer);
 
 				/* Forget the LP_DEAD items that we just vacuumed */
 				dead_items->num_items = 0;
@@ -2452,12 +2451,12 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		buf = ReadBufferExtended(vacrel->rel, MAIN_FORKNUM, blkno, RBM_NORMAL,
 								 vacrel->bstrategy);
 		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
-		page = BufferGetPage(buf);
-		index = lazy_vacuum_heap_page(vacrel, buf, blkno, page, index,
-									  vmbuffer);
+		index = lazy_vacuum_heap_page(vacrel, blkno, buf, index, vmbuffer);
 
 		/* Now that we've vacuumed the page, record its available space */
+		page = BufferGetPage(buf);
 		freespace = PageGetHeapFreeSpace(page);
+
 		UnlockReleaseBuffer(buf);
 		RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 		vacuumed_pages++;
@@ -2497,10 +2496,11 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
  * after all LP_DEAD items for the same page in the array.
  */
 static int
-lazy_vacuum_heap_page(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
-					  Page page, int index, Buffer vmbuffer)
+lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
+					  int index, Buffer vmbuffer)
 {
 	VacDeadItems *dead_items = vacrel->dead_items;
+	Page		page = BufferGetPage(buffer);
 	OffsetNumber unused[MaxHeapTuplesPerPage];
 	int			nunused = 0;
 	TransactionId visibility_cutoff_xid;
@@ -2543,7 +2543,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
 	/*
 	 * Mark buffer dirty before we write WAL.
 	 */
-	MarkBufferDirty(buf);
+	MarkBufferDirty(buffer);
 
 	/* XLOG stuff */
 	if (RelationNeedsWAL(vacrel->rel))
@@ -2556,7 +2556,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, SizeOfHeapVacuum);
 
-		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
+		XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
 		XLogRegisterBufData(0, (char *) unused, nunused * sizeof(OffsetNumber));
 
 		recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_VACUUM);
@@ -2579,7 +2579,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
 	 * emitted.
 	 */
 	Assert(!PageIsAllVisible(page));
-	if (heap_page_is_all_visible(vacrel, buf, &visibility_cutoff_xid,
+	if (heap_page_is_all_visible(vacrel, buffer, &visibility_cutoff_xid,
 								 &all_frozen))
 	{
 		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
@@ -2591,7 +2591,7 @@ lazy_vacuum_heap_page(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
 		}
 
 		PageSetAllVisible(page);
-		visibilitymap_set(vacrel->rel, blkno, buf, InvalidXLogRecPtr,
+		visibilitymap_set(vacrel->rel, blkno, buffer, InvalidXLogRecPtr,
 						  vmbuffer, visibility_cutoff_xid, flags);
 	}
 
