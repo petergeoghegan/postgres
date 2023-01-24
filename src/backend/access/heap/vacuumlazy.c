@@ -1351,12 +1351,12 @@ lazy_scan_strategy(LVRelState *vacrel, bool force_scan_all)
 		 *
 		 * Note that there is a discontinuity when tableagefrac crosses this
 		 * 90%-of-tableagefrac high point: the threshold set here jumps from
-		 * 70% of rel_pages to 100% of rel_pages (MaxBlockNumber, actually).
+		 * 70% of rel_pages to 100% of rel_pages (InvalidBlockNumber, really).
 		 * It's useful to only care about table age once it gets this high.
 		 * That way even extreme cases will have at least some chance of using
 		 * eager scanning before an antiwraparound autovacuum is launched.
 		 */
-		nextra_toomany_threshold = MaxBlockNumber;
+		nextra_toomany_threshold = InvalidBlockNumber;
 	}
 
 	/* Make final choice on scanning strategy using final threshold */
