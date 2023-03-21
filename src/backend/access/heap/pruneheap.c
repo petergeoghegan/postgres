@@ -257,8 +257,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
  * Sets *nnewlpdead for caller, indicating the number of items that were
  * newly set LP_DEAD during prune operation.
  *
- * off_loc is the offset location required by the caller to use in error
- * callback.
+ * off_loc_vacuum is the offset location required by VACUUM caller to use in
+ * error callback.  Opportunistic pruning caller should pass NULL.
  *
  * Returns the number of tuples deleted from the page during this call.
  */
@@ -268,7 +268,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 				TransactionId old_snap_xmin,
 				TimestampTz old_snap_ts,
 				int *nnewlpdead,
-				OffsetNumber *off_loc)
+				OffsetNumber *off_loc_vacuum)
 {
 	int			ndeleted = 0;
 	Page		page = BufferGetPage(buffer);
@@ -345,8 +345,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 		 * Set the offset number so that we can display it along with any
 		 * error that occurred while processing this tuple.
 		 */
-		if (off_loc)
-			*off_loc = offnum;
+		if (off_loc_vacuum)
+			*off_loc_vacuum = offnum;
 
 		prstate.htsv[offnum] = heap_prune_satisfies_vacuum(&prstate, &tup,
 														   buffer);
@@ -364,8 +364,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 			continue;
 
 		/* see preceding loop */
-		if (off_loc)
-			*off_loc = offnum;
+		if (off_loc_vacuum)
+			*off_loc_vacuum = offnum;
 
 		/* Nothing to do if slot is empty or already dead */
 		itemid = PageGetItemId(page, offnum);
@@ -377,8 +377,8 @@ heap_page_prune(Relation relation, Buffer buffer,
 	}
 
 	/* Clear the offset information once we have processed the given page. */
-	if (off_loc)
-		*off_loc = InvalidOffsetNumber;
+	if (off_loc_vacuum)
+		*off_loc_vacuum = InvalidOffsetNumber;
 
 	/* Any error while applying the changes is critical */
 	START_CRIT_SECTION();
@@ -416,6 +416,7 @@ heap_page_prune(Relation relation, Buffer buffer,
 		if (RelationNeedsWAL(relation))
 		{
 			xl_heap_prune xlrec;
+			uint8		info = XLOG_HEAP2_PRUNE;
 			XLogRecPtr	recptr;
 
 			xlrec.snapshotConflictHorizon = prstate.snapshotConflictHorizon;
@@ -445,7 +446,11 @@ heap_page_prune(Relation relation, Buffer buffer,
 				XLogRegisterBufData(0, (char *) prstate.nowunused,
 									prstate.nunused * sizeof(OffsetNumber));
 
-			recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_PRUNE);
+			/* Set bit indicating pruning by VACUUM where appropriate */
+			if (off_loc_vacuum)
+				info |= XLOG_HEAP2_BYVACUUM;
+
+			recptr = XLogInsert(RM_HEAP2_ID, info);
 
 			PageSetLSN(BufferGetPage(buffer), recptr);
 		}
