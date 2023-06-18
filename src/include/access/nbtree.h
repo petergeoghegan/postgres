@@ -1029,10 +1029,51 @@ typedef struct BTArrayKeyInfo
 {
 	int			scan_key;		/* index of associated key in arrayKeyData */
 	int			cur_elem;		/* index of current element in elem_values */
-	int			mark_elem;		/* index of marked element in elem_values */
 	int			num_elems;		/* number of elems in current array value */
 	Datum	   *elem_values;	/* array of num_elems Datums */
 } BTArrayKeyInfo;
+
+typedef enum BTTrinerayBool
+{
+	BT_FALSE = 0,
+	BT_TRUE,
+	BT_MAYBE
+} BTTrinerayBool;
+
+/*
+ * _bt_readpage state used across _bt_checkkeys calls for a page
+ */
+typedef struct BTReadPageState
+{
+	/*
+	 * Input parameters set by _bt_readpage, for _bt_checkkeys.
+	 *
+	 * dir: scan direction
+	 *
+	 * highkey:	page high key
+	 *
+	 * SK_SEARCHARRAY forward scans are required to set the page high key up
+	 * front.
+	 */
+	ScanDirection dir;
+	IndexTuple	highkey;
+
+	/*
+	 * Output parameters set by _bt_checkkeys, for _bt_readpage.
+	 *
+	 * continuescan: Is there a need to continue the scan beyond this tuple?
+	 */
+	BTTrinerayBool		continuescan;
+	int					ikey;
+
+	/*
+	 * Private _bt_checkkeys state, describes caller's page.
+	 *
+	 * highkeychecked: Current set of array keys checked against high key?
+	 */
+	bool		highkeychecked;
+	bool		advanced;
+} BTReadPageState;
 
 typedef struct BTScanOpaqueData
 {
@@ -1047,7 +1088,11 @@ typedef struct BTScanOpaqueData
 								 * there are any unsatisfiable array keys) */
 	int			arrayKeyCount;	/* count indicating number of array scan keys
 								 * processed */
+	bool		arrayKeysStarted;	/* Scan still processing array keys? */
+	bool		arrayKeysInvalid;	/* Scan still processing array keys? */
+	bool		arrayKeysNoAdvance;	/* Scan still processing array keys? */
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
+	FmgrInfo	 *arrayPoskey;	/* initial positioning insertion scan key */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
 
 	/* info about killed items if any (killedItems is NULL if never used) */
@@ -1250,11 +1295,12 @@ extern void _bt_freestack(BTStack stack);
 extern void _bt_preprocess_array_keys(IndexScanDesc scan);
 extern void _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir);
-extern void _bt_mark_array_keys(IndexScanDesc scan);
-extern void _bt_restore_array_keys(IndexScanDesc scan);
+extern void _bt_advance_array_keys_to_end(IndexScanDesc scan, ScanDirection dir);
+extern void _bt_reset_invalid_array_keys(IndexScanDesc scan, ScanDirection dir);
 extern void _bt_preprocess_keys(IndexScanDesc scan);
-extern bool _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple,
-						  int tupnatts, ScanDirection dir, bool *continuescan);
+extern bool _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, bool final,
+						  BTReadPageState *pstate);
+extern void _bt_checkfinalkeys(IndexScanDesc scan, BTReadPageState *pstate);
 extern void _bt_killitems(IndexScanDesc scan);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);
