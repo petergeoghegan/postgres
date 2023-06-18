@@ -363,7 +363,9 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 
 	so->arrayKeyData = NULL;	/* assume no array keys for now */
 	so->numArrayKeys = 0;
+	so->arrayKeysStarted = false;
 	so->arrayKeys = NULL;
+	so->disableDynamic = false;
 	so->arrayContext = NULL;
 
 	so->killedItems = NULL;		/* until needed */
@@ -404,6 +406,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 
 	so->markItemIndex = -1;
 	so->arrayKeyCount = 0;
+	so->arrayKeysStarted = false;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
 
@@ -752,7 +755,8 @@ _bt_parallel_done(IndexScanDesc scan)
  *			keys.
  *
  * Updates the count of array keys processed for both local and parallel
- * scans.
+ * scans. (XXX Really? Then why is "scan->parallel_scan != NULL" used as a
+ * gating condition by our caller?)
  */
 void
 _bt_parallel_advance_array_keys(IndexScanDesc scan)

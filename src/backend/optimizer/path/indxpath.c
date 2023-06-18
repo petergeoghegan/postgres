@@ -32,6 +32,7 @@
 #include "optimizer/paths.h"
 #include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 
@@ -107,7 +108,7 @@ static List *build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 							   bool useful_predicate,
 							   ScanTypeControl scantype,
 							   bool *skip_nonnative_saop,
-							   bool *skip_lower_saop);
+							   bool *skip_unordered_saop);
 static List *build_paths_for_OR(PlannerInfo *root, RelOptInfo *rel,
 								List *clauses, List *other_clauses);
 static List *generate_bitmap_or_paths(PlannerInfo *root, RelOptInfo *rel,
@@ -706,8 +707,8 @@ eclass_already_used(EquivalenceClass *parent_ec, Relids oldrelids,
  * index AM supports them natively, we should just include them in simple
  * index paths.  If not, we should exclude them while building simple index
  * paths, and then make a separate attempt to include them in bitmap paths.
- * Furthermore, we should consider excluding lower-order ScalarArrayOpExpr
- * quals so as to create ordered paths.
+ * Furthermore, we should consider excluding ScalarArrayOpExpr quals whose
+ * inclusion would force the path as a whole to be unordered.
  */
 static void
 get_index_paths(PlannerInfo *root, RelOptInfo *rel,
@@ -716,28 +717,28 @@ get_index_paths(PlannerInfo *root, RelOptInfo *rel,
 {
 	List	   *indexpaths;
 	bool		skip_nonnative_saop = false;
-	bool		skip_lower_saop = false;
+	bool		skip_unordered_saop = false;
 	ListCell   *lc;
 
 	/*
 	 * Build simple index paths using the clauses.  Allow ScalarArrayOpExpr
 	 * clauses only if the index AM supports them natively, and skip any such
-	 * clauses for index columns after the first (so that we produce ordered
-	 * paths if possible).
+	 * clauses for index columns whose inclusion would make it impossible to
+	 * produce ordered paths.
 	 */
 	indexpaths = build_index_paths(root, rel,
 								   index, clauses,
 								   index->predOK,
 								   ST_ANYSCAN,
 								   &skip_nonnative_saop,
-								   &skip_lower_saop);
+								   &skip_unordered_saop);
 
 	/*
-	 * If we skipped any lower-order ScalarArrayOpExprs on an index with an AM
-	 * that supports them, then try again including those clauses.  This will
-	 * produce paths with more selectivity but no ordering.
+	 * If we skipped any ScalarArrayOpExprs without ordered paths on an index
+	 * with an AM that supports them, then try again including those clauses.
+	 * This will produce paths with more selectivity.
 	 */
-	if (skip_lower_saop)
+	if (skip_unordered_saop)
 	{
 		indexpaths = list_concat(indexpaths,
 								 build_index_paths(root, rel,
@@ -817,11 +818,9 @@ get_index_paths(PlannerInfo *root, RelOptInfo *rel,
  * to true if we found any such clauses (caller must initialize the variable
  * to false).  If it's NULL, we do not ignore ScalarArrayOpExpr clauses.
  *
- * If skip_lower_saop is non-NULL, we ignore ScalarArrayOpExpr clauses for
- * non-first index columns, and we set *skip_lower_saop to true if we found
- * any such clauses (caller must initialize the variable to false).  If it's
- * NULL, we do not ignore non-first ScalarArrayOpExpr clauses, but they will
- * result in considering the scan's output to be unordered.
+ * If skip_unordered_saop is non-NULL, we ignore ScalarArrayOpExpr clauses
+ * whose inclusion forces us to treat the scan's output as unordered.  If it's
+ * NULL then we allow it, in order to produce paths with greater selectivity.
  *
  * 'rel' is the index's heap relation
  * 'index' is the index for which we want to generate paths
@@ -829,7 +828,7 @@ get_index_paths(PlannerInfo *root, RelOptInfo *rel,
  * 'useful_predicate' indicates whether the index has a useful predicate
  * 'scantype' indicates whether we need plain or bitmap scan support
  * 'skip_nonnative_saop' indicates whether to accept SAOP if index AM doesn't
- * 'skip_lower_saop' indicates whether to accept non-first-column SAOP
+ * 'skip_unordered_saop' indicates whether to accept unordered SOAPs
  */
 static List *
 build_index_paths(PlannerInfo *root, RelOptInfo *rel,
@@ -837,7 +836,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 				  bool useful_predicate,
 				  ScanTypeControl scantype,
 				  bool *skip_nonnative_saop,
-				  bool *skip_lower_saop)
+				  bool *skip_unordered_saop)
 {
 	List	   *result = NIL;
 	IndexPath  *ipath;
@@ -848,10 +847,13 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	List	   *orderbyclausecols;
 	List	   *index_pathkeys;
 	List	   *useful_pathkeys;
-	bool		found_lower_saop_clause;
+	bool		row_compare_seen_already;
+	bool		saop_included_already;
+	bool		saop_invalidates_ordering;
 	bool		pathkeys_possibly_useful;
 	bool		index_is_ordered;
 	bool		index_only_scan;
+	int			prev_equality_indexcol;
 	int			indexcol;
 
 	/*
@@ -880,25 +882,27 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	 * on by btree and possibly other places.)  The list can be empty, if the
 	 * index AM allows that.
 	 *
-	 * found_lower_saop_clause is set true if we accept a ScalarArrayOpExpr
-	 * index clause for a non-first index column.  This prevents us from
-	 * assuming that the scan result is ordered.  (Actually, the result is
-	 * still ordered if there are equality constraints for all earlier
-	 * columns, but it seems too expensive and non-modular for this code to be
-	 * aware of that refinement.)
+	 * saop_invalidates_ordering is set true if we accept a ScalarArrayOpExpr
+	 * index clause that invalidates the sort order.  In practice this is
+	 * always due to the presence of a non-first index column.  This prevents
+	 * us from assuming that the scan result is ordered.
 	 *
 	 * We also build a Relids set showing which outer rels are required by the
 	 * selected clauses.  Any lateral_relids are included in that, but not
 	 * otherwise accounted for.
 	 */
 	index_clauses = NIL;
-	found_lower_saop_clause = false;
+	prev_equality_indexcol = -1;
+	row_compare_seen_already = false;
+	saop_included_already = false;
+	saop_invalidates_ordering = false;
 	outer_relids = bms_copy(rel->lateral_relids);
 	for (indexcol = 0; indexcol < index->nkeycolumns; indexcol++)
 	{
+		List	   *colclauses = clauses->indexclauses[indexcol];
 		ListCell   *lc;
 
-		foreach(lc, clauses->indexclauses[indexcol])
+		foreach(lc, colclauses)
 		{
 			IndexClause *iclause = (IndexClause *) lfirst(lc);
 			RestrictInfo *rinfo = iclause->rinfo;
@@ -906,6 +910,8 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 			/* We might need to omit ScalarArrayOpExpr clauses */
 			if (IsA(rinfo->clause, ScalarArrayOpExpr))
 			{
+				ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) rinfo->clause;
+
 				if (!index->amsearcharray)
 				{
 					if (skip_nonnative_saop)
@@ -916,18 +922,179 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 					}
 					/* Caller had better intend this only for bitmap scan */
 					Assert(scantype == ST_BITMAPSCAN);
+					saop_invalidates_ordering = true;	/* defensive */
+					goto include_clause;
 				}
-				if (indexcol > 0)
+
+				if (list_length(colclauses) > 1)
+					continue;
+
+				/*
+				 * Index AM that handles ScalarArrayOpExpr quals natively.
+				 *
+				 * We assume that it's always better to apply a clause as an
+				 * indexqual than as a filter (qpqual); which is where an
+				 * available clause would end up being applied if we omit it
+				 * from the indexquals.
+				 *
+				 * XXX Currently, nbtree just assumes that all SK_SEARCHARRAY
+				 * search-type scankeys will be marked as required, with the
+				 * exception of the first attribute without an "=" key (any
+				 * such attribute is marked SK_BT_REQFWD or SK_BT_REQBKWD, but
+				 * it won't be in the initial positioning insertion scan key,
+				 * so _bt_array_continuescan() won't consider it).
+				 */
+				if (row_compare_seen_already)
 				{
-					if (skip_lower_saop)
+					/*
+					 * Cannot safely include a ScalarArrayOpExpr after a
+					 * higher-order RowCompareExpr (barring the "=" case).
+					 *
+					 * XXX Actually, we could do better here.  Imagine a new
+					 * kind of ScalarArrayOpExpr whose array contains a small
+					 * number of predicates.  We don't need to limit ourselves
+					 * to simple equality predicates -- we just need to make
+					 * sure that all of the predicates (for a given column)
+					 * are disjuncts.  Then they can be AND'd together with
+					 * other scan keys (other "single value predicates") used
+					 * for adjoining columns.
+					 *
+					 * The MDAM paper describes such a scheme for SQL standard
+					 * row constructors -- see "Multi-Valued Predicates".
+					 *
+					 * XXX Alternatively (or in addition), we could teach
+					 * nbtree to be careful about mixing ScalarArrayOpExpr and
+					 * RowCompareExpr. (It's not yet clear what division of
+					 * labor between the optimizer and nbtree works best. This
+					 * is totally unsettled.)
+					 */
+					Assert(indexcol > 0);
+					continue;
+				}
+
+				if (indexcol != prev_equality_indexcol + 1)
+				{
+					/*
+					 * An index attribute that lacks an equality constraint
+					 * was included as a clause already.  This may make it
+					 * unsafe to include this ScalarArrayOpExpr clause now.
+					 */
+					if (saop_included_already)
 					{
-						/* Caller doesn't want to lose index ordering */
-						*skip_lower_saop = true;
+						/*
+						 * We included at least one ScalarArrayOpExpr clause
+						 * earlier, too.  (This must have been included before
+						 * the inequality, since we treat ScalarArrayOpExpr
+						 * clauses as equality constraints by default.)
+						 *
+						 * We cannot safely include this ScalarArrayOpExpr as
+						 * a clause for the current index path.  It'll become
+						 * qpqual conditions instead.
+						 *
+						 * XXX Actually, we could do better here too -- at
+						 * least for an important subset of cases.  We just
+						 * lack a way of dealing with what the MDAM paper
+						 * calls "Missing Key Predicates" (better known as
+						 * skip scan, loose index scan, etc).
+						 *
+						 * One can imagine a limited form of skip scan for a
+						 * constrained subset of "dense" columns.  A new
+						 * ScalarArrayOpExpr style expression type could
+						 * "fill-in" for a boolean column lacking candidate
+						 * clauses.  The index AM would then execute this new
+						 * expression type as if it was an ScalarArrayOpExpr
+						 * written as "WHERE boolcol = ANY(0, 1, NULL)".
+						 */
 						continue;
 					}
-					found_lower_saop_clause = true;
+
+					/*
+					 * This particular ScalarArrayOpExpr happens to be the
+					 * most significant one encountered so far.  That makes it
+					 * safe to include -- provided we invalidate ordering for
+					 * the index path as a whole.
+					 */
+					if (skip_unordered_saop)
+					{
+						/* Caller doesn't want to lose index ordering */
+						*skip_unordered_saop = true;
+						continue;
+					}
+
+					/* Caller prioritizes selectivity over ordering */
+					saop_invalidates_ordering = true;
 				}
+
+				/*
+				 * Includable ScalarArrayOpExpr clauses are themselves
+				 * equality constraints (they don't make the inclusion of
+				 * further ScalarArrayOpExpr clauses invalidate ordering).
+				 */
+				saop_included_already = true;
+				if (saop->useOr && get_oprrest(saop->opno) == F_EQSEL)
+					prev_equality_indexcol = indexcol;
 			}
+			else if (IsA(rinfo->clause, NullTest))
+			{
+				NullTest   *nulltest = (NullTest *) rinfo->clause;
+
+				/*
+				 * Like ScalarArrayOpExpr clauses, IS NULL NullTest clauses
+				 * are treated as equality conditions, despite not being
+				 * recognized as such by the equivalence class machinery.
+				 *
+				 * This relies on the assumption that amsearcharray index AMs
+				 * will treat NULL as just another value from the domain of
+				 * indexed values for initial search purposes.
+				 */
+				if (!nulltest->argisrow && nulltest->nulltesttype == IS_NULL)
+					prev_equality_indexcol = indexcol;
+			}
+			else if (IsA(rinfo->clause, RowCompareExpr))
+			{
+				/*
+				 * RowCompareExpr clause will make it unsafe to include any
+				 * ScalarArrayOpExpr encountered in lower-order caluses.
+				 * (Already-included ScalarArrayOpExpr clauses can stay.)
+				 */
+				row_compare_seen_already = true;
+			}
+			else if (rinfo->mergeopfamilies)
+			{
+				/*
+				 * Equality constraint clause -- won't make it unsafe to
+				 * include later ScalarArrayOpExpr clauses.
+				 *
+				 * It's okay if there are other clauses for this same index
+				 * column.  Our assumption is that the index AM will reliably
+				 * remove all but the "=" key during preprocessing.
+				 */
+				prev_equality_indexcol = indexcol;
+			}
+			else
+			{
+				/*
+				 * Clause isn't an equality condition according to the EQ
+				 * machinery (not a NullTest or ScalarArrayOpExpr, either).
+				 *
+				 * If there are any later ScalarArrayOpExpr clauses, they must
+				 * not be used as index quals.  We'll either make it safe by
+				 * setting saop_invalidates_ordering to true, or by just not
+				 * including them (they can still be qpqual conditions).
+				 *
+				 * Note: there are several interesting types of expressions
+				 * that we deem incompatible with ScalarArrayOpExpr clauses
+				 * due to a lack of infrastructure to perform transformations
+				 * into single-value predicates (that index AMs can treat as
+				 * disjuncts).  For example, it might be worth finding a way
+				 * to convert "WHERE a BETWEEN 1 AND 3" (or the equivalent
+				 * "WHERE a >= 1 AND a <= 3") into "WHERE a = ANY(1, 2, 3)".
+				 * Such a scheme is likely to require dedicated btree opclass
+				 * support.
+				 */
+			}
+
+	include_clause:
 
 			/* OK to include this clause */
 			index_clauses = lappend(index_clauses, iclause);
@@ -960,7 +1127,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	 * assume the scan is unordered.
 	 */
 	pathkeys_possibly_useful = (scantype != ST_BITMAPSCAN &&
-								!found_lower_saop_clause &&
+								!saop_invalidates_ordering &&
 								has_useful_pathkeys(root, rel));
 	index_is_ordered = (index->sortopfamily != NULL);
 	if (index_is_ordered && pathkeys_possibly_useful)

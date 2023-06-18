@@ -6700,9 +6700,19 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	 * For a RowCompareExpr, we consider only the first column, just as
 	 * rowcomparesel() does.
 	 *
-	 * If there's a ScalarArrayOpExpr in the quals, we'll actually perform N
-	 * index scans not one, but the ScalarArrayOpExpr's operator can be
-	 * considered to act the same as it normally does.
+	 * If there's a ScalarArrayOpExpr in the quals, we'll perform N index
+	 * scans in the worst case.  We assume the worst case, though it's
+	 * possible that we'll need as few as one single descent of the index.
+	 * Note that the ScalarArrayOpExpr's externally visible behavior and
+	 * selectivity are unaffected by the number of descents required.
+	 *
+	 * XXX Do we need to update the costing here?  Obviously, the assumption
+	 * that we'll always get N descents is pessimistic.  But many types of
+	 * queries do exactly that, particularly those involving composite indexes
+	 * with several ScalarArrayOpExprs on high-order index columns with low
+	 * cardinality data.  It's hard to make any generalizations about what'll
+	 * be the common case.  It's even harder to reliably predict the number of
+	 * index descents using the information available to us here.
 	 */
 	indexBoundQuals = NIL;
 	indexcol = 0;
