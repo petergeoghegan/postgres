@@ -1,0 +1,331 @@
+drop table if exists foo;
+NOTICE:  table "foo" does not exist, skipping
+create table foo (bar int4);
+create index skippy on foo(bar);
+insert into foo select i from generate_series(1,500) i;
+analyze foo;
+set track_io_timing to off;
+set enable_seqscan to off;
+-- prewarm
+select count(*) from foo;
+ count 
+-------
+   500
+(1 row)
+
+select count(*) from foo;
+ count 
+-------
+   500
+(1 row)
+
+select count(*) from foo;
+ count 
+-------
+   500
+(1 row)
+
+vacuum foo;
+-- Index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+-- Simple example:
+select ctid, bar from foo where bar in (2,3,4);
+ ctid  | bar 
+-------+-----
+ (0,2) |   2
+ (0,3) |   3
+ (0,4) |   4
+(3 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (2,3,4);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Index Scan using skippy on foo (actual rows=3 loops=1)
+   Index Cond: (bar = ANY ('{2,3,4}'::integer[]))
+   Buffers: shared hit=3
+(3 rows)
+
+-- continuescan-on-highkey case should work:
+select ctid, bar from foo where bar in (365,366);
+  ctid   | bar 
+---------+-----
+ (1,139) | 365
+ (1,140) | 366
+(2 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (365,366);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Index Scan using skippy on foo (actual rows=2 loops=1)
+   Index Cond: (bar = ANY ('{365,366}'::integer[]))
+   Buffers: shared hit=3
+(3 rows)
+
+-- pivotsearch (first item on leftmost leaf page's right sibling page) case
+-- should also work:
+select ctid, bar from foo where bar in (367,368);
+  ctid   | bar 
+---------+-----
+ (1,141) | 367
+ (1,142) | 368
+(2 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (367,368);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Index Scan using skippy on foo (actual rows=2 loops=1)
+   Index Cond: (bar = ANY ('{367,368}'::integer[]))
+   Buffers: shared hit=3
+(3 rows)
+
+-- Gap of one shouldn't confuse us:
+select ctid, bar from foo where bar in (2,4);
+ ctid  | bar 
+-------+-----
+ (0,2) |   2
+ (0,4) |   4
+(2 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (2,4);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Index Scan using skippy on foo (actual rows=2 loops=1)
+   Index Cond: (bar = ANY ('{2,4}'::integer[]))
+   Buffers: shared hit=3
+(3 rows)
+
+-- Gap of two shouldn't confuse us:
+select ctid, bar from foo where bar in (2,5);
+ ctid  | bar 
+-------+-----
+ (0,2) |   2
+ (0,5) |   5
+(2 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (2,5);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Index Scan using skippy on foo (actual rows=2 loops=1)
+   Index Cond: (bar = ANY ('{2,5}'::integer[]))
+   Buffers: shared hit=3
+(3 rows)
+
+-- Adjoining non-pivot tuples split only by leaf page high key should require
+-- only one descent of btree, so second page is read by read next page path:
+select ctid, bar from foo where bar in (366,367);
+  ctid   | bar 
+---------+-----
+ (1,140) | 366
+ (1,141) | 367
+(2 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (366,367);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Index Scan using skippy on foo (actual rows=2 loops=1)
+   Index Cond: (bar = ANY ('{366,367}'::integer[]))
+   Buffers: shared hit=4
+(3 rows)
+
+-- Index-only scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to on;
+set enable_indexscan to off;
+select bar from foo where bar in (2,3,4);
+ bar 
+-----
+   2
+   3
+   4
+(3 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select bar from foo where bar in (2,3,4);
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Index Only Scan using skippy on foo (actual rows=3 loops=1)
+   Index Cond: (bar = ANY ('{2,3,4}'::integer[]))
+   Heap Fetches: 3
+   Buffers: shared hit=4
+(4 rows)
+
+-- Bitmap index scan:
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+select ctid, bar from foo where bar in (2,3,4);
+ ctid  | bar 
+-------+-----
+ (0,2) |   2
+ (0,3) |   3
+ (0,4) |   4
+(3 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (2,3,4);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Bitmap Heap Scan on foo (actual rows=3 loops=1)
+   Recheck Cond: (bar = ANY ('{2,3,4}'::integer[]))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on skippy (actual rows=3 loops=1)
+         Index Cond: (bar = ANY ('{2,3,4}'::integer[]))
+         Buffers: shared hit=2
+(7 rows)
+
+-- Same as "simple example", but with duplicates:
+insert into foo(bar) values (22), (23), (23), (24), (24), (24);
+select ctid, bar from foo where bar in (22,23,24) order by bar;
+  ctid  | bar 
+--------+-----
+ (0,22) |  22
+ (2,49) |  22
+ (2,50) |  23
+ (0,23) |  23
+ (2,51) |  23
+ (2,54) |  24
+ (2,52) |  24
+ (2,53) |  24
+ (0,24) |  24
+(9 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (22,23,24) order by bar;
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Sort (actual rows=9 loops=1)
+   Sort Key: bar
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=4
+   ->  Bitmap Heap Scan on foo (actual rows=9 loops=1)
+         Recheck Cond: (bar = ANY ('{22,23,24}'::integer[]))
+         Heap Blocks: exact=2
+         Buffers: shared hit=4
+         ->  Bitmap Index Scan on skippy (actual rows=9 loops=1)
+               Index Cond: (bar = ANY ('{22,23,24}'::integer[]))
+               Buffers: shared hit=2
+(11 rows)
+
+-- Large group of duplicates spanning many pages
+insert into foo select 555 from generate_series(1,3000) i;
+-- Looks like this now:
+-- ┌───┬───────┬───────┬────────┬────────┬────────────┬───────┬───────┬───────────────────┬─────────┬───────────┬──────────────────────────────────┐
+-- │ i │ blkno │ flags │ nhtids │ nhblks │ ndeadhblks │ nlive │ ndead │ nhtidschecksimple │ avgsize │ freespace │             highkey              │
+-- ├───┼───────┼───────┼────────┼────────┼────────────┼───────┼───────┼───────────────────┼─────────┼───────────┼──────────────────────────────────┤
+-- │ 1 │     1 │     1 │    372 │      3 │          0 │   373 │     0 │                 0 │      16 │       688 │ (bar)=(367)                      │
+-- │ 2 │     2 │     1 │    134 │      2 │          0 │   135 │     0 │                 0 │      16 │     5,448 │ (bar)=(555)                      │
+-- │ 3 │     4 │     1 │  1,278 │      6 │          0 │     7 │     0 │                 0 │   1,115 │       312 │ (bar)=(555), (htid)=('(7,202)')  │
+-- │ 4 │     5 │     1 │  1,278 │      7 │          0 │     7 │     0 │                 0 │   1,115 │       312 │ (bar)=(555), (htid)=('(13,124)') │
+-- │ 5 │     6 │     1 │    444 │      3 │          0 │    39 │     0 │                 0 │      78 │     4,920 │ ∅                                │
+-- └───┴───────┴───────┴────────┴────────┴────────────┴───────┴───────┴───────────────────┴─────────┴───────────┴──────────────────────────────────┘
+-- Scan blknos 2,4,5,6
+--
+-- This avoids continuescan termination on block 2, which used to happen due
+-- to using the wrong scan key (the first, from 500 constant).
+-- It's fixed, so now we switch to next SAOP element rather than
+-- terminate _bt_first-wise/_bt_search-wise scan at that point
+--
+-- (So matches master branch, buffer-access-count-wise)
+select count(*) from foo where bar in (500,555);
+ count 
+-------
+  3001
+(1 row)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*) from foo where bar in (500,555);
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Buffers: shared hit=21
+   ->  Bitmap Heap Scan on foo (actual rows=3001 loops=1)
+         Recheck Cond: (bar = ANY ('{500,555}'::integer[]))
+         Heap Blocks: exact=14
+         Buffers: shared hit=21
+         ->  Bitmap Index Scan on skippy (actual rows=3001 loops=1)
+               Index Cond: (bar = ANY ('{500,555}'::integer[]))
+               Buffers: shared hit=5
+(9 rows)
+
+-- Same again, almost -- just don't scan blkno 2 this time
+--
+-- This results in one useful _bt_search call, and another useless one that
+-- should be avoided by realizing that we already ran out of tuples to output
+-- at the end of the fist _bt_search (which doesn't return any 556 rows
+-- either, since there is nothing to return).
+--
+-- (So matches master branch, buffer-access-count-wise)
+select count(*) from foo where bar in (555,556);
+ count 
+-------
+  3000
+(1 row)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*) from foo where bar in (555,556);
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Buffers: shared hit=22
+   ->  Bitmap Heap Scan on foo (actual rows=3000 loops=1)
+         Recheck Cond: (bar = ANY ('{555,556}'::integer[]))
+         Heap Blocks: exact=14
+         Buffers: shared hit=22
+         ->  Bitmap Index Scan on skippy (actual rows=3000 loops=1)
+               Index Cond: (bar = ANY ('{555,556}'::integer[]))
+               Buffers: shared hit=6
+(9 rows)
+
+-- We do want to skip to the start and then the end here, and get correct
+-- results while doing it:
+select ctid, bar from foo where bar in (1, 500);
+  ctid  | bar 
+--------+-----
+ (0,1)  |   1
+ (2,48) | 500
+(2 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ctid, bar from foo where bar in (1, 500);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Bitmap Heap Scan on foo (actual rows=2 loops=1)
+   Recheck Cond: (bar = ANY ('{1,500}'::integer[]))
+   Heap Blocks: exact=2
+   Buffers: shared hit=5
+   ->  Bitmap Index Scan on skippy (actual rows=2 loops=1)
+         Index Cond: (bar = ANY ('{1,500}'::integer[]))
+         Buffers: shared hit=3
+(7 rows)
+
+-- No infinite loops, please
+select * from foo where bar = any ('{365,366,368}');
+ bar 
+-----
+ 365
+ 366
+ 368
+(3 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from foo where bar = any ('{365,366,368}');
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Bitmap Heap Scan on foo (actual rows=3 loops=1)
+   Recheck Cond: (bar = ANY ('{365,366,368}'::integer[]))
+   Heap Blocks: exact=1
+   Buffers: shared hit=4
+   ->  Bitmap Index Scan on skippy (actual rows=3 loops=1)
+         Index Cond: (bar = ANY ('{365,366,368}'::integer[]))
+         Buffers: shared hit=3
+(7 rows)
+

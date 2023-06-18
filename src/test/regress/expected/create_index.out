@@ -1970,9 +1970,8 @@ WHERE thousand < 2 AND tenthous IN (1001,3000)
 ORDER BY thousand;
  thousand | tenthous 
 ----------+----------
-        0 |     3000
         1 |     1001
-(2 rows)
+(1 row)
 
 RESET enable_indexonlyscan;
 --

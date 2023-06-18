@@ -1538,6 +1538,12 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 	int			itemIndex;
 	bool		continuescan;
 	int			indnatts;
+	BTArrayKeyInfo *curArrayKey = so->arrayKeys;
+	int			init_cur_elem = 0;
+	int			matches_for_cur_elem = 0;
+
+	if (curArrayKey)
+		init_cur_elem = curArrayKey->cur_elem;
 
 	/*
 	 * We must have the buffer pinned and locked, but the usual macro can't be
@@ -1617,6 +1623,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 
 			if (_bt_checkkeys(scan, itup, indnatts, dir, &continuescan))
 			{
+				matches_for_cur_elem++;
+
 				/* tuple passes all scan key conditions */
 				if (!BTreeTupleIsPosting(itup))
 				{
@@ -1647,6 +1655,40 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 					}
 				}
 			}
+
+			/* Need to advance current SAOP array key? */
+			if (!continuescan && so->numArrayKeys)
+			{
+				continuescan = true;
+				if (matches_for_cur_elem == 0)
+				{
+					continuescan = true;
+					offnum = OffsetNumberNext(offnum);
+					continue;
+				}
+
+				if (_bt_advance_array_keys(scan, ForwardScanDirection))
+				{
+					matches_for_cur_elem = 0;
+					_bt_preprocess_keys(scan);
+					if (init_cur_elem == curArrayKey->cur_elem ||
+						curArrayKey->cur_elem == 0)
+						break;
+					continue;
+				}
+				else
+				{
+					if (init_cur_elem == curArrayKey->cur_elem ||
+						curArrayKey->cur_elem == 0)
+					{
+						/* HACK stop btgettuple() from returning more: */
+						so->numArrayKeys = 0;
+					}
+					offnum = OffsetNumberNext(offnum);
+					continue;
+				}
+			}
+
 			/* When !continuescan, there can't be any more matches, so stop */
 			if (!continuescan)
 				break;
@@ -1673,6 +1715,26 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 
 			truncatt = BTreeTupleGetNAtts(itup, scan->indexRelation);
 			_bt_checkkeys(scan, itup, truncatt, dir, &continuescan);
+
+			/* Need to advance current SAOP array key? */
+			if (!continuescan && so->numArrayKeys)
+			{
+				if (matches_for_cur_elem == 0)
+				{
+					continuescan = true;
+				}
+				else if (_bt_advance_array_keys(scan, ForwardScanDirection))
+				{
+					continuescan = true;
+					_bt_preprocess_keys(scan);
+				}
+				else
+				{
+					/* HACK stop btgettuple() from returning more: */
+					so->numArrayKeys = 0;
+					continuescan = false;
+				}
+			}
 		}
 
 		if (!continuescan)
