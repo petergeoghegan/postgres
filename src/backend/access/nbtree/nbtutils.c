@@ -542,6 +542,58 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
 }
 
 /*
+ * Is the current set of array elements >= index tuple from offset?
+ */
+bool
+_bt_array_keys_geq_offset(IndexScanDesc scan, OffsetNumber offnum)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	int16	   *indoption = scan->indexRelation->rd_indoption;
+	Page		page = BufferGetPage(so->currPos.buf);
+	BTScanInsert inskey = &so->inskey;
+	BTScanInsert itup_key = NULL;
+	bool		is_geq_offnum;
+	int			natts;
+
+	if (!so->hasinskey)
+	{
+		itup_key = _bt_mkscankey(rel, NULL);
+		itup_key->allequalimage = _bt_allequalimage(rel, false);
+		itup_key->keysz = so->numArrayKeys;
+		inskey = itup_key;
+	}
+
+	natts = Min(so->numArrayKeys, inskey->keysz);
+	inskey->keysz = natts;
+	if (inskey->keysz <= 0)
+		return false;
+	Assert(inskey->keysz >= 1);
+	Assert(inskey->scantid == NULL);
+
+
+	for (int i = 0; i < natts; i++)
+	{
+		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
+		int			cur_elem = curArrayKey->cur_elem;
+		ScanKey		scanKey = inskey->scankeys + i;
+		Datum		*cur_elem_subkey;
+
+		/* Copy current element value into insertion scankey */
+		cur_elem_subkey = curArrayKey->elem_values + cur_elem;
+		memcpy(&scanKey->sk_argument, cur_elem_subkey, sizeof(Datum));
+		scanKey->sk_flags = (indoption[i] << SK_BT_INDOPTION_SHIFT);
+	}
+
+	is_geq_offnum = (_bt_compare(rel, inskey, page, offnum) >= 0);
+
+	if (!so->hasinskey)
+		pfree(itup_key);
+
+	return is_geq_offnum;
+}
+
+/*
  * _bt_advance_array_keys() -- Advance to next set of array elements
  *
  * Returns true if there is another set of values to consider, false if not.
@@ -553,6 +605,9 @@ _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		found = false;
 	int			i;
+
+	if (so->arrayKeysDone)
+		return false;
 
 	/*
 	 * We must advance the last array key most quickly, since it will

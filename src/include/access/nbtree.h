@@ -1042,6 +1042,9 @@ typedef struct BTScanOpaqueData
 	ScanKey		keyData;		/* array of preprocessed scan keys */
 
 	/* workspace for SK_SEARCHARRAY support */
+	bool		hasinskey;
+	BTScanInsertData inskey;
+	bool		arrayKeysDone;
 	ScanKey		arrayKeyData;	/* modified copy of scan->keyData */
 	int			numArrayKeys;	/* number of equality-type array keys (-1 if
 								 * there are any unsatisfiable array keys) */
@@ -1249,6 +1252,7 @@ extern BTScanInsert _bt_mkscankey(Relation rel, IndexTuple itup);
 extern void _bt_freestack(BTStack stack);
 extern void _bt_preprocess_array_keys(IndexScanDesc scan);
 extern void _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir);
+extern bool _bt_array_keys_geq_offset(IndexScanDesc scan, OffsetNumber offnum);
 extern bool _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir);
 extern void _bt_mark_array_keys(IndexScanDesc scan);
 extern void _bt_restore_array_keys(IndexScanDesc scan);

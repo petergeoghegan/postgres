@@ -1428,6 +1428,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	/* remember which buffer we have pinned, if any */
 	Assert(!BTScanPosIsValid(so->currPos));
 	so->currPos.buf = buf;
+	so->inskey = inskey;
+	so->hasinskey = true;
 
 	/*
 	 * Now load data from the first page of the scan.
@@ -1647,6 +1649,32 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 					}
 				}
 			}
+
+			/* Need to advance current SAOP array key? */
+			if (!continuescan && so->numArrayKeys)
+			{
+				if (_bt_array_keys_geq_offset(scan, offnum))
+				{
+					offnum = OffsetNumberNext(offnum);
+
+					continuescan = true;
+					continue;
+				}
+				else if (_bt_advance_array_keys(scan, ForwardScanDirection))
+				{
+					_bt_preprocess_keys(scan);
+
+					/* Don't advance offnum */
+					continuescan = true;
+					continue;
+				}
+				else
+				{
+					offnum = OffsetNumberNext(offnum);
+					so->arrayKeysDone = true;
+				}
+			}
+
 			/* When !continuescan, there can't be any more matches, so stop */
 			if (!continuescan)
 				break;
@@ -1673,6 +1701,25 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 
 			truncatt = BTreeTupleGetNAtts(itup, scan->indexRelation);
 			_bt_checkkeys(scan, itup, truncatt, dir, &continuescan);
+
+			/* Need to advance current SAOP array key? */
+			if (!continuescan && so->numArrayKeys)
+			{
+				if (_bt_array_keys_geq_offset(scan, P_HIKEY))
+				{
+					continuescan = true;
+				}
+				else if (_bt_advance_array_keys(scan, ForwardScanDirection))
+				{
+					_bt_preprocess_keys(scan);
+
+					continuescan = true;
+				}
+				else
+				{
+					so->arrayKeysDone = true;
+				}
+			}
 		}
 
 		if (!continuescan)
