@@ -33,7 +33,7 @@
 
 typedef struct BTSortArrayContext
 {
-	FmgrInfo	flinfo;
+	FmgrInfo   *orderproc;
 	Oid			collation;
 	bool		reverse;
 } BTSortArrayContext;
@@ -41,15 +41,37 @@ typedef struct BTSortArrayContext
 static Datum _bt_find_extreme_element(IndexScanDesc scan, ScanKey skey,
 									  StrategyNumber strat,
 									  Datum *elems, int nelems);
+static void _bt_sort_cmp_func_setup(IndexScanDesc scan, ScanKey skey);
 static int	_bt_sort_array_elements(IndexScanDesc scan, ScanKey skey,
 									bool reverse,
 									Datum *elems, int nelems);
+static int	_bt_merge_arrays(IndexScanDesc scan, ScanKey skey, bool reverse,
+							 Datum *elems_orig, int nelems_orig,
+							 Datum *elems_next, int nelems_next);
 static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
+static inline int32 _bt_compare_array_skey(ScanKey cur, FmgrInfo *orderproc,
+										   Datum datum, bool null,
+										   Datum arrdatum);
+static int	_bt_binsrch_array_skey(ScanDirection dir, bool cur_elem_start,
+								   BTArrayKeyInfo *array, ScanKey cur,
+								   FmgrInfo *orderproc, Datum datum, bool null,
+								   int32 *final_result);
+static bool _bt_advance_array_keys_increment(IndexScanDesc scan, ScanDirection dir);
+static bool _bt_tuple_before_array_skeys(IndexScanDesc scan,
+										 BTReadPageState *pstate,
+										 IndexTuple tuple);
+static bool _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
+								   IndexTuple tuple, bool skrequiredtrigger);
+static void _bt_preprocess_keys_leafbuf(IndexScanDesc scan);
 static bool _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 									 ScanKey leftarg, ScanKey rightarg,
 									 bool *result);
 static bool _bt_fix_scankey_strategy(ScanKey skey, int16 *indoption);
 static void _bt_mark_scankey_required(ScanKey skey);
+static bool _bt_check_compare(ScanDirection dir, BTScanOpaque so,
+							  IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
+							  bool *continuescan, bool *skrequiredtrigger,
+							  bool requiredMatchedByPrecheck);
 static bool _bt_check_rowcompare(ScanKey skey,
 								 IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 								 ScanDirection dir, bool *continuescan);
@@ -198,13 +220,48 @@ _bt_freestack(BTStack stack)
  * If there are any SK_SEARCHARRAY scan keys, deconstruct the array(s) and
  * set up BTArrayKeyInfo info for each one that is an equality-type key.
  * Prepare modified scan keys in so->arrayKeyData, which will hold the current
- * array elements during each primitive indexscan operation.  For inequality
- * array keys, it's sufficient to find the extreme element value and replace
- * the whole array with that scalar value.
+ * array elements.
+ *
+ * _bt_preprocess_keys treats each primitive scan as an independent piece of
+ * work.  That structure pushes the responsibility for preprocessing that must
+ * work "across array keys" onto us.  This division of labor makes sense once
+ * you consider that we're typically called no more than once per btrescan,
+ * whereas _bt_preprocess_keys is always called once per primitive index scan.
+ *
+ * Currently we perform two kinds of preprocessing to deal with redundancies.
+ * For inequality array keys, it's sufficient to find the extreme element
+ * value and replace the whole array with that scalar value.  This eliminates
+ * all but one array key as redundant.  Similarly, we are capable of "merging
+ * together" multiple equality array keys from two or more input scan keys
+ * into a single output scan key that contains only the intersecting array
+ * elements.  This can eliminate many redundant array elements, as well as
+ * eliminating whole array scan keys as redundant.
+ *
+ * Note: _bt_start_array_keys actually sets up the cur_elem counters later on,
+ * once the scan direction is known.
  *
  * Note: the reason we need so->arrayKeyData, rather than just scribbling
  * on scan->keyData, is that callers are permitted to call btrescan without
  * supplying a new set of scankey data.
+ *
+ * Note: _bt_preprocess_keys is responsible for creating the so->keyData scan
+ * keys used by _bt_checkkeys.  Index scans that don't use equality array keys
+ * will have _bt_preprocess_keys treat scan->keyData as input and so->keyData
+ * as output.  Scans that use equality array keys have _bt_preprocess_keys
+ * treat so->arrayKeyData (which is our output) as their input, while (as per
+ * usual) outputting so->keyData for _bt_checkkeys.  This function adds an
+ * additional layer of indirection that allows _bt_preprocess_keys to more or
+ * less avoid dealing with SK_SEARCHARRAY as a special case.
+ *
+ * Note: _bt_preprocess_keys_leafbuf works by updating already-processed
+ * output keys (so->keyData) in-place.  It cannot eliminate redundant or
+ * contradictory scan keys.  This necessitates having _bt_preprocess_keys
+ * understand that it is unsafe to eliminate "redundant" SK_SEARCHARRAY
+ * equality scan keys on the basis of what is actually just the current array
+ * key values -- it must conservatively assume that such a scan key might no
+ * longer be redundant after the next _bt_preprocess_keys_leafbuf call.
+ * Ideally we'd be able to deal with that by eliminating a subset of truly
+ * redundant array keys up-front, but it doesn't seem worth the trouble.
  */
 void
 _bt_preprocess_array_keys(IndexScanDesc scan)
@@ -212,7 +269,9 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	int			numberOfKeys = scan->numberOfKeys;
 	int16	   *indoption = scan->indexRelation->rd_indoption;
+	int16		nkeyatts = IndexRelationGetNumberOfKeyAttributes(scan->indexRelation);
 	int			numArrayKeys;
+	int			lastEqualityArrayAtt = -1;
 	ScanKey		cur;
 	int			i;
 	MemoryContext oldContext;
@@ -265,6 +324,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 
 	/* Allocate space for per-array data in the workspace context */
 	so->arrayKeys = (BTArrayKeyInfo *) palloc0(numArrayKeys * sizeof(BTArrayKeyInfo));
+	so->orderProcs = (FmgrInfo *) palloc0(nkeyatts * sizeof(FmgrInfo));
 
 	/* Now process each array key */
 	numArrayKeys = 0;
@@ -281,6 +341,16 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		int			j;
 
 		cur = &so->arrayKeyData[i];
+
+		/*
+		 * Attributes with equality-type scan keys (including but not limited
+		 * to array scan keys) will need a 3-way comparison function.   Set
+		 * that up now.  (Avoids repeating work for the same attribute.)
+		 */
+		if (cur->sk_strategy == BTEqualStrategyNumber &&
+			!OidIsValid(so->orderProcs[cur->sk_attno - 1].fn_oid))
+			_bt_sort_cmp_func_setup(scan, cur);
+
 		if (!(cur->sk_flags & SK_SEARCHARRAY))
 			continue;
 
@@ -358,12 +428,40 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 											elem_values, num_nonnulls);
 
 		/*
+		 * If this scan key is semantically equivalent to a previous equality
+		 * operator array scan key, merge the two arrays together to eliminate
+		 * redundant non-intersecting elements (and redundant whole scan keys)
+		 */
+		if (lastEqualityArrayAtt == cur->sk_attno)
+		{
+			Datum	   *elems_orig = so->arrayKeys[numArrayKeys - 1].elem_values;
+			Datum	   *elems_next = elem_values;
+			int			nelems_orig = so->arrayKeys[numArrayKeys - 1].num_elems;
+			int			nelems_next = num_elems;
+
+			num_elems = _bt_merge_arrays(scan, cur,
+										 (indoption[cur->sk_attno - 1] & INDOPTION_DESC) != 0,
+										 elems_orig, nelems_orig,
+										 elems_next, nelems_next);
+
+			/*
+			 * Mark the original scan key/array as redundant.  This instructs
+			 * _bt_preprocess_keys to not include it in its final so->keyData
+			 * output.
+			 */
+			so->arrayKeys[numArrayKeys - 1].num_elems = num_elems;
+			cur->sk_flags |= SK_UNARY;
+			continue;
+		}
+
+		/*
 		 * And set up the BTArrayKeyInfo data.
 		 */
 		so->arrayKeys[numArrayKeys].scan_key = i;
 		so->arrayKeys[numArrayKeys].num_elems = num_elems;
 		so->arrayKeys[numArrayKeys].elem_values = elem_values;
 		numArrayKeys++;
+		lastEqualityArrayAtt = cur->sk_attno;
 	}
 
 	so->numArrayKeys = numArrayKeys;
@@ -437,6 +535,42 @@ _bt_find_extreme_element(IndexScanDesc scan, ScanKey skey,
 }
 
 /*
+ * Look up the appropriate comparison function in the opfamily.
+ *
+ * Note: it's possible that this would fail, if the opfamily is incomplete,
+ * but it seems quite unlikely that an opfamily would omit non-cross-type
+ * support functions for any datatype that it supports at all.
+ */
+static void
+_bt_sort_cmp_func_setup(IndexScanDesc scan, ScanKey skey)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	Oid			elemtype;
+	RegProcedure cmp_proc;
+	FmgrInfo   *orderproc = &so->orderProcs[skey->sk_attno - 1];
+
+	/*
+	 * Determine the nominal datatype of the array elements.  We have to
+	 * support the convention that sk_subtype == InvalidOid means the opclass
+	 * input type; this is a hack to simplify life for ScanKeyInit().
+	 */
+	elemtype = skey->sk_subtype;
+	if (elemtype == InvalidOid)
+		elemtype = rel->rd_opcintype[skey->sk_attno - 1];
+
+	cmp_proc = get_opfamily_proc(rel->rd_opfamily[skey->sk_attno - 1],
+								 rel->rd_opcintype[skey->sk_attno - 1],
+								 elemtype,
+								 BTORDER_PROC);
+	if (!RegProcedureIsValid(cmp_proc))
+		elog(ERROR, "missing support function %d(%u,%u) in opfamily %u",
+			 BTORDER_PROC, elemtype, elemtype,
+			 rel->rd_opfamily[skey->sk_attno - 1]);
+	fmgr_info_cxt(cmp_proc, orderproc, so->arrayContext);
+}
+
+/*
  * _bt_sort_array_elements() -- sort and de-dup array elements
  *
  * The array elements are sorted in-place, and the new number of elements
@@ -450,42 +584,14 @@ _bt_sort_array_elements(IndexScanDesc scan, ScanKey skey,
 						bool reverse,
 						Datum *elems, int nelems)
 {
-	Relation	rel = scan->indexRelation;
-	Oid			elemtype;
-	RegProcedure cmp_proc;
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	BTSortArrayContext cxt;
 
 	if (nelems <= 1)
 		return nelems;			/* no work to do */
 
-	/*
-	 * Determine the nominal datatype of the array elements.  We have to
-	 * support the convention that sk_subtype == InvalidOid means the opclass
-	 * input type; this is a hack to simplify life for ScanKeyInit().
-	 */
-	elemtype = skey->sk_subtype;
-	if (elemtype == InvalidOid)
-		elemtype = rel->rd_opcintype[skey->sk_attno - 1];
-
-	/*
-	 * Look up the appropriate comparison function in the opfamily.
-	 *
-	 * Note: it's possible that this would fail, if the opfamily is
-	 * incomplete, but it seems quite unlikely that an opfamily would omit
-	 * non-cross-type support functions for any datatype that it supports at
-	 * all.
-	 */
-	cmp_proc = get_opfamily_proc(rel->rd_opfamily[skey->sk_attno - 1],
-								 elemtype,
-								 elemtype,
-								 BTORDER_PROC);
-	if (!RegProcedureIsValid(cmp_proc))
-		elog(ERROR, "missing support function %d(%u,%u) in opfamily %u",
-			 BTORDER_PROC, elemtype, elemtype,
-			 rel->rd_opfamily[skey->sk_attno - 1]);
-
 	/* Sort the array elements */
-	fmgr_info(cmp_proc, &cxt.flinfo);
+	cxt.orderproc = &so->orderProcs[skey->sk_attno - 1];
 	cxt.collation = skey->sk_collation;
 	cxt.reverse = reverse;
 	qsort_arg(elems, nelems, sizeof(Datum),
@@ -494,6 +600,48 @@ _bt_sort_array_elements(IndexScanDesc scan, ScanKey skey,
 	/* Now scan the sorted elements and remove duplicates */
 	return qunique_arg(elems, nelems, sizeof(Datum),
 					   _bt_compare_array_elements, &cxt);
+}
+
+/*
+ * _bt_merge_arrays() -- merge together duplicate array keys
+ *
+ * Both scan key's have array elements that have already been sorted and
+ * deduplicated.
+ */
+static int
+_bt_merge_arrays(IndexScanDesc scan, ScanKey skey, bool reverse,
+				 Datum *elems_orig, int nelems_orig,
+				 Datum *elems_next, int nelems_next)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	BTSortArrayContext cxt;
+	Datum	   *merged = palloc(sizeof(Datum) * nelems_orig);
+	int			merged_nelems = 0;
+
+	/*
+	 * Incrementally copy the original array into a temp buffer, skipping over
+	 * any items that are missing from the "next" array
+	 */
+	cxt.orderproc = &so->orderProcs[skey->sk_attno - 1];
+	cxt.collation = skey->sk_collation;
+	cxt.reverse = reverse;
+	for (int i = 0; i < nelems_orig; i++)
+	{
+		Datum	   *elem = elems_orig + i;
+
+		if (bsearch_arg(elem, elems_next, nelems_next, sizeof(Datum),
+						_bt_compare_array_elements, &cxt))
+			merged[merged_nelems++] = *elem;
+	}
+
+	/*
+	 * Overwrite the original array with temp buffer so that we're only left
+	 * with intersecting array elements
+	 */
+	memcpy(elems_orig, merged, merged_nelems * sizeof(Datum));
+	pfree(merged);
+
+	return merged_nelems;
 }
 
 /*
@@ -507,12 +655,168 @@ _bt_compare_array_elements(const void *a, const void *b, void *arg)
 	BTSortArrayContext *cxt = (BTSortArrayContext *) arg;
 	int32		compare;
 
-	compare = DatumGetInt32(FunctionCall2Coll(&cxt->flinfo,
+	compare = DatumGetInt32(FunctionCall2Coll(cxt->orderproc,
 											  cxt->collation,
 											  da, db));
 	if (cxt->reverse)
 		INVERT_COMPARE_RESULT(compare);
 	return compare;
+}
+
+/*
+ * Comparator uses to search for the next array element when array keys need
+ * to be advanced via one or more binary searches
+ *
+ * This code is loosely based on _bt_compare.  However, there are some
+ * important differences.
+ *
+ * It is convenient to think of calling _bt_compare as comparing caller's
+ * insertion scankey to an index tuple.  But our callers are not searching
+ * through the index at all -- they're searching through a local array of
+ * datums associated with a scan key (using values they've taken from an index
+ * tuple).  This is a complete reversal of how things usually work, which can
+ * be confusing.
+ *
+ * Callers of this function should think of it as comparing "datum" (as well
+ * as "null") to "arrdatum".  This is the same approach that _bt_compare takes
+ * in that both functions compare the value that they're searching for to one
+ * particular item used as a binary search pivot.  (But it's the wrong way
+ * around if you think of it as "tuple values vs scan key values".  So don't.)
+*/
+static inline int32
+_bt_compare_array_skey(ScanKey cur,
+					   FmgrInfo *orderproc,
+					   Datum datum,
+					   bool null,
+					   Datum arrdatum)
+{
+	int32		result = 0;
+
+	Assert(cur->sk_strategy == BTEqualStrategyNumber);
+	Assert((cur->sk_flags & SK_ROW_HEADER) == 0);
+
+	if (cur->sk_flags & SK_ISNULL)	/* array/scan key is NULL */
+	{
+		if (null)
+			result = 0;			/* NULL "=" NULL */
+		else if (cur->sk_flags & SK_BT_NULLS_FIRST)
+			result = 1;			/* NULL "<" NOT_NULL */
+		else
+			result = -1;		/* NULL ">" NOT_NULL */
+	}
+	else if (null)				/* array/scan key is NOT_NULL and tuple item
+								 * is NULL */
+	{
+		if (cur->sk_flags & SK_BT_NULLS_FIRST)
+			result = -1;		/* NOT_NULL ">" NULL */
+		else
+			result = 1;			/* NOT_NULL "<" NULL */
+	}
+	else
+	{
+		/*
+		 * Like _bt_compare, we need to be careful of cross-type comparisons,
+		 * so the left value has to be the value that came from an index
+		 * tuple.  (Array scan keys cannot be cross-type, but other required
+		 * scan keys that use an equal operator can be.)
+		 */
+		result = DatumGetInt32(FunctionCall2Coll(orderproc, cur->sk_collation,
+												 datum, arrdatum));
+
+		/*
+		 * Unlike _bt_compare, we flip the sign when column is a DESC column
+		 * (and *not* when column is ASC).  This matches the approach taken by
+		 * _bt_check_rowcompare, which performs similar three-way comparisons.
+		 */
+		if (cur->sk_flags & SK_BT_DESC)
+			INVERT_COMPARE_RESULT(result);
+	}
+
+	return result;
+}
+
+/*
+ * _bt_binsrch_array_skey() -- Binary search for next matching array key
+ *
+ * cur_elem_start indicates if the binary search should begin at the array's
+ * current element (or have the current element as an upper bound if it's a
+ * backward scan).  This allows searches against required scan key arrays to
+ * reuse the work of earlier searches.
+ *
+ * Returns an index to the first array element >= caller's datum argument.
+ * Also sets *final_result to whatever _bt_compare_array_skey returned when we
+ * directly compared the returned array element to searched-for datum.
+ */
+static int
+_bt_binsrch_array_skey(ScanDirection dir, bool cur_elem_start,
+					   BTArrayKeyInfo *array, ScanKey cur,
+					   FmgrInfo *orderproc, Datum datum, bool null,
+					   int32 *final_result)
+{
+	int			low_elem,
+				high_elem,
+				result = 0;
+	bool		knownequal = false;
+
+	Assert(cur->sk_flags & SK_SEARCHARRAY);
+	Assert(cur->sk_strategy == BTEqualStrategyNumber);
+
+	if (ScanDirectionIsForward(dir))
+	{
+		if (cur_elem_start)
+			low_elem = array->cur_elem;
+		else
+			low_elem = 0;
+		high_elem = array->num_elems - 1;
+	}
+	else
+	{
+		low_elem = 0;
+		if (cur_elem_start)
+			high_elem = array->cur_elem;
+		else
+			high_elem = array->num_elems - 1;
+	}
+
+	while (high_elem > low_elem)
+	{
+		int			mid_elem = low_elem + ((high_elem - low_elem) / 2);
+		Datum		arrdatum = array->elem_values[mid_elem];
+
+		result = _bt_compare_array_skey(cur, orderproc, datum, null, arrdatum);
+
+		if (result == 0)
+		{
+			/*
+			 * Each array was deduplicated during initial preprocessing, so
+			 * each element is guaranteed to be unique.  We can quit as soon
+			 * as we see an equal array element, saving ourselves an extra
+			 * comparison or two...
+			 */
+			low_elem = mid_elem;
+			knownequal = true;
+			break;
+		}
+
+		if (result > 0)
+			low_elem = mid_elem + 1;
+		else
+			high_elem = mid_elem;
+	}
+
+	/*
+	 * ...but our caller also cares about the position of the searched-for
+	 * datum relative to the low_elem match we'll return.  Make sure that we
+	 * set *final_result to the result that comes from comparing low_elem's
+	 * key value to the datum that caller had us search for.
+	 */
+	if (!knownequal)
+		result = _bt_compare_array_skey(cur, orderproc, datum, null,
+										array->elem_values[low_elem]);
+
+	*final_result = result;
+
+	return low_elem;
 }
 
 /*
@@ -539,22 +843,23 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
 			curArrayKey->cur_elem = 0;
 		skey->sk_argument = curArrayKey->elem_values[curArrayKey->cur_elem];
 	}
-
-	so->arraysStarted = true;
 }
 
 /*
- * _bt_advance_array_keys() -- Advance to next set of array elements
+ * Advance the array keys by a single increment in the current scan direction.
  *
- * Returns true if there is another set of values to consider, false if not.
- * On true result, the scankeys are initialized with the next set of values.
+ * Returns true when the array keys advanced incrementally.  Returns false
+ * when the scan's array keys could not be advanced because all array keys
+ * have already been advanced to the final element position (final for the
+ * current scan direction).
  */
-bool
-_bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
+static bool
+_bt_advance_array_keys_increment(IndexScanDesc scan, ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		found = false;
-	int			i;
+
+	Assert(!so->needPrimScan);
 
 	/*
 	 * We must advance the last array key most quickly, since it will
@@ -562,7 +867,7 @@ _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
 	 * qualifications. This is necessary to ensure correct ordering of output
 	 * when there are multiple array keys.
 	 */
-	for (i = so->numArrayKeys - 1; i >= 0; i--)
+	for (int i = so->numArrayKeys - 1; i >= 0; i--)
 	{
 		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
 		ScanKey		skey = &so->arrayKeyData[curArrayKey->scan_key];
@@ -595,18 +900,6 @@ _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
 		if (found)
 			break;
 	}
-
-	/* advance parallel scan */
-	if (scan->parallel_scan != NULL)
-		_bt_parallel_advance_array_keys(scan);
-
-	/*
-	 * When no new array keys were found, the scan is "past the end" of the
-	 * array keys.  _bt_start_array_keys can still "restart" the array keys if
-	 * a rescan is required.
-	 */
-	if (!found)
-		so->arraysStarted = false;
 
 	return found;
 }
@@ -661,13 +954,8 @@ _bt_restore_array_keys(IndexScanDesc scan)
 	 * If we changed any keys, we must redo _bt_preprocess_keys.  That might
 	 * sound like overkill, but in cases with multiple keys per index column
 	 * it seems necessary to do the full set of pushups.
-	 *
-	 * Also do this whenever the scan's set of array keys "wrapped around" at
-	 * the end of the last primitive index scan.  There won't have been a call
-	 * to _bt_preprocess_keys from some other place following wrap around, so
-	 * we do it for ourselves.
 	 */
-	if (changed || !so->arraysStarted)
+	if (changed)
 	{
 		_bt_preprocess_keys(scan);
 		/* The mark should have been set on a consistent set of keys... */
@@ -675,6 +963,621 @@ _bt_restore_array_keys(IndexScanDesc scan)
 	}
 }
 
+/*
+ * Routine to determine if a continuescan=false tuple (set that way by an
+ * initial call to _bt_check_compare) might need to advance the scan's array
+ * keys.
+ *
+ * Returns true when caller passes a tuple that is < the current set of array
+ * keys for the most significant non-equal column/scan key (or > for backwards
+ * scans).  This means that it cannot possibly be time to advance the array
+ * keys just yet.  _bt_checkkeys caller should suppress its _bt_check_compare
+ * call, and return -- the tuple is treated as not satisfy our indexquals.
+ *
+ * Returns false when caller's tuple is >= the current array keys (or <=, in
+ * the case of backwards scans).  This means that it is now time for our
+ * caller to advance the array keys to the next set (assuming that caller
+ * found that _bt_check_compare set continuescan=false before calling here).
+ *
+ * Note: advancing the array keys may be required when every attribute value
+ * from caller's tuple is equal to corresponding scan key/array datums.  See
+ * comments at the start of _bt_advance_array_keys for more.
+ */
+static bool
+_bt_tuple_before_array_skeys(IndexScanDesc scan, BTReadPageState *pstate,
+							 IndexTuple tuple)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	ScanDirection dir = pstate->dir;
+	TupleDesc	itupdesc = RelationGetDescr(rel);
+	bool		tuple_before_array_keys = false;
+	ScanKey		cur;
+	int			ntupatts = BTreeTupleGetNAtts(tuple, rel),
+				ikey;
+
+	Assert(so->numArrayKeys > 0);
+	Assert(so->numberOfKeys > 0);
+	Assert(!so->needPrimScan);
+
+	for (cur = so->keyData, ikey = 0; ikey < so->numberOfKeys; cur++, ikey++)
+	{
+		int			attnum = cur->sk_attno;
+		FmgrInfo   *orderproc;
+		Datum		datum;
+		bool		null,
+					skrequired;
+		int32		result;
+
+		/*
+		 * We only deal with equality strategy scan keys.  We leave handling
+		 * of inequalities up to _bt_check_compare.
+		 */
+		if (cur->sk_strategy != BTEqualStrategyNumber)
+			continue;
+
+		/*
+		 * Determine if this scan key is required.
+		 *
+		 * Equality strategy scan keys are either required in both directions
+		 * or neither direction, so the current scan direction doesn't need to
+		 * be tested here.
+		 */
+		skrequired = (cur->sk_flags & SK_BT_REQFWD);
+		Assert(!skrequired || (cur->sk_flags & SK_BT_REQBKWD));
+
+		/*
+		 * Unlike _bt_advance_array_keys, we never deal with any non-required
+		 * array keys.  Cases where skrequiredtrigger is set to false by
+		 * _bt_check_compare should never call here.  We are only called after
+		 * _bt_check_compare provisionally indicated that the scan should be
+		 * terminated due to a _required_ scan key not being satisfied.
+		 *
+		 * We expect _bt_check_compare to notice and report required scan keys
+		 * before non-required ones.  _bt_advance_array_keys might still have
+		 * to advance non-required array keys in passing for a tuple that we
+		 * were called for, but _bt_advance_array_keys doesn't rely on us to
+		 * give it advanced notice of that.
+		 */
+		if (!skrequired)
+			break;
+
+		if (attnum > ntupatts)
+		{
+			/*
+			 * When we reach a high key's truncated attribute, assume that the
+			 * tuple attribute's value is >= the scan's search-type scan keys
+			 */
+			break;
+		}
+
+		datum = index_getattr(tuple, attnum, itupdesc, &null);
+
+		orderproc = &so->orderProcs[attnum - 1];
+		result = _bt_compare_array_skey(cur, orderproc,
+										datum, null,
+										cur->sk_argument);
+
+		if (result != 0)
+		{
+			if (ScanDirectionIsForward(dir))
+				tuple_before_array_keys = result < 0;
+			else
+				tuple_before_array_keys = result > 0;
+
+			break;
+		}
+	}
+
+	return tuple_before_array_keys;
+}
+
+/*
+ * _bt_array_keys_remain() -- Start another primitive index scan?
+ *
+ * Returns true if _bt_checkkeys determined that another primitive index scan
+ * must take place by calling _bt_first.  Otherwise returns false, indicating
+ * that caller's top-level scan is now past the point where further matching
+ * index tuples can be found (for the current scan direction).
+ *
+ * Only call here during scans with one or more equality type array scan keys.
+ * All other scans should just call _bt_first once, no matter what.
+ *
+ * Top-level index scans executed via multiple primitive index scans must not
+ * fail to output index tuples in the usual order for the index -- just like
+ * any other index scan would.  The state machine that manages the scan's
+ * array keys must only start primitive index scans when they cover key space
+ * strictly greater than the key space for tuples that the scan has already
+ * returned (or strictly less in the backwards scan case).  Otherwise the scan
+ * could output the same index tuples more than once, or in the wrong order.
+ *
+ * This is managed by limiting the cases that can trigger new primitive index
+ * scans to those involving required array scan keys and/or other required
+ * scan keys that use the equality strategy.  In particular, the state machine
+ * must not allow high order required scan keys using an inequality strategy
+ * (which are only required in one scan direction) to directly trigger a new
+ * primitive index scan that advances low order non-required array scan keys.
+ * For example, a query such as "SELECT thousand, tenthous FROM tenk1 WHERE
+ * thousand < 2 AND tenthous IN (1001,3000) ORDER BY thousand" whose execution
+ * involves a scan of an index on "(thousand, tenthous)" must perform no more
+ * than a single primitive index scan.  Otherwise we risk outputting tuples in
+ * the wrong order.  Array key values for the non-required scan key on the
+ * "tenthous" column must not dictate top-level scan order.  Primitive index
+ * scans mustn't scan tuples already scanned by some earlier primitive scan.
+ *
+ * In fact, nbtree makes a stronger guarantee than is strictly necessary here:
+ * it guarantees that the top-level scan won't repeat any leaf page reads.
+ * (Actually, that can still happen when the scan is repositioned, or the scan
+ * direction changes -- but that's just as true with other types of scans.)
+ */
+bool
+_bt_array_keys_remain(IndexScanDesc scan, ScanDirection dir)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+
+	Assert(so->numArrayKeys);
+
+	/*
+	 * Array keys are advanced within _bt_checkkeys when the scan reaches the
+	 * leaf level (more precisely, they're advanced when the scan reaches the
+	 * end of each distinct set of array elements).  This process avoids
+	 * repeat access to leaf pages (across multiple primitive index scans) by
+	 * opportunistically advancing the scan's array keys when it allows the
+	 * primitive index scan to find nearby matching tuples (or to eliminate
+	 * array keys with no matching tuples from further consideration).
+	 *
+	 * _bt_checkkeys sets a simple flag variable that we check here.  This
+	 * tells us if we need to perform another primitive index scan for the
+	 * now-current array keys or not.  We'll unset the flag once again to
+	 * acknowledge having started a new primitive scan (or we'll see that it
+	 * isn't set and end the top-level scan right away).
+	 *
+	 * We cannot rely on _bt_first always reaching _bt_checkkeys here.  There
+	 * are various scenarios where that won't happen.  For example, if the
+	 * index is completely empty, then _bt_first won't get as far as calling
+	 * _bt_readpage/_bt_checkkeys.
+	 *
+	 * We also don't expect _bt_checkkeys to be reached when searching for a
+	 * non-existent value that happens to be higher than any existing value in
+	 * the index.  No _bt_checkkeys are expected when _bt_readpage reads the
+	 * rightmost page during such a scan -- even a _bt_checkkeys call against
+	 * the high key won't happen.  There is an analogous issue for backwards
+	 * scans that search for a value lower than all existing index tuples.
+	 *
+	 * We don't actually require special handling for these cases -- we don't
+	 * need to be explicitly instructed to _not_ perform another primitive
+	 * index scan.  This is correct for all of the cases we've listed so far,
+	 * which all involve primitive index scans that access pages "near the
+	 * boundaries of the key space" (the leftmost page, the rightmost page, or
+	 * an imaginary empty leaf root page).  If _bt_checkkeys cannot be reached
+	 * by a primitive index scan for one set of array keys, it follows that it
+	 * also won't be reached for any later set of array keys.
+	 *
+	 * There is one exception: the case where _bt_first's _bt_preprocess_keys
+	 * call determined that the scan's input scan keys can never be satisfied.
+	 * That might be true for one set of array keys, but not the next set.
+	 */
+	if (!so->qual_ok)
+	{
+		/*
+		 * Defensively check for interrupts -- the scan's next call to
+		 * _bt_first won't be able to do so if the next set of keys also turn
+		 * out to be unsatisfiable
+		 */
+		CHECK_FOR_INTERRUPTS();
+
+		/* Can't use _bt_advance_array_keys so use incremental advancement */
+		so->needPrimScan = false;
+		if (_bt_advance_array_keys_increment(scan, dir))
+			return true;
+	}
+
+	/* Time for another primitive index scan? */
+	if (so->needPrimScan)
+	{
+		/* Time for another call to _bt_first (for the current array keys) */
+		so->needPrimScan = false;
+		if (scan->parallel_scan != NULL)
+			_bt_parallel_next_primitive_scan(scan);
+
+		return true;
+	}
+
+	if (scan->parallel_scan != NULL)
+		_bt_parallel_done(scan);
+
+	/*
+	 * No more primitive index scans.  Terminate the top-level scan.
+	 */
+	return false;
+}
+
+/*
+ * _bt_advance_array_keys() -- Advance array elements using a tuple
+ *
+ * Returns true if all required equality-type scan keys (in particular, those
+ * that are array keys) now have exact matching values to those from tuple.
+ * Returns false when the tuple isn't an exact match in this sense.
+ *
+ * Sets pstate.continuescan for caller when we return false.  When we return
+ * true it's up to caller to call _bt_check_compare to recheck the tuple.  It
+ * is okay to let the second call set pstate.continuescan=false without
+ * further intervention, since we know that it can only be for a scan key that
+ * is required in one direction.
+ *
+ * When called with skrequiredtrigger, we don't expect to have to advance any
+ * non-required scan keys.  We'll always set pstate.continuescan because a
+ * non-required scan key can never terminate the scan.
+ *
+ * Required array keys are always advanced to the highest element >= the
+ * corresponding tuple attribute values for its most significant non-equal
+ * column (or the next lowest set <= the tuple value during backwards scans).
+ * If we reach the end of the array keys for the current scan direction, we
+ * end the top-level index scan.
+ *
+ * This function will always advance the array keys by at least one increment
+ * (except when it ends the top-level index scan having reached a tuple beyond
+ * the scan's final array key, and except during !skrequiredtrigger calls).
+ * _bt_tuple_before_array_skeys is responsible for determining if the current
+ * place in the scan is >= the current array keys (or <= during backward
+ * scans).  Calling here before that point will prematurely advance the array
+ * keys, leading to wrong query results.
+ *
+ * Note that we may sometimes need to advance the array keys in spite of the
+ * existing array keys already being an exact match for every corresponding
+ * value from caller's tuple.  We fall back on "incrementally" advancing the
+ * array keys in these cases, which all involve non-array scan keys.  For
+ * example, with a composite index on (a, b) and a qual "WHERE a IN (3,5) AND
+ * b < 42", we'll be called for both "a" keys (i.e. keys 3 and 5) when the
+ * scan reaches tuples where "b >= 42".  Even though "a" array keys continue
+ * to have exact matches for tuples "b >= 42" (for both array key groupings),
+ * we will still advance the array for "a" via our fallback on incremental
+ * advancement each time we're called.  The first time we're called (when the
+ * scan reaches a tuple >= "(3, 42)"), we advance the array key (from 3 to 5).
+ * This gives our caller the option of starting a new primitive index scan
+ * that quickly locates the start of tuples > "(5, -inf)".  The second time
+ * we're called (when the scan reaches a tuple >= "(5, 42)"), we incrementally
+ * advance the keys a second time.  This second call ends the top-level scan.
+ *
+ * Note also that we deal with all required equality-type scan keys here; it's
+ * not limited to array scan keys.  We need to handle non-array equality cases
+ * here because they're equality constraints for the scan, in the same way
+ * that array scan keys are.  We must not suppress cases where a call to
+ * _bt_check_compare sets continuescan=false for a required scan key that uses
+ * the equality strategy (only inequality-type scan keys get that treatment).
+ * We don't want to suppress the scan's termination when it's inappropriate.
+ */
+static bool
+_bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
+					   IndexTuple tuple, bool skrequiredtrigger)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	ScanDirection dir = pstate->dir;
+	TupleDesc	itupdesc = RelationGetDescr(rel);
+	ScanKey		cur;
+	int			ikey,
+				arrayidx = 0,
+				ntupatts = BTreeTupleGetNAtts(tuple, rel);
+	bool		arrays_advanced = false,
+				arrays_exhausted,
+				beyond_end_advance = false,
+				all_eqtype_sk_equal = true,
+				all_required_eqtype_sk_equal PG_USED_FOR_ASSERTS_ONLY = true;
+
+	/*
+	 * Must only be called when tuple is >= current required array keys
+	 * (except during backwards scans, when it must be <= the array keys)
+	 */
+	Assert(!skrequiredtrigger ||
+		   !_bt_tuple_before_array_skeys(scan, pstate, tuple));
+
+	/*
+	 * Try to advance array keys via a series of binary searches.
+	 *
+	 * Loop iterates through the current scankeys (so->keyData, which were
+	 * output by _bt_preprocess_keys earlier) and then sets input scan keys
+	 * (so->arrayKeyData scan keys) to new array values.
+	 */
+	for (cur = so->keyData, ikey = 0; ikey < so->numberOfKeys; cur++, ikey++)
+	{
+		BTArrayKeyInfo *array = NULL;
+		ScanKey		skeyarray = NULL;
+		FmgrInfo   *orderproc;
+		int			attnum = cur->sk_attno,
+					first_elem_dir,
+					final_elem_dir,
+					set_elem = 0;
+		Datum		datum;
+		bool		skrequired,
+					null;
+		int32		result;
+
+		/*
+		 * We only deal with equality strategy scan keys.  We leave handling
+		 * of inequalities up to _bt_check_compare.
+		 */
+		if (cur->sk_strategy != BTEqualStrategyNumber)
+			continue;
+
+		/*
+		 * Determine if this scan key is required.
+		 *
+		 * Equality strategy scan keys are either required in both directions
+		 * or neither direction, so the current scan direction doesn't need to
+		 * be tested here.
+		 */
+		skrequired = (cur->sk_flags & SK_BT_REQFWD);
+		Assert(!skrequired || (cur->sk_flags & SK_BT_REQBKWD));
+
+		/*
+		 * We need to check required non-array scan keys (that use the equal
+		 * strategy), as well as required and non-required array scan keys
+		 * (also limited to those that use the equal strategy, since array
+		 * inequalities degenerate into a simple comparison).
+		 *
+		 * Perform initial set up for this scan key.  If it is backed by an
+		 * array then we need to set variables describing the current position
+		 * in the array.
+		 */
+		orderproc = &so->orderProcs[attnum - 1];
+		first_elem_dir = final_elem_dir = 0;	/* keep compiler quiet */
+		if (cur->sk_flags & SK_SEARCHARRAY)
+		{
+			/* Set up array comparison function */
+			Assert(arrayidx < so->numArrayKeys);
+			array = &so->arrayKeys[arrayidx++];
+			skeyarray = &so->arrayKeyData[array->scan_key];
+			Assert(skeyarray->sk_attno == attnum);
+
+			if (ScanDirectionIsForward(dir))
+			{
+				first_elem_dir = 0;
+				final_elem_dir = array->num_elems - 1;
+			}
+			else
+			{
+				first_elem_dir = array->num_elems - 1;
+				final_elem_dir = 0;
+			}
+		}
+
+		/*
+		 * Here we perform steps for all array scan keys after a required
+		 * array scan key whose binary search triggered "beyond end of array
+		 * element" array advancement.
+		 *
+		 * NB: We must do this for all arrays, not just required arrays.
+		 * Otherwise the final incremental array advancement step (that takes
+		 * place just outside the loop) won't "carry" in the way we expect.
+		 */
+		if (beyond_end_advance)
+		{
+			Assert(skrequiredtrigger);
+			Assert(!all_eqtype_sk_equal && !all_required_eqtype_sk_equal);
+
+			if (array && array->cur_elem != final_elem_dir)
+			{
+				array->cur_elem = final_elem_dir;
+				skeyarray->sk_argument = array->elem_values[final_elem_dir];
+				arrays_advanced = true;
+			}
+
+			continue;
+		}
+
+		/*
+		 * Here we perform steps for any required scan keys after the first
+		 * non-equal required scan key.  The first scan key must have been set
+		 * to a value > the value from the tuple back when we dealt with it
+		 * (or, for a backwards scan, to a value < the value from the tuple).
+		 * That needs to cascade to lower-order array scan keys.  They must be
+		 * set to the first array element for the current scan direction.
+		 *
+		 * We're still setting the keys to values >= the tuple here -- it just
+		 * needs to work for the tuple as a whole.  For example, when a tuple
+		 * "(a, b) = (42, 5)" advances the array keys on "a" from 40 to 45, we
+		 * must also set "b" to whatever the first array element for "b" is.
+		 * It would be wrong to allow "b" to be set to a value from the tuple,
+		 * since the value is actually from a different part of the key space.
+		 *
+		 * Also perform the same steps with truncated high key attributes in
+		 * order to find the closest >= match to the attribute while treating
+		 * the attribute as if it had the value -inf.  (This has nothing to do
+		 * with making advancement cascade across attributes.  You can think
+		 * of it as a "binary search" for the array key closest to -inf.)
+		 */
+		if ((arrays_advanced && !all_eqtype_sk_equal) || attnum > ntupatts)
+		{
+			/* Just skip if triggered by a non-required scan key */
+			if (!skrequiredtrigger)
+				break;
+
+			if (array && array->cur_elem != first_elem_dir)
+			{
+				array->cur_elem = first_elem_dir;
+				skeyarray->sk_argument = array->elem_values[first_elem_dir];
+				arrays_advanced = true;
+			}
+
+			continue;
+		}
+
+		/*
+		 * Search in scankey's array for the corresponding tuple attribute
+		 * value from caller's tuple
+		 */
+		datum = index_getattr(tuple, attnum, itupdesc, &null);
+
+		if (!array)
+		{
+			if (!skrequired)
+				continue;
+
+			/*
+			 * This is a required non-array eqaulity strategy scan key, which
+			 * we'll treat as a degenerate single value array
+			 */
+			result = _bt_compare_array_skey(cur, orderproc, datum, null,
+											cur->sk_argument);
+		}
+		else
+		{
+			/*
+			 * Binary search for an array key >= the tuple value, which we'll
+			 * then set as our current array key (or <= the tuple value if
+			 * this is a backward scan)
+			 */
+			set_elem = _bt_binsrch_array_skey(dir,
+											  (skrequired && !arrays_advanced),
+											  array, cur, orderproc, datum,
+											  null, &result);
+		}
+
+		/* Consider advancing array keys */
+		Assert(!array || set_elem >= 0 && set_elem < array->num_elems);
+		if (array && array->cur_elem != set_elem)
+		{
+			array->cur_elem = set_elem;
+			skeyarray->sk_argument = array->elem_values[set_elem];
+			arrays_advanced = true;
+
+			/*
+			 * We shouldn't have to advance a required array when called due
+			 * to _bt_check_compare determining that a non-required array
+			 * needs to be advanced.  We expect _bt_check_compare to notice
+			 * and report required scan keys before non-required ones.
+			 */
+			Assert(skrequiredtrigger || !skrequired);
+		}
+
+		/*
+		 * Track whether all attributes from the tuple are equal to the array
+		 * keys that we'll be advancing to (or to existing array keys that
+		 * didn't need to be advanced)
+		 */
+		if (result != 0)
+		{
+			all_eqtype_sk_equal = false;
+			if (skrequired)
+				all_required_eqtype_sk_equal = false;
+		}
+
+		/*
+		 * Consider "beyond end of array element" array advancement.
+		 *
+		 * When the tuple attribute value is > the closest matching array key
+		 * (or < in the backwards scan case), we need to ratchet the array
+		 * forward (backward) by one position, so that the array is set to a
+		 * value < the tuple attribute value instead (or to a value > the
+		 * tuple value in the backwards scan case).
+		 *
+		 * This process has to work for all of the arrays, not just this one:
+		 * it must "carry" to higher-order arrays when the set_elem that we
+		 * just used for this array happens to have been the final element
+		 * (final for the current scan direction).  That's why we don't handle
+		 * this issue by modifying this array's set_elem (that won't "carry").
+		 *
+		 * Our approach is to set each subsequent lower-order array to its
+		 * final element.  We'll then advance the array keys incrementally,
+		 * just outside the loop.  That way earlier/higher order arrays will
+		 * advance as required, up to including the most significant array.
+		 * It's even possible that the most significant array will be
+		 * exhausted at that point, which means that all the array keys are
+		 * exhausted, ending the top-level scan.
+		 */
+		Assert(!beyond_end_advance);
+		if (skrequired &&
+			((ScanDirectionIsForward(dir) && result > 0) ||
+			 (ScanDirectionIsBackward(dir) && result < 0)))
+			beyond_end_advance = true;
+	}
+
+	/*
+	 * Consider if we need to advance the array keys incrementally to finish
+	 * off "beyond end of array element" array advancement.
+	 *
+	 * Also fall back on incremental advancement in cases where we couldn't
+	 * advance the array keys any other way.  See header comments for an
+	 * example of this, where inequality-type scan keys alone drive array key
+	 * advancement.  (We don't directly deal with inequality type scan keys
+	 * here, but cases that use the fallback must involve inequalities.)
+	 */
+	arrays_exhausted = false;
+	if ((beyond_end_advance || !arrays_advanced) && skrequiredtrigger)
+	{
+		/* Fallback case must have all-equal equality type scan keys */
+		Assert(beyond_end_advance || all_required_eqtype_sk_equal);
+
+		if (!_bt_advance_array_keys_increment(scan, dir))
+			arrays_exhausted = true;
+		else
+			arrays_advanced = true;
+
+		/*
+		 * The newly advanced array keys won't be equal anymore, so remember
+		 * that in order to avoid a second _bt_check_compare call for tuple
+		 */
+		all_eqtype_sk_equal = all_required_eqtype_sk_equal = false;
+	}
+
+	Assert(arrays_exhausted || arrays_advanced || !skrequiredtrigger);
+
+	/*
+	 * If we haven't yet exhausted all required array scan keys, make the
+	 * primitive index scan continue.
+	 *
+	 * In general top-level index scans are terminated when a local primitive
+	 * index scan terminates (by setting pstate.continuescan=false) _without_
+	 * also indicating that another primitive index scan must take place
+	 * (setting so.needPrimScan=true primes _bt_array_keys_remain to launch
+	 * another primitive scan by calling _bt_first).  Though we never ask for
+	 * another primitive index scan (we don't set so.needPrimScan), we are
+	 * responsible for ending the top-level scan by applying information about
+	 * our progress with processing the scan's array keys.
+	 */
+	pstate->continuescan = !arrays_exhausted;
+
+	if (pstate->continuescan && arrays_advanced)
+	{
+		/*
+		 * We advanced the array keys, and have established that the ongoing
+		 * primitive index scan will continue.
+		 *
+		 * We must now perform a targeted form of in-place preprocessing of
+		 * the scan's search-type scan keys.  This completes the process of
+		 * advancing the array keys (if we skipped this final step then any
+		 * call to _bt_check_compare would use stale array keys until such
+		 * time as _bt_preprocess_keys was once again called by _bt_first).
+		 */
+		_bt_preprocess_keys_leafbuf(scan);
+
+		/*
+		 * If any required array keys were advanced, be prepared to recheck
+		 * the page high key against the new array keys (as an optimization)
+		 */
+		if (skrequiredtrigger)
+			pstate->highkeychecked = false;
+	}
+
+	/* Cannot set continuescan=false when called for non-required array */
+	Assert(pstate->continuescan || skrequiredtrigger);
+
+	/*
+	 * Tuple must now be <= current/newly advanced required array keys.  We're
+	 * stricter than that in cases where the tuple was already equal to the
+	 * previous array keys when we were called: tuple must now be < required
+	 * array keys there.
+	 *
+	 * (As usual the rule is the same for backwards scans, except that the
+	 * operators are flipped: tuple should be either >= or > the new array
+	 * keys, according to the same condition used for the forward scan case.)
+	 */
+	Assert(arrays_exhausted || all_required_eqtype_sk_equal ||
+		   _bt_tuple_before_array_skeys(scan, pstate, tuple));
+
+	return all_eqtype_sk_equal && pstate->continuescan;
+}
 
 /*
  *	_bt_preprocess_keys() -- Preprocess scan keys
@@ -748,6 +1651,21 @@ _bt_restore_array_keys(IndexScanDesc scan)
  * (In this case we do not bother completing the output key array!)
  * Again, missing cross-type operators might cause us to fail to prove the
  * quals contradictory when they really are, but the scan will work correctly.
+ *
+ * Index scans with array keys need to be able to advance each array's keys
+ * and make them the current search-type scan keys without calling here.  They
+ * expect to be able to call _bt_preprocess_keys_leafbuf instead (a stripped
+ * down version of this function that's specialized to array key index scans).
+ * We need to be careful about that case here when we determine redundancy;
+ * equality quals must not be eliminated as redundant on the basis of array
+ * input keys that might change before another call here takes place.
+ *
+ * Note, however, that the presence of an array scan key doesn't affect how we
+ * determine if index quals are contradictory.  Contradictory qual scans move
+ * on to the next primitive index scan right away, by incrementing the scan's
+ * array keys once control reaches _bt_array_keys_remain.  There won't ever be
+ * a call to _bt_preprocess_keys_leafbuf before the next call here, so there
+ * is nothing for us to break.
  *
  * Row comparison keys are currently also treated without any smarts:
  * we just transfer them into the preprocessed array without any
@@ -895,8 +1813,11 @@ _bt_preprocess_keys(IndexScanDesc scan)
 							so->qual_ok = false;
 							return;
 						}
-						/* else discard the redundant non-equality key */
-						xform[j] = NULL;
+						else if (!(eq->sk_flags & SK_SEARCHARRAY))
+						{
+							/* else discard the redundant non-equality key */
+							xform[j] = NULL;
+						}
 					}
 					/* else, cannot determine redundancy, keep both keys */
 				}
@@ -986,6 +1907,15 @@ _bt_preprocess_keys(IndexScanDesc scan)
 			continue;
 		}
 
+		if (cur->sk_flags & SK_UNARY)
+		{
+			/*
+			 * _bt_preprocess_array_keys merged this with some other array key
+			 * already.  It's redundant to us.
+			 */
+			continue;
+		}
+
 		/* have we seen one of these before? */
 		if (xform[j] == NULL)
 		{
@@ -999,7 +1929,26 @@ _bt_preprocess_keys(IndexScanDesc scan)
 										 &test_result))
 			{
 				if (test_result)
-					xform[j] = cur;
+				{
+					if (j == (BTEqualStrategyNumber - 1) &&
+						((xform[j]->sk_flags & SK_SEARCHARRAY) ||
+						 (cur->sk_flags & SK_SEARCHARRAY)))
+					{
+						/*
+						 * Must never replace an = array operator ourselves,
+						 * nor can we ever fail to remember an = array
+						 * operator.  _bt_preprocess_keys_leafbuf expects
+						 * this.
+						 */
+						ScanKey		outkey = &outkeys[new_numberOfKeys++];
+
+						memcpy(outkey, cur, sizeof(ScanKeyData));
+						if (numberOfEqualCols == attno - 1)
+							_bt_mark_scankey_required(outkey);
+					}
+					else
+						xform[j] = cur;
+				}
 				else if (j == (BTEqualStrategyNumber - 1))
 				{
 					/* key == a && key == b, but a != b */
@@ -1025,6 +1974,52 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	}
 
 	so->numberOfKeys = new_numberOfKeys;
+}
+
+/*
+ *	_bt_preprocess_keys_leafbuf() -- Preprocess array scan keys only
+ *
+ * Stripped down version of _bt_preprocess_keys that can be called with a
+ * buffer lock held.  Reuses much of the work performed during the previous
+ * _bt_preprocess_keys call.
+ *
+ * This function just transfers newly advanced array keys that were set in
+ * "so->arrayKeyData" to corresponding "so->keyData" search-type scan keys.
+ * It does not independently detect redunant or contradictory scan keys.  This
+ * makes little difference in practice -- we rely on _bt_preprocess_keys calls
+ * from _bt_first to get most of the available benefit.
+ */
+static void
+_bt_preprocess_keys_leafbuf(IndexScanDesc scan)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	ScanKey		cur;
+	int			ikey,
+				arrayidx = 0;
+
+	Assert(so->qual_ok);
+
+	for (cur = so->keyData, ikey = 0; ikey < so->numberOfKeys; cur++, ikey++)
+	{
+		BTArrayKeyInfo *array;
+		ScanKey		skeyarray;
+
+		/* Just update equality array scan keys */
+		if (cur->sk_strategy != BTEqualStrategyNumber ||
+			!(cur->sk_flags & SK_SEARCHARRAY))
+			continue;
+
+		array = &so->arrayKeys[arrayidx++];
+		skeyarray = &so->arrayKeyData[array->scan_key];
+
+		/*
+		 * Update the scan key's argument, but nothing more
+		 */
+		Assert(cur->sk_attno == skeyarray->sk_attno);
+		cur->sk_argument = skeyarray->sk_argument;
+	}
+
+	Assert(arrayidx == so->numArrayKeys);
 }
 
 /*
@@ -1360,41 +2355,205 @@ _bt_mark_scankey_required(ScanKey skey)
  *
  * Return true if so, false if not.  If the tuple fails to pass the qual,
  * we also determine whether there's any need to continue the scan beyond
- * this tuple, and set *continuescan accordingly.  See comments for
+ * this tuple, and set pstate.continuescan accordingly.  See comments for
  * _bt_preprocess_keys(), above, about how this is done.
  *
- * Forward scan callers can pass a high key tuple in the hopes of having
- * us set *continuescan to false, and avoiding an unnecessary visit to
- * the page to the right.
+ * Forward scan callers can pass a high key tuple in the hopes of having us
+ * set pstate.continuescan to false, and avoiding an unnecessary visit to the
+ * page to the right.
+ *
+ * Forwards scan callers with equality type array scan keys are obligated to
+ * set up page state in a way that makes it possible for us to check the high
+ * key early, before we've expended too much effort on comparing tuples that
+ * cannot possibly be matches for any set of array keys.  This is just an
+ * optimization.
+ *
+ * Advances the current set of array keys for SK_SEARCHARRAY scans where
+ * appropriate.  These callers are required to initialize the page level high
+ * key in pstate before the first call here for the page (when the scan
+ * direction is forwards).  Note that we rely on _bt_readpage calling here in
+ * page offset number order (for its scan direction).  Any other order will
+ * lead to inconsistent array key state.
  *
  * scan: index scan descriptor (containing a search-type scankey)
+ * pstate: Page level input and output parameters
  * tuple: index tuple to test
- * tupnatts: number of attributes in tupnatts (high key may be truncated)
- * dir: direction we are scanning in
- * continuescan: output parameter (will be set correctly in all cases)
+ * finaltup: Is tuple the final one we'll be called with for this page?
  * requiredMatchedByPrecheck: indicates that scan keys required for
  * 							  direction scan are already matched
  */
 bool
-_bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
-			  ScanDirection dir, bool *continuescan,
+_bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate,
+			  IndexTuple tuple, bool finaltup,
 			  bool requiredMatchedByPrecheck)
 {
-	TupleDesc	tupdesc;
-	BTScanOpaque so;
-	int			keysz;
+	TupleDesc	tupdesc = RelationGetDescr(scan->indexRelation);
+	int			natts = BTreeTupleGetNAtts(tuple, scan->indexRelation);
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	bool		res;
+	bool		skrequiredtrigger;
+
+	Assert(pstate->continuescan);
+	Assert(!so->needPrimScan);
+
+	res = _bt_check_compare(pstate->dir, so, tuple, natts, tupdesc,
+							&pstate->continuescan, &skrequiredtrigger,
+							requiredMatchedByPrecheck);
+
+	/*
+	 * Only one _bt_check_compare call is required in the common case where
+	 * there are no equality-type array scan keys.
+	 *
+	 * When there are array scan keys then we can still accept the first
+	 * answer we get from _bt_check_compare when continuescan wasn't unset.
+	 */
+	if (!so->numArrayKeys || pstate->continuescan)
+		return res;
+
+	/*
+	 * _bt_check_compare set continuescan=false in the presence of equality
+	 * type array keys.  It's possible that we haven't reached the start of
+	 * the array keys just yet.  It's also possible that we need to advance
+	 * the array keys now.  (Or perhaps we really do need to terminate the
+	 * top-level scan.)
+	 */
+	pstate->continuescan = true;	/* new initial assumption */
+
+	if (skrequiredtrigger && _bt_tuple_before_array_skeys(scan, pstate, tuple))
+	{
+		/*
+		 * Tuple is still < the current array scan key values (as well as
+		 * other equality type scan keys) if this is a forward scan.
+		 * (Backwards scans reach here with a tuple > equality constraints.)
+		 * We must now consider how to proceed with the ongoing primitive
+		 * index scan.
+		 *
+		 * Should _bt_readpage continue with this page for now, in the hope of
+		 * finding tuples whose key space is covered by the current array keys
+		 * before too long?  Or, should it give up and start a new primitive
+		 * index scan instead?
+		 *
+		 * Our policy is to terminate the primitive index scan at the end of
+		 * the current page if the current (most recently advanced) array keys
+		 * don't cover the final tuple from the page.  This policy is fairly
+		 * conservative overall.  Note, however, that our policy effectively
+		 * infers what the next sibling page is likely to look like based on
+		 * details from the current page (in particular its final tuple).
+		 *
+		 * It's possible that we'll gamble and lose: a grouping of tuples
+		 * covered by the current array keys could be aligned with the key
+		 * space boundaries of the current leaf page, without any later array
+		 * keys having key space that is covered by the next sibling page.
+		 */
+		if (finaltup || (!pstate->highkeychecked && pstate->highkey &&
+						 _bt_tuple_before_array_skeys(scan, pstate,
+													  pstate->highkey)))
+		{
+			/*
+			 * This is the final tuple (the high key for forward scans, or the
+			 * tuple at the first offset number for backward scans), but it is
+			 * still before the current array keys.  As such, we're unwilling
+			 * to allow the current primitive index scan to continue to the
+			 * next leaf page.  Start a new primitive index scan that will
+			 * reposition the top-level scan to the first leaf page whose key
+			 * space is covered by our _current_ array keys.  We expect that
+			 * this process will effectively make the scan "skip over" a group
+			 * of leaf pages that cannot possibly contain any matching tuples.
+			 *
+			 * Note: _bt_readpage stashes the page high key, which allows us
+			 * to make this check early (for forward scans).  We thereby avoid
+			 * scanning very many extra tuples on the page.  This is just an
+			 * optimization; skipping these useless comparisons should never
+			 * change our final conclusion about what the scan should do next.
+			 */
+			pstate->continuescan = false;
+			so->needPrimScan = true;
+		}
+		else if (!finaltup && pstate->highkey)
+		{
+			/*
+			 * Remember that the high key has been checked with this
+			 * particular set of array keys.
+			 *
+			 * It might make sense to check the same high key again at some
+			 * point during the ongoing _bt_readpage-wise scan of this page.
+			 * But it is definitely wasteful to repeat the same high key check
+			 * before the array keys are advanced by some later tuple.
+			 */
+			pstate->highkeychecked = true;
+		}
+
+		/*
+		 * In any case, this indextuple doesn't match the qual
+		 */
+		return false;
+	}
+
+	/*
+	 * Caller's tuple is >= the current set of array keys and other equality
+	 * constraint scan keys (or <= if this is a backwards scans).
+	 *
+	 * It might be time to advance the array keys to the next set.  Try doing
+	 * that now, while determining in passing if the tuple matches the newly
+	 * advanced set of array keys (if we've any left).
+	 *
+	 * This call will also set continuescan for us (or tells us to perform
+	 * another _bt_check_compare call, which then sets continuescan for us).
+	 */
+	if (!_bt_advance_array_keys(scan, pstate, tuple, skrequiredtrigger))
+	{
+		/*
+		 * Tuple doesn't match any later array keys, either.  Give up on this
+		 * tuple being a match.  (Call may have also terminated the top-level
+		 * scan.)
+		 */
+		return false;
+	}
+
+	/*
+	 * Advanced array keys to values that are exact matches for corresponding
+	 * attribute values from the tuple.
+	 *
+	 * It's fairly likely that the tuple satisfies all index scan conditions
+	 * at this point, but we need confirmation of that.  We also need to give
+	 * _bt_check_compare a real opportunity to end the top-level index scan by
+	 * setting continuescan=false.  (_bt_advance_array_keys cannot deal with
+	 * inequality strategy scan keys; we need _bt_check_compare for those.)
+	 */
+	return _bt_check_compare(pstate->dir, so, tuple, natts, tupdesc,
+							 &pstate->continuescan, &skrequiredtrigger,
+							 false);
+}
+
+/*
+ * Test whether an indextuple satisfies current scan condition.
+ *
+ * Return true if so, false if not.  If not, also clear *continuescan if
+ * it's not possible for any future tuples in the current scan direction to
+ * pass the qual with the current set of array keys.
+ *
+ * This is a subroutine for _bt_checkkeys.  It is written with the assumption
+ * that reaching the end of each distinct set of array keys terminates the
+ * ongoing primitive index scan.  It is up to our caller (that has more
+ * context than we have available here) to override that initial determination
+ * when it makes more sense to advance the array keys and continue with
+ * further tuples from the same leaf page.
+ */
+static bool
+_bt_check_compare(ScanDirection dir, BTScanOpaque so,
+				  IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
+				  bool *continuescan, bool *skrequiredtrigger,
+				  bool requiredMatchedByPrecheck)
+{
 	int			ikey;
 	ScanKey		key;
 
-	Assert(BTreeTupleGetNAtts(tuple, scan->indexRelation) == tupnatts);
+	Assert(!so->numArrayKeys || !requiredMatchedByPrecheck);
 
 	*continuescan = true;		/* default assumption */
+	*skrequiredtrigger = true;	/* default assumption */
 
-	tupdesc = RelationGetDescr(scan->indexRelation);
-	so = (BTScanOpaque) scan->opaque;
-	keysz = so->numberOfKeys;
-
-	for (key = so->keyData, ikey = 0; ikey < keysz; key++, ikey++)
+	for (key = so->keyData, ikey = 0; ikey < so->numberOfKeys; key++, ikey++)
 	{
 		Datum		datum;
 		bool		isNull;
@@ -1526,7 +2685,7 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
 		 * _bt_first() except for the NULLs checking, which have already done
 		 * above.
 		 */
-		if (!requiredOppositeDir)
+		if (!requiredOppositeDir || so->numArrayKeys)
 		{
 			test = FunctionCall2Coll(&key->sk_func, key->sk_collation,
 									 datum, key->sk_argument);
@@ -1549,9 +2708,21 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
 			 * qual fails, it is critical that equality quals be used for the
 			 * initial positioning in _bt_first() when they are available. See
 			 * comments in _bt_first().
+			 *
+			 * Scans with equality-type array scan keys run into a similar
+			 * problem whenever they advance the array keys.  Our caller uses
+			 * _bt_tuple_before_array_skeys to avoid the problem there.
 			 */
 			if (requiredSameDir)
 				*continuescan = false;
+
+			if ((key->sk_flags & SK_SEARCHARRAY) &&
+				key->sk_strategy == BTEqualStrategyNumber)
+			{
+				if (!requiredSameDir)
+					*skrequiredtrigger = false;
+				*continuescan = false;
+			}
 
 			/*
 			 * In any case, this indextuple doesn't match the qual.
@@ -1571,7 +2742,7 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
  * it's not possible for any future tuples in the current scan direction
  * to pass the qual.
  *
- * This is a subroutine for _bt_checkkeys, which see for more info.
+ * This is a subroutine for _bt_checkkeys/_bt_check_compare.
  */
 static bool
 _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
