@@ -274,7 +274,8 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 		if (res)
 			break;
 		/* ... otherwise see if we have more array keys to deal with */
-	} while (so->numArrayKeys && _bt_advance_array_keys(scan, dir));
+	} while (so->numArrayKeys && !so->arrayKeysDone &&
+			 _bt_advance_array_keys(scan, dir));
 
 	return res;
 }
@@ -332,7 +333,8 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 			}
 		}
 		/* Now see if we have more array keys to deal with */
-	} while (so->numArrayKeys && _bt_advance_array_keys(scan, ForwardScanDirection));
+	} while (so->numArrayKeys && !so->arrayKeysDone &&
+			 _bt_advance_array_keys(scan, ForwardScanDirection));
 
 	return ntids;
 }
@@ -363,7 +365,11 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 
 	so->arrayKeyData = NULL;	/* assume no array keys for now */
 	so->numArrayKeys = 0;
+	so->arrayKeyCount = 0;
+	so->arrayKeysDone = false;
 	so->arrayKeys = NULL;
+	so->disableDynamic = false;
+	so->arrayHkey = BT_HIGHKEY_NOT_CHECKED;
 	so->arrayContext = NULL;
 
 	so->killedItems = NULL;		/* until needed */
@@ -404,6 +410,8 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 
 	so->markItemIndex = -1;
 	so->arrayKeyCount = 0;
+	so->arrayKeysDone = false;
+	so->arrayHkey = BT_HIGHKEY_NOT_CHECKED;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
 
@@ -751,20 +759,17 @@ _bt_parallel_done(IndexScanDesc scan)
  * _bt_parallel_advance_array_keys() -- Advances the parallel scan for array
  *			keys.
  *
- * Updates the count of array keys processed for both local and parallel
- * scans.
+ * Updates the count of array keys processed in shared memory.
  */
 void
 _bt_parallel_advance_array_keys(IndexScanDesc scan)
 {
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
 
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
 
-	so->arrayKeyCount++;
 	SpinLockAcquire(&btscan->btps_mutex);
 	if (btscan->btps_pageStatus == BTPARALLEL_DONE)
 	{

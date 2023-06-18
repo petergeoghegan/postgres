@@ -1034,6 +1034,13 @@ typedef struct BTArrayKeyInfo
 	Datum	   *elem_values;	/* array of num_elems Datums */
 } BTArrayKeyInfo;
 
+typedef enum BTHighKeyInfo
+{
+	BT_HIGHKEY_NOT_CHECKED = 0,
+	BT_HIGHKEY_LESS,
+	BT_HIGHKEY_GREATER
+} BTHighKeyInfo;
+
 typedef struct BTScanOpaqueData
 {
 	/* these fields are set by _bt_preprocess_keys(): */
@@ -1047,7 +1054,11 @@ typedef struct BTScanOpaqueData
 								 * there are any unsatisfiable array keys) */
 	int			arrayKeyCount;	/* count indicating number of array scan keys
 								 * processed */
+	bool		arrayKeysDone;	/* all array keys processed yet? */
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
+	bool		disableDynamic; /* disables dynamically advancing array keys */
+	BTScanInsertData inskey;	/* insertion scan key for merge optimization */
+	BTHighKeyInfo	arrayHkey;
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
 
 	/* info about killed items if any (killedItems is NULL if never used) */
@@ -1120,6 +1131,9 @@ typedef struct BTOptions
 #define PROGRESS_BTREE_PHASE_PERFORMSORT_1				3
 #define PROGRESS_BTREE_PHASE_PERFORMSORT_2				4
 #define PROGRESS_BTREE_PHASE_LEAF_LOAD					5
+
+/* GUC parameter */
+extern PGDLLIMPORT bool enable_saop_optimization;
 
 /*
  * external entry points for btree, in nbtree.c
@@ -1248,13 +1262,18 @@ extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
 extern BTScanInsert _bt_mkscankey(Relation rel, IndexTuple itup);
 extern void _bt_freestack(BTStack stack);
 extern void _bt_preprocess_array_keys(IndexScanDesc scan);
+extern void _bt_check_dynamic_array_key_advancement(IndexScanDesc scan,
+													ScanDirection dir,
+													BTScanInsert inskey);
 extern void _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir);
 extern void _bt_mark_array_keys(IndexScanDesc scan);
 extern void _bt_restore_array_keys(IndexScanDesc scan);
 extern void _bt_preprocess_keys(IndexScanDesc scan);
 extern bool _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple,
-						  int tupnatts, ScanDirection dir, bool *continuescan);
+						  int tupnatts, ScanDirection dir, bool *continuescan,
+						  IndexTuple highkey);
+extern bool _bt_nocheckkeys(IndexScanDesc scan, ScanDirection dir);
 extern void _bt_killitems(IndexScanDesc scan);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);

@@ -28,6 +28,7 @@
 
 #include "access/commit_ts.h"
 #include "access/gin.h"
+#include "access/nbtree.h"
 #include "access/toast_compression.h"
 #include "access/twophase.h"
 #include "access/xlog_internal.h"
@@ -1364,6 +1365,15 @@ struct config_bool ConfigureNamesBool[] =
 		&log_statement_stats,
 		false,
 		check_log_stats, NULL, NULL
+	},
+	{
+		{"enable_saop_optimization", PGC_USERSET, DEVELOPER_OPTIONS,
+			NULL, NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&enable_saop_optimization,
+		true,
+		NULL, NULL, NULL
 	},
 #ifdef BTREE_BUILD_STATS
 	{

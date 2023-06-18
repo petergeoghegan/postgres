@@ -107,7 +107,7 @@ static List *build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 							   bool useful_predicate,
 							   ScanTypeControl scantype,
 							   bool *skip_nonnative_saop,
-							   bool *skip_lower_saop);
+							   bool *skip_unordered_saop);
 static List *build_paths_for_OR(PlannerInfo *root, RelOptInfo *rel,
 								List *clauses, List *other_clauses);
 static List *generate_bitmap_or_paths(PlannerInfo *root, RelOptInfo *rel,
@@ -706,8 +706,8 @@ eclass_already_used(EquivalenceClass *parent_ec, Relids oldrelids,
  * index AM supports them natively, we should just include them in simple
  * index paths.  If not, we should exclude them while building simple index
  * paths, and then make a separate attempt to include them in bitmap paths.
- * Furthermore, we should consider excluding lower-order ScalarArrayOpExpr
- * quals so as to create ordered paths.
+ * Furthermore, we should consider excluding ScalarArrayOpExpr quals whose
+ * inclusion would force the path as a whole to be unordered.
  */
 static void
 get_index_paths(PlannerInfo *root, RelOptInfo *rel,
@@ -716,28 +716,28 @@ get_index_paths(PlannerInfo *root, RelOptInfo *rel,
 {
 	List	   *indexpaths;
 	bool		skip_nonnative_saop = false;
-	bool		skip_lower_saop = false;
+	bool		skip_unordered_saop = false;
 	ListCell   *lc;
 
 	/*
 	 * Build simple index paths using the clauses.  Allow ScalarArrayOpExpr
 	 * clauses only if the index AM supports them natively, and skip any such
-	 * clauses for index columns after the first (so that we produce ordered
-	 * paths if possible).
+	 * clauses for index columns whose inclusion would make it impossible to
+	 * produce ordered paths.
 	 */
 	indexpaths = build_index_paths(root, rel,
 								   index, clauses,
 								   index->predOK,
 								   ST_ANYSCAN,
 								   &skip_nonnative_saop,
-								   &skip_lower_saop);
+								   &skip_unordered_saop);
 
 	/*
-	 * If we skipped any lower-order ScalarArrayOpExprs on an index with an AM
-	 * that supports them, then try again including those clauses.  This will
-	 * produce paths with more selectivity but no ordering.
+	 * If we skipped any ScalarArrayOpExprs without ordered paths on an index
+	 * with an AM that supports them, then try again including those clauses.
+	 * This will produce paths with more selectivity.
 	 */
-	if (skip_lower_saop)
+	if (skip_unordered_saop)
 	{
 		indexpaths = list_concat(indexpaths,
 								 build_index_paths(root, rel,
@@ -817,11 +817,9 @@ get_index_paths(PlannerInfo *root, RelOptInfo *rel,
  * to true if we found any such clauses (caller must initialize the variable
  * to false).  If it's NULL, we do not ignore ScalarArrayOpExpr clauses.
  *
- * If skip_lower_saop is non-NULL, we ignore ScalarArrayOpExpr clauses for
- * non-first index columns, and we set *skip_lower_saop to true if we found
- * any such clauses (caller must initialize the variable to false).  If it's
- * NULL, we do not ignore non-first ScalarArrayOpExpr clauses, but they will
- * result in considering the scan's output to be unordered.
+ * If skip_unordered_saop is non-NULL, we ignore ScalarArrayOpExpr clauses If
+ * whose inclusion forces us to treat the scan's output as unordered.  If it's
+ * NULL we allow this to produce paths with greater selectivity.
  *
  * 'rel' is the index's heap relation
  * 'index' is the index for which we want to generate paths
@@ -829,7 +827,7 @@ get_index_paths(PlannerInfo *root, RelOptInfo *rel,
  * 'useful_predicate' indicates whether the index has a useful predicate
  * 'scantype' indicates whether we need plain or bitmap scan support
  * 'skip_nonnative_saop' indicates whether to accept SAOP if index AM doesn't
- * 'skip_lower_saop' indicates whether to accept non-first-column SAOP
+ * 'skip_unordered_saop' indicates whether to accept unordered SOAPs
  */
 static List *
 build_index_paths(PlannerInfo *root, RelOptInfo *rel,
@@ -837,7 +835,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 				  bool useful_predicate,
 				  ScanTypeControl scantype,
 				  bool *skip_nonnative_saop,
-				  bool *skip_lower_saop)
+				  bool *skip_unordered_saop)
 {
 	List	   *result = NIL;
 	IndexPath  *ipath;
@@ -848,7 +846,8 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	List	   *orderbyclausecols;
 	List	   *index_pathkeys;
 	List	   *useful_pathkeys;
-	bool		found_lower_saop_clause;
+	bool		has_higher_inequality_clause;
+	bool		saop_invalidates_ordering;
 	bool		pathkeys_possibly_useful;
 	bool		index_is_ordered;
 	bool		index_only_scan;
@@ -880,19 +879,18 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	 * on by btree and possibly other places.)  The list can be empty, if the
 	 * index AM allows that.
 	 *
-	 * found_lower_saop_clause is set true if we accept a ScalarArrayOpExpr
-	 * index clause for a non-first index column.  This prevents us from
-	 * assuming that the scan result is ordered.  (Actually, the result is
-	 * still ordered if there are equality constraints for all earlier
-	 * columns, but it seems too expensive and non-modular for this code to be
-	 * aware of that refinement.)
+	 * saop_invalidates_ordering is set true if we accept a ScalarArrayOpExpr
+	 * index clause that invalidates the sort order.  In practice this is
+	 * always due to the presence of a non-first index column.  This prevents
+	 * us from assuming that the scan result is ordered.
 	 *
 	 * We also build a Relids set showing which outer rels are required by the
 	 * selected clauses.  Any lateral_relids are included in that, but not
 	 * otherwise accounted for.
 	 */
 	index_clauses = NIL;
-	found_lower_saop_clause = false;
+	has_higher_inequality_clause = false;
+	saop_invalidates_ordering = false;
 	outer_relids = bms_copy(rel->lateral_relids);
 	for (indexcol = 0; indexcol < index->nkeycolumns; indexcol++)
 	{
@@ -917,16 +915,35 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 					/* Caller had better intend this only for bitmap scan */
 					Assert(scantype == ST_BITMAPSCAN);
 				}
-				if (indexcol > 0)
+				if (has_higher_inequality_clause)
 				{
-					if (skip_lower_saop)
+					Assert(indexcol > 0);
+
+					if (skip_unordered_saop)
 					{
 						/* Caller doesn't want to lose index ordering */
-						*skip_lower_saop = true;
+						*skip_unordered_saop = true;
 						continue;
 					}
-					found_lower_saop_clause = true;
+					saop_invalidates_ordering = true;
 				}
+			}
+			else if (!rinfo->mergeopfamilies &&
+					 !OidIsValid(rinfo->hashjoinoperator))
+			{
+				/*
+				 * Clauses which are not equality conditions force us to
+				 * either omit lower ScalarArrayOpExpr clauses or to
+				 * invalidate the ordering of the index path as a whole.
+				 * Prepare for that.
+				 *
+				 * Avoid this with IS [NOT] NULL clauses, though (just like
+				 * ScalarArrayOpExr clauses).  These are safe because the
+				 * B-Tree code effectively treats NULL as another value from
+				 * the domain of indexed values.
+				 */
+				if (!IsA(rinfo->clause, NullTest))
+					has_higher_inequality_clause = true;
 			}
 
 			/* OK to include this clause */
@@ -960,7 +977,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	 * assume the scan is unordered.
 	 */
 	pathkeys_possibly_useful = (scantype != ST_BITMAPSCAN &&
-								!found_lower_saop_clause &&
+								!saop_invalidates_ordering &&
 								has_useful_pathkeys(root, rel));
 	index_is_ordered = (index->sortopfamily != NULL);
 	if (index_is_ordered && pathkeys_possibly_useful)

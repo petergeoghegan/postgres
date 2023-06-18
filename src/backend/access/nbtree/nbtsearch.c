@@ -890,6 +890,19 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	Assert(!BTScanPosIsValid(so->currPos));
 
+	/*
+	 * XXX Queries with SAOPs have always accounted for each call here as one
+	 * "index scan".  This meant that the accounting showed one index scan per
+	 * distinct SAOP constant.  This approach is consistent with how it was
+	 * done before nbtree was taught to handle ScalarArrayOpExpr quals itself
+	 * (it's also how non-amsearcharray index AMs still do it).
+	 *
+	 * As things stand, dynamic SK_SEARCHARRAY qual execution by nbtree
+	 * changes nothing here.  This means that the number of "index scans"
+	 * might sometimes vary significantly based on implementation details.
+	 * That seems defensible, though not necessarily desirable (it's at least
+	 * logically consistent).
+	 */
 	pgstat_count_index_scan(rel);
 
 	/*
@@ -1371,6 +1384,13 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	inskey.keysz = keysCount;
 
 	/*
+	 * Make sure that the SAOP coalescing optimization is safe if we're
+	 * eligible to apply it
+	 */
+	if (so->numArrayKeys > 0)
+		_bt_check_dynamic_array_key_advancement(scan, dir, &inskey);
+
+	/*
 	 * Use the manufactured insertion scan key to descend the tree and
 	 * position ourselves on the target leaf page.
 	 */
@@ -1598,6 +1618,9 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 	/* initialize tuple workspace to empty */
 	so->currPos.nextTupleOffset = 0;
 
+	/* Reset high key checked info for each page */
+	so->arrayHkey = BT_HIGHKEY_NOT_CHECKED;
+
 	/*
 	 * Now that the current page has been made consistent, the macro should be
 	 * good.
@@ -1606,6 +1629,15 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 
 	if (ScanDirectionIsForward(dir))
 	{
+		IndexTuple	highkey = NULL;
+
+		if (so->numArrayKeys && !P_RIGHTMOST(opaque))
+		{
+			ItemId		iid = PageGetItemId(page, P_HIKEY);
+
+			highkey = (IndexTuple) PageGetItem(page, iid);
+		}
+
 		/* load items[] in ascending order */
 		itemIndex = 0;
 
@@ -1628,7 +1660,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 
 			itup = (IndexTuple) PageGetItem(page, iid);
 
-			if (_bt_checkkeys(scan, itup, indnatts, dir, &continuescan))
+			if (_bt_checkkeys(scan, itup, indnatts, dir, &continuescan, highkey))
 			{
 				/* tuple passes all scan key conditions */
 				if (!BTreeTupleIsPosting(itup))
@@ -1678,14 +1710,23 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 		 * only appear on non-pivot tuples on the right sibling page are
 		 * common.
 		 */
-		if (continuescan && !P_RIGHTMOST(opaque))
+		if (continuescan)
 		{
-			ItemId		iid = PageGetItemId(page, P_HIKEY);
-			IndexTuple	itup = (IndexTuple) PageGetItem(page, iid);
-			int			truncatt;
+			if (!P_RIGHTMOST(opaque))
+			{
+				int			truncatt;
 
-			truncatt = BTreeTupleGetNAtts(itup, scan->indexRelation);
-			_bt_checkkeys(scan, itup, truncatt, dir, &continuescan);
+				if (!highkey)
+				{
+					ItemId		iid = PageGetItemId(page, P_HIKEY);
+
+					highkey = (IndexTuple) PageGetItem(page, iid);
+				}
+				truncatt = BTreeTupleGetNAtts(highkey, scan->indexRelation);
+				_bt_checkkeys(scan, highkey, truncatt, dir, &continuescan, NULL);
+			}
+			else if (_bt_nocheckkeys(scan, dir))
+				continuescan = false;
 		}
 
 		if (!continuescan)
@@ -1737,7 +1778,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			itup = (IndexTuple) PageGetItem(page, iid);
 
 			passes_quals = _bt_checkkeys(scan, itup, indnatts, dir,
-										 &continuescan);
+										 &continuescan, NULL);
 			if (passes_quals && tuple_alive)
 			{
 				/* tuple passes all scan key conditions */
@@ -1776,15 +1817,23 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 					}
 				}
 			}
+			/* When !continuescan, there can't be any more matches, so stop */
 			if (!continuescan)
-			{
-				/* there can't be any more matches, so stop */
-				so->currPos.moreLeft = false;
 				break;
-			}
 
 			offnum = OffsetNumberPrev(offnum);
 		}
+
+		/*
+		 * Backward scans never check the high key, but must still call
+		 * _bt_nocheckkeys when they reach the last page (the leftmost page)
+		 * without any tuple ever setting continuescan to false.
+		 */
+		if (continuescan && P_LEFTMOST(opaque) && _bt_nocheckkeys(scan, dir))
+			continuescan = false;
+
+		if (!continuescan)
+			so->currPos.moreLeft = false;
 
 		Assert(itemIndex >= 0);
 		so->currPos.firstItem = itemIndex;
@@ -2420,6 +2469,9 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir)
 	BTPageOpaque opaque;
 	OffsetNumber start;
 	BTScanPosItem *currItem;
+
+	if (so->numArrayKeys > 0)
+		_bt_check_dynamic_array_key_advancement(scan, dir, NULL);
 
 	/*
 	 * Scan down to the leftmost or rightmost leaf page.  This is a simplified

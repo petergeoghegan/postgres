@@ -6685,6 +6685,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	bool		found_saop;
 	bool		found_is_null_op;
 	double		num_sa_scans;
+	double		num_sa_descents;
 	ListCell   *lc;
 
 	/*
@@ -6710,6 +6711,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	found_saop = false;
 	found_is_null_op = false;
 	num_sa_scans = 1;
+	num_sa_descents = 1;
 	foreach(lc, path->indexclauses)
 	{
 		IndexClause *iclause = lfirst_node(IndexClause, lc);
@@ -6757,6 +6759,8 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				/* count number of SA scans induced by indexBoundQuals only */
 				if (alength > 1)
 					num_sa_scans *= alength;
+				if (alength > 1 && indexcol == 0)
+					num_sa_descents *= alength;
 			}
 			else if (IsA(clause, NullTest))
 			{
@@ -6847,7 +6851,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	{
 		descentCost = ceil(log(index->tuples) / log(2.0)) * cpu_operator_cost;
 		costs.indexStartupCost += descentCost;
-		costs.indexTotalCost += costs.num_sa_scans * descentCost;
+		costs.indexTotalCost += num_sa_descents * descentCost;
 	}
 
 	/*
@@ -6862,7 +6866,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	 */
 	descentCost = (index->tree_height + 1) * DEFAULT_PAGE_CPU_MULTIPLIER * cpu_operator_cost;
 	costs.indexStartupCost += descentCost;
-	costs.indexTotalCost += costs.num_sa_scans * descentCost;
+	costs.indexTotalCost += num_sa_descents * descentCost;
 
 	/*
 	 * If we can get an estimate of the first column's ordering correlation C
