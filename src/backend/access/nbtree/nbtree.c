@@ -363,7 +363,9 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 
 	so->arrayKeyData = NULL;	/* assume no array keys for now */
 	so->numArrayKeys = 0;
+	so->arrayKeysStarted = false;
 	so->arrayKeys = NULL;
+	so->arrayPoskey = NULL;
 	so->arrayContext = NULL;
 
 	so->killedItems = NULL;		/* until needed */
@@ -404,6 +406,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 
 	so->markItemIndex = -1;
 	so->arrayKeyCount = 0;
+	so->arrayKeysStarted = false;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
 
@@ -752,7 +755,23 @@ _bt_parallel_done(IndexScanDesc scan)
  *			keys.
  *
  * Updates the count of array keys processed for both local and parallel
- * scans.
+ * scans. (XXX Really? Then why is "scan->parallel_scan != NULL" used as a
+ * gating condition by our caller?)
+ *
+ * XXX Local advancement of array keys occurs dynamically, and affects the
+ * top-level scan state.  This is at odds with how parallel scans deal with
+ * array key advancement here, so for now we just don't support them at all.
+ *
+ * The issue here is that the leader instructs workers to process array keys
+ * in whatever order is convenient, without concern for repeat or concurrent
+ * accesses to the same physical leaf pages by workers.  This can be addressed
+ * by assigning batches of array keys to workers.  Each individual batch would
+ * match a range from the key space covered by some specific leaf page.  That
+ * whole approach requires dynamic back-and-forth key space partitioning.
+ *
+ * It seems important that parallel index scans match serial index scans in
+ * promising that no single leaf page will be accessed more than once.  That
+ * makes reasoning about the worst case much easier when costing scans.
  */
 void
 _bt_parallel_advance_array_keys(IndexScanDesc scan)

@@ -1932,6 +1932,7 @@ ORDER BY unique1;
       42
 (3 rows)
 
+SET enable_sort = OFF;
 explain (costs off)
 SELECT thousand, tenthous FROM tenk1
 WHERE thousand < 2 AND tenthous IN (1001,3000)
@@ -1952,6 +1953,7 @@ ORDER BY thousand;
         1 |     1001
 (2 rows)
 
+SET enable_sort = ON;
 SET enable_indexonlyscan = OFF;
 explain (costs off)
 SELECT thousand, tenthous FROM tenk1
