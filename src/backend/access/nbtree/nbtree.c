@@ -361,6 +361,8 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	else
 		so->keyData = NULL;
 
+	so->hasinskey = false;
+	so->arrayKeysDone = false;
 	so->arrayKeyData = NULL;	/* assume no array keys for now */
 	so->numArrayKeys = 0;
 	so->arrayKeys = NULL;
@@ -404,6 +406,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 
 	so->markItemIndex = -1;
 	so->arrayKeyCount = 0;
+	so->hasinskey = false;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
 

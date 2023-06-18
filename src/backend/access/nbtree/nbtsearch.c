@@ -1428,6 +1428,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	/* remember which buffer we have pinned, if any */
 	Assert(!BTScanPosIsValid(so->currPos));
 	so->currPos.buf = buf;
+	so->inskey = inskey;
+	so->hasinskey = true;
 
 	/*
 	 * Now load data from the first page of the scan.
@@ -1506,6 +1508,67 @@ _bt_next(IndexScanDesc scan, ScanDirection dir)
 		scan->xs_itup = (IndexTuple) (so->currTuples + currItem->tupleOffset);
 
 	return true;
+}
+
+static bool
+_bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Page		page;
+	BTPageOpaque opaque;
+	BTScanInsert inskey = &so->inskey;
+	BTScanInsert itup_key = NULL;
+	bool		result;
+	int			natts;
+	int16	   *indoption;
+
+	indoption = scan->indexRelation->rd_indoption;
+
+	page = BufferGetPage(so->currPos.buf);
+	opaque = BTPageGetOpaque(page);
+
+	if (offnum == P_HIKEY && P_RIGHTMOST(opaque))
+		return true;
+
+	if (!so->hasinskey)
+	{
+		itup_key = _bt_mkscankey(scan->indexRelation, NULL);
+		itup_key->allequalimage = _bt_allequalimage(scan->indexRelation, false);
+		inskey = itup_key;
+		inskey->keysz = so->numArrayKeys;
+	}
+
+	natts = Min(so->numArrayKeys, inskey->keysz);
+	inskey->keysz = natts;
+	if (inskey->keysz <= 0)
+		return false;
+	Assert(inskey->keysz >= 1);
+	Assert(inskey->scantid == NULL);
+
+
+	for (int i = 0; i < natts; i++)
+	{
+		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
+		int			cur_elem = curArrayKey->cur_elem;
+		Datum		*subkey;
+
+		subkey = curArrayKey->elem_values + cur_elem;
+
+		memcpy(&(inskey->scankeys + i)->sk_argument, subkey, sizeof(Datum));
+		/* inskey->scankeys[i].sk_flags = skey->sk_flags; */
+
+		inskey->scankeys[i].sk_flags = (indoption[i] << SK_BT_INDOPTION_SHIFT);
+	}
+
+	result = true;
+	inskey->pivotsearch = true;
+	if (_bt_compare(scan->indexRelation, inskey, page, offnum) > 0)
+		result = false;
+
+	if (itup_key)
+		pfree(itup_key);
+
+	return result;
 }
 
 /*
@@ -1647,6 +1710,32 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 					}
 				}
 			}
+
+			/* Need to advance current SAOP array key? */
+			if (!continuescan && so->numArrayKeys)
+			{
+				if (!_bt_cur_elem_array_key_lt_offnum(scan, offnum))
+				{
+					offnum = OffsetNumberNext(offnum);
+
+					continuescan = true;
+					continue;
+				}
+				else if (_bt_advance_array_keys(scan, ForwardScanDirection))
+				{
+					_bt_preprocess_keys(scan);
+
+					/* Don't advance offnum */
+					continuescan = true;
+					continue;
+				}
+				else
+				{
+					offnum = OffsetNumberNext(offnum);
+					so->arrayKeysDone = true;
+				}
+			}
+
 			/* When !continuescan, there can't be any more matches, so stop */
 			if (!continuescan)
 				break;
@@ -1673,6 +1762,25 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 
 			truncatt = BTreeTupleGetNAtts(itup, scan->indexRelation);
 			_bt_checkkeys(scan, itup, truncatt, dir, &continuescan);
+
+			/* Need to advance current SAOP array key? */
+			if (!continuescan && so->numArrayKeys)
+			{
+				if (!_bt_cur_elem_array_key_lt_offnum(scan, P_HIKEY))
+				{
+					continuescan = true;
+				}
+				else if (_bt_advance_array_keys(scan, ForwardScanDirection))
+				{
+					_bt_preprocess_keys(scan);
+
+					continuescan = true;
+				}
+				else
+				{
+					so->arrayKeysDone = true;
+				}
+			}
 		}
 
 		if (!continuescan)

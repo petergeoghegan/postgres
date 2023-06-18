@@ -1042,6 +1042,9 @@ typedef struct BTScanOpaqueData
 	ScanKey		keyData;		/* array of preprocessed scan keys */
 
 	/* workspace for SK_SEARCHARRAY support */
+	bool			hasinskey;
+	BTScanInsertData inskey;
+	bool		arrayKeysDone;
 	ScanKey		arrayKeyData;	/* modified copy of scan->keyData */
 	int			numArrayKeys;	/* number of equality-type array keys (-1 if
 								 * there are any unsatisfiable array keys) */

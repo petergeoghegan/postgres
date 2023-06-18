@@ -554,6 +554,9 @@ _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
 	bool		found = false;
 	int			i;
 
+	if (so->arrayKeysDone)
+		return false;
+
 	/*
 	 * We must advance the last array key most quickly, since it will
 	 * correspond to the lowest-order index column among the available
@@ -651,6 +654,8 @@ _bt_restore_array_keys(IndexScanDesc scan)
 	 * If we changed any keys, we must redo _bt_preprocess_keys.  That might
 	 * sound like overkill, but in cases with multiple keys per index column
 	 * it seems necessary to do the full set of pushups.
+	 *
+	 * XXX That's what I'm doing too...is it overkill?
 	 */
 	if (changed)
 	{
