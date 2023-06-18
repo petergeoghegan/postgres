@@ -6700,9 +6700,9 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	 * For a RowCompareExpr, we consider only the first column, just as
 	 * rowcomparesel() does.
 	 *
-	 * If there's a ScalarArrayOpExpr in the quals, we'll actually perform N
-	 * index scans not one, but the ScalarArrayOpExpr's operator can be
-	 * considered to act the same as it normally does.
+	 * If there's a ScalarArrayOpExpr in the quals, we'll perform N primitive
+	 * index scans in the worst case.  Assume that worst case, for now.  We'll
+	 * clamp later on if the tally approaches the total number of index pages.
 	 */
 	indexBoundQuals = NIL;
 	indexcol = 0;
@@ -6754,7 +6754,15 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 
 				clause_op = saop->opno;
 				found_saop = true;
-				/* count number of SA scans induced by indexBoundQuals only */
+
+				/*
+				 * Count number of SA scans induced by indexBoundQuals only.
+				 *
+				 * Since this is multiplicative, it can wildly inflate the
+				 * assumed number of descents (number of primitive index
+				 * scans) for scans with several SAOP clauses.  We might clamp
+				 * num_sa_scans later on to deal with this.
+				 */
 				if (alength > 1)
 					num_sa_scans *= alength;
 			}
@@ -6833,6 +6841,39 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	genericcostestimate(root, path, loop_count, &costs);
 
 	/*
+	 * The btree index AM will automatically combine individual primitive
+	 * index scans whenever the tuples covered by the next set of array keys
+	 * are close to tuples covered by the current set.  This optimization
+	 * makes the final number of descents particularly difficult to estimate.
+	 * However, btree scans never visit any single leaf page more than once.
+	 * That puts a natural floor under the worst case number of descents.
+	 *
+	 * Clamp the number of descents to the estimated number of leaf page
+	 * visits.  This is still fairly pessimistic, but tends to result in more
+	 * accurate costing of scans with several SAOP clauses -- especially when
+	 * each array has more than a few elements.
+	 *
+	 * Also clamp the number of descents to 1/3 the number of index pages.
+	 * This avoids implausibly high estimates with low selectivity paths,
+	 * where scans frequently require no more than one or two descents.
+	 *
+	 * XXX genericcostestimate is still the dominant influence on the total
+	 * cost of SAOP-heavy index paths -- indexTotalCost is still calculated in
+	 * a way that assumes significant repeat access to leaf pages for a path
+	 * with SAOP clauses.  This just isn't sensible anymore.  Note that nbtree
+	 * scans promise to avoid accessing any leaf page more than once.  The
+	 * worst case I/O cost of an SAOP-heavy path is therefore guaranteed to
+	 * never exceed the I/O cost of a conventional full index scan (though
+	 * this relies on standard assumptions about internal page access costs).
+	 */
+	if (num_sa_scans > 1)
+	{
+		num_sa_scans = Min(num_sa_scans, costs.numIndexPages);
+		num_sa_scans = Min(num_sa_scans, index->pages / 3);
+		num_sa_scans = Max(num_sa_scans, 1);
+	}
+
+	/*
 	 * Add a CPU-cost component to represent the costs of initial btree
 	 * descent.  We don't charge any I/O cost for touching upper btree levels,
 	 * since they tend to stay in cache, but we still have to do about log2(N)
@@ -6847,7 +6888,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	{
 		descentCost = ceil(log(index->tuples) / log(2.0)) * cpu_operator_cost;
 		costs.indexStartupCost += descentCost;
-		costs.indexTotalCost += costs.num_sa_scans * descentCost;
+		costs.indexTotalCost += num_sa_scans * descentCost;
 	}
 
 	/*
@@ -6858,11 +6899,12 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	 * in cases where only a single leaf page is expected to be visited.  This
 	 * cost is somewhat arbitrarily set at 50x cpu_operator_cost per page
 	 * touched.  The number of such pages is btree tree height plus one (ie,
-	 * we charge for the leaf page too).  As above, charge once per SA scan.
+	 * we charge for the leaf page too).  As above, charge once per estimated
+	 * primitive SA scan.
 	 */
 	descentCost = (index->tree_height + 1) * DEFAULT_PAGE_CPU_MULTIPLIER * cpu_operator_cost;
 	costs.indexStartupCost += descentCost;
-	costs.indexTotalCost += costs.num_sa_scans * descentCost;
+	costs.indexTotalCost += num_sa_scans * descentCost;
 
 	/*
 	 * If we can get an estimate of the first column's ordering correlation C
