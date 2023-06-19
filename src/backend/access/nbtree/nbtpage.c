@@ -1958,10 +1958,20 @@ _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate)
 					return;
 				}
 
-				/* we need an insertion scan key for the search, so build one */
+				/*
+				 * We need an insertion scan key, so build one.
+				 *
+				 * _bt_search searches for the leaf page with the first
+				 * matching non-pivot tuple.  We need it to "search" for the
+				 * pivot tuple from the leaf page that we're set to delete.
+				 * Compensate for this mismatch by having _bt_search locate
+				 * the position/page < the first matching non-pivot tuple.
+				 */
 				itup_key = _bt_mkscankey(rel, targetkey);
-				/* find the leftmost leaf page with matching pivot/high key */
-				itup_key->pivotsearch = true;
+
+				/* Set up a BTLessStrategyNumber-like insertion scan key */
+				itup_key->nextkey = false;
+				itup_key->backward = true;
 				stack = _bt_search(rel, NULL, itup_key, &sleafbuf, BT_READ);
 				/* won't need a second lock or pin on leafbuf */
 				_bt_relbuf(rel, sleafbuf);
