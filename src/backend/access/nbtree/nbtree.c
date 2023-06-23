@@ -361,6 +361,7 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	else
 		so->keyData = NULL;
 
+	so->arrayKeysDone = false;
 	so->arrayKeyData = NULL;	/* assume no array keys for now */
 	so->numArrayKeys = 0;
 	so->arrayKeys = NULL;

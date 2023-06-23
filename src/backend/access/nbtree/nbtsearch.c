@@ -1657,7 +1657,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			}
 
 			/* Need to advance current SAOP array key? */
-			if (!continuescan && so->numArrayKeys)
+			if (!continuescan && so->numArrayKeys && !so->arrayKeysDone)
 			{
 				continuescan = true;
 				if (matches_for_cur_elem == 0)
@@ -1681,8 +1681,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 					if (init_cur_elem == curArrayKey->cur_elem ||
 						curArrayKey->cur_elem == 0)
 					{
-						/* HACK stop btgettuple() from returning more: */
-						so->numArrayKeys = 0;
+						so->arrayKeysDone = true;
 					}
 					offnum = OffsetNumberNext(offnum);
 					continue;
@@ -1717,7 +1716,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			_bt_checkkeys(scan, itup, truncatt, dir, &continuescan);
 
 			/* Need to advance current SAOP array key? */
-			if (!continuescan && so->numArrayKeys)
+			if (!continuescan && so->numArrayKeys && !so->arrayKeysDone)
 			{
 				if (matches_for_cur_elem == 0)
 				{
@@ -1730,8 +1729,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 				}
 				else
 				{
-					/* HACK stop btgettuple() from returning more: */
-					so->numArrayKeys = 0;
+					so->arrayKeysDone = true;
 					continuescan = false;
 				}
 			}
