@@ -144,7 +144,6 @@ typedef bool (*get_index_stats_hook_type) (PlannerInfo *root,
 										   AttrNumber indexattnum,
 										   VariableStatData *vardata);
 extern PGDLLIMPORT get_index_stats_hook_type get_index_stats_hook;
-extern PGDLLIMPORT bool suppress_nbtree_instrumentation;
 
 /* Functions in selfuncs.c */
 
