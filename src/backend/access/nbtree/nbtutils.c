@@ -613,17 +613,15 @@ _bt_array_keys_geq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	{
 		itup_key = _bt_mkscankey(rel, NULL);
 		itup_key->allequalimage = _bt_allequalimage(rel, false);
+		itup_key->keysz = so->numArrayKeys;
 		inskey = itup_key;
-		inskey->keysz = so->numArrayKeys;
 	}
 
 	if (so->log_btree_verbosity >= 2)
 		appendStringInfo(&so->debugstr,
 						 "_bt_array_keys_geq_offset for offnum %u: natts %u, numArrayKeys %u, inskey.keysz %u\n",
-						 offnum,
-						 Min(so->numArrayKeys, inskey->keysz),
-						 so->numArrayKeys,
-						 inskey->keysz);
+						 offnum, Min(so->numArrayKeys, inskey->keysz),
+						 so->numArrayKeys, inskey->keysz);
 
 	natts = Min(so->numArrayKeys, inskey->keysz);
 	inskey->keysz = natts;
@@ -655,15 +653,14 @@ _bt_array_keys_geq_offset(IndexScanDesc scan, OffsetNumber offnum)
 		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
 							 "_bt_array_keys_geq_offset: elem %d datum %lu flags %s\n",
-							 i,
-							 inskey->scankeys[i].sk_argument, flags);
+							 i, inskey->scankeys[i].sk_argument, flags);
 
 		pfree(flags);
 	}
 
 	is_geq_offnum = (_bt_compare(rel, inskey, page, offnum) >= 0);
 
-	if (itup_key)
+	if (!so->hasinskey)
 		pfree(itup_key);
 
 	if (so->log_btree_verbosity >= 2)
