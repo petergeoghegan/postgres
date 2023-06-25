@@ -595,6 +595,87 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
 }
 
 /*
+ * Is the current set of array elements <= index tuple from offset?
+ */
+bool
+_bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	int16	   *indoption = scan->indexRelation->rd_indoption;
+	Page		page = BufferGetPage(so->currPos.buf)e;
+	BTScanInsert inskey = &so->inskey;
+	BTScanInsert itup_key = NULL;
+	bool		result;
+	int			natts;
+
+	if (!so->hasinskey)
+	{
+		itup_key = _bt_mkscankey(rel, NULL);
+		itup_key->allequalimage = _bt_allequalimage(rel, false);
+		inskey = itup_key;
+		inskey->keysz = so->numArrayKeys;
+	}
+
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr,
+						 "_bt_array_cur_key_leq_offset for offnum %u: natts %u, numArrayKeys %u, inskey.keysz %u\n",
+						 offnum,
+						 Min(so->numArrayKeys, inskey->keysz),
+						 so->numArrayKeys,
+						 inskey->keysz);
+
+	natts = Min(so->numArrayKeys, inskey->keysz);
+	inskey->keysz = natts;
+	if (inskey->keysz <= 0)
+	{
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr,
+							 "_bt_array_cur_key_leq_offset for offnum %u: returning early because there are no insertion scan key keys\n",
+							 offnum);
+		return false;
+	}
+	Assert(inskey->keysz >= 1);
+	Assert(inskey->scantid == NULL);
+
+
+	for (int i = 0; i < natts; i++)
+	{
+		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
+		int			cur_elem = curArrayKey->cur_elem;
+		Datum		*subkey;
+		char		*flags;
+
+		subkey = curArrayKey->elem_values + cur_elem;
+		memcpy(&(inskey->scankeys + i)->sk_argument, subkey, sizeof(Datum));
+		inskey->scankeys[i].sk_flags = (indoption[i] << SK_BT_INDOPTION_SHIFT);
+
+		flags = dump_scankey_flags(&inskey->scankeys[i]);
+
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr,
+							 "_bt_array_cur_key_leq_offset: elem %d datum %lu flags %s\n",
+							 i,
+							 inskey->scankeys[i].sk_argument, flags);
+
+		pfree(flags);
+	}
+
+	inskey->pivotsearch = true;
+	result = (_bt_compare(rel, inskey, page, offnum) <= 0);
+
+	if (itup_key)
+		pfree(itup_key);
+
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr,
+						 "_bt_array_cur_key_leq_offset for offnum %u returns %d\n",
+						 offnum, result);
+
+	return result;
+}
+
+/*
  * _bt_advance_array_keys() -- Advance to next set of array elements
  *
  * Returns true if there is another set of values to consider, false if not.
