@@ -654,7 +654,7 @@ _bt_array_keys_geq_offset(IndexScanDesc scan, OffsetNumber offnum)
 
 		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
-							 "_bt_array_keys_geq_offset: elem %d datum %lu flags %s\n",
+							 "_bt_array_keys_geq_offset: elem %d datum %zu flags %s\n",
 							 i, scanKey->sk_argument, flags);
 
 		pfree(flags);
@@ -983,7 +983,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 
 		if (so->log_btree_verbosity)
 			appendStringInfo(&so->debugstr,
-							 "_bt_preprocess_keys: numberOfKeys == 1 case set so->keyData[0] to %lu, qual_ok to %d\n",
+							 "_bt_preprocess_keys: numberOfKeys == 1 case set so->keyData[0] to %zu, qual_ok to %d\n",
 							 outkeys[0].sk_argument, so->qual_ok);
 
 		return;
@@ -1705,7 +1705,7 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
 
 			if (so->log_btree_verbosity >= 2)
 				appendStringInfo(&so->debugstr,
-								 "_bt_checkkeys %d: comparing (%u,%u) to %lu false result continuescan %d\n",
+								 "_bt_checkkeys %d: comparing (%u,%u) to %zu false result continuescan %d\n",
 								 iter++,
 								 ItemPointerGetBlockNumberNoCheck(&tuple->t_tid),
 								 ItemPointerGetOffsetNumberNoCheck(&tuple->t_tid),
@@ -1717,7 +1717,7 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
 		}
 		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
-							 "_bt_checkkeys %d: comparing (%u,%u) to %lu true result continuescan %d\n",
+							 "_bt_checkkeys %d: comparing (%u,%u) to %zu true result continuescan %d\n",
 							 iter++,
 							 ItemPointerGetBlockNumberNoCheck(&tuple->t_tid),
 							 ItemPointerGetOffsetNumberNoCheck(&tuple->t_tid),
@@ -2700,7 +2700,7 @@ _nbtree_print_itup(IndexTuple itup,
 		char	   *tp;			/* ptr to tuple data */
 
 		tp = (char *) itup + IndexInfoFindDataOffset(itup->t_info);
-		return psprintf("%lu", *((int64 *) tp));
+		return psprintf("%zu", *((int64 *) tp));
 	}
 
 	natts = BTreeTupleGetNAtts(itup, rel);

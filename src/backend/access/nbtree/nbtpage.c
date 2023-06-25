@@ -1598,7 +1598,7 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 				deletable[ndeletable++] = idxoffnum;
 
 				dataitemstr = _nbtree_print_itup(itup, rel);
-				appendStringInfo(&delstate->debugstr, "%3u. %s w TID (%u,%u) will be deleted freeing %lu %s\n",
+				appendStringInfo(&delstate->debugstr, "%3u. %s w TID (%u,%u) will be deleted freeing %zu %s\n",
 								 idxoffnum, dataitemstr,
 								 ItemPointerGetBlockNumber(&itup->t_tid),
 								 ItemPointerGetOffsetNumber(&itup->t_tid),
@@ -1693,14 +1693,14 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 
 			dataitemstr = _nbtree_print_itup(itup, rel);
 			if (delstate->bottomup)
-				appendStringInfo(&delstate->debugstr, "%3u. %s w %d TIDs (of which %d promising) will be deleted outright freeing %lu %s\n",
+				appendStringInfo(&delstate->debugstr, "%3u. %s w %d TIDs (of which %d promising) will be deleted outright freeing %zu %s\n",
 								 idxoffnum, dataitemstr,
 								 nitem,
 								 npromising,
 								 IndexTupleSize(itup) + sizeof(ItemIdData),
 								 ItemIdIsDead(itemid) ? "(LP_DEAD bit set)" : "");
 			else
-				appendStringInfo(&delstate->debugstr, "%3u. %s w %d TIDs will be deleted outright freeing %lu %s\n",
+				appendStringInfo(&delstate->debugstr, "%3u. %s w %d TIDs will be deleted outright freeing %zu %s\n",
 								 idxoffnum, dataitemstr,
 								 nitem,
 								 IndexTupleSize(itup) + sizeof(ItemIdData),
@@ -1719,7 +1719,7 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 
 			dataitemstr = _nbtree_print_itup(itup, rel);
 			appendStringInfo(&delstate->debugstr,
-							 "%3u. %s w %d TIDs will have %d deleted freeing %lu\n",
+							 "%3u. %s w %d TIDs will have %d deleted freeing %zu\n",
 							 idxoffnum, dataitemstr,
 							 nitem,
 							 vacposting->ndeletedtids,
