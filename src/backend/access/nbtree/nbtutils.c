@@ -1487,6 +1487,7 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
 	int			keysz;
 	int			ikey;
 	ScanKey		key;
+	int		iter=0;
 
 	Assert(BTreeTupleGetNAtts(tuple, scan->indexRelation) == tupnatts);
 
@@ -1625,11 +1626,25 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, int tupnatts,
 					 ScanDirectionIsBackward(dir))
 				*continuescan = false;
 
+			if (so->log_btree_verbosity >= 2)
+				appendStringInfo(&so->debugstr,
+								 "_bt_checkkeys %d: comparing (%u,%u) to %lu false result continuescan %d\n",
+								 iter++,
+								 ItemPointerGetBlockNumberNoCheck(&tuple->t_tid),
+								 ItemPointerGetOffsetNumberNoCheck(&tuple->t_tid),
+								 key->sk_argument, *continuescan);
 			/*
 			 * In any case, this indextuple doesn't match the qual.
 			 */
 			return false;
 		}
+		if (so->log_btree_verbosity >= 2)
+			appendStringInfo(&so->debugstr,
+							 "_bt_checkkeys %d: comparing (%u,%u) to %lu true result continuescan %d\n",
+							 iter++,
+							 ItemPointerGetBlockNumberNoCheck(&tuple->t_tid),
+							 ItemPointerGetOffsetNumberNoCheck(&tuple->t_tid),
+							 key->sk_argument, *continuescan);
 	}
 
 	/* If we get here, the tuple passes all index quals. */

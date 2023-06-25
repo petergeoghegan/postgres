@@ -1910,10 +1910,24 @@ _bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 		inskey->keysz = so->numArrayKeys;
 	}
 
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr,
+						 "_bt_cur_elem_array_key_lt_offnum for offnum %u: natts %u, numArrayKeys %u, inskey.keysz %u\n",
+						 offnum,
+						 Min(so->numArrayKeys, inskey->keysz),
+						 so->numArrayKeys,
+						 inskey->keysz);
+
 	natts = Min(so->numArrayKeys, inskey->keysz);
 	inskey->keysz = natts;
 	if (inskey->keysz <= 0)
+	{
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr,
+							 "_bt_cur_elem_array_key_lt_offnum for offnum %u: returning early because there are no insertion scan key keys\n",
+							 offnum);
 		return false;
+	}
 	Assert(inskey->keysz >= 1);
 	Assert(inskey->scantid == NULL);
 
@@ -1923,6 +1937,7 @@ _bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
 		int			cur_elem = curArrayKey->cur_elem;
 		Datum		*subkey;
+		char		*flags;
 
 		subkey = curArrayKey->elem_values + cur_elem;
 
@@ -1930,6 +1945,15 @@ _bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 		/* inskey->scankeys[i].sk_flags = skey->sk_flags; */
 
 		inskey->scankeys[i].sk_flags = (indoption[i] << SK_BT_INDOPTION_SHIFT);
+		flags = dump_scankey_flags(&inskey->scankeys[i]);
+
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr,
+							 "_bt_cur_elem_array_key_lt_offnum: elem %d datum %lu flags %s\n",
+							 i,
+							 inskey->scankeys[i].sk_argument, flags);
+
+		pfree(flags);
 	}
 
 	result = true;
@@ -1939,6 +1963,11 @@ _bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 
 	if (itup_key)
 		pfree(itup_key);
+
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr,
+						 "_bt_cur_elem_array_key_lt_offnum for offnum %u returns %d\n",
+						 offnum, result);
 
 	return result;
 }
@@ -2145,6 +2174,12 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 				}
 				else
 				{
+					if (so->log_btree_verbosity)
+						appendStringInfo(&so->debugstr,
+										 "_bt_readpage: failed to advance cur_elem (which is %d) at offnum %u\n",
+										 so->arrayKeys->cur_elem,
+										 offnum);
+
 					offnum = OffsetNumberNext(offnum);
 					so->arrayKeysDone = true;
 				}
