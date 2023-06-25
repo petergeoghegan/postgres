@@ -1935,11 +1935,9 @@ _bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 		char		*flags;
 
 		subkey = curArrayKey->elem_values + cur_elem;
-
 		memcpy(&(inskey->scankeys + i)->sk_argument, subkey, sizeof(Datum));
-		/* inskey->scankeys[i].sk_flags = skey->sk_flags; */
-
 		inskey->scankeys[i].sk_flags = (indoption[i] << SK_BT_INDOPTION_SHIFT);
+
 		flags = dump_scankey_flags(&inskey->scankeys[i]);
 
 		if (so->log_btree_verbosity)
