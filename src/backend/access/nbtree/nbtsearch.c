@@ -1949,10 +1949,8 @@ _bt_array_cur_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 		pfree(flags);
 	}
 
-	result = true;
 	inskey->pivotsearch = true;
-	if (_bt_compare(scan->indexRelation, inskey, page, offnum) > 0)
-		result = false;
+	result = (_bt_compare(scan->indexRelation, inskey, page, offnum) <= 0);
 
 	if (itup_key)
 		pfree(itup_key);
