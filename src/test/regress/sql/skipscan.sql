@@ -1,81 +1,81 @@
-drop table if exists foo;
-create table foo (bar int4);
-create index skippy on foo(bar);
-insert into foo select i from generate_series(1,500) i;
-vacuum analyze foo;
+drop table if exists skippy_tbl;
+create table skippy_tbl (bar int4);
+create index skippy_idx on skippy_tbl(bar);
+insert into skippy_tbl select i from generate_series(1,500) i;
+vacuum analyze skippy_tbl;
 
 set log_btree_verbosity=1;
 set track_io_timing to off;
 set enable_seqscan to off;
 
 -- prewarm
-select count(*) from foo;
-select count(*) from foo;
-select count(*) from foo;
-vacuum analyze foo;
+select count(*) from skippy_tbl;
+select count(*) from skippy_tbl;
+select count(*) from skippy_tbl;
+vacuum analyze skippy_tbl;
 
 -- Index scan:
 set enable_bitmapscan to off;
 set enable_indexonlyscan to off;
 set enable_indexscan to on;
 -- Simple example:
-select ctid, bar from foo where bar in (2,3,4);
+select ctid, bar from skippy_tbl where bar in (2,3,4);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (2,3,4);
+select ctid, bar from skippy_tbl where bar in (2,3,4);
 -- continuescan-on-highkey case should work:
-select ctid, bar from foo where bar in (365,366);
+select ctid, bar from skippy_tbl where bar in (365,366);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (365,366);
+select ctid, bar from skippy_tbl where bar in (365,366);
 -- pivotsearch (first item on leftmost leaf page's right sibling page) case
 -- should also work:
-select ctid, bar from foo where bar in (367,368);
+select ctid, bar from skippy_tbl where bar in (367,368);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (367,368);
+select ctid, bar from skippy_tbl where bar in (367,368);
 -- Gap of one shouldn't confuse us:
-select ctid, bar from foo where bar in (2,4);
+select ctid, bar from skippy_tbl where bar in (2,4);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (2,4);
+select ctid, bar from skippy_tbl where bar in (2,4);
 -- Gap of two shouldn't confuse us:
-select ctid, bar from foo where bar in (2,5);
+select ctid, bar from skippy_tbl where bar in (2,5);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (2,5);
+select ctid, bar from skippy_tbl where bar in (2,5);
 
 -- Adjoining non-pivot tuples split only by leaf page high key should require
 -- only one descent of btree, so second page is read by read next page path:
-select ctid, bar from foo where bar in (366,367);
+select ctid, bar from skippy_tbl where bar in (366,367);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (366,367);
+select ctid, bar from skippy_tbl where bar in (366,367);
 
 -- Index-only scan:
 set enable_bitmapscan to off;
 set enable_indexonlyscan to on;
 set enable_indexscan to off;
-select bar from foo where bar in (2,3,4);
+select bar from skippy_tbl where bar in (2,3,4);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select bar from foo where bar in (2,3,4);
+select bar from skippy_tbl where bar in (2,3,4);
 
 -- Bitmap index scan:
 set enable_bitmapscan to on;
 set enable_indexonlyscan to off;
 set enable_indexscan to off;
-select ctid, bar from foo where bar in (2,3,4);
+select ctid, bar from skippy_tbl where bar in (2,3,4);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (2,3,4);
+select ctid, bar from skippy_tbl where bar in (2,3,4);
 -- Same as "simple example", but with duplicates:
-insert into foo(bar) values (22), (23), (23), (24), (24), (24);
-vacuum analyze foo;
-select ctid, bar from foo where bar in (22,23,24) order by bar;
+insert into skippy_tbl(bar) values (22), (23), (23), (24), (24), (24);
+vacuum analyze skippy_tbl;
+select ctid, bar from skippy_tbl where bar in (22,23,24) order by bar;
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (22,23,24) order by bar;
+select ctid, bar from skippy_tbl where bar in (22,23,24) order by bar;
 
 -- 3 non-pivot tuple matches:
-select * from foo where bar in (362,365,366);
+select * from skippy_tbl where bar in (362,365,366);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select * from foo where bar in (362,365,366);
+select * from skippy_tbl where bar in (362,365,366);
 
 -- Large group of duplicates spanning many pages
-insert into foo select 555 from generate_series(1,3000) i;
-vacuum analyze foo;
+insert into skippy_tbl select 555 from generate_series(1,3000) i;
+vacuum analyze skippy_tbl;
 
 -- Looks like this now:
 -- ┌───┬───────┬───────┬────────┬────────┬────────────┬───────┬───────┬───────────────────┬─────────┬───────────┬──────────────────────────────────┐
@@ -96,9 +96,9 @@ vacuum analyze foo;
 -- terminate _bt_first-wise/_bt_search-wise scan at that point
 --
 -- (So matches master branch, buffer-access-count-wise)
-select count(*) from foo where bar in (500,555);
+select count(*) from skippy_tbl where bar in (500,555);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select count(*) from foo where bar in (500,555);
+select count(*) from skippy_tbl where bar in (500,555);
 
 -- Same again, almost -- just don't scan blkno 2 this time
 --
@@ -108,20 +108,20 @@ select count(*) from foo where bar in (500,555);
 -- either, since there is nothing to return).
 --
 -- (So matches master branch, buffer-access-count-wise)
-select count(*) from foo where bar in (555,556);
+select count(*) from skippy_tbl where bar in (555,556);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select count(*) from foo where bar in (555,556);
+select count(*) from skippy_tbl where bar in (555,556);
 
 -- We do want to go through the root (3) to descend to the leftmost page (1) and then step to its right
 -- sibling page (2):
-select ctid, bar from foo where bar in (1, 500);
+select ctid, bar from skippy_tbl where bar in (1, 500);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select ctid, bar from foo where bar in (1, 500);
+select ctid, bar from skippy_tbl where bar in (1, 500);
 
 -- No infinite loops, please
-select * from foo where bar = any ('{365,366,368}');
+select * from skippy_tbl where bar = any ('{365,366,368}');
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select * from foo where bar = any ('{365,366,368}');
+select * from skippy_tbl where bar = any ('{365,366,368}');
 
 -- "More than one so->numArrayKeys" test case (uses 2 SAOPs)
 drop table if exists multi_test;
@@ -197,3 +197,6 @@ select * from multi_test where a in (183) and b in (1,2);
 select * from multi_test where a in (182, 183, 184) and b in (1,2);
 EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test where a in (182, 183, 184) and b in (1,2);
+
+drop table skippy_tbl;
+drop table multi_test;
