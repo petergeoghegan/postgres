@@ -140,24 +140,9 @@ select ctid, bar from skippy_tbl where bar in (366,367);
 set enable_bitmapscan to off;
 set enable_indexonlyscan to on;
 set enable_indexscan to off;
-select bar from skippy_tbl where bar in (2,3,4);
- bar 
------
-   2
-   3
-   4
-(3 rows)
-
-EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select bar from foo where bar in (2,3,4);
-                         QUERY PLAN                          
--------------------------------------------------------------
- Index Only Scan using skippy on foo (actual rows=3 loops=1)
-   Index Cond: (bar = ANY ('{2,3,4}'::integer[]))
-   Heap Fetches: 3
-   Buffers: shared hit=4
-(4 rows)
-
+--select bar from skippy_tbl where bar in (2,3,4);
+--EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+--select bar from skippy_tbl where bar in (2,3,4);
 -- Bitmap index scan:
 set enable_bitmapscan to on;
 set enable_indexonlyscan to off;

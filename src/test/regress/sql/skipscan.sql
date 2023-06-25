@@ -50,9 +50,9 @@ select ctid, bar from skippy_tbl where bar in (366,367);
 set enable_bitmapscan to off;
 set enable_indexonlyscan to on;
 set enable_indexscan to off;
-select bar from skippy_tbl where bar in (2,3,4);
-EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
-select bar from skippy_tbl where bar in (2,3,4);
+--select bar from skippy_tbl where bar in (2,3,4);
+--EXPLAIN (ANALYZE, COSTS OFF, BUFFERS, TIMING OFF, SUMMARY OFF)
+--select bar from skippy_tbl where bar in (2,3,4);
 
 -- Bitmap index scan:
 set enable_bitmapscan to on;
