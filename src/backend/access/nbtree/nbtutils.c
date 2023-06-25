@@ -813,8 +813,6 @@ _bt_restore_array_keys(IndexScanDesc scan)
 	 * If we changed any keys, we must redo _bt_preprocess_keys.  That might
 	 * sound like overkill, but in cases with multiple keys per index column
 	 * it seems necessary to do the full set of pushups.
-	 *
-	 * XXX That's what I'm doing too...is it overkill?
 	 */
 	if (changed)
 	{
