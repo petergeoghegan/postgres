@@ -1886,14 +1886,12 @@ static bool
 _bt_array_cur_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	int16	   *indoption = scan->indexRelation->rd_indoption;
 	Page		page;
 	BTScanInsert inskey = &so->inskey;
 	BTScanInsert itup_key = NULL;
 	bool		result;
 	int			natts;
-	int16	   *indoption;
-
-	indoption = scan->indexRelation->rd_indoption;
 
 	page = BufferGetPage(so->currPos.buf);
 
