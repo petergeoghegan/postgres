@@ -1882,10 +1882,14 @@ _bt_next(IndexScanDesc scan, ScanDirection dir)
 	return true;
 }
 
+/*
+ * Is the current set of array elements <= index tuple from offset?
+ */
 static bool
 _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
 	int16	   *indoption = scan->indexRelation->rd_indoption;
 	Page		page = BufferGetPage(so->currPos.buf)e;
 	BTScanInsert inskey = &so->inskey;
@@ -1895,8 +1899,8 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 
 	if (!so->hasinskey)
 	{
-		itup_key = _bt_mkscankey(scan->indexRelation, NULL);
-		itup_key->allequalimage = _bt_allequalimage(scan->indexRelation, false);
+		itup_key = _bt_mkscankey(rel, NULL);
+		itup_key->allequalimage = _bt_allequalimage(rel, false);
 		inskey = itup_key;
 		inskey->keysz = so->numArrayKeys;
 	}
@@ -1946,7 +1950,7 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	}
 
 	inskey->pivotsearch = true;
-	result = (_bt_compare(scan->indexRelation, inskey, page, offnum) <= 0);
+	result = (_bt_compare(rel, inskey, page, offnum) <= 0);
 
 	if (itup_key)
 		pfree(itup_key);
