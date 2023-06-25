@@ -617,7 +617,7 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 		inskey->keysz = so->numArrayKeys;
 	}
 
-	if (so->log_btree_verbosity)
+	if (so->log_btree_verbosity >= 2)
 		appendStringInfo(&so->debugstr,
 						 "_bt_array_cur_key_leq_offset for offnum %u: natts %u, numArrayKeys %u, inskey.keysz %u\n",
 						 offnum,
@@ -629,7 +629,7 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	inskey->keysz = natts;
 	if (inskey->keysz <= 0)
 	{
-		if (so->log_btree_verbosity)
+		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
 							 "_bt_array_cur_key_leq_offset for offnum %u: returning early because there are no insertion scan key keys\n",
 							 offnum);
@@ -652,7 +652,7 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 
 		flags = dump_scankey_flags(&inskey->scankeys[i]);
 
-		if (so->log_btree_verbosity)
+		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
 							 "_bt_array_cur_key_leq_offset: elem %d datum %lu flags %s\n",
 							 i,
@@ -667,7 +667,7 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	if (itup_key)
 		pfree(itup_key);
 
-	if (so->log_btree_verbosity)
+	if (so->log_btree_verbosity >= 2)
 		appendStringInfo(&so->debugstr,
 						 "_bt_array_cur_key_leq_offset for offnum %u returns %d\n",
 						 offnum, result);
