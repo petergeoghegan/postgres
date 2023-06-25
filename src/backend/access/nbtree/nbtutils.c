@@ -598,7 +598,7 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
  * Is the current set of array elements <= index tuple from offset?
  */
 bool
-_bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
+_bt_array_keys_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
