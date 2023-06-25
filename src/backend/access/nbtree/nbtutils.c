@@ -603,7 +603,7 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 	int16	   *indoption = scan->indexRelation->rd_indoption;
-	Page		page = BufferGetPage(so->currPos.buf)e;
+	Page		page = BufferGetPage(so->currPos.buf);
 	BTScanInsert inskey = &so->inskey;
 	BTScanInsert itup_key = NULL;
 	bool		result;
