@@ -595,10 +595,10 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
 }
 
 /*
- * Is the current set of array elements <= index tuple from offset?
+ * Is the current set of array elements >= index tuple from offset?
  */
 bool
-_bt_array_keys_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
+_bt_array_keys_geq_offset(IndexScanDesc scan, OffsetNumber offnum)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
@@ -606,7 +606,7 @@ _bt_array_keys_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	Page		page = BufferGetPage(so->currPos.buf);
 	BTScanInsert inskey = &so->inskey;
 	BTScanInsert itup_key = NULL;
-	bool		result;
+	bool		is_geq_offnum;
 	int			natts;
 
 	if (!so->hasinskey)
@@ -619,7 +619,7 @@ _bt_array_keys_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 
 	if (so->log_btree_verbosity >= 2)
 		appendStringInfo(&so->debugstr,
-						 "_bt_array_cur_key_leq_offset for offnum %u: natts %u, numArrayKeys %u, inskey.keysz %u\n",
+						 "_bt_array_keys_geq_offset for offnum %u: natts %u, numArrayKeys %u, inskey.keysz %u\n",
 						 offnum,
 						 Min(so->numArrayKeys, inskey->keysz),
 						 so->numArrayKeys,
@@ -631,7 +631,7 @@ _bt_array_keys_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	{
 		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
-							 "_bt_array_cur_key_leq_offset for offnum %u: returning early because there are no insertion scan key keys\n",
+							 "_bt_array_keys_geq_offset for offnum %u: returning early because there are no insertion scan key keys\n",
 							 offnum);
 		return false;
 	}
@@ -654,25 +654,24 @@ _bt_array_keys_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 
 		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
-							 "_bt_array_cur_key_leq_offset: elem %d datum %lu flags %s\n",
+							 "_bt_array_keys_geq_offset: elem %d datum %lu flags %s\n",
 							 i,
 							 inskey->scankeys[i].sk_argument, flags);
 
 		pfree(flags);
 	}
 
-	inskey->pivotsearch = true;
-	result = (_bt_compare(rel, inskey, page, offnum) <= 0);
+	is_geq_offnum = (_bt_compare(rel, inskey, page, offnum) >= 0);
 
 	if (itup_key)
 		pfree(itup_key);
 
 	if (so->log_btree_verbosity >= 2)
 		appendStringInfo(&so->debugstr,
-						 "_bt_array_cur_key_leq_offset for offnum %u returns %d\n",
-						 offnum, result);
+						 "_bt_array_keys_geq_offset for offnum %u returns %d\n",
+						 offnum, is_geq_offnum);
 
-	return result;
+	return is_geq_offnum;
 }
 
 /*

@@ -2067,7 +2067,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			/* Need to advance current SAOP array key? */
 			if (!continuescan && so->numArrayKeys)
 			{
-				if (!_bt_array_keys_leq_offset(scan, offnum))
+				if (_bt_array_keys_geq_offset(scan, offnum))
 				{
 					offnum = OffsetNumberNext(offnum);
 
@@ -2150,7 +2150,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			/* Need to advance current SAOP array key? */
 			if (!continuescan && so->numArrayKeys)
 			{
-				if (!_bt_array_keys_leq_offset(scan, P_HIKEY))
+				if (_bt_array_keys_geq_offset(scan, P_HIKEY))
 				{
 					continuescan = true;
 				}
