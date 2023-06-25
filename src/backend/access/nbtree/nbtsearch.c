@@ -1887,13 +1887,11 @@ _bt_array_cur_key_leq_offset(IndexScanDesc scan, OffsetNumber offnum)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	int16	   *indoption = scan->indexRelation->rd_indoption;
-	Page		page;
+	Page		page = BufferGetPage(so->currPos.buf)e;
 	BTScanInsert inskey = &so->inskey;
 	BTScanInsert itup_key = NULL;
 	bool		result;
 	int			natts;
-
-	page = BufferGetPage(so->currPos.buf);
 
 	if (!so->hasinskey)
 	{
