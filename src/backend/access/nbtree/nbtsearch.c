@@ -1887,7 +1887,6 @@ _bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Page		page;
-	BTPageOpaque opaque;
 	BTScanInsert inskey = &so->inskey;
 	BTScanInsert itup_key = NULL;
 	bool		result;
@@ -1897,10 +1896,6 @@ _bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 	indoption = scan->indexRelation->rd_indoption;
 
 	page = BufferGetPage(so->currPos.buf);
-	opaque = BTPageGetOpaque(page);
-
-	if (offnum == P_HIKEY && P_RIGHTMOST(opaque))
-		return true;
 
 	if (!so->hasinskey)
 	{
