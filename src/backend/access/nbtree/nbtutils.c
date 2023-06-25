@@ -641,19 +641,21 @@ _bt_array_keys_geq_offset(IndexScanDesc scan, OffsetNumber offnum)
 	{
 		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
 		int			cur_elem = curArrayKey->cur_elem;
-		Datum		*subkey;
+		ScanKey		scanKey = inskey->scankeys + i;
+		Datum		*cur_elem_subkey;
 		char		*flags;
 
-		subkey = curArrayKey->elem_values + cur_elem;
-		memcpy(&(inskey->scankeys + i)->sk_argument, subkey, sizeof(Datum));
-		inskey->scankeys[i].sk_flags = (indoption[i] << SK_BT_INDOPTION_SHIFT);
+		/* Copy current element value into insertion scankey */
+		cur_elem_subkey = curArrayKey->elem_values + cur_elem;
+		memcpy(&scanKey->sk_argument, cur_elem_subkey, sizeof(Datum));
+		scanKey->sk_flags = (indoption[i] << SK_BT_INDOPTION_SHIFT);
 
-		flags = dump_scankey_flags(&inskey->scankeys[i]);
+		flags = dump_scankey_flags(scanKey);
 
 		if (so->log_btree_verbosity >= 2)
 			appendStringInfo(&so->debugstr,
 							 "_bt_array_keys_geq_offset: elem %d datum %lu flags %s\n",
-							 i, inskey->scankeys[i].sk_argument, flags);
+							 i, scanKey->sk_argument, flags);
 
 		pfree(flags);
 	}
