@@ -1883,7 +1883,7 @@ _bt_next(IndexScanDesc scan, ScanDirection dir)
 }
 
 static bool
-_bt_cur_elem_array_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
+_bt_array_cur_key_lt_offnum(IndexScanDesc scan, OffsetNumber offnum)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Page		page;
@@ -2150,7 +2150,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			/* Need to advance current SAOP array key? */
 			if (!continuescan && so->numArrayKeys)
 			{
-				if (!_bt_cur_elem_array_key_lt_offnum(scan, offnum))
+				if (!_bt_array_cur_key_lt_offnum(scan, offnum))
 				{
 					offnum = OffsetNumberNext(offnum);
 
@@ -2233,7 +2233,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 			/* Need to advance current SAOP array key? */
 			if (!continuescan && so->numArrayKeys)
 			{
-				if (!_bt_cur_elem_array_key_lt_offnum(scan, P_HIKEY))
+				if (!_bt_array_cur_key_lt_offnum(scan, P_HIKEY))
 				{
 					continuescan = true;
 				}
