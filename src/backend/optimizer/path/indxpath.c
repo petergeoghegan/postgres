@@ -25,6 +25,7 @@
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/print.h"
 #include "nodes/supportnodes.h"
 #include "optimizer/cost.h"
 #include "optimizer/optimizer.h"
@@ -848,6 +849,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	List	   *index_pathkeys;
 	List	   *useful_pathkeys;
 	bool		row_compare_seen_already;
+	bool		node_seen_already = false;
 	bool		saop_included_already;
 	bool		saop_invalidates_ordering;
 	bool		pathkeys_possibly_useful;
@@ -855,6 +857,10 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	bool		index_only_scan;
 	int			prev_equality_indexcol;
 	int			indexcol;
+	StringInfoData	debug;
+
+	initStringInfo(&debug);
+	appendStringInfoString(&debug, "\n");
 
 	/*
 	 * Check that index supports the desired scan type(s)
@@ -906,6 +912,12 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 		{
 			IndexClause *iclause = (IndexClause *) lfirst(lc);
 			RestrictInfo *rinfo = iclause->rinfo;
+			char *str = nodeToString(rinfo);
+
+			str = pretty_format_node_dump(str);
+
+			appendStringInfo(&debug, "%d.\n%s\n\n\n", indexcol, str);
+			pfree(str);
 
 			/* We might need to omit ScalarArrayOpExpr clauses */
 			if (IsA(rinfo->clause, ScalarArrayOpExpr))
@@ -1113,6 +1125,10 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 		if (index_clauses == NIL && !index->amoptionalkey)
 			return NIL;
 	}
+
+	if (node_seen_already)
+		elog(WARNING, "node: %s", debug.data);
+	pfree(debug.data);
 
 	/* We do not want the index's rel itself listed in outer_relids */
 	outer_relids = bms_del_member(outer_relids, rel->relid);
