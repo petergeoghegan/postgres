@@ -1,0 +1,83 @@
+
+Results with ratios for most recent "perf_validate_int_int.sql" run:
+
+Result 1: index = t_one_int_int_idx, nsearches = 1, patch = 15.432 ms, master = 13.967 ms, ratio = 1.1048
+
+Result 2: index = t_one_int_int_idx, nsearches = 1, patch = 15.465 ms, master = 13.918 ms, ratio = 1.1111
+
+Result 3: index = t_one_int_int_idx, nsearches = 1, patch = 15.477 ms, master = 13.959 ms, ratio = 1.1087
+
+Result 4: index = t_one_int_int_idx, nsearches = 1, patch = 37.531 ms, master = 35.109 ms, ratio = 1.0689
+
+Result 5: index = t_one_sequential_int_int_idx, nsearches = 1, patch = 15.223 ms, master = 13.692 ms, ratio = 1.1118
+
+Result 6: index = t_one_sequential_int_int_idx, nsearches = 1, patch = 15.092 ms, master = 13.716 ms, ratio = 1.1003
+
+Result 7: index = t_one_sequential_int_int_idx, nsearches = 1, patch = 15.194 ms, master = 13.683 ms, ratio = 1.1104
+
+Result 8: index = t_one_sequential_int_int_idx, nsearches = 1, patch = 37.129 ms, master = 33.799 ms, ratio = 1.0985
+
+Result 9: index = t_five_int_int_idx, nsearches = 1, patch = 15.530 ms, master = 13.955 ms, ratio = 1.1128
+
+Result 10: index = t_five_int_int_idx, nsearches = 1, patch = 15.566 ms, master = 13.967 ms, ratio = 1.1144
+
+Result 11: index = t_five_int_int_idx, nsearches = 1, patch = 15.509 ms, master = 14.025 ms, ratio = 1.1058
+
+Result 12: index = t_five_int_int_idx, nsearches = 1, patch = 37.226 ms, master = 34.055 ms, ratio = 1.0931
+
+Result 13: index = t_ten_int_int_idx, nsearches = 1, patch = 15.716 ms, master = 14.001 ms, ratio = 1.1224
+
+Result 14: index = t_ten_int_int_idx, nsearches = 1, patch = 15.589 ms, master = 14.011 ms, ratio = 1.1126
+
+Result 15: index = t_ten_int_int_idx, nsearches = 1, patch = 15.586 ms, master = 14.033 ms, ratio = 1.1106
+
+Result 16: index = t_ten_int_int_idx, nsearches = 1, patch = 37.376 ms, master = 34.037 ms, ratio = 1.0980
+
+Result 17: index = t_fifteen_int_int_idx, nsearches = 1, patch = 15.556 ms, master = 13.946 ms, ratio = 1.1154
+
+Result 18: index = t_fifteen_int_int_idx, nsearches = 1, patch = 15.428 ms, master = 13.923 ms, ratio = 1.1080
+
+Result 19: index = t_fifteen_int_int_idx, nsearches = 1, patch = 15.464 ms, master = 13.974 ms, ratio = 1.1066
+
+Result 20: index = t_fifteen_int_int_idx, nsearches = 1, patch = 37.481 ms, master = 34.816 ms, ratio = 1.0765
+
+Result 21: index = t_seventeen_int_int_idx, nsearches = 1, patch = 15.649 ms, master = 13.981 ms, ratio = 1.1193
+
+Result 22: index = t_seventeen_int_int_idx, nsearches = 1, patch = 15.467 ms, master = 14.090 ms, ratio = 1.0977
+
+Result 23: index = t_seventeen_int_int_idx, nsearches = 1, patch = 15.489 ms, master = 13.986 ms, ratio = 1.1074
+
+Result 24: index = t_seventeen_int_int_idx, nsearches = 1, patch = 37.300 ms, master = 34.054 ms, ratio = 1.0953
+
+Result 25: index = t_twenty_int_int_idx, nsearches = 1, patch = 15.487 ms, master = 14.042 ms, ratio = 1.1029
+
+Result 26: index = t_twenty_int_int_idx, nsearches = 1, patch = 15.479 ms, master = 13.960 ms, ratio = 1.1088
+
+Result 27: index = t_twenty_int_int_idx, nsearches = 1, patch = 15.599 ms, master = 14.056 ms, ratio = 1.1097
+
+Result 28: index = t_twenty_int_int_idx, nsearches = 1, patch = 37.296 ms, master = 34.170 ms, ratio = 1.0914
+
+Result 29: index = t_twentyfive_int_int_idx, nsearches = 1, patch = 15.778 ms, master = 14.042 ms, ratio = 1.1236
+
+Result 30: index = t_twentyfive_int_int_idx, nsearches = 1, patch = 15.440 ms, master = 13.992 ms, ratio = 1.1034
+
+Result 31: index = t_twentyfive_int_int_idx, nsearches = 1, patch = 15.584 ms, master = 14.027 ms, ratio = 1.1110
+
+Result 32: index = t_twentyfive_int_int_idx, nsearches = 1, patch = 37.368 ms, master = 33.975 ms, ratio = 1.0998
+
+Result 33: index = t_fifty_int_int_idx, nsearches = 740, patch = 9.126 ms, master = 13.951 ms, ratio = .6541
+
+Result 34: index = t_fifty_int_int_idx, nsearches = 740, patch = 9.110 ms, master = 14.092 ms, ratio = .6464
+
+Result 35: index = t_fifty_int_int_idx, nsearches = 740, patch = 9.178 ms, master = 15.168 ms, ratio = .6050
+
+Result 36: index = t_fifty_int_int_idx, nsearches = 740, patch = 9.483 ms, master = 34.048 ms, ratio = .2785
+
+Result 37: index = t_five_hundred_int_int_idx, nsearches = 2001, patch = 1.692 ms, master = 14.111 ms, ratio = .1199
+
+Result 38: index = t_five_hundred_int_int_idx, nsearches = 2001, patch = 1.720 ms, master = 14.054 ms, ratio = .1223
+
+Result 39: index = t_five_hundred_int_int_idx, nsearches = 2001, patch = 1.740 ms, master = 14.081 ms, ratio = .1235
+
+Result 40: index = t_five_hundred_int_int_idx, nsearches = 2001, patch = 1.890 ms, master = 34.280 ms, ratio = .0551
+

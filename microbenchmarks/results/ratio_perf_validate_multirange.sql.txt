@@ -1,0 +1,153 @@
+
+Results with ratios for most recent "perf_validate_multirange.sql" run:
+
+Result 1, select * from test_multirange where a = 42 and c = 1:
+  index = test_multirange_idx, nsearches = 1, patch = 15.999 ms, master = 15.411 ms, ratio = 1.0381
+
+Result 2, select * from test_multirange where a = 42 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_idx, nsearches = 2, patch = 15.909 ms, master = 15.479 ms, ratio = 1.0277
+
+Result 3, select * from test_multirange where a between 0 and 42 and b between 0 and 1_000_000 and c = 1:
+  index = test_multirange_idx, nsearches = 1, patch = 16.143 ms, master = 34.592 ms, ratio = .4666
+
+Result 4, select * from test_multirange where a between 0 and 42 and b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_idx, nsearches = 2, patch = 16.165 ms, master = 35.073 ms, ratio = .4608
+
+Result 5, select * from test_multirange where a between 0 and 42 and c = 1:
+  index = test_multirange_idx, nsearches = 1, patch = 16.078 ms, master = 21.079 ms, ratio = .7627
+
+Result 6, select * from test_multirange where a between 0 and 42 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_idx, nsearches = 2, patch = 16.134 ms, master = 21.490 ms, ratio = .7507
+
+Result 7, select * from test_multirange where b between 0 and 1_000_000 and c = 1:
+  index = test_multirange_idx, nsearches = 1, patch = 16.170 ms, master = 26.716 ms, ratio = .6052
+
+Result 8, select * from test_multirange where b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_idx, nsearches = 2, patch = 16.097 ms, master = 26.812 ms, ratio = .6003
+
+Result 9, select * from test_multirange where b between 0 and 1 and c = 1:
+  index = test_multirange_idx, nsearches = 2, patch = 0.009 ms, master = 19.110 ms, ratio = .0004
+
+Result 10, select * from test_multirange where b between 0 and 1 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_idx, nsearches = 2, patch = 0.011 ms, master = 19.438 ms, ratio = .0005
+
+Result 11, select * from test_multirange_allhighcardinality where a = 42 and c = 1:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.007 ms, master = 0.007 ms, ratio = 1.0000
+
+Result 12, select * from test_multirange_allhighcardinality where a = 42 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.008 ms, master = 0.007 ms, ratio = 1.1428
+
+Result 13, select * from test_multirange_allhighcardinality where a between 0 and 42 and b between 0 and 1_000_000 and c = 1:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.012 ms, master = 0.009 ms, ratio = 1.3333
+
+Result 14, select * from test_multirange_allhighcardinality where a between 0 and 42 and b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.011 ms, master = 0.015 ms, ratio = .7333
+
+Result 15, select * from test_multirange_allhighcardinality where a between 0 and 42 and c = 1:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.011 ms, master = 0.007 ms, ratio = 1.5714
+
+Result 16, select * from test_multirange_allhighcardinality where a between 0 and 42 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.010 ms, master = 0.008 ms, ratio = 1.2500
+
+Result 17, select * from test_multirange_allhighcardinality where a between 0 and 42:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.010 ms, master = 0.011 ms, ratio = .9090
+
+Result 18, select * from test_multirange_allhighcardinality where a between 0 and 42 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.011 ms, master = 0.011 ms, ratio = 1.0000
+
+Result 19, select * from test_multirange_allhighcardinality where a between 0 and 42 and b = 555:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.010 ms, master = 0.007 ms, ratio = 1.4285
+
+Result 20, select * from test_multirange_allhighcardinality where a between 0 and 42 and b = 555 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 0.009 ms, master = 0.011 ms, ratio = .8181
+
+Result 21, select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and b = 555:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 16.076 ms, master = 21.067 ms, ratio = .7630
+
+Result 22, select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and b = 555 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 2, patch = 15.865 ms, master = 21.229 ms, ratio = .7473
+
+Result 23, select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and c = 555:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 15.988 ms, master = 21.126 ms, ratio = .7567
+
+Result 24, select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and c = 555 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 2, patch = 16.046 ms, master = 21.309 ms, ratio = .7530
+
+Result 25, select * from test_multirange_allhighcardinality where b between 0 and 1_000_000 and c = 1:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 15.983 ms, master = 27.114 ms, ratio = .5894
+
+Result 26, select * from test_multirange_allhighcardinality where b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 2, patch = 16.021 ms, master = 26.711 ms, ratio = .5997
+
+Result 27, select * from test_multirange_allhighcardinality where b between 0 and 1 and c = 1:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 70.035 ms, master = 19.155 ms, ratio = 3.6562
+
+Result 28, select * from test_multirange_allhighcardinality where b between 0 and 1 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 2, patch = 64.639 ms, master = 19.272 ms, ratio = 3.3540
+
+Result 29, select * from test_multirange_allhighcardinality where b between 0 and 1 and c between 0 and 1:
+  index = test_multirange_allhighcardinality_idx, nsearches = 1, patch = 71.549 ms, master = 19.218 ms, ratio = 3.7230
+
+Result 30, select * from test_multirange_allhighcardinality where b between 0 and 1 and c between 0 and 1 order by a desc, b desc, c desc:
+  index = test_multirange_allhighcardinality_idx, nsearches = 2, patch = 65.794 ms, master = 19.496 ms, ratio = 3.3747
+
+Result 31, select * from test_multirange_medcard where a = 42 and c = 1:
+  index = test_multirange_medcard_idx, nsearches = 1, patch = 0.024 ms, master = 0.013 ms, ratio = 1.8461
+
+Result 32, select * from test_multirange_medcard where a = 42 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 2, patch = 0.023 ms, master = 0.012 ms, ratio = 1.9166
+
+Result 33, select * from test_multirange_medcard where a between 0 and 42 and b between 0 and 1_000_000 and c = 1:
+  index = test_multirange_medcard_idx, nsearches = 1, patch = 0.613 ms, master = 0.457 ms, ratio = 1.3413
+
+Result 34, select * from test_multirange_medcard where a between 0 and 42 and b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 2, patch = 0.596 ms, master = 0.459 ms, ratio = 1.2984
+
+Result 35, select * from test_multirange_medcard where a between 0 and 42 and c = 1:
+  index = test_multirange_medcard_idx, nsearches = 1, patch = 0.239 ms, master = 0.282 ms, ratio = .8475
+
+Result 36, select * from test_multirange_medcard where a between 0 and 42 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 2, patch = 0.246 ms, master = 0.283 ms, ratio = .8692
+
+Result 37, select * from test_multirange_medcard where a between 0 and 42:
+  index = test_multirange_medcard_idx, nsearches = 1, patch = 1.377 ms, master = 1.369 ms, ratio = 1.0058
+
+Result 38, select * from test_multirange_medcard where a between 0 and 42 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 1, patch = 1.384 ms, master = 1.357 ms, ratio = 1.0198
+
+Result 39, select * from test_multirange_medcard where a between 0 and 42 and b = 555:
+  index = test_multirange_medcard_idx, nsearches = 43, patch = 0.041 ms, master = 0.283 ms, ratio = .1448
+
+Result 40, select * from test_multirange_medcard where a between 0 and 42 and b = 555 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 43, patch = 0.043 ms, master = 0.277 ms, ratio = .1552
+
+Result 41, select * from test_multirange_medcard where a between 0 and 1_000_000 and b = 555:
+  index = test_multirange_medcard_idx, nsearches = 3334, patch = 2.738 ms, master = 22.336 ms, ratio = .1225
+
+Result 42, select * from test_multirange_medcard where a between 0 and 1_000_000 and b = 555 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 3334, patch = 2.993 ms, master = 21.947 ms, ratio = .1363
+
+Result 43, select * from test_multirange_medcard where a between 0 and 1_000_000 and c = 555:
+  index = test_multirange_medcard_idx, nsearches = 1, patch = 17.190 ms, master = 22.048 ms, ratio = .7796
+
+Result 44, select * from test_multirange_medcard where a between 0 and 1_000_000 and c = 555 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 2, patch = 17.223 ms, master = 21.934 ms, ratio = .7852
+
+Result 45, select * from test_multirange_medcard where b between 0 and 1_000_000 and c = 1:
+  index = test_multirange_medcard_idx, nsearches = 1, patch = 17.506 ms, master = 27.334 ms, ratio = .6404
+
+Result 46, select * from test_multirange_medcard where b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 2, patch = 17.069 ms, master = 27.379 ms, ratio = .6234
+
+Result 47, select * from test_multirange_medcard where b between 0 and 1 and c = 1:
+  index = test_multirange_medcard_idx, nsearches = 3334, patch = 2.819 ms, master = 20.045 ms, ratio = .1406
+
+Result 48, select * from test_multirange_medcard where b between 0 and 1 and c = 1 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 3334, patch = 3.191 ms, master = 19.868 ms, ratio = .1606
+
+Result 49, select * from test_multirange_medcard where b between 0 and 1 and c between 0 and 1:
+  index = test_multirange_medcard_idx, nsearches = 3334, patch = 2.808 ms, master = 20.334 ms, ratio = .1380
+
+Result 50, select * from test_multirange_medcard where b between 0 and 1 and c between 0 and 1 order by a desc, b desc, c desc:
+  index = test_multirange_medcard_idx, nsearches = 3334, patch = 3.185 ms, master = 20.162 ms, ratio = .1579
+

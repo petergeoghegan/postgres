@@ -1,0 +1,4390 @@
+set enable_seqscan = off;
+set max_parallel_workers_per_gather=0;
+\getenv abs_srcdir PG_ABS_SRCDIR
+-- Set log_btree_verbosity to 1 without depending on having that patch
+-- applied (HACK, just sets commit_siblings instead when we don't have that
+-- patch available):
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '1', false);
+ set_config 
+------------
+ 1
+(1 row)
+
+--
+-- Heikki CREATE INDEX regression stress test query (miniaturized) --
+--
+-- Test case taken from: https://postgr.es/m/aa55adf3-6466-4324-92e6-5ef54e7c3918@iki.fi
+--
+-- set enable_seqscan=off; set max_parallel_workers_per_gather=0;
+-- Setup:
+set client_min_messages=error;
+drop table if exists heikki_skiptest_small;
+reset client_min_messages;
+-- First do retail insert version of his query, where suffix truncation is
+-- effective:
+create unlogged table heikki_skiptest_small (a int, b int);
+create index heikki_skiptest_small_idx on heikki_skiptest_small (a, b);
+insert into heikki_skiptest_small
+select g / 10 as a, g % 10 as b
+from generate_series(1, 10_000) g;
+vacuum freeze heikki_skiptest_small;
+-- Forwards:
+select count(*)
+from heikki_skiptest_small
+where b = 1;
+ count 
+-------
+  1000
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*)
+from heikki_skiptest_small
+where b = 1;
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=133.91..133.92 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=29
+   ->  Index Only Scan using heikki_skiptest_small_idx on heikki_skiptest_small  (cost=0.29..133.78 rows=50 width=0) (actual rows=1000 loops=1)
+         Index Cond: (b = 1)
+         Index Searches: 1
+         Heap Fetches: 0
+         Buffers: shared hit=29
+(7 rows)
+
+-- Backwards:
+select a, b
+from heikki_skiptest_small
+where b = 1
+order by a desc, b desc
+limit 1 offset 20_000;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select a, b
+from heikki_skiptest_small
+where b = 1
+order by a desc, b desc
+limit 1 offset 20_000;
+                                                                       QUERY PLAN                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=133.78..136.45 rows=1 width=8) (actual rows=0 loops=1)
+   Buffers: shared hit=30
+   ->  Index Only Scan Backward using heikki_skiptest_small_idx on heikki_skiptest_small  (cost=0.29..133.78 rows=50 width=8) (actual rows=1000 loops=1)
+         Index Cond: (b = 1)
+         Index Searches: 2
+         Heap Fetches: 0
+         Buffers: shared hit=30
+(7 rows)
+
+-- Okay, now the actual adversarial case, which requires that suffix
+-- truncation wasn't very effective -- REINDEX to get that:
+reindex index heikki_skiptest_small_idx;
+-- Now repeat exactly the same queries as first time around:
+-- Forwards:
+select count(*)
+from heikki_skiptest_small
+where b = 1;
+ count 
+-------
+  1000
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*)
+from heikki_skiptest_small
+where b = 1;
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=135.91..135.92 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=31
+   ->  Index Only Scan using heikki_skiptest_small_idx on heikki_skiptest_small  (cost=0.29..135.78 rows=50 width=0) (actual rows=1000 loops=1)
+         Index Cond: (b = 1)
+         Index Searches: 2
+         Heap Fetches: 0
+         Buffers: shared hit=31
+(7 rows)
+
+-- Backwards:
+select a, b
+from heikki_skiptest_small
+where b = 1
+order by a desc, b desc
+limit 1 offset 20_000;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select a, b
+from heikki_skiptest_small
+where b = 1
+order by a desc, b desc
+limit 1 offset 20_000;
+                                                                       QUERY PLAN                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=135.78..138.50 rows=1 width=8) (actual rows=0 loops=1)
+   Buffers: shared hit=31
+   ->  Index Only Scan Backward using heikki_skiptest_small_idx on heikki_skiptest_small  (cost=0.29..135.78 rows=50 width=8) (actual rows=1000 loops=1)
+         Index Cond: (b = 1)
+         Index Searches: 2
+         Heap Fetches: 0
+         Buffers: shared hit=31
+(7 rows)
+
+-----------------------------------------------
+-- Skip scan parity for backwards scan tests --
+-----------------------------------------------
+--
+-- (Jan 29 2025) Make sure that backwards scan and forward scan full index
+-- scans have reasonably (if not exactly) comparable performance
+-- characteristics in cases where skip scan is applied but cannot ever really
+-- help
+--
+set client_min_messages=error;
+drop table if exists multi_test;
+reset client_min_messages;
+create unlogged table multi_test(
+  a int,
+  b int
+);
+create index multi_test_idx on multi_test(a, b);
+insert into multi_test
+select
+  j,
+  case when i < 14 then
+    0
+  else
+    1
+  end
+from
+  generate_series(1, 14) i,
+  generate_series(1, 400) j
+order by
+  j,
+  i;
+vacuum analyze multi_test;
+-- Index-only scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to on;
+set enable_indexscan to off;
+-- Forward scan:
+select *
+from multi_test
+where b = 1
+order by a, b;
+  a  | b 
+-----+---
+   1 | 1
+   2 | 1
+   3 | 1
+   4 | 1
+   5 | 1
+   6 | 1
+   7 | 1
+   8 | 1
+   9 | 1
+  10 | 1
+  11 | 1
+  12 | 1
+  13 | 1
+  14 | 1
+  15 | 1
+  16 | 1
+  17 | 1
+  18 | 1
+  19 | 1
+  20 | 1
+  21 | 1
+  22 | 1
+  23 | 1
+  24 | 1
+  25 | 1
+  26 | 1
+  27 | 1
+  28 | 1
+  29 | 1
+  30 | 1
+  31 | 1
+  32 | 1
+  33 | 1
+  34 | 1
+  35 | 1
+  36 | 1
+  37 | 1
+  38 | 1
+  39 | 1
+  40 | 1
+  41 | 1
+  42 | 1
+  43 | 1
+  44 | 1
+  45 | 1
+  46 | 1
+  47 | 1
+  48 | 1
+  49 | 1
+  50 | 1
+  51 | 1
+  52 | 1
+  53 | 1
+  54 | 1
+  55 | 1
+  56 | 1
+  57 | 1
+  58 | 1
+  59 | 1
+  60 | 1
+  61 | 1
+  62 | 1
+  63 | 1
+  64 | 1
+  65 | 1
+  66 | 1
+  67 | 1
+  68 | 1
+  69 | 1
+  70 | 1
+  71 | 1
+  72 | 1
+  73 | 1
+  74 | 1
+  75 | 1
+  76 | 1
+  77 | 1
+  78 | 1
+  79 | 1
+  80 | 1
+  81 | 1
+  82 | 1
+  83 | 1
+  84 | 1
+  85 | 1
+  86 | 1
+  87 | 1
+  88 | 1
+  89 | 1
+  90 | 1
+  91 | 1
+  92 | 1
+  93 | 1
+  94 | 1
+  95 | 1
+  96 | 1
+  97 | 1
+  98 | 1
+  99 | 1
+ 100 | 1
+ 101 | 1
+ 102 | 1
+ 103 | 1
+ 104 | 1
+ 105 | 1
+ 106 | 1
+ 107 | 1
+ 108 | 1
+ 109 | 1
+ 110 | 1
+ 111 | 1
+ 112 | 1
+ 113 | 1
+ 114 | 1
+ 115 | 1
+ 116 | 1
+ 117 | 1
+ 118 | 1
+ 119 | 1
+ 120 | 1
+ 121 | 1
+ 122 | 1
+ 123 | 1
+ 124 | 1
+ 125 | 1
+ 126 | 1
+ 127 | 1
+ 128 | 1
+ 129 | 1
+ 130 | 1
+ 131 | 1
+ 132 | 1
+ 133 | 1
+ 134 | 1
+ 135 | 1
+ 136 | 1
+ 137 | 1
+ 138 | 1
+ 139 | 1
+ 140 | 1
+ 141 | 1
+ 142 | 1
+ 143 | 1
+ 144 | 1
+ 145 | 1
+ 146 | 1
+ 147 | 1
+ 148 | 1
+ 149 | 1
+ 150 | 1
+ 151 | 1
+ 152 | 1
+ 153 | 1
+ 154 | 1
+ 155 | 1
+ 156 | 1
+ 157 | 1
+ 158 | 1
+ 159 | 1
+ 160 | 1
+ 161 | 1
+ 162 | 1
+ 163 | 1
+ 164 | 1
+ 165 | 1
+ 166 | 1
+ 167 | 1
+ 168 | 1
+ 169 | 1
+ 170 | 1
+ 171 | 1
+ 172 | 1
+ 173 | 1
+ 174 | 1
+ 175 | 1
+ 176 | 1
+ 177 | 1
+ 178 | 1
+ 179 | 1
+ 180 | 1
+ 181 | 1
+ 182 | 1
+ 183 | 1
+ 184 | 1
+ 185 | 1
+ 186 | 1
+ 187 | 1
+ 188 | 1
+ 189 | 1
+ 190 | 1
+ 191 | 1
+ 192 | 1
+ 193 | 1
+ 194 | 1
+ 195 | 1
+ 196 | 1
+ 197 | 1
+ 198 | 1
+ 199 | 1
+ 200 | 1
+ 201 | 1
+ 202 | 1
+ 203 | 1
+ 204 | 1
+ 205 | 1
+ 206 | 1
+ 207 | 1
+ 208 | 1
+ 209 | 1
+ 210 | 1
+ 211 | 1
+ 212 | 1
+ 213 | 1
+ 214 | 1
+ 215 | 1
+ 216 | 1
+ 217 | 1
+ 218 | 1
+ 219 | 1
+ 220 | 1
+ 221 | 1
+ 222 | 1
+ 223 | 1
+ 224 | 1
+ 225 | 1
+ 226 | 1
+ 227 | 1
+ 228 | 1
+ 229 | 1
+ 230 | 1
+ 231 | 1
+ 232 | 1
+ 233 | 1
+ 234 | 1
+ 235 | 1
+ 236 | 1
+ 237 | 1
+ 238 | 1
+ 239 | 1
+ 240 | 1
+ 241 | 1
+ 242 | 1
+ 243 | 1
+ 244 | 1
+ 245 | 1
+ 246 | 1
+ 247 | 1
+ 248 | 1
+ 249 | 1
+ 250 | 1
+ 251 | 1
+ 252 | 1
+ 253 | 1
+ 254 | 1
+ 255 | 1
+ 256 | 1
+ 257 | 1
+ 258 | 1
+ 259 | 1
+ 260 | 1
+ 261 | 1
+ 262 | 1
+ 263 | 1
+ 264 | 1
+ 265 | 1
+ 266 | 1
+ 267 | 1
+ 268 | 1
+ 269 | 1
+ 270 | 1
+ 271 | 1
+ 272 | 1
+ 273 | 1
+ 274 | 1
+ 275 | 1
+ 276 | 1
+ 277 | 1
+ 278 | 1
+ 279 | 1
+ 280 | 1
+ 281 | 1
+ 282 | 1
+ 283 | 1
+ 284 | 1
+ 285 | 1
+ 286 | 1
+ 287 | 1
+ 288 | 1
+ 289 | 1
+ 290 | 1
+ 291 | 1
+ 292 | 1
+ 293 | 1
+ 294 | 1
+ 295 | 1
+ 296 | 1
+ 297 | 1
+ 298 | 1
+ 299 | 1
+ 300 | 1
+ 301 | 1
+ 302 | 1
+ 303 | 1
+ 304 | 1
+ 305 | 1
+ 306 | 1
+ 307 | 1
+ 308 | 1
+ 309 | 1
+ 310 | 1
+ 311 | 1
+ 312 | 1
+ 313 | 1
+ 314 | 1
+ 315 | 1
+ 316 | 1
+ 317 | 1
+ 318 | 1
+ 319 | 1
+ 320 | 1
+ 321 | 1
+ 322 | 1
+ 323 | 1
+ 324 | 1
+ 325 | 1
+ 326 | 1
+ 327 | 1
+ 328 | 1
+ 329 | 1
+ 330 | 1
+ 331 | 1
+ 332 | 1
+ 333 | 1
+ 334 | 1
+ 335 | 1
+ 336 | 1
+ 337 | 1
+ 338 | 1
+ 339 | 1
+ 340 | 1
+ 341 | 1
+ 342 | 1
+ 343 | 1
+ 344 | 1
+ 345 | 1
+ 346 | 1
+ 347 | 1
+ 348 | 1
+ 349 | 1
+ 350 | 1
+ 351 | 1
+ 352 | 1
+ 353 | 1
+ 354 | 1
+ 355 | 1
+ 356 | 1
+ 357 | 1
+ 358 | 1
+ 359 | 1
+ 360 | 1
+ 361 | 1
+ 362 | 1
+ 363 | 1
+ 364 | 1
+ 365 | 1
+ 366 | 1
+ 367 | 1
+ 368 | 1
+ 369 | 1
+ 370 | 1
+ 371 | 1
+ 372 | 1
+ 373 | 1
+ 374 | 1
+ 375 | 1
+ 376 | 1
+ 377 | 1
+ 378 | 1
+ 379 | 1
+ 380 | 1
+ 381 | 1
+ 382 | 1
+ 383 | 1
+ 384 | 1
+ 385 | 1
+ 386 | 1
+ 387 | 1
+ 388 | 1
+ 389 | 1
+ 390 | 1
+ 391 | 1
+ 392 | 1
+ 393 | 1
+ 394 | 1
+ 395 | 1
+ 396 | 1
+ 397 | 1
+ 398 | 1
+ 399 | 1
+ 400 | 1
+(400 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test
+where b = 1
+order by a, b;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using multi_test_idx on multi_test  (cost=0.28..64.28 rows=400 width=8) (actual rows=400 loops=1)
+   Disabled: true
+   Index Cond: (b = 1)
+   Index Searches: 1
+   Heap Fetches: 0
+   Buffers: shared hit=9
+(6 rows)
+
+select *
+from multi_test
+where b < 0
+order by a, b;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test
+where b < 0
+order by a, b;
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Index Only Scan using multi_test_idx on multi_test  (cost=0.28..60.29 rows=1 width=8) (actual rows=0 loops=1)
+   Disabled: true
+   Index Cond: (b < 0)
+   Index Searches: 1
+   Heap Fetches: 0
+   Buffers: shared hit=8
+(6 rows)
+
+-- Backward scan, should match forward scan "buffers" (more or less):
+select *
+from multi_test
+where b = 1
+order by a desc, b desc;
+  a  | b 
+-----+---
+ 400 | 1
+ 399 | 1
+ 398 | 1
+ 397 | 1
+ 396 | 1
+ 395 | 1
+ 394 | 1
+ 393 | 1
+ 392 | 1
+ 391 | 1
+ 390 | 1
+ 389 | 1
+ 388 | 1
+ 387 | 1
+ 386 | 1
+ 385 | 1
+ 384 | 1
+ 383 | 1
+ 382 | 1
+ 381 | 1
+ 380 | 1
+ 379 | 1
+ 378 | 1
+ 377 | 1
+ 376 | 1
+ 375 | 1
+ 374 | 1
+ 373 | 1
+ 372 | 1
+ 371 | 1
+ 370 | 1
+ 369 | 1
+ 368 | 1
+ 367 | 1
+ 366 | 1
+ 365 | 1
+ 364 | 1
+ 363 | 1
+ 362 | 1
+ 361 | 1
+ 360 | 1
+ 359 | 1
+ 358 | 1
+ 357 | 1
+ 356 | 1
+ 355 | 1
+ 354 | 1
+ 353 | 1
+ 352 | 1
+ 351 | 1
+ 350 | 1
+ 349 | 1
+ 348 | 1
+ 347 | 1
+ 346 | 1
+ 345 | 1
+ 344 | 1
+ 343 | 1
+ 342 | 1
+ 341 | 1
+ 340 | 1
+ 339 | 1
+ 338 | 1
+ 337 | 1
+ 336 | 1
+ 335 | 1
+ 334 | 1
+ 333 | 1
+ 332 | 1
+ 331 | 1
+ 330 | 1
+ 329 | 1
+ 328 | 1
+ 327 | 1
+ 326 | 1
+ 325 | 1
+ 324 | 1
+ 323 | 1
+ 322 | 1
+ 321 | 1
+ 320 | 1
+ 319 | 1
+ 318 | 1
+ 317 | 1
+ 316 | 1
+ 315 | 1
+ 314 | 1
+ 313 | 1
+ 312 | 1
+ 311 | 1
+ 310 | 1
+ 309 | 1
+ 308 | 1
+ 307 | 1
+ 306 | 1
+ 305 | 1
+ 304 | 1
+ 303 | 1
+ 302 | 1
+ 301 | 1
+ 300 | 1
+ 299 | 1
+ 298 | 1
+ 297 | 1
+ 296 | 1
+ 295 | 1
+ 294 | 1
+ 293 | 1
+ 292 | 1
+ 291 | 1
+ 290 | 1
+ 289 | 1
+ 288 | 1
+ 287 | 1
+ 286 | 1
+ 285 | 1
+ 284 | 1
+ 283 | 1
+ 282 | 1
+ 281 | 1
+ 280 | 1
+ 279 | 1
+ 278 | 1
+ 277 | 1
+ 276 | 1
+ 275 | 1
+ 274 | 1
+ 273 | 1
+ 272 | 1
+ 271 | 1
+ 270 | 1
+ 269 | 1
+ 268 | 1
+ 267 | 1
+ 266 | 1
+ 265 | 1
+ 264 | 1
+ 263 | 1
+ 262 | 1
+ 261 | 1
+ 260 | 1
+ 259 | 1
+ 258 | 1
+ 257 | 1
+ 256 | 1
+ 255 | 1
+ 254 | 1
+ 253 | 1
+ 252 | 1
+ 251 | 1
+ 250 | 1
+ 249 | 1
+ 248 | 1
+ 247 | 1
+ 246 | 1
+ 245 | 1
+ 244 | 1
+ 243 | 1
+ 242 | 1
+ 241 | 1
+ 240 | 1
+ 239 | 1
+ 238 | 1
+ 237 | 1
+ 236 | 1
+ 235 | 1
+ 234 | 1
+ 233 | 1
+ 232 | 1
+ 231 | 1
+ 230 | 1
+ 229 | 1
+ 228 | 1
+ 227 | 1
+ 226 | 1
+ 225 | 1
+ 224 | 1
+ 223 | 1
+ 222 | 1
+ 221 | 1
+ 220 | 1
+ 219 | 1
+ 218 | 1
+ 217 | 1
+ 216 | 1
+ 215 | 1
+ 214 | 1
+ 213 | 1
+ 212 | 1
+ 211 | 1
+ 210 | 1
+ 209 | 1
+ 208 | 1
+ 207 | 1
+ 206 | 1
+ 205 | 1
+ 204 | 1
+ 203 | 1
+ 202 | 1
+ 201 | 1
+ 200 | 1
+ 199 | 1
+ 198 | 1
+ 197 | 1
+ 196 | 1
+ 195 | 1
+ 194 | 1
+ 193 | 1
+ 192 | 1
+ 191 | 1
+ 190 | 1
+ 189 | 1
+ 188 | 1
+ 187 | 1
+ 186 | 1
+ 185 | 1
+ 184 | 1
+ 183 | 1
+ 182 | 1
+ 181 | 1
+ 180 | 1
+ 179 | 1
+ 178 | 1
+ 177 | 1
+ 176 | 1
+ 175 | 1
+ 174 | 1
+ 173 | 1
+ 172 | 1
+ 171 | 1
+ 170 | 1
+ 169 | 1
+ 168 | 1
+ 167 | 1
+ 166 | 1
+ 165 | 1
+ 164 | 1
+ 163 | 1
+ 162 | 1
+ 161 | 1
+ 160 | 1
+ 159 | 1
+ 158 | 1
+ 157 | 1
+ 156 | 1
+ 155 | 1
+ 154 | 1
+ 153 | 1
+ 152 | 1
+ 151 | 1
+ 150 | 1
+ 149 | 1
+ 148 | 1
+ 147 | 1
+ 146 | 1
+ 145 | 1
+ 144 | 1
+ 143 | 1
+ 142 | 1
+ 141 | 1
+ 140 | 1
+ 139 | 1
+ 138 | 1
+ 137 | 1
+ 136 | 1
+ 135 | 1
+ 134 | 1
+ 133 | 1
+ 132 | 1
+ 131 | 1
+ 130 | 1
+ 129 | 1
+ 128 | 1
+ 127 | 1
+ 126 | 1
+ 125 | 1
+ 124 | 1
+ 123 | 1
+ 122 | 1
+ 121 | 1
+ 120 | 1
+ 119 | 1
+ 118 | 1
+ 117 | 1
+ 116 | 1
+ 115 | 1
+ 114 | 1
+ 113 | 1
+ 112 | 1
+ 111 | 1
+ 110 | 1
+ 109 | 1
+ 108 | 1
+ 107 | 1
+ 106 | 1
+ 105 | 1
+ 104 | 1
+ 103 | 1
+ 102 | 1
+ 101 | 1
+ 100 | 1
+  99 | 1
+  98 | 1
+  97 | 1
+  96 | 1
+  95 | 1
+  94 | 1
+  93 | 1
+  92 | 1
+  91 | 1
+  90 | 1
+  89 | 1
+  88 | 1
+  87 | 1
+  86 | 1
+  85 | 1
+  84 | 1
+  83 | 1
+  82 | 1
+  81 | 1
+  80 | 1
+  79 | 1
+  78 | 1
+  77 | 1
+  76 | 1
+  75 | 1
+  74 | 1
+  73 | 1
+  72 | 1
+  71 | 1
+  70 | 1
+  69 | 1
+  68 | 1
+  67 | 1
+  66 | 1
+  65 | 1
+  64 | 1
+  63 | 1
+  62 | 1
+  61 | 1
+  60 | 1
+  59 | 1
+  58 | 1
+  57 | 1
+  56 | 1
+  55 | 1
+  54 | 1
+  53 | 1
+  52 | 1
+  51 | 1
+  50 | 1
+  49 | 1
+  48 | 1
+  47 | 1
+  46 | 1
+  45 | 1
+  44 | 1
+  43 | 1
+  42 | 1
+  41 | 1
+  40 | 1
+  39 | 1
+  38 | 1
+  37 | 1
+  36 | 1
+  35 | 1
+  34 | 1
+  33 | 1
+  32 | 1
+  31 | 1
+  30 | 1
+  29 | 1
+  28 | 1
+  27 | 1
+  26 | 1
+  25 | 1
+  24 | 1
+  23 | 1
+  22 | 1
+  21 | 1
+  20 | 1
+  19 | 1
+  18 | 1
+  17 | 1
+  16 | 1
+  15 | 1
+  14 | 1
+  13 | 1
+  12 | 1
+  11 | 1
+  10 | 1
+   9 | 1
+   8 | 1
+   7 | 1
+   6 | 1
+   5 | 1
+   4 | 1
+   3 | 1
+   2 | 1
+   1 | 1
+(400 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test
+where b = 1
+order by a desc, b desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan Backward using multi_test_idx on multi_test  (cost=0.28..64.28 rows=400 width=8) (actual rows=400 loops=1)
+   Disabled: true
+   Index Cond: (b = 1)
+   Index Searches: 2
+   Heap Fetches: 0
+   Buffers: shared hit=10
+(6 rows)
+
+select *
+from multi_test
+where b < 0
+order by a desc, b desc;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test
+where b < 0
+order by a desc, b desc;
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan Backward using multi_test_idx on multi_test  (cost=0.28..60.29 rows=1 width=8) (actual rows=0 loops=1)
+   Disabled: true
+   Index Cond: (b < 0)
+   Index Searches: 2
+   Heap Fetches: 0
+   Buffers: shared hit=10
+(6 rows)
+
+set client_min_messages=error;
+drop table if exists high_low_high_card;
+reset client_min_messages;
+create unlogged table high_low_high_card(
+  skippy int4,
+  key int4,
+  type text
+);
+create index on high_low_high_card(skippy, key);
+insert into high_low_high_card
+select
+  -- "+ 250" here to make sure that there are leftmost pages full of tuples with
+  -- distinct "skippy" vals:
+  (abs(hashint4(i % 5)) + 250) % (10000 + 250),
+  abs(hashint4(i + 42)) % 100_000,
+  'fat'
+from
+  generate_series(1, 100_000) i;
+with card as (
+  select
+    i skippy,
+    abs(hashint4(i + j)) % 10000,
+    'skinny'
+  from
+    generate_series(1, 10000) i,
+    generate_series(1, 10) j
+),
+oth as (
+  select
+    *
+  from
+    card c
+  where
+    not exists (
+      select
+        *
+      from
+        high_low_high_card h
+      where
+        c.skippy = h.skippy)
+)
+insert into high_low_high_card
+select
+  *
+from
+  oth;
+vacuum analyze high_low_high_card;
+-- Index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+--------------------
+-- Forwards scans --
+--------------------
+select * from high_low_high_card where key = 40 order by skippy, key;
+ skippy | key |  type  
+--------+-----+--------
+   1615 |  40 | skinny
+   1616 |  40 | skinny
+   1617 |  40 | skinny
+   1618 |  40 | skinny
+   1619 |  40 | skinny
+   1620 |  40 | skinny
+   1621 |  40 | skinny
+   1622 |  40 | skinny
+   1623 |  40 | skinny
+   1624 |  40 | skinny
+   5526 |  40 | fat
+   9481 |  40 | skinny
+   9482 |  40 | skinny
+   9483 |  40 | skinny
+   9484 |  40 | skinny
+   9485 |  40 | skinny
+   9486 |  40 | skinny
+   9487 |  40 | skinny
+   9488 |  40 | skinny
+   9489 |  40 | skinny
+   9490 |  40 | skinny
+(21 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 40 order by skippy, key;
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Index Scan using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=21 loops=1)
+   Index Cond: (key = 40)
+   Index Searches: 6
+   Buffers: shared hit=428
+(4 rows)
+
+select * from high_low_high_card where key = 37 order by skippy, key;
+ skippy | key |  type  
+--------+-----+--------
+    255 |  37 | fat
+   7080 |  37 | skinny
+   7081 |  37 | skinny
+   7082 |  37 | skinny
+   7083 |  37 | skinny
+   7084 |  37 | skinny
+   7085 |  37 | skinny
+   7086 |  37 | skinny
+   7087 |  37 | skinny
+   7088 |  37 | skinny
+   7089 |  37 | skinny
+(11 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 37 order by skippy, key;
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Index Scan using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=11 loops=1)
+   Index Cond: (key = 37)
+   Index Searches: 6
+   Buffers: shared hit=418
+(4 rows)
+
+select * from high_low_high_card where key = 38 order by skippy, key;
+ skippy | key | type 
+--------+-----+------
+   5526 |  38 | fat
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 38 order by skippy, key;
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Index Scan using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=1 loops=1)
+   Index Cond: (key = 38)
+   Index Searches: 6
+   Buffers: shared hit=408
+(4 rows)
+
+select * from high_low_high_card where key = 13 order by skippy, key;
+ skippy | key |  type  
+--------+-----+--------
+   4381 |  13 | skinny
+   4382 |  13 | skinny
+   4383 |  13 | skinny
+   4384 |  13 | skinny
+   4385 |  13 | skinny
+   4386 |  13 | skinny
+   4387 |  13 | skinny
+   4388 |  13 | skinny
+   4389 |  13 | skinny
+   4390 |  13 | skinny
+   4726 |  13 | fat
+   7836 |  13 | skinny
+   7837 |  13 | skinny
+   7838 |  13 | skinny
+   7839 |  13 | skinny
+   7840 |  13 | skinny
+   7841 |  13 | skinny
+   7842 |  13 | skinny
+   7843 |  13 | skinny
+   7844 |  13 | skinny
+   7845 |  13 | skinny
+(21 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 13 order by skippy, key;
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Index Scan using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=21 loops=1)
+   Index Cond: (key = 13)
+   Index Searches: 6
+   Buffers: shared hit=428
+(4 rows)
+
+select * from high_low_high_card where key = 15 order by skippy, key;
+ skippy | key | type 
+--------+-----+------
+   4726 |  15 | fat
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 15 order by skippy, key;
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Index Scan using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=1 loops=1)
+   Index Cond: (key = 15)
+   Index Searches: 6
+   Buffers: shared hit=408
+(4 rows)
+
+---------------------
+-- Backwards scans --
+---------------------
+select * from high_low_high_card where key = 40 order by skippy desc, key desc;
+ skippy | key |  type  
+--------+-----+--------
+   9490 |  40 | skinny
+   9489 |  40 | skinny
+   9488 |  40 | skinny
+   9487 |  40 | skinny
+   9486 |  40 | skinny
+   9485 |  40 | skinny
+   9484 |  40 | skinny
+   9483 |  40 | skinny
+   9482 |  40 | skinny
+   9481 |  40 | skinny
+   5526 |  40 | fat
+   1624 |  40 | skinny
+   1623 |  40 | skinny
+   1622 |  40 | skinny
+   1621 |  40 | skinny
+   1620 |  40 | skinny
+   1619 |  40 | skinny
+   1618 |  40 | skinny
+   1617 |  40 | skinny
+   1616 |  40 | skinny
+   1615 |  40 | skinny
+(21 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 40 order by skippy desc, key desc;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=21 loops=1)
+   Index Cond: (key = 40)
+   Index Searches: 2
+   Buffers: shared hit=735
+(4 rows)
+
+select * from high_low_high_card where key = 37 order by skippy desc, key desc;
+ skippy | key |  type  
+--------+-----+--------
+   7089 |  37 | skinny
+   7088 |  37 | skinny
+   7087 |  37 | skinny
+   7086 |  37 | skinny
+   7085 |  37 | skinny
+   7084 |  37 | skinny
+   7083 |  37 | skinny
+   7082 |  37 | skinny
+   7081 |  37 | skinny
+   7080 |  37 | skinny
+    255 |  37 | fat
+(11 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 37 order by skippy desc, key desc;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=11 loops=1)
+   Index Cond: (key = 37)
+   Index Searches: 2
+   Buffers: shared hit=725
+(4 rows)
+
+select * from high_low_high_card where key = 38 order by skippy desc, key desc;
+ skippy | key | type 
+--------+-----+------
+   5526 |  38 | fat
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 38 order by skippy desc, key desc;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Index Scan Backward using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=1 loops=1)
+   Index Cond: (key = 38)
+   Index Searches: 2
+   Buffers: shared hit=715
+(4 rows)
+
+select * from high_low_high_card where key = 13 order by skippy desc, key desc;
+ skippy | key |  type  
+--------+-----+--------
+   7845 |  13 | skinny
+   7844 |  13 | skinny
+   7843 |  13 | skinny
+   7842 |  13 | skinny
+   7841 |  13 | skinny
+   7840 |  13 | skinny
+   7839 |  13 | skinny
+   7838 |  13 | skinny
+   7837 |  13 | skinny
+   7836 |  13 | skinny
+   4726 |  13 | fat
+   4390 |  13 | skinny
+   4389 |  13 | skinny
+   4388 |  13 | skinny
+   4387 |  13 | skinny
+   4386 |  13 | skinny
+   4385 |  13 | skinny
+   4384 |  13 | skinny
+   4383 |  13 | skinny
+   4382 |  13 | skinny
+   4381 |  13 | skinny
+(21 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 13 order by skippy desc, key desc;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=21 loops=1)
+   Index Cond: (key = 13)
+   Index Searches: 2
+   Buffers: shared hit=735
+(4 rows)
+
+select * from high_low_high_card where key = 15 order by skippy desc, key desc;
+ skippy | key | type 
+--------+-----+------
+   4726 |  15 | fat
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select * from high_low_high_card where key = 15 order by skippy desc, key desc;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Index Scan Backward using high_low_high_card_skippy_key_idx on high_low_high_card (actual rows=1 loops=1)
+   Index Cond: (key = 15)
+   Index Searches: 2
+   Buffers: shared hit=715
+(4 rows)
+
+----------------
+-- UUID tests --
+----------------
+set client_min_messages=error;
+DROP TABLE if exists uuid_tests;
+reset client_min_messages;
+create unlogged table uuid_tests
+(
+  skippy uuid,
+  predval int4
+);
+create index uuid_tests_idx on uuid_tests(skippy, predval);
+insert into uuid_tests
+select '00000000-0000-0000-0000-000000000001', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '10000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '20000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '30000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '40000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '50000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '60000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '70000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '80000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '90000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'A0000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'B0000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'C0000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'D0000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'E0000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'F0000000-0000-0000-0000-000000000000', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFE', j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select NULL, j from
+  generate_series(1, 5000) j;
+vacuum analyze uuid_tests;
+-- Basic skip scan test case for UUID:
+select skippy, predval
+from uuid_tests
+where predval = 777 order by skippy, predval;
+                skippy                | predval 
+--------------------------------------+---------
+ 00000000-0000-0000-0000-000000000001 |     777
+ 10000000-0000-0000-0000-000000000000 |     777
+ 20000000-0000-0000-0000-000000000000 |     777
+ 30000000-0000-0000-0000-000000000000 |     777
+ 40000000-0000-0000-0000-000000000000 |     777
+ 50000000-0000-0000-0000-000000000000 |     777
+ 60000000-0000-0000-0000-000000000000 |     777
+ 70000000-0000-0000-0000-000000000000 |     777
+ 80000000-0000-0000-0000-000000000000 |     777
+ 90000000-0000-0000-0000-000000000000 |     777
+ a0000000-0000-0000-0000-000000000000 |     777
+ b0000000-0000-0000-0000-000000000000 |     777
+ c0000000-0000-0000-0000-000000000000 |     777
+ d0000000-0000-0000-0000-000000000000 |     777
+ e0000000-0000-0000-0000-000000000000 |     777
+ f0000000-0000-0000-0000-000000000000 |     777
+ ffffffff-ffff-ffff-ffff-fffffffffffe |     777
+                                      |     777
+(18 rows)
+
+-- The number of descents of the index significantly exceeds the number of
+-- distinct "skippy" values, since we effectively probe for the next UUID
+-- value by incrementing here.  Even though explicit probes aren't really used,
+-- it more or less looks like they're used in practice.
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select skippy, predval
+from uuid_tests
+where predval = 777 order by skippy, predval;
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Index Scan using uuid_tests_idx on uuid_tests  (cost=0.42..63.13 rows=18 width=20) (actual rows=18 loops=1)
+   Index Cond: (predval = 777)
+   Index Searches: 36
+   Buffers: shared hit=128
+(4 rows)
+
+-- Basic skip scan test case for UUID, backwards scan:
+select skippy, predval
+from uuid_tests
+where predval = 777 order by skippy desc, predval desc;
+                skippy                | predval 
+--------------------------------------+---------
+                                      |     777
+ ffffffff-ffff-ffff-ffff-fffffffffffe |     777
+ f0000000-0000-0000-0000-000000000000 |     777
+ e0000000-0000-0000-0000-000000000000 |     777
+ d0000000-0000-0000-0000-000000000000 |     777
+ c0000000-0000-0000-0000-000000000000 |     777
+ b0000000-0000-0000-0000-000000000000 |     777
+ a0000000-0000-0000-0000-000000000000 |     777
+ 90000000-0000-0000-0000-000000000000 |     777
+ 80000000-0000-0000-0000-000000000000 |     777
+ 70000000-0000-0000-0000-000000000000 |     777
+ 60000000-0000-0000-0000-000000000000 |     777
+ 50000000-0000-0000-0000-000000000000 |     777
+ 40000000-0000-0000-0000-000000000000 |     777
+ 30000000-0000-0000-0000-000000000000 |     777
+ 20000000-0000-0000-0000-000000000000 |     777
+ 10000000-0000-0000-0000-000000000000 |     777
+ 00000000-0000-0000-0000-000000000001 |     777
+(18 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select skippy, predval
+from uuid_tests
+where predval = 777 order by skippy desc, predval desc;
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using uuid_tests_idx on uuid_tests  (cost=0.42..63.13 rows=18 width=20) (actual rows=18 loops=1)
+   Index Cond: (predval = 777)
+   Index Searches: 36
+   Buffers: shared hit=126
+(4 rows)
+
+-- SAOP skip scan test case for UUID:
+select count(*)
+from uuid_tests
+where predval in (333, 4000, 4500, 5000);
+ count 
+-------
+    72
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*)
+from uuid_tests
+where predval in (333, 4000, 4500, 5000);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=233.82..233.83 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=293
+   ->  Index Scan using uuid_tests_idx on uuid_tests  (cost=0.42..233.64 rows=72 width=0) (actual rows=72 loops=1)
+         Index Cond: (predval = ANY ('{333,4000,4500,5000}'::integer[]))
+         Index Searches: 73
+         Buffers: shared hit=293
+(6 rows)
+
+-- Equivalent-ish range scan formulation (expected to do same accesses, and
+-- give same answer):
+select count(*)
+from uuid_tests
+where skippy between '00000000-0000-0000-0000-000000000000' and 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+ count 
+-------
+    68
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- COSTS OFF added to get stable test output
+select count(*)
+from uuid_tests
+where skippy between '00000000-0000-0000-0000-000000000000' and 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+                                                                                             QUERY PLAN                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Buffers: shared hit=277
+   ->  Index Scan using uuid_tests_idx on uuid_tests (actual rows=68 loops=1)
+         Index Cond: ((skippy >= '00000000-0000-0000-0000-000000000000'::uuid) AND (skippy <= 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid) AND (predval = ANY ('{333,4000,4500,5000}'::integer[])))
+         Index Searches: 69
+         Buffers: shared hit=277
+(6 rows)
+
+-- Equivalent-ish range scan formulation using > and < operators (expected to do same accesses, and
+-- give same answer) -- stresses preprocessing with pass-by-reference types:
+--
+-- (UPDATE July 22) This arguably regressed a bit when we went from setting
+-- low_elem and high_elem during preprocessing to always directly using the
+-- inequalities to fix cross-type range bugs.  One extra primitive index scan.
+select count(*)
+from uuid_tests
+where skippy > '00000000-0000-0000-0000-000000000000' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+ count 
+-------
+    68
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- COSTS OFF added to get stable test output
+select count(*)
+from uuid_tests
+where skippy > '00000000-0000-0000-0000-000000000000' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Buffers: shared hit=274
+   ->  Index Scan using uuid_tests_idx on uuid_tests (actual rows=68 loops=1)
+         Index Cond: ((skippy > '00000000-0000-0000-0000-000000000000'::uuid) AND (skippy < 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid) AND (predval = ANY ('{333,4000,4500,5000}'::integer[])))
+         Index Searches: 68
+         Buffers: shared hit=274
+(6 rows)
+
+-- For good luck, more inequality stuff designed to stress preprocessing code
+-- (note that these are boundary cases):
+--
+-- (UPDATE July 22) This arguably regressed a bit when we went from setting
+-- low_elem and high_elem during preprocessing to always directly using the
+-- inequalities to fix cross-type range bugs.  One extra primitive index scan.
+prepare uuid_good_luck as
+select count(*)
+from uuid_tests
+where skippy > '0FFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFE'
+and
+predval in (333, 4000, 4500, 5000);
+execute uuid_good_luck;
+ count 
+-------
+    60
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- COSTS OFF added to get stable test output
+execute uuid_good_luck;
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Buffers: shared hit=241
+   ->  Index Scan using uuid_tests_idx on uuid_tests (actual rows=60 loops=1)
+         Index Cond: ((skippy > '0fffffff-ffff-ffff-ffff-ffffffffffff'::uuid) AND (skippy < 'ffffffff-ffff-ffff-ffff-fffffffffffe'::uuid) AND (predval = ANY ('{333,4000,4500,5000}'::integer[])))
+         Index Searches: 60
+         Buffers: shared hit=241
+(6 rows)
+
+deallocate uuid_good_luck;
+------------------------------------------------------------------------
+-- (July 2) Alexander Alekseev failing "char" (not char(1)) test case --
+------------------------------------------------------------------------
+set client_min_messages=error;
+drop table if exists alekseev_test;
+reset client_min_messages;
+create unlogged table alekseev_test(c "char", n bigint);
+select setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+insert into alekseev_test
+select chr(ascii('a') + random(0,2)) as c,
+random(0, 1_000_000_000) as n
+from generate_series(0, 10_000);
+create index alekseev_test_idx on alekseev_test using btree(c, n);
+-- Force bitmap index scan:
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Better not have a buggy btree/char_ops skip support function:
+select count(*) from alekseev_test where n > 900_000_000;
+ count 
+-------
+   988
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 11 buffer hits
+select count(*) from alekseev_test where n > 900_000_000;
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=263.14..263.15 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=65
+   ->  Bitmap Heap Scan on alekseev_test  (cost=158.13..254.80 rows=3334 width=0) (actual rows=988 loops=1)
+         Recheck Cond: (n > 900000000)
+         Heap Blocks: exact=54
+         Buffers: shared hit=65
+         ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=3334 width=0) (actual rows=988 loops=1)
+               Index Cond: (n > 900000000)
+               Index Searches: 4
+               Buffers: shared hit=11
+(10 rows)
+
+-- More selective query:
+select c, n from alekseev_test where n = 952_200_397;
+ c |     n     
+---+-----------
+ c | 952200397
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 952_200_397;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..200.01 rows=50 width=9) (actual rows=1 loops=1)
+   Recheck Cond: (n = 952200397)
+   Heap Blocks: exact=1
+   Buffers: shared hit=11
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 952200397)
+         Index Searches: 5
+         Buffers: shared hit=10
+(8 rows)
+
+-- More selective query, low value that exists:
+select c, n from alekseev_test where n = 24_759;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 24_759;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..200.01 rows=50 width=9) (actual rows=1 loops=1)
+   Recheck Cond: (n = 24759)
+   Heap Blocks: exact=1
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 24759)
+         Index Searches: 4
+         Buffers: shared hit=8
+(8 rows)
+
+-- More selective query, low value that does not exist:
+select c, n from alekseev_test where n = -1000;
+ c | n 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = -1000;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..200.01 rows=50 width=9) (actual rows=0 loops=1)
+   Recheck Cond: (n = '-1000'::integer)
+   Buffers: shared hit=8
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=0 loops=1)
+         Index Cond: (n = '-1000'::integer)
+         Index Searches: 4
+         Buffers: shared hit=8
+(7 rows)
+
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 8 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.33..214.39 rows=150 width=9) (actual rows=2 loops=1)
+   Recheck Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Heap Blocks: exact=2
+   Buffers: shared hit=10
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=150 width=0) (actual rows=2 loops=1)
+         Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+         Index Searches: 4
+         Buffers: shared hit=8
+(8 rows)
+
+-- Middling elements in SAOP test:
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+ c |     n     
+---+-----------
+ c | 500061970
+ a | 500048538
+ a | 500411856
+ b | 500143236
+ b | 500164863
+ a | 500129489
+ b | 500448495
+ a | 500229159
+ a | 500255696
+ a | 500630870
+(10 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 10 buffer hits
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.44..219.94 rows=500 width=9) (actual rows=10 loops=1)
+   Recheck Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+   Heap Blocks: exact=10
+   Buffers: shared hit=20
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=500 width=0) (actual rows=10 loops=1)
+         Index Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+         Index Searches: 5
+         Buffers: shared hit=10
+(8 rows)
+
+-- Force index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+---------------------------------
+-- "char" backwards scan tests --
+---------------------------------
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..268.79 rows=150 width=9) (actual rows=2 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Index Searches: 4
+   Buffers: shared hit=10
+(4 rows)
+
+-------------------------------------------------------
+-- Text tests, which can't use skip support function --
+-------------------------------------------------------
+-- Make "more selective query" work with text, so we have somewhat of a basis
+-- of comparison:
+alter table alekseev_test alter column c type text;
+-- Force bitmap index scan:
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+------------------------------------
+-- Now repeat queries from before --
+------------------------------------
+-- "Better not have a buggy btree/char_ops skip support function", but no skip
+-- support function this time around (since this is text):
+select count(*) from alekseev_test where n > 900_000_000;
+ count 
+-------
+   988
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 11 buffer hits
+select count(*) from alekseev_test where n > 900_000_000;
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=272.14..272.15 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=65
+   ->  Bitmap Heap Scan on alekseev_test  (cost=158.13..263.80 rows=3334 width=0) (actual rows=988 loops=1)
+         Recheck Cond: (n > 900000000)
+         Heap Blocks: exact=54
+         Buffers: shared hit=65
+         ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=3334 width=0) (actual rows=988 loops=1)
+               Index Cond: (n > 900000000)
+               Index Searches: 4
+               Buffers: shared hit=11
+(10 rows)
+
+-- More selective query:
+select c, n from alekseev_test where n = 952_200_397;
+ c |     n     
+---+-----------
+ c | 952200397
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 952_200_397;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..202.93 rows=50 width=40) (actual rows=1 loops=1)
+   Recheck Cond: (n = 952200397)
+   Heap Blocks: exact=1
+   Buffers: shared hit=13
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 952200397)
+         Index Searches: 6
+         Buffers: shared hit=12
+(8 rows)
+
+-- More selective query, low value that exists:
+select c, n from alekseev_test where n = 24_759;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 24_759;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..202.93 rows=50 width=40) (actual rows=1 loops=1)
+   Recheck Cond: (n = 24759)
+   Heap Blocks: exact=1
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 24759)
+         Index Searches: 4
+         Buffers: shared hit=8
+(8 rows)
+
+-- More selective query, low value that does not exist:
+select c, n from alekseev_test where n = -1000;
+ c | n 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = -1000;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..202.93 rows=50 width=40) (actual rows=0 loops=1)
+   Recheck Cond: (n = '-1000'::integer)
+   Buffers: shared hit=8
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=0 loops=1)
+         Index Cond: (n = '-1000'::integer)
+         Index Searches: 4
+         Buffers: shared hit=8
+(7 rows)
+
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.33..223.39 rows=150 width=40) (actual rows=2 loops=1)
+   Recheck Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Heap Blocks: exact=2
+   Buffers: shared hit=10
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=150 width=0) (actual rows=2 loops=1)
+         Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+         Index Searches: 4
+         Buffers: shared hit=8
+(8 rows)
+
+-- Middling elements in SAOP test:
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+ c |     n     
+---+-----------
+ c | 500061970
+ a | 500048538
+ a | 500411856
+ b | 500143236
+ b | 500164863
+ a | 500129489
+ b | 500448495
+ a | 500229159
+ a | 500255696
+ a | 500630870
+(10 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 14 buffer hits vs 10 for "char" due to not naturally needing to visit extremal n values
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.44..228.94 rows=500 width=40) (actual rows=10 loops=1)
+   Recheck Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+   Heap Blocks: exact=10
+   Buffers: shared hit=24
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=500 width=0) (actual rows=10 loops=1)
+         Index Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+         Index Searches: 7
+         Buffers: shared hit=14
+(8 rows)
+
+-- Force index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+-------------------------------
+-- text backwards scan tests --
+-------------------------------
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..286.79 rows=150 width=40) (actual rows=2 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Index Searches: 4
+   Buffers: shared hit=10
+(4 rows)
+
+------------------------------
+-- text NULL tests (July 7) --
+------------------------------
+insert into alekseev_test
+select null, n from alekseev_test;
+-- More selective query:
+select c, n from alekseev_test where n = 952_200_397;
+ c |     n     
+---+-----------
+ c | 952200397
+   | 952200397
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 952_200_397;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..433.70 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: (n = 952200397)
+   Index Searches: 7
+   Buffers: shared hit=16
+(4 rows)
+
+-- More selective query, low value that exists:
+select c, n from alekseev_test where n = 24_759;
+ c |   n   
+---+-------
+ b | 24759
+   | 24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 24_759;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..433.70 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: (n = 24759)
+   Index Searches: 4
+   Buffers: shared hit=10
+(4 rows)
+
+-- More selective query, low value that does not exist:
+select c, n from alekseev_test where n = -1000;
+ c | n 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = -1000;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..433.70 rows=84 width=40) (actual rows=0 loops=1)
+   Index Cond: (n = '-1000'::integer)
+   Index Searches: 4
+   Buffers: shared hit=8
+(4 rows)
+
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+   |     24759
+   | 999843016
+(4 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..529.39 rows=253 width=40) (actual rows=4 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Index Searches: 5
+   Buffers: shared hit=14
+(4 rows)
+
+-- Same again, but IS NOT NULL inequality used on skip attribute:
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016);
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..570.74 rows=252 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c IS NOT NULL) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 4
+   Buffers: shared hit=10
+(4 rows)
+
+-- Same again, but with regular > inequality used on skip attribute:
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c > 'a'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 3
+   Buffers: shared hit=8
+(4 rows)
+
+-- Same again, but with regular < inequality used on skip attribute:
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c < 'c'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 3
+   Buffers: shared hit=7
+(4 rows)
+
+-- Middling elements in SAOP test:
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+ c |     n     
+---+-----------
+ a | 500048538
+ a | 500129489
+ a | 500229159
+ a | 500255696
+ a | 500411856
+ a | 500630870
+ b | 500143236
+ b | 500164863
+ b | 500448495
+ c | 500061970
+   | 500048538
+   | 500061970
+   | 500129489
+   | 500143236
+   | 500164863
+   | 500229159
+   | 500255696
+   | 500411856
+   | 500448495
+   | 500630870
+(20 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 14 buffer hits vs 10 for "char" due to not naturally needing to visit extremal n values
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..535.31 rows=844 width=40) (actual rows=20 loops=1)
+   Index Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+   Index Searches: 8
+   Buffers: shared hit=36
+(4 rows)
+
+---------------------------
+-- NULL + Backwards scan --
+---------------------------
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+   | 999843016
+   |     24759
+ c | 999843016
+ b |     24759
+(4 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..529.39 rows=253 width=40) (actual rows=4 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Index Searches: 5
+   Buffers: shared hit=14
+(4 rows)
+
+-- Same again, but with IS NOT NULL on c:
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..570.74 rows=252 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c IS NOT NULL) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 4
+   Buffers: shared hit=10
+(4 rows)
+
+-- Same again, but with regular > inequality used on skip attribute:
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c > 'a'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 3
+   Buffers: shared hit=8
+(4 rows)
+
+-- Same again, but with regular < inequality used on skip attribute:
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c < 'c'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 3
+   Buffers: shared hit=7
+(4 rows)
+
+-- Almost the same query again, but now it's an <=:
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c <= 'b'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 3
+   Buffers: shared hit=7
+(4 rows)
+
+-- Same exact query again, but now it's a forwards scan:
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c < 'c'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 3
+   Buffers: shared hit=7
+(4 rows)
+
+-- Almost the same query again, but now it's an <=:
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016);
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c <= 'b'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Index Searches: 3
+   Buffers: shared hit=7
+(4 rows)
+
+---------------------------
+-- Wisconsin table tests --
+---------------------------
+set client_min_messages=error;
+drop table if exists wisconsin;
+reset client_min_messages;
+create unlogged table wisconsin
+(
+unique1 int4,
+unique2 int4,
+two int4,
+four int4,
+ten int4,
+twenty int4,
+onepercent int4,
+tenpercent int4,
+twentypercent int4,
+fiftypercent int4,
+unique3 int4,
+evenonepercent int4,
+oddonepercent int4,
+stringu1 text,
+stringu2 text,
+string4 text
+);
+\set filename :abs_srcdir '/data/wisconsin.csv'
+COPY wisconsin FROM :'filename' with (format csv, encoding 'win1252', header false, null $$$$, quote $$'$$); -- Fix the syntax highlighting: '
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+  2147483646,
+  2147483646,
+  2147483646,
+  2147483646,
+  2147483646;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+  2147483647,
+  2147483647,
+  2147483647,
+  2147483647,
+  2147483647;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+(-2147483647),
+(-2147483647),
+(-2147483647),
+(-2147483647),
+(-2147483647);
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,(-2147483648),
+(-2147483648),
+(-2147483648),
+(-2147483648),
+(-2147483648);
+vacuum analyze wisconsin;
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Two:
+create index two_idx on wisconsin (two, unique1);
+select two, unique1 from wisconsin where unique1 = 5555;
+     two     | unique1 
+-------------+---------
+           0 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select two, unique1 from wisconsin where unique1 = 5555;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=14
+   ->  Bitmap Index Scan on two_idx (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Index Searches: 4
+         Buffers: shared hit=12
+(8 rows)
+
+drop index two_idx;
+-- Four:
+create index four_idx on wisconsin (four, unique1);
+-- Point lookup:
+select four, unique1 from wisconsin where unique1 = 5555;
+    four     | unique1 
+-------------+---------
+           0 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select four, unique1 from wisconsin where unique1 = 5555;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=20
+   ->  Bitmap Index Scan on four_idx (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Index Searches: 6
+         Buffers: shared hit=18
+(8 rows)
+
+-- SAOP:
+select four, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+    four     | unique1 
+-------------+---------
+           1 |  200000
+           3 |  100000
+           1 |       1
+           0 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select four, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=56
+   ->  Bitmap Index Scan on four_idx (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Index Searches: 17
+         Buffers: shared hit=51
+(8 rows)
+
+drop index four_idx;
+-- Ten:
+create index ten_idx on wisconsin (ten, unique1);
+-- Point lookup:
+select ten, unique1 from wisconsin where unique1 = 5555;
+     ten     | unique1 
+-------------+---------
+           2 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select ten, unique1 from wisconsin where unique1 = 5555;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=38
+   ->  Bitmap Index Scan on ten_idx (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Index Searches: 12
+         Buffers: shared hit=36
+(8 rows)
+
+-- Range instead of skip attribute on "ten":
+prepare range_instead as
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+execute range_instead;
+ ten | unique1 
+-----+---------
+   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF)
+execute range_instead;
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=19
+   ->  Bitmap Index Scan on ten_idx (actual rows=1 loops=1)
+         Index Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+         Index Searches: 6
+         Buffers: shared hit=18
+(8 rows)
+
+-- Range instead of skip attribute on "ten", backwards scan:
+set enable_bitmapscan to off;
+set enable_indexscan to on;
+prepare range_instead_backwards as
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
+execute range_instead_backwards;
+ ten | unique1 
+-----+---------
+   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF)
+execute range_instead_backwards;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Index Scan Backward using ten_idx on wisconsin (actual rows=1 loops=1)
+   Index Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+   Index Searches: 6
+   Buffers: shared hit=19
+(4 rows)
+
+set enable_bitmapscan to on;
+set enable_indexscan to off;
+-- SAOP:
+select ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+     ten     | unique1 
+-------------+---------
+           9 |  200000
+           3 |  100000
+           9 |       1
+           2 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=128
+   ->  Bitmap Index Scan on ten_idx (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Index Searches: 41
+         Buffers: shared hit=123
+(8 rows)
+
+-- Contradictory qual:
+-- XXX consider adding preprocessing to detect this case.
+select ten, unique1 from wisconsin where unique1 between 101 and 100;
+ ten | unique1 
+-----+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits, patch 0 hits, since patch detects >= and <= related contradictoriness
+select ten, unique1 from wisconsin where unique1 between 101 and 100;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=0 loops=1)
+   Recheck Cond: ((unique1 >= 101) AND (unique1 <= 100))
+   Buffers: shared hit=33
+   ->  Bitmap Index Scan on ten_idx (actual rows=0 loops=1)
+         Index Cond: ((unique1 >= 101) AND (unique1 <= 100))
+         Index Searches: 11
+         Buffers: shared hit=33
+(7 rows)
+
+-- Contradictory qual, > and < strategies:
+-- XXX consider adding preprocessing to detect this case.
+select ten, unique1 from wisconsin where unique1 > 100 and unique1 < 100;
+ ten | unique1 
+-----+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select ten, unique1 from wisconsin where unique1 > 100 and unique1 < 100;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=0 loops=1)
+   Recheck Cond: ((unique1 > 100) AND (unique1 < 100))
+   Buffers: shared hit=33
+   ->  Bitmap Index Scan on ten_idx (actual rows=0 loops=1)
+         Index Cond: ((unique1 > 100) AND (unique1 < 100))
+         Index Searches: 11
+         Buffers: shared hit=33
+(7 rows)
+
+-- Contradictory qual, > and < strategies, many operators:
+-- XXX consider adding preprocessing to detect this case.
+select ten, unique1 from wisconsin
+where
+unique1 > 1 and
+unique1 < 400 and
+unique1 > 90 and
+unique1 > 100 and
+unique1 < 100
+;
+ ten | unique1 
+-----+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select ten, unique1 from wisconsin
+where
+unique1 > 1 and
+unique1 < 400 and
+unique1 > 90 and
+unique1 > 100 and
+unique1 < 100
+;
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=0 loops=1)
+   Recheck Cond: ((unique1 > 1) AND (unique1 < 400) AND (unique1 > 90) AND (unique1 > 100) AND (unique1 < 100))
+   Buffers: shared hit=33
+   ->  Bitmap Index Scan on ten_idx (actual rows=0 loops=1)
+         Index Cond: ((unique1 > 1) AND (unique1 < 400) AND (unique1 > 90) AND (unique1 > 100) AND (unique1 < 100))
+         Index Searches: 11
+         Buffers: shared hit=33
+(7 rows)
+
+-- Just one constant generate by skip array (100):
+select ten, unique1 from wisconsin where unique1 between 100 and 100;
+ ten | unique1 
+-----+---------
+   9 |     100
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select ten, unique1 from wisconsin where unique1 between 100 and 100;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((unique1 >= 100) AND (unique1 <= 100))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on ten_idx (actual rows=1 loops=1)
+         Index Cond: ((unique1 >= 100) AND (unique1 <= 100))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-- Just one constant generate by skip array (100), > and < strategies:
+select unique1 from wisconsin where unique1 > 99 and unique1 < 101;
+ unique1 
+---------
+     100
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select unique1 from wisconsin where unique1 > 99 and unique1 < 101;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((unique1 > 99) AND (unique1 < 101))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on ten_idx (actual rows=1 loops=1)
+         Index Cond: ((unique1 > 99) AND (unique1 < 101))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-- Just one constant generate by skip array (100), > and < strategies, many operators:
+select unique1 from wisconsin
+where
+unique1 > 1 and
+unique1 < 400 and
+unique1 > 90 and
+unique1 > 99 and
+unique1 < 101
+;
+ unique1 
+---------
+     100
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select unique1 from wisconsin
+where
+unique1 > 1 and
+unique1 < 400 and
+unique1 > 90 and
+unique1 > 99 and
+unique1 < 101
+;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((unique1 > 1) AND (unique1 < 400) AND (unique1 > 90) AND (unique1 > 99) AND (unique1 < 101))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on ten_idx (actual rows=1 loops=1)
+         Index Cond: ((unique1 > 1) AND (unique1 < 400) AND (unique1 > 90) AND (unique1 > 99) AND (unique1 < 101))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+drop index ten_idx;
+-- Four, ten:
+create index four_ten_idx on wisconsin (four, ten, unique1);
+-- Point lookup, skips two cols (four and ten):
+select four, ten, unique1 from wisconsin where unique1 = 5555;
+    four     |     ten     | unique1 
+-------------+-------------+---------
+           0 |           2 |    5555
+  2147483646 |  2147483646 |    5555
+  2147483647 |  2147483647 |    5555
+ -2147483647 | -2147483647 |    5555
+ -2147483648 | -2147483648 |    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 1152 hits
+select four, ten, unique1 from wisconsin where unique1 = 5555;
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=125
+   ->  Bitmap Index Scan on four_ten_idx (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Index Searches: 41
+         Buffers: shared hit=123
+(8 rows)
+
+-- Point lookup, skips one col (four), range on other col after that (ten):
+select four, ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+ four | ten | unique1 
+------+-----+---------
+    0 |   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 1152 hits
+select four, ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=70
+   ->  Bitmap Index Scan on four_ten_idx (actual rows=1 loops=1)
+         Index Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+         Index Searches: 23
+         Buffers: shared hit=69
+(8 rows)
+
+-- Should be able to handle BETWEEN ranges with same value for >= and <=:
+prepare handle_between as
+select four, ten, unique1 from wisconsin where four between 0 and 0 and unique1 = 5555;
+execute handle_between;
+ four | ten | unique1 
+------+-----+---------
+    0 |   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF)
+execute handle_between;
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((four >= 0) AND (four <= 0) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on four_ten_idx (actual rows=1 loops=1)
+         Index Cond: ((four >= 0) AND (four <= 0) AND (unique1 = 5555))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-- Missing predicate is in "intermediate" column (ten) here:
+select four, ten, unique1 from wisconsin where four = 0 and unique1 = 5555;
+ four | ten | unique1 
+------+-----+---------
+    0 |   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF) -- master 290 hits, patch 33 hits
+select four, ten, unique1 from wisconsin where four = 0 and unique1 = 5555;
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((four = 0) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on four_ten_idx (actual rows=1 loops=1)
+         Index Cond: ((four = 0) AND (unique1 = 5555))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-- Missing predicate is in "intermediate" column (ten) here, plus we use a
+-- SAOP for unique1 this time around:
+select four, ten, unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
+ four | ten | unique1 
+------+-----+---------
+    0 |   0 |      41
+    0 |   2 |    5555
+    0 |   8 |  299118
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF) -- master 290 hits, patch 33 hits
+select four, ten, unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=3 loops=1)
+   Recheck Cond: ((four = 0) AND (unique1 = ANY ('{41,5555,299118,300000}'::integer[])))
+   Heap Blocks: exact=3
+   Buffers: shared hit=36
+   ->  Bitmap Index Scan on four_ten_idx (actual rows=3 loops=1)
+         Index Cond: ((four = 0) AND (unique1 = ANY ('{41,5555,299118,300000}'::integer[])))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-- SAOP:
+select four, ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+    four     |     ten     | unique1 
+-------------+-------------+---------
+           1 |           9 |  200000
+           3 |           3 |  100000
+           1 |           9 |       1
+           0 |           2 |    5555
+  2147483646 |  2147483646 |    5555
+  2147483647 |  2147483647 |    5555
+ -2147483647 | -2147483647 |    5555
+ -2147483648 | -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF) -- master 1152 hits
+select four, ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=248
+   ->  Bitmap Index Scan on four_ten_idx (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Index Searches: 81
+         Buffers: shared hit=243
+(8 rows)
+
+-- backwards scans:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+-- Simple backwards scan (failed once, simplified from next test case):
+select four, ten, unique1
+from wisconsin
+where unique1 = 1
+order by four desc, ten desc, unique1 desc;
+ four | ten | unique1 
+------+-----+---------
+    1 |   9 |       1
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 = 1
+order by four desc, ten desc, unique1 desc;
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Index Scan Backward using four_ten_idx on wisconsin (actual rows=1 loops=1)
+   Index Cond: (unique1 = 1)
+   Index Searches: 21
+   Buffers: shared hit=64
+(4 rows)
+
+-- SAOP backwards scan:
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+    four     |     ten     | unique1 
+-------------+-------------+---------
+  2147483647 |  2147483647 |    5555
+  2147483646 |  2147483646 |    5555
+           3 |           3 |  100000
+           1 |           9 |  200000
+           1 |           9 |       1
+           0 |           2 |    5555
+ -2147483647 | -2147483647 |    5555
+ -2147483648 | -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Index Scan Backward using four_ten_idx on wisconsin (actual rows=8 loops=1)
+   Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Index Searches: 81
+   Buffers: shared hit=249
+(4 rows)
+
+-- One omitted attribute (four) followed by two SAOPs
+select four, ten, unique1
+from wisconsin
+where
+  ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+  and unique1 in (41, 5555, 299118, 300000);
+ four | ten | unique1 
+------+-----+---------
+    0 |   0 |      41
+    0 |   2 |    5555
+    0 |   8 |  299118
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF)
+select four, ten, unique1
+from wisconsin
+where
+  ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+  and unique1 in (41, 5555, 299118, 300000);
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan using four_ten_idx on wisconsin (actual rows=3 loops=1)
+   Index Cond: ((ten = ANY ('{0,1,2,3,4,5,6,7,8,9}'::integer[])) AND (unique1 = ANY ('{41,5555,299118,300000}'::integer[])))
+   Index Searches: 44
+   Buffers: shared hit=135
+(4 rows)
+
+drop index four_ten_idx;
+-- SAOP, DESC index, forward scan (forward relative to DESC direction):
+create index four_desc_ten_desc_idx on wisconsin (four desc, ten desc, unique1 desc);
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+    four     |     ten     | unique1 
+-------------+-------------+---------
+  2147483647 |  2147483647 |    5555
+  2147483646 |  2147483646 |    5555
+           3 |           3 |  100000
+           1 |           9 |  200000
+           1 |           9 |       1
+           0 |           2 |    5555
+ -2147483647 | -2147483647 |    5555
+ -2147483648 | -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Index Scan using four_desc_ten_desc_idx on wisconsin (actual rows=8 loops=1)
+   Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Index Searches: 81
+   Buffers: shared hit=249
+(4 rows)
+
+-- SAOP, DESC index, backward scan (backward relative to DESC direction):
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four, ten, unique1;
+    four     |     ten     | unique1 
+-------------+-------------+---------
+ -2147483648 | -2147483648 |    5555
+ -2147483647 | -2147483647 |    5555
+           0 |           2 |    5555
+           1 |           9 |       1
+           1 |           9 |  200000
+           3 |           3 |  100000
+  2147483646 |  2147483646 |    5555
+  2147483647 |  2147483647 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four, ten, unique1;
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
+ Index Scan Backward using four_desc_ten_desc_idx on wisconsin (actual rows=8 loops=1)
+   Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Index Searches: 81
+   Buffers: shared hit=249
+(4 rows)
+
+drop index four_desc_ten_desc_idx;
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Twenty:
+create index twenty_idx on wisconsin (twenty, unique1);
+-- Point lookup:
+select twenty, unique1 from wisconsin where unique1 = 5555;
+   twenty    | unique1 
+-------------+---------
+          12 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select twenty, unique1 from wisconsin where unique1 = 5555;
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=65
+   ->  Bitmap Index Scan on twenty_idx (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Index Searches: 21
+         Buffers: shared hit=63
+(8 rows)
+
+-- SAOP:
+select twenty, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+   twenty    | unique1 
+-------------+---------
+           9 |  200000
+           3 |  100000
+           9 |       1
+          12 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select twenty, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=245
+   ->  Bitmap Index Scan on twenty_idx (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Index Searches: 80
+         Buffers: shared hit=240
+(8 rows)
+
+drop index twenty_idx;
+-- Hundred/onepercent:
+create index onepercent_idx on wisconsin (onepercent, unique1);
+-- Point lookup:
+select onepercent, unique1 from wisconsin where unique1 = 5555;
+ onepercent  | unique1 
+-------------+---------
+          32 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select onepercent, unique1 from wisconsin where unique1 = 5555;
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=305
+   ->  Bitmap Index Scan on onepercent_idx (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Index Searches: 101
+         Buffers: shared hit=303
+(8 rows)
+
+-- SAOP:
+select onepercent, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+ onepercent  | unique1 
+-------------+---------
+          89 |  200000
+          43 |  100000
+           9 |       1
+          32 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select onepercent, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=956
+   ->  Bitmap Index Scan on onepercent_idx (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Index Searches: 317
+         Buffers: shared hit=951
+(8 rows)
+
+-- (June 14, day after going into JFK 27 to have lunch (later dinner) with
+-- jkatz)
+--
+-- Test case showing bug in _bt_advance_skip_array_increment when we wrap
+-- around a scan key whose sk_argument is already INT_MAX.  We should
+-- "increment" its scan key to NULL, the true final value.  The bug that we
+-- saw here involved not returning the row with a NULL oncepercent and a
+-- unique1 value of -666.  We'd actually skip straight past NULL, wrapping
+-- back around to INT_MIN again, which was just wrong.
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select 1, 1, 1, 1, 1, 1, 2147483647 from generate_series(1, 1500) i;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select 1, 1, 1, 1, 1, 1, (-2147483648)::int4 from generate_series(1, 1500) i;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select -666, 1, 1, 1, 1, 1, 2147483647;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select -666, 1, 1, 1, 1, 1, (-2147483648)::int4;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select 1, 1, 1, 1, 1, 1, NULL from generate_series(1, 1500) i;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select -666, 1, 1, 1, 1, 1, NULL;
+vacuum analyze wisconsin;
+-- Force index scan
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+-- Main test
+select onepercent, unique1 from wisconsin where unique1 = -666;
+ onepercent  | unique1 
+-------------+---------
+ -2147483648 |    -666
+  2147483647 |    -666
+             |    -666
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select onepercent, unique1 from wisconsin where unique1 = -666;
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Index Scan using onepercent_idx on wisconsin (actual rows=3 loops=1)
+   Index Cond: (unique1 = '-666'::integer)
+   Index Searches: 103
+   Buffers: shared hit=312
+(4 rows)
+
+-- Same again, backwards scan
+select onepercent, unique1 from wisconsin where unique1 = -666
+order by onepercent desc, unique1 desc;
+ onepercent  | unique1 
+-------------+---------
+             |    -666
+  2147483647 |    -666
+ -2147483648 |    -666
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select onepercent, unique1 from wisconsin where unique1 = -666
+order by onepercent desc, unique1 desc;
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Index Scan Backward using onepercent_idx on wisconsin (actual rows=3 loops=1)
+   Index Cond: (unique1 = '-666'::integer)
+   Index Searches: 103
+   Buffers: shared hit=313
+(4 rows)
+
+drop index onepercent_idx;
+-- Hundred/onepercent, nulls first, repeat last two test cases:
+create index onepercent_nulls_first_idx on wisconsin (onepercent desc nulls first, unique1 desc nulls first);
+-- Main test
+select onepercent, unique1 from wisconsin where unique1 = -666;
+ onepercent  | unique1 
+-------------+---------
+             |    -666
+  2147483647 |    -666
+ -2147483648 |    -666
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select onepercent, unique1 from wisconsin where unique1 = -666;
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
+ Index Scan using onepercent_nulls_first_idx on wisconsin (actual rows=3 loops=1)
+   Index Cond: (unique1 = '-666'::integer)
+   Index Searches: 102
+   Buffers: shared hit=316
+(4 rows)
+
+-- Same again, backwards scan (this variant was broken briefly, when I only
+-- had forward scan handling code in _bt_advance_skip_array_increment)
+select onepercent, unique1 from wisconsin where unique1 = -666
+order by onepercent, unique1;
+ onepercent  | unique1 
+-------------+---------
+ -2147483648 |    -666
+  2147483647 |    -666
+             |    -666
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select onepercent, unique1 from wisconsin where unique1 = -666
+order by onepercent, unique1;
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Index Scan Backward using onepercent_nulls_first_idx on wisconsin (actual rows=3 loops=1)
+   Index Cond: (unique1 = '-666'::integer)
+   Index Searches: 103
+   Buffers: shared hit=311
+(4 rows)
+
+drop index onepercent_nulls_first_idx;
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Four, ten, twenty, unique1 (causes errors about attribute order from
+-- _by_preprocess_keys):
+create index on wisconsin (four, ten, twenty, unique1);
+select four, ten, twenty, unique1
+from wisconsin
+where
+  ten between 1 and 10
+  and twenty in (1, 2, 3)
+  and unique1 in (84396, 217539, 60814);
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    2 |   2 |      2 |  217539
+    3 |   3 |      3 |   84396
+    2 |   2 |      2 |   60814
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- master 822 hits
+select four, ten, twenty, unique1
+from wisconsin
+where
+  ten between 1 and 10
+  and twenty in (1, 2, 3)
+  and unique1 in (84396, 217539, 60814);
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=3 loops=1)
+   Recheck Cond: ((ten >= 1) AND (ten <= 10) AND (twenty = ANY ('{1,2,3}'::integer[])) AND (unique1 = ANY ('{84396,217539,60814}'::integer[])))
+   Heap Blocks: exact=3
+   Buffers: shared hit=93
+   ->  Bitmap Index Scan on wisconsin_four_ten_twenty_unique1_idx (actual rows=3 loops=1)
+         Index Cond: ((ten >= 1) AND (ten <= 10) AND (twenty = ANY ('{1,2,3}'::integer[])) AND (unique1 = ANY ('{84396,217539,60814}'::integer[])))
+         Index Searches: 30
+         Buffers: shared hit=90
+(8 rows)
+
+-- (January 19 2025) Contradictory scan keys should not confuse _bt_preprocess_array_keys
+--
+-- _bt_preprocess_array_keys shouldn't get confused about contradictory quals
+-- with things like a = key and an inequality key on the same attribute.
+--
+-- Right now, these test cases trick _bt_preprocess_array_keys into throwing
+-- errors such as:
+-- ERROR:  missing oprcode for skipping equals operator 2437166984
+-- Contradictory
+select four, ten, unique1
+from wisconsin
+where
+  four = -1 and four between 0 and 3
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+ four | ten | unique1 
+------+-----+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select four, ten, unique1
+from wisconsin
+where
+  four = -1 and four between 0 and 3
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=0 loops=1)
+   Recheck Cond: ((four >= 0) AND (four <= 3) AND (four = '-1'::integer) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+   ->  Bitmap Index Scan on wisconsin_four_ten_twenty_unique1_idx (actual rows=0 loops=1)
+         Index Cond: ((four >= 0) AND (four <= 3) AND (four = '-1'::integer) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+         Index Searches: 0
+(5 rows)
+
+-- Contradictory
+select four, ten, unique1
+from wisconsin
+where
+  four between 0 and 3 and four = -1
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+ four | ten | unique1 
+------+-----+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select four, ten, unique1
+from wisconsin
+where
+  four between 0 and 3 and four = -1
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=0 loops=1)
+   Recheck Cond: ((four >= 0) AND (four <= 3) AND (four = '-1'::integer) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+   ->  Bitmap Index Scan on wisconsin_four_ten_twenty_unique1_idx (actual rows=0 loops=1)
+         Index Cond: ((four >= 0) AND (four <= 3) AND (four = '-1'::integer) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+         Index Searches: 0
+(5 rows)
+
+-- Contradictory
+select four, ten, unique1
+from wisconsin
+where
+  four = 4 and four between 0 and 3 and four = -1
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+ four | ten | unique1 
+------+-----+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select four, ten, unique1
+from wisconsin
+where
+  four = 4 and four between 0 and 3 and four = -1
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+           QUERY PLAN           
+--------------------------------
+ Result (actual rows=0 loops=1)
+   One-Time Filter: false
+(2 rows)
+
+-- Partially redundant
+select four, ten, unique1
+from wisconsin
+where
+  four = 1 and four between 0 and 3
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+ four | ten | unique1 
+------+-----+---------
+    1 |   9 |       1
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select four, ten, unique1
+from wisconsin
+where
+  four = 1 and four between 0 and 3
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((four >= 0) AND (four <= 3) AND (four = 1) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on wisconsin_four_ten_twenty_unique1_idx (actual rows=1 loops=1)
+         Index Cond: ((four >= 0) AND (four <= 3) AND (four = 1) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-- Partially redundant
+select four, ten, unique1
+from wisconsin
+where
+  four between 0 and 3 and four = 1
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+ four | ten | unique1 
+------+-----+---------
+    1 |   9 |       1
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+select four, ten, unique1
+from wisconsin
+where
+  four between 0 and 3 and four = 1
+  and ten between 2 and 15
+  and unique1 in (1, 2490, 7777);
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((four >= 0) AND (four <= 3) AND (four = 1) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on wisconsin_four_ten_twenty_unique1_idx (actual rows=1 loops=1)
+         Index Cond: ((four >= 0) AND (four <= 3) AND (four = 1) AND (ten >= 2) AND (ten <= 15) AND (unique1 = ANY ('{1,2490,7777}'::integer[])))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-------------------------------------------------------------------------------
+-- (July 12) Day after going for drinks with jkatz + company in East Village --
+-------------------------------------------------------------------------------
+drop index wisconsin_four_ten_twenty_unique1_idx;
+create index four_ten_unique1_idx on wisconsin (four, ten, unique1);
+-- Missing predicate is in "intermediate" column (ten) here:
+-- "#define FORCE_NOSKIP_DEBUG + integer wisconsin table" broke with this
+-- query at one point, but it's now fine:
+prepare force_noskip_debug as
+select four, ten, unique1 from wisconsin where four = 0 and unique1 = 5555;
+execute force_noskip_debug;
+ four | ten | unique1 
+------+-----+---------
+    0 |   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute force_noskip_debug;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
+   Recheck Cond: ((four = 0) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=34
+   ->  Bitmap Index Scan on four_ten_unique1_idx (actual rows=1 loops=1)
+         Index Cond: ((four = 0) AND (unique1 = 5555))
+         Index Searches: 11
+         Buffers: shared hit=33
+(8 rows)
+
+-- Consistently prefer bitmap scans:
+set enable_indexscan=off;
+set enable_sort=on;
+set enable_hashagg=off;
+drop table if exists small_sales_mdam_paper;
+reset client_min_messages;
+create unlogged table small_sales_mdam_paper
+(
+  dept int4,
+  sdate date,
+  item_class serial,
+  store int4,
+  item int4,
+  total_sales numeric
+);
+create index small_mdam_idx on small_sales_mdam_paper(dept, sdate, item_class, store);
+select setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+insert into small_sales_mdam_paper (dept, sdate, item_class, store, total_sales)
+-- total_sales is pretty much just a filler column:
+-- omit "item" (which is serial column):
+select
+  dept,
+  '1995-01-01'::date + sdate,
+  item_class,
+  store,
+  (random() * 500.0) as total_sales
+from
+  -- 10 departments (like in the NOT IN() example, I guess):
+  generate_series(1, 10) dept,
+  -- 45 days, starting on Jan 1 of 95:
+  generate_series(1, 45) sdate,
+  -- Arbitrarily assuming 75 total for my standard MDAM table, let's make it 20:
+  generate_series(1, 20) item_class,
+  -- Arbitrarily assuming 300 total for my standard MDAM table, let's make it 50:
+  generate_series(1, 50) store;
+vacuum analyze small_sales_mdam_paper;
+-- dept range, sdate range, item_class range, store range:
+prepare tenth as
+select sdate, item_class, store, sum(total_sales)
+from small_sales_mdam_paper
+where
+  dept between 5 and 7
+  and sdate between '1995-01-01' and '1995-01-05'
+  and item_class between 1 and 15
+  and store between 15 and 25
+group by sdate, item_class, store;
+-- (XXX UPDATE August 6) Doing well on this test hinges upon suppressing the
+-- Postgres 17 required-in-opposite-direction new primitive scan logic in
+-- _bt_advance_array_keys.
+--
+-- The issue isn't specific to skip arrays, it's just that it only looks like
+-- a regression when comparing skip arrays to similar full index scan.
+execute tenth;
+   sdate    | item_class | store |         sum         
+------------+------------+-------+---------------------
+ 01-02-1995 |          1 |    15 |   677.5995897823487
+ 01-02-1995 |          1 |    16 |   686.5933987499542
+ 01-02-1995 |          1 |    17 |   507.0651322877652
+ 01-02-1995 |          1 |    18 |   652.3759573428749
+ 01-02-1995 |          1 |    19 |   1107.991715329965
+ 01-02-1995 |          1 |    20 |    806.300537376569
+ 01-02-1995 |          1 |    21 |   728.2422285041567
+ 01-02-1995 |          1 |    22 |    853.138764940335
+ 01-02-1995 |          1 |    23 |   703.9159813077851
+ 01-02-1995 |          1 |    24 |   1116.174401855987
+ 01-02-1995 |          1 |    25 |    736.843315893628
+ 01-02-1995 |          2 |    15 |    952.647090972827
+ 01-02-1995 |          2 |    16 |   1018.030064776676
+ 01-02-1995 |          2 |    17 |   1145.176160096564
+ 01-02-1995 |          2 |    18 |   1088.815666453215
+ 01-02-1995 |          2 |    19 |   587.6584506574167
+ 01-02-1995 |          2 |    20 |   1331.041436366640
+ 01-02-1995 |          2 |    21 |   556.7478075571386
+ 01-02-1995 |          2 |    22 |   880.4048986951302
+ 01-02-1995 |          2 |    23 |   838.5691310164545
+ 01-02-1995 |          2 |    24 |    875.340867806574
+ 01-02-1995 |          2 |    25 |   398.1838593887916
+ 01-02-1995 |          3 |    15 |  407.15223554468267
+ 01-02-1995 |          3 |    16 |    718.042083025198
+ 01-02-1995 |          3 |    17 |   272.1257488107402
+ 01-02-1995 |          3 |    18 |    505.680453340937
+ 01-02-1995 |          3 |    19 |   391.9108480184564
+ 01-02-1995 |          3 |    20 |   358.5246173430317
+ 01-02-1995 |          3 |    21 |   490.8634036754285
+ 01-02-1995 |          3 |    22 |   809.5880057995321
+ 01-02-1995 |          3 |    23 |    868.262295964133
+ 01-02-1995 |          3 |    24 |    878.332037937689
+ 01-02-1995 |          3 |    25 |   1058.878826622171
+ 01-02-1995 |          4 |    15 |   1081.201389185061
+ 01-02-1995 |          4 |    16 |  1015.4686395654821
+ 01-02-1995 |          4 |    17 |   1060.867584661159
+ 01-02-1995 |          4 |    18 |   828.7328440271595
+ 01-02-1995 |          4 |    19 |   1145.583353148879
+ 01-02-1995 |          4 |    20 |   1012.926556593564
+ 01-02-1995 |          4 |    21 |    994.597271732168
+ 01-02-1995 |          4 |    22 |   225.2294985852094
+ 01-02-1995 |          4 |    23 |    778.483286502583
+ 01-02-1995 |          4 |    24 |    744.657689286239
+ 01-02-1995 |          4 |    25 |   335.8876734604760
+ 01-02-1995 |          5 |    15 |    662.264481249561
+ 01-02-1995 |          5 |    16 |   166.6329275231192
+ 01-02-1995 |          5 |    17 |    815.820139612907
+ 01-02-1995 |          5 |    18 |    758.423579116995
+ 01-02-1995 |          5 |    19 |  309.23589148181975
+ 01-02-1995 |          5 |    20 |  673.25689490123244
+ 01-02-1995 |          5 |    21 |    476.906231119415
+ 01-02-1995 |          5 |    22 |   309.4511031289677
+ 01-02-1995 |          5 |    23 |   676.8233376962809
+ 01-02-1995 |          5 |    24 |  1006.1778762258126
+ 01-02-1995 |          5 |    25 |    801.891682997916
+ 01-02-1995 |          6 |    15 |   1162.922133031716
+ 01-02-1995 |          6 |    16 |   554.8015115539415
+ 01-02-1995 |          6 |    17 |    992.630482848390
+ 01-02-1995 |          6 |    18 |   816.6768705333259
+ 01-02-1995 |          6 |    19 |    727.619613251860
+ 01-02-1995 |          6 |    20 |   587.5298385003624
+ 01-02-1995 |          6 |    21 |    828.020669886826
+ 01-02-1995 |          6 |    22 |    979.554405286582
+ 01-02-1995 |          6 |    23 |   359.4865980679799
+ 01-02-1995 |          6 |    24 |  264.65681127850777
+ 01-02-1995 |          6 |    25 |   375.6126325790058
+ 01-02-1995 |          7 |    15 |    699.719775940831
+ 01-02-1995 |          7 |    16 |    918.660794488326
+ 01-02-1995 |          7 |    17 |   1076.822204897405
+ 01-02-1995 |          7 |    18 |    989.985388894491
+ 01-02-1995 |          7 |    19 |    620.786525722385
+ 01-02-1995 |          7 |    20 |    816.602330799562
+ 01-02-1995 |          7 |    21 |   1252.103867967769
+ 01-02-1995 |          7 |    22 |   1058.559044936147
+ 01-02-1995 |          7 |    23 |   731.2997432009859
+ 01-02-1995 |          7 |    24 |    829.001328845311
+ 01-02-1995 |          7 |    25 |    646.138412009530
+ 01-02-1995 |          8 |    15 |   1168.899887854866
+ 01-02-1995 |          8 |    16 |    723.789357493508
+ 01-02-1995 |          8 |    17 |    803.295649304469
+ 01-02-1995 |          8 |    18 |   1077.960426777824
+ 01-02-1995 |          8 |    19 |   1147.983643615134
+ 01-02-1995 |          8 |    20 |   1153.693365641580
+ 01-02-1995 |          8 |    21 |   505.8322375081470
+ 01-02-1995 |          8 |    22 |   686.1363136795652
+ 01-02-1995 |          8 |    23 |   834.6194954746571
+ 01-02-1995 |          8 |    24 |    976.373254077104
+ 01-02-1995 |          8 |    25 |    457.634458226154
+ 01-02-1995 |          9 |    15 |   773.2847162475945
+ 01-02-1995 |          9 |    16 |   597.1138869923951
+ 01-02-1995 |          9 |    17 |   731.6744746741893
+ 01-02-1995 |          9 |    18 |    900.251615716518
+ 01-02-1995 |          9 |    19 |   630.3915861898424
+ 01-02-1995 |          9 |    20 |   554.4084252160475
+ 01-02-1995 |          9 |    21 |   1019.688657659669
+ 01-02-1995 |          9 |    22 |    589.392545412530
+ 01-02-1995 |          9 |    23 |   666.3250566718504
+ 01-02-1995 |          9 |    24 |   653.0197366597478
+ 01-02-1995 |          9 |    25 |   1218.036808049353
+ 01-02-1995 |         10 |    15 |   1299.808264936637
+ 01-02-1995 |         10 |    16 |  563.14047161253475
+ 01-02-1995 |         10 |    17 |   596.9137664061555
+ 01-02-1995 |         10 |    18 |    627.264314074546
+ 01-02-1995 |         10 |    19 |   893.2501118964238
+ 01-02-1995 |         10 |    20 |   847.2827236007235
+ 01-02-1995 |         10 |    21 |   643.3082723673883
+ 01-02-1995 |         10 |    22 |    653.054371612899
+ 01-02-1995 |         10 |    23 |   643.8180623528052
+ 01-02-1995 |         10 |    24 |   506.3857323240415
+ 01-02-1995 |         10 |    25 |   598.4655860302354
+ 01-02-1995 |         11 |    15 |    505.893065442927
+ 01-02-1995 |         11 |    16 |   777.7480097860412
+ 01-02-1995 |         11 |    17 |   593.6056428830697
+ 01-02-1995 |         11 |    18 |   1052.284410791773
+ 01-02-1995 |         11 |    19 |   924.8137186795293
+ 01-02-1995 |         11 |    20 |    924.950490429215
+ 01-02-1995 |         11 |    21 |  586.38936203535853
+ 01-02-1995 |         11 |    22 |   762.2507111961388
+ 01-02-1995 |         11 |    23 |   464.2398240693211
+ 01-02-1995 |         11 |    24 |    953.905673519884
+ 01-02-1995 |         11 |    25 |   745.9520129154201
+ 01-02-1995 |         12 |    15 |   1099.008375649342
+ 01-02-1995 |         12 |    16 |  361.05684685221544
+ 01-02-1995 |         12 |    17 |   590.8659656679153
+ 01-02-1995 |         12 |    18 |   1043.855908827766
+ 01-02-1995 |         12 |    19 |    818.928697910063
+ 01-02-1995 |         12 |    20 |    609.893779498222
+ 01-02-1995 |         12 |    21 |    870.721988610079
+ 01-02-1995 |         12 |    22 |  493.57467471763712
+ 01-02-1995 |         12 |    23 |   559.5000128821860
+ 01-02-1995 |         12 |    24 |  480.52471172998683
+ 01-02-1995 |         12 |    25 |    720.494294413252
+ 01-02-1995 |         13 |    15 |    463.498974903006
+ 01-02-1995 |         13 |    16 |    886.649706251355
+ 01-02-1995 |         13 |    17 |    999.980725279135
+ 01-02-1995 |         13 |    18 |    877.605773555610
+ 01-02-1995 |         13 |    19 |   603.7909360123941
+ 01-02-1995 |         13 |    20 |  885.83962092251437
+ 01-02-1995 |         13 |    21 |    568.458689882468
+ 01-02-1995 |         13 |    22 |    996.995558062270
+ 01-02-1995 |         13 |    23 |    677.774445995616
+ 01-02-1995 |         13 |    24 |    674.293609472814
+ 01-02-1995 |         13 |    25 |   469.6233202421612
+ 01-02-1995 |         14 |    15 |    902.820691395967
+ 01-02-1995 |         14 |    16 |   432.6986732648364
+ 01-02-1995 |         14 |    17 |    458.117849526055
+ 01-02-1995 |         14 |    18 |    523.239578624000
+ 01-02-1995 |         14 |    19 |   1028.031932021735
+ 01-02-1995 |         14 |    20 |   1001.236507896408
+ 01-02-1995 |         14 |    21 |    803.992692113923
+ 01-02-1995 |         14 |    22 |    644.578787209366
+ 01-02-1995 |         14 |    23 |   1247.365283060059
+ 01-02-1995 |         14 |    24 |   1024.888028415499
+ 01-02-1995 |         14 |    25 |   479.8114394362846
+ 01-02-1995 |         15 |    15 |    780.151247839222
+ 01-02-1995 |         15 |    16 |   1213.030185227173
+ 01-02-1995 |         15 |    17 |    912.749060959975
+ 01-02-1995 |         15 |    18 |    788.945996933099
+ 01-02-1995 |         15 |    19 |    701.327621515376
+ 01-02-1995 |         15 |    20 |    790.034075329283
+ 01-02-1995 |         15 |    21 |   823.8725911534636
+ 01-02-1995 |         15 |    22 |    656.818945942064
+ 01-02-1995 |         15 |    23 |   1027.265065072408
+ 01-02-1995 |         15 |    24 |    704.122919564725
+ 01-02-1995 |         15 |    25 |    655.289179521101
+ 01-03-1995 |          1 |    15 |    992.423691619774
+ 01-03-1995 |          1 |    16 |    657.997837876617
+ 01-03-1995 |          1 |    17 |   635.8820900422543
+ 01-03-1995 |          1 |    18 |   527.6294762103482
+ 01-03-1995 |          1 |    19 |    539.311203827278
+ 01-03-1995 |          1 |    20 |   1344.492800057306
+ 01-03-1995 |          1 |    21 |    510.422909303543
+ 01-03-1995 |          1 |    22 |   561.3411810008555
+ 01-03-1995 |          1 |    23 |   374.9954148596220
+ 01-03-1995 |          1 |    24 |    916.517204995788
+ 01-03-1995 |          1 |    25 |  572.48284003532797
+ 01-03-1995 |          2 |    15 |   1312.126310078825
+ 01-03-1995 |          2 |    16 |   473.0965556843045
+ 01-03-1995 |          2 |    17 |   707.3237817927679
+ 01-03-1995 |          2 |    18 |   528.2706529621305
+ 01-03-1995 |          2 |    19 |    984.083634351086
+ 01-03-1995 |          2 |    20 |   431.4321625820434
+ 01-03-1995 |          2 |    21 |   610.4618176263609
+ 01-03-1995 |          2 |    22 |    576.379312564062
+ 01-03-1995 |          2 |    23 |    764.960105744868
+ 01-03-1995 |          2 |    24 |   641.3575502912284
+ 01-03-1995 |          2 |    25 |   878.1913216819891
+ 01-03-1995 |          3 |    15 |    813.383858197995
+ 01-03-1995 |          3 |    16 |    874.569412422265
+ 01-03-1995 |          3 |    17 |    687.581641682304
+ 01-03-1995 |          3 |    18 |   658.6865886828637
+ 01-03-1995 |          3 |    19 |    792.142056441821
+ 01-03-1995 |          3 |    20 |   577.0486659711217
+ 01-03-1995 |          3 |    21 |    844.186981462929
+ 01-03-1995 |          3 |    22 |   404.2596516385472
+ 01-03-1995 |          3 |    23 |   531.9712545346521
+ 01-03-1995 |          3 |    24 |    829.373561762915
+ 01-03-1995 |          3 |    25 |   768.2137720242344
+ 01-03-1995 |          4 |    15 |   250.9532541649249
+ 01-03-1995 |          4 |    16 |   736.6488999846181
+ 01-03-1995 |          4 |    17 |    537.119637833796
+ 01-03-1995 |          4 |    18 |   955.5455110318867
+ 01-03-1995 |          4 |    19 |   328.6907634966065
+ 01-03-1995 |          4 |    20 |   1220.989452447915
+ 01-03-1995 |          4 |    21 |   1051.011537859871
+ 01-03-1995 |          4 |    22 |    861.027926071206
+ 01-03-1995 |          4 |    23 |   1062.856399911962
+ 01-03-1995 |          4 |    24 |   580.0793487281893
+ 01-03-1995 |          4 |    25 |    858.838294574659
+ 01-03-1995 |          5 |    15 |   849.4982862911439
+ 01-03-1995 |          5 |    16 |    674.978287291946
+ 01-03-1995 |          5 |    17 |    783.750646387588
+ 01-03-1995 |          5 |    18 |   647.7290323539447
+ 01-03-1995 |          5 |    19 |    909.533596601145
+ 01-03-1995 |          5 |    20 |   479.8342551437724
+ 01-03-1995 |          5 |    21 |    876.428118390358
+ 01-03-1995 |          5 |    22 |    700.435229658625
+ 01-03-1995 |          5 |    23 |   870.0938066322658
+ 01-03-1995 |          5 |    24 |    961.882295045531
+ 01-03-1995 |          5 |    25 |    992.518749079283
+ 01-03-1995 |          6 |    15 |    909.223696982728
+ 01-03-1995 |          6 |    16 |    802.156467660813
+ 01-03-1995 |          6 |    17 |    945.046052230953
+ 01-03-1995 |          6 |    18 |    857.579558426838
+ 01-03-1995 |          6 |    19 |    909.583047494990
+ 01-03-1995 |          6 |    20 |   1026.699264680801
+ 01-03-1995 |          6 |    21 |   594.0060528479918
+ 01-03-1995 |          6 |    22 |   1145.715586778287
+ 01-03-1995 |          6 |    23 |   444.7437704899708
+ 01-03-1995 |          6 |    24 |   341.1834101074919
+ 01-03-1995 |          6 |    25 |   721.5848919006589
+ 01-03-1995 |          7 |    15 |   349.8787411388857
+ 01-03-1995 |          7 |    16 |  522.80007520915069
+ 01-03-1995 |          7 |    17 |   362.7592204412781
+ 01-03-1995 |          7 |    18 |   364.7170168381715
+ 01-03-1995 |          7 |    19 |    761.042945820606
+ 01-03-1995 |          7 |    20 |    984.066480824088
+ 01-03-1995 |          7 |    21 |   384.2893549142941
+ 01-03-1995 |          7 |    22 |   1105.525783862192
+ 01-03-1995 |          7 |    23 |    415.136423601533
+ 01-03-1995 |          7 |    24 |    919.408624381574
+ 01-03-1995 |          7 |    25 |   575.9666418944598
+ 01-03-1995 |          8 |    15 |   332.1704100914290
+ 01-03-1995 |          8 |    16 |   558.6230090881639
+ 01-03-1995 |          8 |    17 |    685.485073750374
+ 01-03-1995 |          8 |    18 |   1243.010862634443
+ 01-03-1995 |          8 |    19 |    666.142579054090
+ 01-03-1995 |          8 |    20 |   1200.361452692835
+ 01-03-1995 |          8 |    21 |   236.9440154798222
+ 01-03-1995 |          8 |    22 |    794.449329115426
+ 01-03-1995 |          8 |    23 |   774.1994103425219
+ 01-03-1995 |          8 |    24 |   411.2490509518678
+ 01-03-1995 |          8 |    25 |   554.2670301071057
+ 01-03-1995 |          9 |    15 |   1296.104918356809
+ 01-03-1995 |          9 |    16 |   394.7550095764614
+ 01-03-1995 |          9 |    17 |   790.0137961941367
+ 01-03-1995 |          9 |    18 |    865.822901380849
+ 01-03-1995 |          9 |    19 |    799.047517711029
+ 01-03-1995 |          9 |    20 |    804.025786098852
+ 01-03-1995 |          9 |    21 |    765.361683379758
+ 01-03-1995 |          9 |    22 |    918.914367724278
+ 01-03-1995 |          9 |    23 |    850.780666120689
+ 01-03-1995 |          9 |    24 |    836.913955481270
+ 01-03-1995 |          9 |    25 |   1012.814129652866
+ 01-03-1995 |         10 |    15 |   1231.852417495162
+ 01-03-1995 |         10 |    16 |    851.613965635705
+ 01-03-1995 |         10 |    17 |    409.659981804889
+ 01-03-1995 |         10 |    18 |    704.902372835121
+ 01-03-1995 |         10 |    19 |   931.3563443579298
+ 01-03-1995 |         10 |    20 |   1150.380215986772
+ 01-03-1995 |         10 |    21 |   506.9351120168351
+ 01-03-1995 |         10 |    22 |  830.21316350233741
+ 01-03-1995 |         10 |    23 |    856.308565562008
+ 01-03-1995 |         10 |    24 |   1078.720793153976
+ 01-03-1995 |         10 |    25 |    871.624128046908
+ 01-03-1995 |         11 |    15 |   551.5980147942439
+ 01-03-1995 |         11 |    16 |   513.1574489933732
+ 01-03-1995 |         11 |    17 |   636.4784762479036
+ 01-03-1995 |         11 |    18 |   408.4460807126549
+ 01-03-1995 |         11 |    19 |   517.5208600661598
+ 01-03-1995 |         11 |    20 |    822.102347650577
+ 01-03-1995 |         11 |    21 |    844.501364915352
+ 01-03-1995 |         11 |    22 |   829.9631804707771
+ 01-03-1995 |         11 |    23 |    984.459842986781
+ 01-03-1995 |         11 |    24 |   1237.289515182234
+ 01-03-1995 |         11 |    25 |   565.6790807757277
+ 01-03-1995 |         12 |    15 |    769.828050286001
+ 01-03-1995 |         12 |    16 |    767.374682209671
+ 01-03-1995 |         12 |    17 |    832.851275054605
+ 01-03-1995 |         12 |    18 |    816.800980094269
+ 01-03-1995 |         12 |    19 |    757.511064897253
+ 01-03-1995 |         12 |    20 |    808.020779234746
+ 01-03-1995 |         12 |    21 |   611.5765638171232
+ 01-03-1995 |         12 |    22 |   741.1484116338739
+ 01-03-1995 |         12 |    23 |    779.010739270769
+ 01-03-1995 |         12 |    24 |   589.9133347170622
+ 01-03-1995 |         12 |    25 |    377.455821546465
+ 01-03-1995 |         13 |    15 |    354.160457953260
+ 01-03-1995 |         13 |    16 |   509.9768175122857
+ 01-03-1995 |         13 |    17 |   356.8999835107972
+ 01-03-1995 |         13 |    18 |   1199.137512733268
+ 01-03-1995 |         13 |    19 |    467.585566251501
+ 01-03-1995 |         13 |    20 |    906.977730991317
+ 01-03-1995 |         13 |    21 |   1177.705732008534
+ 01-03-1995 |         13 |    22 |  696.04271635466349
+ 01-03-1995 |         13 |    23 |    703.618756950015
+ 01-03-1995 |         13 |    24 |   642.2116602301702
+ 01-03-1995 |         13 |    25 |   284.3542358442346
+ 01-03-1995 |         14 |    15 |   1212.614629047130
+ 01-03-1995 |         14 |    16 |   913.2589326316795
+ 01-03-1995 |         14 |    17 |   699.4591078993772
+ 01-03-1995 |         14 |    18 |   650.2965951908347
+ 01-03-1995 |         14 |    19 |    802.897013366962
+ 01-03-1995 |         14 |    20 |    625.697799588181
+ 01-03-1995 |         14 |    21 |    801.421326766608
+ 01-03-1995 |         14 |    22 |   1066.095009940598
+ 01-03-1995 |         14 |    23 |    686.323139537587
+ 01-03-1995 |         14 |    24 |   691.3153768675053
+ 01-03-1995 |         14 |    25 |   1152.773854852322
+ 01-03-1995 |         15 |    15 |    937.451150900332
+ 01-03-1995 |         15 |    16 |   799.9290226662638
+ 01-03-1995 |         15 |    17 |   480.1858765255142
+ 01-03-1995 |         15 |    18 |   799.9016245443899
+ 01-03-1995 |         15 |    19 |   478.0441688929793
+ 01-03-1995 |         15 |    20 |    684.486140210687
+ 01-03-1995 |         15 |    21 |    926.328171254944
+ 01-03-1995 |         15 |    22 |    613.214320806437
+ 01-03-1995 |         15 |    23 |   923.5853487829138
+ 01-03-1995 |         15 |    24 |    761.874719745142
+ 01-03-1995 |         15 |    25 |    840.087314548989
+ 01-04-1995 |          1 |    15 |   942.9347519756829
+ 01-04-1995 |          1 |    16 |    640.384457482149
+ 01-04-1995 |          1 |    17 |   716.6243249918834
+ 01-04-1995 |          1 |    18 |    821.685803636593
+ 01-04-1995 |          1 |    19 |  501.07977529634586
+ 01-04-1995 |          1 |    20 |   343.9636029996153
+ 01-04-1995 |          1 |    21 |   1022.379617494202
+ 01-04-1995 |          1 |    22 |  955.29658176665283
+ 01-04-1995 |          1 |    23 |   328.6853686568293
+ 01-04-1995 |          1 |    24 |    653.651812641164
+ 01-04-1995 |          1 |    25 |    693.743386653349
+ 01-04-1995 |          2 |    15 |    934.719694719951
+ 01-04-1995 |          2 |    16 |  393.87403253281438
+ 01-04-1995 |          2 |    17 |   603.8427429783728
+ 01-04-1995 |          2 |    18 |    998.531644143193
+ 01-04-1995 |          2 |    19 |   298.1305589675649
+ 01-04-1995 |          2 |    20 |   1310.577984805197
+ 01-04-1995 |          2 |    21 |  508.09475807338481
+ 01-04-1995 |          2 |    22 |    941.693079462461
+ 01-04-1995 |          2 |    23 |   1121.979196451722
+ 01-04-1995 |          2 |    24 |   1421.047176240361
+ 01-04-1995 |          2 |    25 |   899.5790946564253
+ 01-04-1995 |          3 |    15 |   1105.345865127776
+ 01-04-1995 |          3 |    16 |    932.310288406267
+ 01-04-1995 |          3 |    17 |    915.355891330985
+ 01-04-1995 |          3 |    18 |    929.365763946055
+ 01-04-1995 |          3 |    19 |   502.8294146543601
+ 01-04-1995 |          3 |    20 |    957.030391929693
+ 01-04-1995 |          3 |    21 |   979.5302777344288
+ 01-04-1995 |          3 |    22 |    961.251181275576
+ 01-04-1995 |          3 |    23 |  408.94277734546752
+ 01-04-1995 |          3 |    24 |    627.354418211304
+ 01-04-1995 |          3 |    25 |   1176.220562833729
+ 01-04-1995 |          4 |    15 |    689.685719564258
+ 01-04-1995 |          4 |    16 |    535.713722501969
+ 01-04-1995 |          4 |    17 |   1099.735182535920
+ 01-04-1995 |          4 |    18 |  788.85029755080069
+ 01-04-1995 |          4 |    19 |   820.1470379415827
+ 01-04-1995 |          4 |    20 |   1051.832780396805
+ 01-04-1995 |          4 |    21 |    895.023741578677
+ 01-04-1995 |          4 |    22 |    757.988625949663
+ 01-04-1995 |          4 |    23 |   329.7049730291750
+ 01-04-1995 |          4 |    24 |   762.8908856393475
+ 01-04-1995 |          4 |    25 |    569.088742284006
+ 01-04-1995 |          5 |    15 |   507.0512796668193
+ 01-04-1995 |          5 |    16 |    690.546694383213
+ 01-04-1995 |          5 |    17 |    801.875321581313
+ 01-04-1995 |          5 |    18 |   766.7649742027341
+ 01-04-1995 |          5 |    19 |    944.963161375507
+ 01-04-1995 |          5 |    20 |   482.3892836584858
+ 01-04-1995 |          5 |    21 |   506.5117111906109
+ 01-04-1995 |          5 |    22 |   696.7339452828461
+ 01-04-1995 |          5 |    23 |   1080.607417365403
+ 01-04-1995 |          5 |    24 |   1073.815535146843
+ 01-04-1995 |          5 |    25 |   1167.505594614005
+ 01-04-1995 |          6 |    15 |    888.228694671148
+ 01-04-1995 |          6 |    16 |   700.8000322251113
+ 01-04-1995 |          6 |    17 |    682.692065610408
+ 01-04-1995 |          6 |    18 |    836.304999971573
+ 01-04-1995 |          6 |    19 |    975.797979957255
+ 01-04-1995 |          6 |    20 |    781.662387994705
+ 01-04-1995 |          6 |    21 |    779.525500565554
+ 01-04-1995 |          6 |    22 |    970.818702015279
+ 01-04-1995 |          6 |    23 |   934.6403304967876
+ 01-04-1995 |          6 |    24 |   1039.156360397226
+ 01-04-1995 |          6 |    25 |   561.5475805556256
+ 01-04-1995 |          7 |    15 | 863.284894696877087
+ 01-04-1995 |          7 |    16 |   781.3059734259808
+ 01-04-1995 |          7 |    17 |    713.088321545757
+ 01-04-1995 |          7 |    18 |   440.1045671372973
+ 01-04-1995 |          7 |    19 |    470.796165521049
+ 01-04-1995 |          7 |    20 |    759.548931702546
+ 01-04-1995 |          7 |    21 |   617.4906539649962
+ 01-04-1995 |          7 |    22 |    695.569674287889
+ 01-04-1995 |          7 |    23 |   339.0462357532858
+ 01-04-1995 |          7 |    24 |   545.0317373658348
+ 01-04-1995 |          7 |    25 |   750.5808940644058
+ 01-04-1995 |          8 |    15 |    848.870168104084
+ 01-04-1995 |          8 |    16 |   596.2346022230876
+ 01-04-1995 |          8 |    17 |    415.799995401953
+ 01-04-1995 |          8 |    18 |  237.94076672842767
+ 01-04-1995 |          8 |    19 |    840.144940430993
+ 01-04-1995 |          8 |    20 |    893.645490564446
+ 01-04-1995 |          8 |    21 |    547.416080076324
+ 01-04-1995 |          8 |    22 |    750.326871076301
+ 01-04-1995 |          8 |    23 |   1118.739753339503
+ 01-04-1995 |          8 |    24 |   1282.971145701504
+ 01-04-1995 |          8 |    25 |    712.291884145716
+ 01-04-1995 |          9 |    15 |    728.272286615425
+ 01-04-1995 |          9 |    16 |   533.8878878705904
+ 01-04-1995 |          9 |    17 |   1244.715573924739
+ 01-04-1995 |          9 |    18 |    890.888091493953
+ 01-04-1995 |          9 |    19 |   353.9718799729726
+ 01-04-1995 |          9 |    20 |   1256.268637495662
+ 01-04-1995 |          9 |    21 |   851.2413160797135
+ 01-04-1995 |          9 |    22 |   580.2020480544928
+ 01-04-1995 |          9 |    23 |   585.2444106252247
+ 01-04-1995 |          9 |    24 |    812.543972533604
+ 01-04-1995 |          9 |    25 |    806.536258748821
+ 01-04-1995 |         10 |    15 |    954.969905501330
+ 01-04-1995 |         10 |    16 |    647.540366344398
+ 01-04-1995 |         10 |    17 |    830.576918963023
+ 01-04-1995 |         10 |    18 |   855.1181469446839
+ 01-04-1995 |         10 |    19 |   712.8895541719107
+ 01-04-1995 |         10 |    20 |   242.1241920667967
+ 01-04-1995 |         10 |    21 |   818.8937706930821
+ 01-04-1995 |         10 |    22 |   843.3364468745633
+ 01-04-1995 |         10 |    23 |   1260.075923167604
+ 01-04-1995 |         10 |    24 |   275.3790541240359
+ 01-04-1995 |         10 |    25 |   1181.686074490679
+ 01-04-1995 |         11 |    15 |    750.449982482369
+ 01-04-1995 |         11 |    16 |    726.081122387326
+ 01-04-1995 |         11 |    17 |   1210.524466713336
+ 01-04-1995 |         11 |    18 |   695.2064555495887
+ 01-04-1995 |         11 |    19 |    529.406055913570
+ 01-04-1995 |         11 |    20 |   571.5703421803858
+ 01-04-1995 |         11 |    21 |    743.973083574651
+ 01-04-1995 |         11 |    22 |   912.5761945997516
+ 01-04-1995 |         11 |    23 |   1000.424892661990
+ 01-04-1995 |         11 |    24 |   993.1774353552699
+ 01-04-1995 |         11 |    25 |   1104.122350980666
+ 01-04-1995 |         12 |    15 |    774.774018954059
+ 01-04-1995 |         12 |    16 |   638.8246403378652
+ 01-04-1995 |         12 |    17 |  310.34071321799376
+ 01-04-1995 |         12 |    18 |   744.5853746579495
+ 01-04-1995 |         12 |    19 |    955.599215719774
+ 01-04-1995 |         12 |    20 |    832.580864111672
+ 01-04-1995 |         12 |    21 |    726.313678854607
+ 01-04-1995 |         12 |    22 |   604.5907532964358
+ 01-04-1995 |         12 |    23 |   558.8504474164925
+ 01-04-1995 |         12 |    24 |    725.795917221131
+ 01-04-1995 |         12 |    25 |   930.1607396025271
+ 01-04-1995 |         13 |    15 |    874.096812318378
+ 01-04-1995 |         13 |    16 |   766.6897446589829
+ 01-04-1995 |         13 |    17 |   1036.196498143876
+ 01-04-1995 |         13 |    18 |    610.276103699890
+ 01-04-1995 |         13 |    19 |   1062.927467170405
+ 01-04-1995 |         13 |    20 |   496.4379866869245
+ 01-04-1995 |         13 |    21 |   1009.567968787490
+ 01-04-1995 |         13 |    22 |  654.40942955875015
+ 01-04-1995 |         13 |    23 |   547.2487328352787
+ 01-04-1995 |         13 |    24 |   1118.888735144966
+ 01-04-1995 |         13 |    25 |   519.5665782950496
+ 01-04-1995 |         14 |    15 |    848.203341028362
+ 01-04-1995 |         14 |    16 |   550.6360779265358
+ 01-04-1995 |         14 |    17 |   957.4898382829575
+ 01-04-1995 |         14 |    18 |    842.381967073949
+ 01-04-1995 |         14 |    19 |   1138.927692387681
+ 01-04-1995 |         14 |    20 |    701.951808655548
+ 01-04-1995 |         14 |    21 |  402.40040531421497
+ 01-04-1995 |         14 |    22 |   1042.708545788633
+ 01-04-1995 |         14 |    23 |   724.6202746853199
+ 01-04-1995 |         14 |    24 |   842.2929281407277
+ 01-04-1995 |         14 |    25 |   358.5753550965834
+ 01-04-1995 |         15 |    15 |   1112.397535782975
+ 01-04-1995 |         15 |    16 |   473.4166945589043
+ 01-04-1995 |         15 |    17 |   604.1998807975726
+ 01-04-1995 |         15 |    18 |   1150.992260142060
+ 01-04-1995 |         15 |    19 |    949.318745751269
+ 01-04-1995 |         15 |    20 |   1087.293824040281
+ 01-04-1995 |         15 |    21 |   561.3453429758917
+ 01-04-1995 |         15 |    22 |    802.903910267398
+ 01-04-1995 |         15 |    23 |    862.997397112388
+ 01-04-1995 |         15 |    24 |   527.5578568417909
+ 01-04-1995 |         15 |    25 |    685.799014738445
+ 01-05-1995 |          1 |    15 |    868.788084363772
+ 01-05-1995 |          1 |    16 |   447.2808798501026
+ 01-05-1995 |          1 |    17 |    851.785705929746
+ 01-05-1995 |          1 |    18 |   624.0925871299412
+ 01-05-1995 |          1 |    19 |    867.389062039270
+ 01-05-1995 |          1 |    20 |   1009.919733417725
+ 01-05-1995 |          1 |    21 |    691.910241778723
+ 01-05-1995 |          1 |    22 |    523.097380271157
+ 01-05-1995 |          1 |    23 |  725.81503557685154
+ 01-05-1995 |          1 |    24 |   136.3901006946662
+ 01-05-1995 |          1 |    25 |   620.8144843651465
+ 01-05-1995 |          2 |    15 |   678.5853544085686
+ 01-05-1995 |          2 |    16 |   784.0124803976922
+ 01-05-1995 |          2 |    17 |    955.538872360130
+ 01-05-1995 |          2 |    18 |    614.887606715127
+ 01-05-1995 |          2 |    19 |   1029.926492094949
+ 01-05-1995 |          2 |    20 |   377.2007576116072
+ 01-05-1995 |          2 |    21 |   125.2454786310526
+ 01-05-1995 |          2 |    22 |    998.392064472244
+ 01-05-1995 |          2 |    23 |   492.6810962908051
+ 01-05-1995 |          2 |    24 |   1022.741334324847
+ 01-05-1995 |          2 |    25 |    726.221606730701
+ 01-05-1995 |          3 |    15 |   471.2872966506774
+ 01-05-1995 |          3 |    16 |   1146.065020114869
+ 01-05-1995 |          3 |    17 |   506.4340759611748
+ 01-05-1995 |          3 |    18 |    935.017437376022
+ 01-05-1995 |          3 |    19 |   1058.510617975114
+ 01-05-1995 |          3 |    20 |   609.9648301600832
+ 01-05-1995 |          3 |    21 |   1074.941555103338
+ 01-05-1995 |          3 |    22 |    666.690193423741
+ 01-05-1995 |          3 |    23 |   1189.697159302295
+ 01-05-1995 |          3 |    24 |   568.2120852452887
+ 01-05-1995 |          3 |    25 |   433.1146930889831
+ 01-05-1995 |          4 |    15 |   928.0918125922507
+ 01-05-1995 |          4 |    16 |    538.770083887496
+ 01-05-1995 |          4 |    17 |    989.123877393879
+ 01-05-1995 |          4 |    18 |    740.495240096437
+ 01-05-1995 |          4 |    19 |   753.0119806691952
+ 01-05-1995 |          4 |    20 |   182.5181791590162
+ 01-05-1995 |          4 |    21 |   1158.743548782020
+ 01-05-1995 |          4 |    22 |   1237.632753331007
+ 01-05-1995 |          4 |    23 |  562.02058506571106
+ 01-05-1995 |          4 |    24 |   374.8236880520529
+ 01-05-1995 |          4 |    25 |   653.1823656884679
+ 01-05-1995 |          5 |    15 |    959.648870028234
+ 01-05-1995 |          5 |    16 |   1065.015595966679
+ 01-05-1995 |          5 |    17 |    919.211231381267
+ 01-05-1995 |          5 |    18 |    943.209140384872
+ 01-05-1995 |          5 |    19 |   917.2811761493145
+ 01-05-1995 |          5 |    20 |   560.4286085130633
+ 01-05-1995 |          5 |    21 |   1096.186470891348
+ 01-05-1995 |          5 |    22 |   442.1508101592353
+ 01-05-1995 |          5 |    23 |    711.828351622750
+ 01-05-1995 |          5 |    24 |   1128.268425360239
+ 01-05-1995 |          5 |    25 |    886.537355969937
+ 01-05-1995 |          6 |    15 |    740.510050660415
+ 01-05-1995 |          6 |    16 |   887.8583420693028
+ 01-05-1995 |          6 |    17 |    987.763758370576
+ 01-05-1995 |          6 |    18 |    849.233855228789
+ 01-05-1995 |          6 |    19 |    996.553766324280
+ 01-05-1995 |          6 |    20 |   914.7400971726604
+ 01-05-1995 |          6 |    21 |   1013.018984621068
+ 01-05-1995 |          6 |    22 |    642.710461349167
+ 01-05-1995 |          6 |    23 |    845.495882696974
+ 01-05-1995 |          6 |    24 |    805.628663776787
+ 01-05-1995 |          6 |    25 |    680.757770308989
+ 01-05-1995 |          7 |    15 |    986.511587604487
+ 01-05-1995 |          7 |    16 |   688.7060517660958
+ 01-05-1995 |          7 |    17 |    718.191887750459
+ 01-05-1995 |          7 |    18 |   230.8082175535330
+ 01-05-1995 |          7 |    19 |    821.322971836851
+ 01-05-1995 |          7 |    20 |  289.93603659454343
+ 01-05-1995 |          7 |    21 |   1127.432498820487
+ 01-05-1995 |          7 |    22 |   559.4001981307218
+ 01-05-1995 |          7 |    23 |   1074.350744117025
+ 01-05-1995 |          7 |    24 |   842.2631578361693
+ 01-05-1995 |          7 |    25 |    977.740932166054
+ 01-05-1995 |          8 |    15 |   601.3957886119376
+ 01-05-1995 |          8 |    16 |    991.458977710336
+ 01-05-1995 |          8 |    17 |  596.35670133571811
+ 01-05-1995 |          8 |    18 |    958.594145144917
+ 01-05-1995 |          8 |    19 |   1191.984774875048
+ 01-05-1995 |          8 |    20 |   847.9309169294589
+ 01-05-1995 |          8 |    21 |    861.033556659287
+ 01-05-1995 |          8 |    22 |   787.4325471844656
+ 01-05-1995 |          8 |    23 |    765.490668013288
+ 01-05-1995 |          8 |    24 |    833.561050764753
+ 01-05-1995 |          8 |    25 |   756.5191693869559
+ 01-05-1995 |          9 |    15 |   352.4005550412113
+ 01-05-1995 |          9 |    16 |    945.061385866798
+ 01-05-1995 |          9 |    17 |    891.814307362368
+ 01-05-1995 |          9 |    18 |   525.7608840392502
+ 01-05-1995 |          9 |    19 |   535.9150035011629
+ 01-05-1995 |          9 |    20 |   567.7398757541918
+ 01-05-1995 |          9 |    21 |   551.4829317734778
+ 01-05-1995 |          9 |    22 |    870.726917986069
+ 01-05-1995 |          9 |    23 |   618.7064136138919
+ 01-05-1995 |          9 |    24 |    935.156789130605
+ 01-05-1995 |          9 |    25 |   1033.503714689910
+ 01-05-1995 |         10 |    15 |    813.999095558735
+ 01-05-1995 |         10 |    16 |    340.933154219834
+ 01-05-1995 |         10 |    17 |  768.22976395621482
+ 01-05-1995 |         10 |    18 |    862.288290961036
+ 01-05-1995 |         10 |    19 |   1128.661627896225
+ 01-05-1995 |         10 |    20 |   523.2413919092272
+ 01-05-1995 |         10 |    21 |   435.7315625029008
+ 01-05-1995 |         10 |    22 |   1037.046867617430
+ 01-05-1995 |         10 |    23 |   785.4683311481301
+ 01-05-1995 |         10 |    24 |   1158.057235064822
+ 01-05-1995 |         10 |    25 |   521.3107904533658
+ 01-05-1995 |         11 |    15 |    700.110027497036
+ 01-05-1995 |         11 |    16 |    581.876685501896
+ 01-05-1995 |         11 |    17 |   718.2905795934129
+ 01-05-1995 |         11 |    18 |    908.171038149807
+ 01-05-1995 |         11 |    19 |   647.6268051696556
+ 01-05-1995 |         11 |    20 |    869.200439731265
+ 01-05-1995 |         11 |    21 |   657.5080455389398
+ 01-05-1995 |         11 |    22 |   815.0495006188202
+ 01-05-1995 |         11 |    23 |   1283.063982226238
+ 01-05-1995 |         11 |    24 |    542.109979128814
+ 01-05-1995 |         11 |    25 |    946.152757629037
+ 01-05-1995 |         12 |    15 |   584.1962445360957
+ 01-05-1995 |         12 |    16 |    781.850841197747
+ 01-05-1995 |         12 |    17 |    680.116292559818
+ 01-05-1995 |         12 |    18 |   358.0095470396114
+ 01-05-1995 |         12 |    19 |    922.922279018361
+ 01-05-1995 |         12 |    20 |   736.6627877485013
+ 01-05-1995 |         12 |    21 |   1084.484215781277
+ 01-05-1995 |         12 |    22 |    948.008206212441
+ 01-05-1995 |         12 |    23 |   771.4941609935628
+ 01-05-1995 |         12 |    24 |    917.574236240565
+ 01-05-1995 |         12 |    25 |   737.4029297036532
+ 01-05-1995 |         13 |    15 |    684.917128138188
+ 01-05-1995 |         13 |    16 |   521.3469812567897
+ 01-05-1995 |         13 |    17 |   737.1860561527941
+ 01-05-1995 |         13 |    18 |    610.494199025024
+ 01-05-1995 |         13 |    19 |   553.7624564619843
+ 01-05-1995 |         13 |    20 |    870.761142582684
+ 01-05-1995 |         13 |    21 |    848.606655372816
+ 01-05-1995 |         13 |    22 |   190.2726898759378
+ 01-05-1995 |         13 |    23 |   1070.334115477906
+ 01-05-1995 |         13 |    24 |    462.932956994980
+ 01-05-1995 |         13 |    25 |   1456.670369702379
+ 01-05-1995 |         14 |    15 |    886.713096794368
+ 01-05-1995 |         14 |    16 |   661.3277925619163
+ 01-05-1995 |         14 |    17 |   766.9356983313376
+ 01-05-1995 |         14 |    18 |   655.8173325160017
+ 01-05-1995 |         14 |    19 |   446.9177251973641
+ 01-05-1995 |         14 |    20 |    975.855639937542
+ 01-05-1995 |         14 |    21 |   521.4563856292674
+ 01-05-1995 |         14 |    22 |   601.1139950183291
+ 01-05-1995 |         14 |    23 |    819.083715230634
+ 01-05-1995 |         14 |    24 |    708.854267646746
+ 01-05-1995 |         14 |    25 |   1359.376466957512
+ 01-05-1995 |         15 |    15 |   711.5112826529974
+ 01-05-1995 |         15 |    16 |   602.2142251101702
+ 01-05-1995 |         15 |    17 |   717.0387629322026
+ 01-05-1995 |         15 |    18 |   1253.831038895350
+ 01-05-1995 |         15 |    19 |    711.477280028341
+ 01-05-1995 |         15 |    20 |   438.5726891148217
+ 01-05-1995 |         15 |    21 |   803.4061034929563
+ 01-05-1995 |         15 |    22 |    906.579631896627
+ 01-05-1995 |         15 |    23 |   532.7947151051876
+ 01-05-1995 |         15 |    24 |    539.630517372223
+ 01-05-1995 |         15 |    25 |   190.3493144533946
+(660 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute tenth;
+                                                                                                     QUERY PLAN                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=660 loops=1)
+   Group Key: sdate, item_class, store
+   Buffers: shared hit=142
+   ->  Sort (actual rows=1980 loops=1)
+         Sort Key: sdate, item_class, store
+         Sort Method: quicksort  Memory: 128kB
+         Buffers: shared hit=142
+         ->  Bitmap Heap Scan on small_sales_mdam_paper (actual rows=1980 loops=1)
+               Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store >= 15) AND (store <= 25))
+               Heap Blocks: exact=59
+               Buffers: shared hit=142
+               ->  Bitmap Index Scan on small_mdam_idx (actual rows=1980 loops=1)
+                     Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store >= 15) AND (store <= 25))
+                     Index Searches: 12
+                     Buffers: shared hit=83
+(15 rows)
+
+deallocate tenth;
+-- dept range, sdate range, item_class range, store range:
+prepare eleventh as
+select sdate, item_class, store, sum(total_sales)
+from small_sales_mdam_paper
+where
+  dept between 5 and 7
+  and sdate between '1995-01-01' and '1995-01-05'
+  and item_class between 1 and 15
+  and store = 10 -- Not a range, unlike last time, but otherwise the same
+group by sdate, item_class, store;
+execute eleventh;
+   sdate    | item_class | store |        sum         
+------------+------------+-------+--------------------
+ 01-02-1995 |          1 |    10 |  560.8035327426003
+ 01-02-1995 |          2 |    10 |  348.1914893438554
+ 01-02-1995 |          3 |    10 |  571.8935227151006
+ 01-02-1995 |          4 |    10 |   742.207226757668
+ 01-02-1995 |          5 |    10 |  744.8736197652008
+ 01-02-1995 |          6 |    10 |  693.9175498947799
+ 01-02-1995 |          7 |    10 |   792.966607771599
+ 01-02-1995 |          8 |    10 |   973.941175814561
+ 01-02-1995 |          9 |    10 |   931.454524691947
+ 01-02-1995 |         10 |    10 |   479.001262310081
+ 01-02-1995 |         11 |    10 |  1003.023789879926
+ 01-02-1995 |         12 |    10 |  682.5073990035203
+ 01-02-1995 |         13 |    10 |   784.996291736659
+ 01-02-1995 |         14 |    10 |  506.3254675479066
+ 01-02-1995 |         15 |    10 | 503.32959627485079
+ 01-03-1995 |          1 |    10 |   736.894190571796
+ 01-03-1995 |          2 |    10 |  543.7171707821486
+ 01-03-1995 |          3 |    10 |  794.1597079527169
+ 01-03-1995 |          4 |    10 |  520.2425102708636
+ 01-03-1995 |          5 |    10 |   888.622102016800
+ 01-03-1995 |          6 |    10 |  573.1218357667473
+ 01-03-1995 |          7 |    10 |   912.859805949579
+ 01-03-1995 |          8 |    10 |  1073.660077026915
+ 01-03-1995 |          9 |    10 | 424.16079172426332
+ 01-03-1995 |         10 |    10 |   852.574691118331
+ 01-03-1995 |         11 |    10 | 337.30212640118514
+ 01-03-1995 |         12 |    10 |  1141.226696762375
+ 01-03-1995 |         13 |    10 |  627.9442571914305
+ 01-03-1995 |         14 |    10 |  586.8335477243598
+ 01-03-1995 |         15 |    10 |  730.4911088085434
+ 01-04-1995 |          1 |    10 |  686.8752790615634
+ 01-04-1995 |          2 |    10 |  1138.666681645208
+ 01-04-1995 |          3 |    10 |  491.1859317204265
+ 01-04-1995 |          4 |    10 |   872.594430884656
+ 01-04-1995 |          5 |    10 |  683.2180405567224
+ 01-04-1995 |          6 |    10 |   874.449531812533
+ 01-04-1995 |          7 |    10 |  498.5588975233493
+ 01-04-1995 |          8 |    10 |  1140.630002852194
+ 01-04-1995 |          9 |    10 |   550.965901588681
+ 01-04-1995 |         10 |    10 |   837.030750315656
+ 01-04-1995 |         11 |    10 |   494.369994430426
+ 01-04-1995 |         12 |    10 | 480.62369695949936
+ 01-04-1995 |         13 |    10 |   763.995976899950
+ 01-04-1995 |         14 |    10 |  376.8537100095302
+ 01-04-1995 |         15 |    10 | 668.67859115909655
+ 01-05-1995 |          1 |    10 |   815.090804058244
+ 01-05-1995 |          2 |    10 |  1221.425297179188
+ 01-05-1995 |          3 |    10 |  781.8723210623275
+ 01-05-1995 |          4 |    10 |   911.045650159351
+ 01-05-1995 |          5 |    10 |  417.4014489215987
+ 01-05-1995 |          6 |    10 |  573.1662118486083
+ 01-05-1995 |          7 |    10 |   814.941015696602
+ 01-05-1995 |          8 |    10 |   886.750951027752
+ 01-05-1995 |          9 |    10 |   809.539392748519
+ 01-05-1995 |         10 |    10 |   953.547262462304
+ 01-05-1995 |         11 |    10 |   827.068387282074
+ 01-05-1995 |         12 |    10 |  360.9390440470397
+ 01-05-1995 |         13 |    10 |  942.5890009300261
+ 01-05-1995 |         14 |    10 |  695.9167445230843
+ 01-05-1995 |         15 |    10 |  716.3241176186495
+(60 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute eleventh;
+                                                                                           QUERY PLAN                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=60 loops=1)
+   Group Key: sdate, item_class
+   Buffers: shared hit=94
+   ->  Sort (actual rows=180 loops=1)
+         Sort Key: sdate, item_class
+         Sort Method: quicksort  Memory: 32kB
+         Buffers: shared hit=94
+         ->  Bitmap Heap Scan on small_sales_mdam_paper (actual rows=180 loops=1)
+               Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = 10))
+               Heap Blocks: exact=5
+               Buffers: shared hit=94
+               ->  Bitmap Index Scan on small_mdam_idx (actual rows=180 loops=1)
+                     Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = 10))
+                     Index Searches: 15
+                     Buffers: shared hit=89
+(15 rows)
+
+deallocate eleventh;
+-- dept range, sdate range, item_class range, store range:
+prepare twelfth as
+select sdate, item_class, store, sum(total_sales)
+from small_sales_mdam_paper
+where
+  dept between 5 and 7
+  and sdate between '1995-01-01' and '1995-01-05'
+  and item_class between 1 and 15
+  and store = -1 -- Not a range, no matching tuples
+group by sdate, item_class, store;
+execute twelfth;
+ sdate | item_class | store | sum 
+-------+------------+-------+-----
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute twelfth;
+                                                                                                 QUERY PLAN                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual rows=0 loops=1)
+   Group Key: sdate, item_class
+   Buffers: shared hit=89
+   ->  Sort (actual rows=0 loops=1)
+         Sort Key: sdate, item_class
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=89
+         ->  Bitmap Heap Scan on small_sales_mdam_paper (actual rows=0 loops=1)
+               Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = '-1'::integer))
+               Buffers: shared hit=89
+               ->  Bitmap Index Scan on small_mdam_idx (actual rows=0 loops=1)
+                     Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = '-1'::integer))
+                     Index Searches: 15
+                     Buffers: shared hit=89
+(14 rows)
+
+deallocate twelfth;
