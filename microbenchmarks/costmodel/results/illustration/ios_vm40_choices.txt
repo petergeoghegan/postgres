@@ -1,0 +1,16 @@
+-- stock_eic16
+Bitmap Heap Scan on t_sparse_ios  (cost=1669.50..152613.15 rows=78544 width=4)
+  Recheck Cond: ((id >= 50001) AND (id <= 130000))
+  ->  Bitmap Index Scan on t_sparse_ios_id  (cost=0.00..1649.86 rows=78544 width=0)
+        Index Cond: ((id >= 50001) AND (id <= 130000))
+
+-- stock_eic100
+Bitmap Heap Scan on t_sparse_ios  (cost=1669.50..152613.15 rows=78544 width=4)
+  Recheck Cond: ((id >= 50001) AND (id <= 130000))
+  ->  Bitmap Index Scan on t_sparse_ios_id  (cost=0.00..1649.86 rows=78544 width=0)
+        Index Cond: ((id >= 50001) AND (id <= 130000))
+
+-- patch_eic100
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..60794.85 rows=78544 width=4)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+

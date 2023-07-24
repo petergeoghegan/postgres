@@ -1,0 +1,10 @@
+-- SELECT * FROM t_dups WHERE grp BETWEEN 40001 AND 55625 ORDER BY grp
+-- plain, 90% of heap pages in shared_buffers, eic=16
+Index Scan using t_dups_grp on t_dups  (cost=0.43..751029.27 rows=1021111 width=117) (actual time=0.011..89.397 rows=1000000.00 loops=1)
+  Index Cond: ((grp >= 40001) AND (grp <= 55625))
+  Index Searches: 1
+  Prefetch: avg=172.47 max=255 capacity=272
+  I/O: count=3052 waits=8 size=1.06 in-progress=15.75
+  Buffers: shared hit=31171 read=3229
+Planning Time: 0.058 ms
+Execution Time: 101.263 ms

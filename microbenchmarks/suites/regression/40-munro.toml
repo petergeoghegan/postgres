@@ -1,0 +1,95 @@
+# --- Thomas Munro mid-January regression test queries ---
+# Cold-run scan with fillfactor=90 and an EXTREMELY scattered tuple layout.
+# The heap is ordered by "i + 16384*(random()-0.5)" with 4 rows/key (~96
+# rows/page), so a key's rows sit up to ~+/-340 pages from their index-order
+# position, and the ~24 keys on one page are spread over ~16k index positions.
+# The block sequence the scan feeds the read stream is therefore a random walk
+# inside a sliding ~680-page window. The only adjacent-block transitions are
+# within-key straddles of a page boundary (+/-16-row shuffle): in MU1's order
+# 17% of the 2.47M block switches go to P+1, 0.1% to P-1, and the rest jump
+# beyond +/-16 pages (measured on the data, 2026-09-10). The straddled page
+# was usually read already, so combining barely applies (EXPLAIN I/O
+# size=1.08) in either direction. The ~700 distinct blocks queued between two
+# visits of a page exceed both the 32-entry dedup ring (READ_STREAM_DEDUP_RECENT)
+# and the look-ahead window, so count ~= read (96522 I/Os for 85994 blocks). This
+# makes munro the GENUINELY different member of the regression family (see
+# suite 50): with no repeats to absorb and nothing to combine, the pair
+# measures look-ahead DEPTH itself -- how far the stream reads ahead with
+# single-block I/Os -- which io_combine_limit governs (icl=1 keeps the distance
+# at ~5, icl=16 lets it ramp to ~330 avg / 511 max).
+#   MU1 (ORDER BY a ASC -> ascending-on-average heap blocks): master rides OS
+#     page-cache read-ahead over the sliding window, so the patch's single-block
+#     look-ahead competes with a cheap baseline; sensitive to io_combine_limit.
+#   MU2 (ORDER BY a DESC -> descending): master reads serially; the patch's
+#     look-ahead parallelizes those reads at any io_combine_limit.
+#
+# Measured 2026-09-10 (io_uring, eic=100, uncached, min of 3,
+# patch/master):
+#   scratch cluster, icl=16: MU1 1.12x (2569 vs 2304 ms; medians 1.17x),
+#     MU2 0.50x (2901 vs 5757 ms; master bimodal 5.8/9.7 s, medians 0.30x).
+#   scratch cluster, icl=1: MU1 1.03x (2370 ms), MU2 0.67x (3838 ms).
+#   io_method=worker (io_max_workers=32), icl=16: MU1 1.16x.
+#   prefetch_benchmark.py on patch/data, icl=16: MU1 1.06x (avg 1.11x),
+#     MU2 0.26x (2741 vs 10741 ms).
+#   Request deduplication did not move MU1: its repeats are too far
+#   apart for the ring. MU1 still needs a low io_combine_limit to reach parity
+#   with master, as it did in January; MU2 is a big win regardless.
+
+[suite]
+mode_prefix = "munro"
+order = 40
+cli_flag = "--munro"
+cli_dest = "munro_tests"
+help = "Run Thomas Munro mid-January benchmark (cold scan over a heap scattered across a ~680-page window)"
+title = "Thomas Munro mid-January Regression Benchmark"
+tables = [
+    "t_munro",
+]
+setup_sql_file = "40-munro.sql"
+row_description = "10M rows"
+
+[queries.MU1]
+name = "Forward scan, heap scattered over a ~680-page window (beyond the dedup ring and look-ahead window): stresses look-ahead depth with single-block reads against an OS read-ahead baseline; sensitive to io_combine_limit"
+sql = """
+
+            SELECT a FROM t_munro
+            WHERE a BETWEEN 19440 AND 2068015
+            ORDER BY a ASC
+        """
+evict = [
+    "t_munro",
+]
+prewarm_indexes = [
+    "idx_munro",
+]
+prewarm_tables = [
+    "t_munro",
+]
+
+[queries.MU1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+enable_indexonlyscan = "off"
+
+[queries.MU2]
+name = "Backward scan, heap scattered over a ~680-page window: stresses look-ahead depth with single-block reads against a serial-read baseline, at any io_combine_limit"
+sql = """
+
+            SELECT a FROM t_munro
+            WHERE a BETWEEN 19440 AND 2068015
+            ORDER BY a DESC
+        """
+evict = [
+    "t_munro",
+]
+prewarm_indexes = [
+    "idx_munro",
+]
+prewarm_tables = [
+    "t_munro",
+]
+
+[queries.MU2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+enable_indexonlyscan = "off"

@@ -1,0 +1,10 @@
+-- SELECT * FROM t_dups WHERE grp BETWEEN 40001 AND 55625 ORDER BY grp
+-- plain scan, uncached_eic16
+Index Scan using t_dups_grp on t_dups  (cost=0.43..751029.27 rows=1021111 width=117) (actual time=0.172..344.319 rows=1000000.00 loops=1)
+  Index Cond: ((grp >= 40001) AND (grp <= 55625))
+  Index Searches: 1
+  Prefetch: avg=34.94 max=45 capacity=272
+  I/O: count=15589 waits=2027 size=2.05 in-progress=15.99
+  Buffers: shared hit=2383 read=32017
+Planning Time: 0.057 ms
+Execution Time: 360.846 ms

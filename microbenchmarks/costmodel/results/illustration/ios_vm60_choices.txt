@@ -1,0 +1,12 @@
+-- stock_eic16
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..110189.85 rows=80683 width=4)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+
+-- stock_eic100
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..110189.85 rows=80683 width=4)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+
+-- patch_eic100
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..42284.67 rows=80683 width=4)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+
