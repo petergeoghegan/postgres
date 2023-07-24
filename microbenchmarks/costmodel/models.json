@@ -1,0 +1,192 @@
+{
+ "legacy_rpc4": {
+  "debug_index_cost_model": 0,
+  "random_page_cost": 4.0
+ },
+ "legacy_rpc2": {
+  "debug_index_cost_model": 0,
+  "random_page_cost": 2.0
+ },
+ "legacy_rpc1.1": {
+  "debug_index_cost_model": 0,
+  "random_page_cost": 1.1
+ },
+ "m1_sqrt": {
+  "debug_index_cost_model": 1,
+  "random_page_cost": 4.0
+ },
+ "m2_lin": {
+  "debug_index_cost_model": 2,
+  "random_page_cost": 4.0
+ },
+ "m3_halfsqrt": {
+  "debug_index_cost_model": 3,
+  "random_page_cost": 4.0
+ },
+ "m4_little": {
+  "debug_index_cost_model": 4,
+  "random_page_cost": 4.0
+ },
+ "m5_lin_little": {
+  "debug_index_cost_model": 5,
+  "random_page_cost": 4.0
+ },
+ "m6_sqrt_little": {
+  "debug_index_cost_model": 6,
+  "random_page_cost": 4.0
+ },
+ "m14_little_bm": {
+  "debug_index_cost_model": 14,
+  "random_page_cost": 4.0
+ },
+ "m15_lin_bm": {
+  "debug_index_cost_model": 15,
+  "random_page_cost": 4.0
+ },
+ "m16_sqrt_bm": {
+  "debug_index_cost_model": 16,
+  "random_page_cost": 4.0
+ },
+ "m7_eicrel": {
+  "debug_index_cost_model": 7,
+  "random_page_cost": 4.0
+ },
+ "m17_eicrel_bm": {
+  "debug_index_cost_model": 17,
+  "random_page_cost": 4.0
+ },
+ "m8_half": {
+  "debug_index_cost_model": 8,
+  "random_page_cost": 4.0
+ },
+ "m18_half_bm": {
+  "debug_index_cost_model": 18,
+  "random_page_cost": 4.0
+ },
+ "m9_quarter": {
+  "debug_index_cost_model": 9,
+  "random_page_cost": 4.0
+ },
+ "m19_quarter_bm": {
+  "debug_index_cost_model": 19,
+  "random_page_cost": 4.0
+ },
+ "m20_pin": {
+  "debug_index_cost_model": 20,
+  "random_page_cost": 4.0
+ },
+ "m24_little_bm_pin": {
+  "debug_index_cost_model": 24,
+  "random_page_cost": 4.0
+ },
+ "m27_eicrel_bm_pin": {
+  "debug_index_cost_model": 27,
+  "random_page_cost": 4.0
+ },
+ "m28_half_bm_pin": {
+  "debug_index_cost_model": 28,
+  "random_page_cost": 4.0
+ },
+ "m29_quarter_bm_pin": {
+  "debug_index_cost_model": 29,
+  "random_page_cost": 4.0
+ },
+ "m34_little_bm_fade": {
+  "debug_index_cost_model": 34,
+  "random_page_cost": 4.0
+ },
+ "m44_little_bm_sqfade": {
+  "debug_index_cost_model": 44,
+  "random_page_cost": 4.0
+ },
+ "m37_eicrel_bm_fade": {
+  "debug_index_cost_model": 37,
+  "random_page_cost": 4.0
+ },
+ "m47_eicrel_bm_sqfade": {
+  "debug_index_cost_model": 47,
+  "random_page_cost": 4.0
+ },
+ "m38_half_bm_fade": {
+  "debug_index_cost_model": 38,
+  "random_page_cost": 4.0
+ },
+ "m48_half_bm_sqfade": {
+  "debug_index_cost_model": 48,
+  "random_page_cost": 4.0
+ },
+ "m39_quarter_bm_fade": {
+  "debug_index_cost_model": 39,
+  "random_page_cost": 4.0
+ },
+ "m49_quarter_bm_sqfade": {
+  "debug_index_cost_model": 49,
+  "random_page_cost": 4.0
+ },
+ "m54_little_bm_io": {
+  "debug_index_cost_model": 54,
+  "random_page_cost": 4.0
+ },
+ "m57_eicrel_bm_io": {
+  "debug_index_cost_model": 57,
+  "random_page_cost": 4.0
+ },
+ "m58_half_bm_io": {
+  "debug_index_cost_model": 58,
+  "random_page_cost": 4.0
+ },
+ "m59_quarter_bm_io": {
+  "debug_index_cost_model": 59,
+  "random_page_cost": 4.0
+ },
+ "legacy_q25": {
+  "debug_index_cost_model": 0,
+  "random_page_cost": 1.0,
+  "seq_page_cost": 0.25
+ },
+ "legacy_q10": {
+  "debug_index_cost_model": 0,
+  "random_page_cost": 0.4,
+  "seq_page_cost": 0.1
+ },
+ "legacy_q50": {
+  "debug_index_cost_model": 0,
+  "random_page_cost": 2.0,
+  "seq_page_cost": 0.5
+ },
+ "m64_little_bm_io_pin": {
+  "debug_index_cost_model": 64,
+  "random_page_cost": 4.0
+ },
+ "m74_little_bm_io_pin3": {
+  "debug_index_cost_model": 74,
+  "random_page_cost": 4.0
+ },
+ "m67_eicrel_bm_io_pin": {
+  "debug_index_cost_model": 67,
+  "random_page_cost": 4.0
+ },
+ "m77_eicrel_bm_io_pin3": {
+  "debug_index_cost_model": 77,
+  "random_page_cost": 4.0
+ },
+ "m68_half_bm_io_pin": {
+  "debug_index_cost_model": 68,
+  "random_page_cost": 4.0
+ },
+ "m78_half_bm_io_pin3": {
+  "debug_index_cost_model": 78,
+  "random_page_cost": 4.0
+ },
+ "m53_sqrteic_bm_io": {
+  "debug_index_cost_model": 53,
+  "random_page_cost": 4.0
+ },
+ "m13_sqrteic_bm": {
+  "debug_index_cost_model": 13,
+  "random_page_cost": 4.0
+ },
+ "patch_B": {
+  "random_page_cost": 4.0
+ }
+}

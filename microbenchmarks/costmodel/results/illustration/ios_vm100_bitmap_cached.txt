@@ -1,0 +1,13 @@
+-- SELECT id FROM t_sparse_ios WHERE id BETWEEN 50001 AND 130000
+-- bitmap, vm100, cached
+Bitmap Heap Scan on t_sparse_ios  (cost=1722.71..155105.88 rows=81004 width=4) (actual time=16.878..46.317 rows=80000.00 loops=1)
+  Recheck Cond: ((id >= 50001) AND (id <= 130000))
+  Heap Blocks: exact=79999
+  Prefetch: avg=1.00 max=1 capacity=1616
+  Buffers: shared hit=80221
+  ->  Bitmap Index Scan on t_sparse_ios_id  (cost=0.00..1702.46 rows=81004 width=0) (actual time=5.973..5.973 rows=80000.00 loops=1)
+        Index Cond: ((id >= 50001) AND (id <= 130000))
+        Index Searches: 1
+        Buffers: shared hit=222
+Planning Time: 0.037 ms
+Execution Time: 47.207 ms

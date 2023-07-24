@@ -1,0 +1,20 @@
+{
+ "ios_vm100_ios_cached": 8.15,
+ "ios_vm100_ios_uncached_eic100": 8.205,
+ "ios_vm100_ios_uncached_eic16": 8.164,
+ "ios_vm100_bitmap_cached": 47.207,
+ "ios_vm100_bitmap_uncached_eic100": 256.567,
+ "ios_vm100_bitmap_uncached_eic16": 510.306,
+ "ios_vm60_ios_cached": 19.873,
+ "ios_vm60_ios_uncached_eic100": 126.499,
+ "ios_vm60_ios_uncached_eic16": 253.113,
+ "ios_vm60_bitmap_cached": 58.791,
+ "ios_vm60_bitmap_uncached_eic100": 255.849,
+ "ios_vm60_bitmap_uncached_eic16": 514.192,
+ "ios_vm40_ios_cached": 23.647,
+ "ios_vm40_ios_uncached_eic100": 187.977,
+ "ios_vm40_ios_uncached_eic16": 382.621,
+ "ios_vm40_bitmap_cached": 57.759,
+ "ios_vm40_bitmap_uncached_eic100": 256.022,
+ "ios_vm40_bitmap_uncached_eic16": 507.076
+}

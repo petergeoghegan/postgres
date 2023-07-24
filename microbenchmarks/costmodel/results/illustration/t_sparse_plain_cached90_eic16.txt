@@ -1,0 +1,12 @@
+-- SELECT * FROM t_sparse WHERE id BETWEEN 50001 AND 70000 ORDER BY id
+-- plain, 90% of heap pages in shared_buffers, eic=16
+Index Scan using t_sparse_id on t_sparse  (cost=0.42..76937.04 rows=20033 width=708) (actual time=0.010..23.139 rows=20000.00 loops=1)
+  Index Cond: ((id >= 50001) AND (id <= 70000))
+  Index Searches: 1
+  Prefetch: avg=154.88 max=271 capacity=272
+  I/O: count=2017 waits=73 size=1.00 in-progress=15.85
+  Buffers: shared hit=18040 read=2018
+Planning:
+  Buffers: shared hit=11
+Planning Time: 0.088 ms
+Execution Time: 23.437 ms

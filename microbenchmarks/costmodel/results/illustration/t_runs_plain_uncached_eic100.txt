@@ -1,0 +1,10 @@
+-- SELECT * FROM t_runs WHERE id BETWEEN 2500001 AND 3500000 ORDER BY id
+-- plain scan, uncached_eic100
+Index Scan using t_runs_id on t_runs  (cost=0.43..758322.37 rows=1003804 width=117) (actual time=0.120..96.125 rows=1000000.00 loops=1)
+  Index Cond: ((id >= 2500001) AND (id <= 3500000))
+  Index Searches: 1
+  Prefetch: avg=124.67 max=127 capacity=1616
+  I/O: count=5105 waits=7 size=4.44 in-progress=27.52
+  Buffers: shared hit=3223 read=22660
+Planning Time: 0.045 ms
+Execution Time: 108.188 ms

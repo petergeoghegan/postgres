@@ -1,0 +1,18 @@
+{
+ "t_dups_plain_cached90_eic16": 101.263,
+ "t_dups_plain_cached90_eic100": 102.447,
+ "t_dups_bitmap_cached90_eic16": 272.226,
+ "t_dups_bitmap_cached90_eic100": 276.21,
+ "t_runs_plain_cached90_eic16": 99.507,
+ "t_runs_plain_cached90_eic100": 100.492,
+ "t_runs_bitmap_cached90_eic16": 271.806,
+ "t_runs_bitmap_cached90_eic100": 271.02,
+ "t_sparse_plain_cached90_eic16": 23.437,
+ "t_sparse_plain_cached90_eic100": 23.188,
+ "t_sparse_bitmap_cached90_eic16": 45.068,
+ "t_sparse_bitmap_cached90_eic100": 32.916,
+ "ios_vm40_ios_cached90_eic16": 58.471,
+ "ios_vm40_ios_cached90_eic100": 60.938,
+ "ios_vm40_bitmap_cached90_eic16": 99.143,
+ "ios_vm40_bitmap_cached90_eic100": 94.57
+}

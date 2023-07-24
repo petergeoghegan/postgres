@@ -1,0 +1,10 @@
+-- SELECT * FROM t_sparse WHERE id BETWEEN 50001 AND 70000 ORDER BY id
+-- plain scan, uncached_eic100
+Index Scan using t_sparse_id on t_sparse  (cost=0.42..77435.23 rows=20170 width=708) (actual time=0.165..127.933 rows=20000.00 loops=1)
+  Index Cond: ((id >= 50001) AND (id <= 70000))
+  Index Searches: 1
+  Prefetch: avg=99.66 max=100 capacity=1616
+  I/O: count=19997 waits=813 size=1.00 in-progress=99.66
+  Buffers: shared hit=58 read=20000
+Planning Time: 0.046 ms
+Execution Time: 128.512 ms

@@ -1,0 +1,10 @@
+-- SELECT * FROM t_runs WHERE id BETWEEN 2500001 AND 3500000 ORDER BY id
+-- plain, 90% of heap pages in shared_buffers, eic=16
+Index Scan using t_runs_id on t_runs  (cost=0.43..758322.27 rows=1003799 width=117) (actual time=0.013..88.093 rows=1000000.00 loops=1)
+  Index Cond: ((id >= 2500001) AND (id <= 3500000))
+  Index Searches: 1
+  Prefetch: avg=113.05 max=127 capacity=272
+  I/O: count=2154 waits=7 size=1.08 in-progress=11.44
+  Buffers: shared hit=23549 read=2334
+Planning Time: 0.056 ms
+Execution Time: 99.507 ms
