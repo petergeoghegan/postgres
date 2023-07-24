@@ -1,0 +1,136 @@
+# --- Index-only-scan heap-fetch prefetch benchmark queries ---
+# Index-only scans over a table where a bursty, multi-scale subset of heap pages
+# carries LP_DEAD stub line pointers (left by DELETE + VACUUM (INDEX_CLEANUP off)),
+# so those pages are permanently not-all-visible and force recurring heap fetches.
+# The queries return all matching rows: the harness runs them under EXPLAIN (ANALYZE,
+# SERIALIZE), which serializes and discards the result (nothing is sent to the client),
+# and that per-row work overlaps in-flight prefetch I/O -- part of what we want to
+# measure.  ORDER BY a/h is satisfied by the index (IF2's DESC gives a backward Index
+# Only Scan, far cheaper than sorting the whole result), which fixes the scan direction.
+# IF1/IF2: correlated key a, forward/backward, full range (bursty semi-sequential I/O).
+# IF3: uncorrelated key h=hashint8(a) (scattered random heap I/O; biggest prefetch win).
+# IF4/IF5: correlated key a over a dense / sparse sub-range of the poison density.
+
+[suite]
+mode_prefix = "ios_fetch"
+order = 70
+cli_flag = "--ios-fetch"
+cli_dest = "ios_fetch_tests"
+help = "Run IOS heap-fetch prefetch benchmark (LP_DEAD-poisoned pages, recurring heap fetches, 10M rows)"
+title = "Index-Only-Scan Heap-Fetch Prefetch Benchmark (LP_DEAD poison)"
+tables = [
+    "ios_fetch",
+]
+setup_sql_file = "70-ios_fetch.sql"
+row_description = "10M rows"
+all_visible = false
+
+[queries.IF1]
+name = "IOS heap fetches, correlated key, forward (bursty, semi-sequential I/O)"
+sql = """
+
+            SELECT a FROM ios_fetch
+            WHERE a BETWEEN 50000 AND 9950000
+            ORDER BY a ASC
+        """
+evict = [
+    "ios_fetch",
+]
+prewarm_indexes = [
+    "ios_fetch_a_idx",
+]
+prewarm_tables = [
+    "ios_fetch",
+]
+
+[queries.IF1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.IF2]
+name = "IOS heap fetches, correlated key, backward (backward vis/prefetch paths)"
+sql = """
+
+            SELECT a FROM ios_fetch
+            WHERE a BETWEEN 50000 AND 9950000
+            ORDER BY a DESC
+        """
+evict = [
+    "ios_fetch",
+]
+prewarm_indexes = [
+    "ios_fetch_a_idx",
+]
+prewarm_tables = [
+    "ios_fetch",
+]
+
+[queries.IF2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.IF3]
+name = "IOS heap fetches, uncorrelated key, forward (scattered random heap I/O)"
+sql = """
+
+            SELECT h FROM ios_fetch
+            WHERE h BETWEEN -9000000000000000000 AND 9000000000000000000
+            ORDER BY h ASC
+        """
+evict = [
+    "ios_fetch",
+]
+prewarm_indexes = [
+    "ios_fetch_h_idx",
+]
+prewarm_tables = [
+    "ios_fetch",
+]
+
+[queries.IF3.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.IF4]
+name = "IOS heap fetches, correlated key, dense sub-range (bursts fill the ring)"
+sql = """
+
+            SELECT a FROM ios_fetch
+            WHERE a BETWEEN 3000000 AND 3600000
+            ORDER BY a ASC
+        """
+evict = [
+    "ios_fetch",
+]
+prewarm_indexes = [
+    "ios_fetch_a_idx",
+]
+prewarm_tables = [
+    "ios_fetch",
+]
+
+[queries.IF4.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.IF5]
+name = "IOS heap fetches, correlated key, sparse sub-range (fetches spaced apart)"
+sql = """
+
+            SELECT a FROM ios_fetch
+            WHERE a BETWEEN 8600000 AND 9200000
+            ORDER BY a ASC
+        """
+evict = [
+    "ios_fetch",
+]
+prewarm_indexes = [
+    "ios_fetch_a_idx",
+]
+prewarm_tables = [
+    "ios_fetch",
+]
+
+[queries.IF5.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"

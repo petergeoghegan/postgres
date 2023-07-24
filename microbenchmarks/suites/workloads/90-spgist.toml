@@ -1,0 +1,89 @@
+# --- SP-GiST Test Queries ---
+# SP-GiST's two canonical workloads, both with index order uncorrelated with
+# heap (insertion) order so that matching rows are scattered across heap pages
+# -- the real-world case where prefetching heap blocks during the scan helps.
+# A single table carries a random-point column (quad_point_ops) and a random
+# text-token column (text_ops, a suffix tree).
+#   SP1 exercises the non-ordered batch path (a point region scan);
+#   SP2 exercises the ordered (nearest-neighbor) "virtual batch" path;
+#   SP3 exercises the non-ordered batch path of the text suffix-tree opclass
+#       (a different opclass, and the one whose values are reconstructed from a
+#       path prefix during the scan).
+# SP-GiST has no backward scan, so there is no forward/backward pair.
+
+[suite]
+mode_prefix = "spgist"
+order = 90
+cli_flag = "--spgist"
+cli_dest = "spgist_tests"
+help = "Run SP-GiST benchmark (point quad-tree + text suffix-tree: region, nearest-neighbor, range scans)"
+title = "SP-GiST Benchmark (point + text indexes)"
+tables = [
+    "t_spgist",
+]
+setup_sql_file = "90-spgist.sql"
+row_description = "10M rows"
+
+[queries.SP1]
+name = "SP-GiST region scan: points within a bounding box (~9% of table, scattered heap I/O)"
+sql = """
+
+            SELECT * FROM t_spgist
+            WHERE location <@ box '(200,200),(500,500)'
+        """
+evict = [
+    "t_spgist",
+]
+prewarm_indexes = [
+    "idx_spgist_point",
+]
+prewarm_tables = [
+    "t_spgist",
+]
+
+[queries.SP1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.SP2]
+name = "SP-GiST nearest-neighbor scan: 100k points closest to a location (ordered scan)"
+sql = """
+
+            SELECT * FROM t_spgist
+            ORDER BY location <-> point '(500,500)'
+            LIMIT 100000
+        """
+evict = [
+    "t_spgist",
+]
+prewarm_indexes = [
+    "idx_spgist_point",
+]
+prewarm_tables = [
+    "t_spgist",
+]
+
+[queries.SP2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.SP3]
+name = "SP-GiST text range scan: tokens in a lexical range (~12% of table, scattered heap I/O)"
+sql = """
+
+            SELECT * FROM t_spgist
+            WHERE tok >= '1' AND tok < '3'
+        """
+evict = [
+    "t_spgist",
+]
+prewarm_indexes = [
+    "idx_spgist_tok",
+]
+prewarm_tables = [
+    "t_spgist",
+]
+
+[queries.SP3.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
