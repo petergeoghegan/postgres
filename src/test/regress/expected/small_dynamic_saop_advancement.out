@@ -1,0 +1,601 @@
+set work_mem='100MB';
+set statement_timeout to '2s';
+set effective_io_concurrency=100;
+set effective_cache_size='24GB';
+set maintenance_io_concurrency=100;
+set random_page_cost=2.0;
+set track_io_timing to off;
+set enable_seqscan to off;
+set client_min_messages=error;
+set log_btree_verbosity=1;
+--set log_btree_verbosity=2;
+create extension if not exists pageinspect; -- just to have it
+reset client_min_messages;
+select count(*), two, four from tenk1_dyn_saop
+where
+two in (0, 1)
+and four in (1, 2, 3)
+group by
+two,
+four
+order by
+two,
+four;
+ count | two | four 
+-------+-----+------
+  2500 |   0 |    2
+  2500 |   1 |    1
+  2500 |   1 |    3
+(3 rows)
+
+select ctid, bar from skippy_tbl where bar in (2,3);
+ ctid  | bar 
+-------+-----
+ (0,2) |   2
+ (0,3) |   3
+(2 rows)
+
+select ctid, bar from skippy_tbl where bar in (2,4);
+ ctid  | bar 
+-------+-----
+ (0,2) |   2
+ (0,4) |   4
+(2 rows)
+
+select * from multi_test where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11,12);
+  a  | b 
+-----+---
+ 183 | 1
+(1 row)
+
+select ctid, bar from skippy_tbl where bar in (1, 500);
+  ctid  | bar 
+--------+-----
+ (0,1)  |   1
+ (2,48) | 500
+(2 rows)
+
+select * from multi_test where a in (182, 183, 184) and b in (1,2);
+  a  | b 
+-----+---
+ 182 | 1
+ 183 | 1
+ 184 | 1
+(3 rows)
+
+select * from multi_test where a in (3,4,5) and b < 0;
+ a | b 
+---+---
+(0 rows)
+
+select * from multi_test where a in (3,4,5) and b < 1;
+ a | b 
+---+---
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 3 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 4 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+ 5 | 0
+(39 rows)
+
+select count(*), two, four, twenty from tenk1_dyn_saop
+where
+two in (0, 1)
+and four in (1, 2, 3)
+and twenty in (1, 2, 14)
+group by
+two,
+four,
+twenty
+order by
+two,
+four,
+twenty;
+ count | two | four | twenty 
+-------+-----+------+--------
+   500 |   0 |    2 |      2
+   500 |   0 |    2 |     14
+   500 |   1 |    1 |      1
+(3 rows)
+
+select ctid, * from nulls_first
+where
+  district = 1
+  and warehouse = 3
+  and orderid is null
+  and anotherorderid in (9, 10)
+  and orderline in (8, 9, 10, 11);
+  ctid  | district | warehouse | orderid | anotherorderid | orderline 
+--------+----------+-----------+---------+----------------+-----------
+ (2,18) |        1 |         3 |         |              9 |         8
+ (2,19) |        1 |         3 |         |              9 |         9
+ (2,20) |        1 |         3 |         |              9 |        10
+ (2,28) |        1 |         3 |         |             10 |         8
+ (2,29) |        1 |         3 |         |             10 |         9
+ (2,30) |        1 |         3 |         |             10 |        10
+(6 rows)
+
+select ctid, thousand from tenk1_dyn_saop
+where
+  two in (0, 1) and four = 1 and twenty in (1, 2)
+order by two, four, twenty limit 20;
+  ctid   | thousand 
+---------+----------
+ (0,8)   |      701
+ (3,3)   |      501
+ (3,8)   |      401
+ (6,16)  |      901
+ (8,16)  |      601
+ (10,20) |      201
+ (12,4)  |      901
+ (13,18) |      301
+ (14,14) |      801
+ (18,13) |        1
+ (25,14) |      301
+ (31,17) |      301
+ (32,24) |      201
+ (32,28) |      201
+ (37,19) |        1
+ (38,27) |      901
+ (42,9)  |      601
+ (50,16) |      901
+ (50,19) |      101
+ (52,7)  |      801
+(20 rows)
+
+select count(*) from nulls_test where a is NULL and b in (0,1);
+ count 
+-------
+  5600
+(1 row)
+
+select ctid, * from nulls_first where district = 1 and warehouse = 5 and orderid is null and anotherorderid in (11,12) and orderline in (8, 9, 10, 11);
+  ctid   | district | warehouse | orderid | anotherorderid | orderline 
+---------+----------+-----------+---------+----------------+-----------
+ (3,153) |        1 |         5 |         |             11 |         8
+ (3,154) |        1 |         5 |         |             11 |         9
+ (3,155) |        1 |         5 |         |             11 |        10
+ (3,163) |        1 |         5 |         |             12 |         8
+ (3,164) |        1 |         5 |         |             12 |         9
+ (3,165) |        1 |         5 |         |             12 |        10
+(6 rows)
+
+SELECT count(*) FROM functional_dependencies WHERE a IN (1, 51) AND b IN ('1', '2');
+ count 
+-------
+   100
+(1 row)
+
+select * from multi_test where a in (123, 182, 183, 184) and b > 0;
+  a  | b 
+-----+---
+ 123 | 1
+ 182 | 1
+ 183 | 1
+ 184 | 1
+(4 rows)
+
+select ctid, bar from skippy_tbl where bar in (2,4) order by bar desc;
+ ctid  | bar 
+-------+-----
+ (0,4) |   4
+ (0,2) |   2
+(2 rows)
+
+-- Just about the smallest possible stress test that goes over 80 checks of
+-- the same tuple for ongoing failures:
+with a as (
+  select i from generate_series(0, 8) i
+)
+select
+  count(*), two, four, twenty
+from
+  tenk1_dyn_saop
+where
+  two = any (array[(select array_agg(i) from a)]) and
+  four = any (array[(select array_agg(i) from a)]) and
+  twenty = any (array[(select array_agg(i) from a)])
+group by
+  two, four, twenty
+order by
+  two, four, twenty;
+ count | two | four | twenty 
+-------+-----+------+--------
+   500 |   0 |    0 |      0
+   500 |   0 |    0 |      4
+   500 |   0 |    0 |      8
+   500 |   0 |    2 |      2
+   500 |   0 |    2 |      6
+   500 |   1 |    1 |      1
+   500 |   1 |    1 |      5
+   500 |   1 |    3 |      3
+   500 |   1 |    3 |      7
+(9 rows)
+
+-- Minimal variant that fails independently due to infinite looping:
+with a as (
+  select i from generate_series(0, 85) i
+)
+select
+  count(*), two, four, twenty
+from
+  tenk1_dyn_saop
+where
+  two = any (array[(select array_agg(i) from a)]) and
+  four = any (array[(select array_agg(i) from a)]) and
+  twenty = any (array[(select array_agg(i) from a)])
+group by
+  two, four, twenty
+order by
+  two, four, twenty;
+ count | two | four | twenty 
+-------+-----+------+--------
+   500 |   0 |    0 |      0
+   500 |   0 |    0 |      4
+   500 |   0 |    0 |      8
+   500 |   0 |    0 |     12
+   500 |   0 |    0 |     16
+   500 |   0 |    2 |      2
+   500 |   0 |    2 |      6
+   500 |   0 |    2 |     10
+   500 |   0 |    2 |     14
+   500 |   0 |    2 |     18
+   500 |   1 |    1 |      1
+   500 |   1 |    1 |      5
+   500 |   1 |    1 |      9
+   500 |   1 |    1 |     13
+   500 |   1 |    1 |     17
+   500 |   1 |    3 |      3
+   500 |   1 |    3 |      7
+   500 |   1 |    3 |     11
+   500 |   1 |    3 |     15
+   500 |   1 |    3 |     19
+(20 rows)
+
+-- August 26
+-- This one remains
+with a as (
+  select i from generate_series(0, 5000) i
+)
+select
+  count(*), two, four, twenty
+from
+  tenk1_dyn_saop
+where
+  two = any (array[(select array_agg(i) from a)]) and
+  four = any (array[(select array_agg(i) from a)]) and
+  twenty = any (array[(select array_agg(i) from a)])
+group by
+  two, four, twenty
+order by
+  two, four, twenty;
+ count | two  | four | twenty 
+-------+------+------+--------
+   500 |    0 |    0 |      0
+   500 |    0 |    0 |      4
+   500 |    0 |    0 |      8
+   500 |    0 |    0 |     12
+   500 |    0 |    0 |     16
+   500 |    0 |    2 |      2
+   500 |    0 |    2 |      6
+   500 |    0 |    2 |     10
+   500 |    0 |    2 |     14
+   500 |    0 |    2 |     18
+   500 |    1 |    1 |      1
+   500 |    1 |    1 |      5
+   500 |    1 |    1 |      9
+   500 |    1 |    1 |     13
+   500 |    1 |    1 |     17
+   500 |    1 |    3 |      3
+   500 |    1 |    3 |      7
+   500 |    1 |    3 |     11
+   500 |    1 |    3 |     15
+   500 |    1 |    3 |     19
+     1 | 4999 |    0 |      0
+     1 | 5000 |    3 |     11
+(22 rows)
+
+-- August 25
+-- Challenging infinite loop case that made you think about going back to
+-- walking tuple in reverse order
+with a as (
+  select i from generate_series(0, 4999) i
+)
+select
+  count(*), two, four, twenty
+from
+  tenk1_dyn_saop
+where
+  two = any (array[(select array_agg(i) from a)]) and
+  four = any (array[(select array_agg(i) from a)]) and
+  twenty = any (array[(select array_agg(i) from a)])
+group by
+  two, four, twenty
+order by
+  two, four, twenty;
+ count | two  | four | twenty 
+-------+------+------+--------
+   500 |    0 |    0 |      0
+   500 |    0 |    0 |      4
+   500 |    0 |    0 |      8
+   500 |    0 |    0 |     12
+   500 |    0 |    0 |     16
+   500 |    0 |    2 |      2
+   500 |    0 |    2 |      6
+   500 |    0 |    2 |     10
+   500 |    0 |    2 |     14
+   500 |    0 |    2 |     18
+   500 |    1 |    1 |      1
+   500 |    1 |    1 |      5
+   500 |    1 |    1 |      9
+   500 |    1 |    1 |     13
+   500 |    1 |    1 |     17
+   500 |    1 |    3 |      3
+   500 |    1 |    3 |      7
+   500 |    1 |    3 |     11
+   500 |    1 |    3 |     15
+   500 |    1 |    3 |     19
+     1 | 4999 |    0 |      0
+(21 rows)
+
+-- Backwards scan variant
+with a as (
+  select i from generate_series(-1, 5000) i
+)
+select
+  count(*), two, four, twenty
+from
+  tenk1_dyn_saop
+where
+  two = any (array[(select array_agg(i) from a)]) and
+  four = any (array[(select array_agg(i) from a)]) and
+  twenty = any (array[(select array_agg(i) from a)])
+group by
+  two, four, twenty
+order by
+  two desc, four desc, twenty desc;
+ count | two  | four | twenty 
+-------+------+------+--------
+     1 | 5000 |    3 |     11
+     1 | 4999 |    0 |      0
+   500 |    1 |    3 |     19
+   500 |    1 |    3 |     15
+   500 |    1 |    3 |     11
+   500 |    1 |    3 |      7
+   500 |    1 |    3 |      3
+   500 |    1 |    1 |     17
+   500 |    1 |    1 |     13
+   500 |    1 |    1 |      9
+   500 |    1 |    1 |      5
+   500 |    1 |    1 |      1
+   500 |    0 |    2 |     18
+   500 |    0 |    2 |     14
+   500 |    0 |    2 |     10
+   500 |    0 |    2 |      6
+   500 |    0 |    2 |      2
+   500 |    0 |    0 |     16
+   500 |    0 |    0 |     12
+   500 |    0 |    0 |      8
+   500 |    0 |    0 |      4
+   500 |    0 |    0 |      0
+(22 rows)
+
+select * from nulls_test where a in (1,2,350,359,360) and b in (-1,-2,1) order by a desc nulls last, b desc;
+  a  | b 
+-----+---
+ 360 | 1
+ 359 | 1
+ 350 | 1
+   2 | 1
+   1 | 1
+(5 rows)
+
+select count(*), two, four, twenty from tenk1_dyn_saop
+where
+  two in (0, 1)
+  and four in (1, 2, 3, 4)
+  and twenty in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+group by
+  two,
+  four,
+  twenty
+order by
+  two,
+  four,
+  twenty;
+ count | two | four | twenty 
+-------+-----+------+--------
+   500 |   0 |    2 |      2
+   500 |   0 |    2 |      6
+   500 |   0 |    2 |     10
+   500 |   0 |    2 |     14
+   500 |   1 |    1 |      1
+   500 |   1 |    1 |      5
+   500 |   1 |    1 |      9
+   500 |   1 |    1 |     13
+   500 |   1 |    3 |      3
+   500 |   1 |    3 |      7
+   500 |   1 |    3 |     11
+   500 |   1 |    3 |     15
+(12 rows)
+
+select count(*), a, b, c
+from
+  functional_dependencies
+where a = 25 and c in (0, 1, 2, 3)
+group by a, b, c;
+ count | a  | b  | c 
+-------+----+----+---
+    50 | 25 | 25 | 0
+(1 row)
+
+select count(*), a, b, c
+from
+  functional_dependencies
+where a = 65 and c in (14, 15)
+group by a, b, c;
+ count | a  | b  | c  
+-------+----+----+----
+    50 | 65 | 15 | 15
+(1 row)
+
+select count(*), a, b, c
+from
+  functional_dependencies
+  where a in (44,94) and c in (18,19,20)
+  group by a, b, c;
+ count | a  | b  | c  
+-------+----+----+----
+    50 | 44 | 44 | 19
+    50 | 94 | 44 | 19
+(2 rows)
+
+SELECT thousand, tenthous FROM tenk1_dyn_saop
+ WHERE thousand < 2 AND tenthous IN (1001,3000)
+ ORDER BY thousand;
+ thousand | tenthous 
+----------+----------
+        0 |     3000
+        1 |     1001
+(2 rows)
+
+SELECT thousand, tenthous FROM tenk1_dyn_saop
+ WHERE thousand < 2 AND tenthous IN (1001,3000,2001)
+ ORDER BY thousand;
+ thousand | tenthous 
+----------+----------
+        0 |     3000
+        1 |     2001
+        1 |     1001
+(3 rows)
+
+set enable_bitmapscan to off;
+select count(*), district, orderid
+from redescend_test
+where district = 2 and orderid in (3, 5)
+group by district, orderid;
+ count | district | orderid 
+-------+----------+---------
+    50 |        2 |       3
+    50 |        2 |       5
+(2 rows)
+
+-- set enable_indexscan to off;
+-- set enable_indexonlyscan to off;
+-- set enable_seqscan to on;
+-- First variant:
+select
+  ctid,
+  two,
+  four,
+  twenty
+from
+  tenk1_dyn_saop
+where
+  two != 0
+  and four in (0, 1)
+  and twenty in (0, 1)
+order by
+  two,
+  four,
+  twenty
+limit 20;
+  ctid   | two | four | twenty 
+---------+-----+------+--------
+ (0,8)   |   1 |    1 |      1
+ (3,3)   |   1 |    1 |      1
+ (3,8)   |   1 |    1 |      1
+ (6,16)  |   1 |    1 |      1
+ (8,16)  |   1 |    1 |      1
+ (10,20) |   1 |    1 |      1
+ (12,4)  |   1 |    1 |      1
+ (13,18) |   1 |    1 |      1
+ (14,14) |   1 |    1 |      1
+ (18,13) |   1 |    1 |      1
+ (25,14) |   1 |    1 |      1
+ (31,17) |   1 |    1 |      1
+ (32,24) |   1 |    1 |      1
+ (32,28) |   1 |    1 |      1
+ (37,19) |   1 |    1 |      1
+ (38,27) |   1 |    1 |      1
+ (42,9)  |   1 |    1 |      1
+ (50,16) |   1 |    1 |      1
+ (50,19) |   1 |    1 |      1
+ (52,7)  |   1 |    1 |      1
+(20 rows)
+
+-- Second variant (should return same 20 rows as first):
+select
+  ctid,
+  two,
+  four,
+  twenty
+from
+  tenk1_dyn_saop
+where
+  two != 0
+  and four in (0, 1)
+  and twenty in (1, 2)
+order by
+  two,
+  four,
+  twenty
+limit 20;
+  ctid   | two | four | twenty 
+---------+-----+------+--------
+ (0,8)   |   1 |    1 |      1
+ (3,3)   |   1 |    1 |      1
+ (3,8)   |   1 |    1 |      1
+ (6,16)  |   1 |    1 |      1
+ (8,16)  |   1 |    1 |      1
+ (10,20) |   1 |    1 |      1
+ (12,4)  |   1 |    1 |      1
+ (13,18) |   1 |    1 |      1
+ (14,14) |   1 |    1 |      1
+ (18,13) |   1 |    1 |      1
+ (25,14) |   1 |    1 |      1
+ (31,17) |   1 |    1 |      1
+ (32,24) |   1 |    1 |      1
+ (32,28) |   1 |    1 |      1
+ (37,19) |   1 |    1 |      1
+ (38,27) |   1 |    1 |      1
+ (42,9)  |   1 |    1 |      1
+ (50,16) |   1 |    1 |      1
+ (50,19) |   1 |    1 |      1
+ (52,7)  |   1 |    1 |      1
+(20 rows)
+
