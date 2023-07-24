@@ -1,0 +1,128 @@
+--set enable_bitmapscan to off;
+--set enable_indexonlyscan to off;
+--set enable_indexscan to off;
+set enable_nestloop to off;
+set enable_hashjoin to off;
+set enable_material to off;
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+set enable_seqscan to off;
+set enable_sort to off;
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '3', false);
+ set_config 
+------------
+ 3
+(1 row)
+
+set client_min_messages=error;
+drop table if exists tenk1_dyn_saop;
+reset client_min_messages;
+\getenv abs_srcdir PG_ABS_SRCDIR
+CREATE UNLOGGED TABLE tenk1_dyn_saop (
+	unique1		int4,
+	unique2		int4,
+	two			int4,
+	four		int4,
+	ten			int4,
+	twenty		int4,
+	hundred		int4,
+	thousand	int4,
+	twothousand	int4,
+	fivethous	int4,
+	tenthous	int4,
+	odd			int4,
+	even		int4,
+	stringu1	name,
+	stringu2	name,
+	string4		name
+);
+ALTER TABLE tenk1_dyn_saop SET (autovacuum_enabled=off);
+\set filename :abs_srcdir '/data/tenk.data'
+COPY tenk1_dyn_saop FROM :'filename';
+CREATE INDEX tenk1_dyn_saop_idx_lowcard ON tenk1_dyn_saop (two, four, twenty, hundred);
+VACUUM ANALYZE tenk1_dyn_saop;
+--set client_min_messages=debug1;
+select count(*), two, four, twenty, hundred
+from
+  tenk1_dyn_saop
+where
+  two in (0, 1) and four in (1, 2, 3)
+  and two in(-1,0)
+  and twenty in (1, 2, 5, 7, 8, 11, 12, 13, 14, 17)
+  and hundred in (1, 3, 4, 9, 14, 51, 90, 88, 41, 39, 22)
+group by
+  two, four, twenty, hundred
+order by
+  two, four, twenty, hundred;
+ count | two | four | twenty | hundred 
+-------+-----+------+--------+---------
+   100 |   0 |    2 |      2 |      22
+   100 |   0 |    2 |     14 |      14
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*), two, four, twenty, hundred
+from
+  tenk1_dyn_saop
+where
+  two in (0, 1) and four in (1, 2, 3)
+  and two in(-1,0)
+  and twenty in (1, 2, 5, 7, 8, 11, 12, 13, 14, 17)
+  and hundred in (1, 3, 4, 9, 14, 51, 90, 88, 41, 39, 22)
+group by
+  two, four, twenty, hundred
+order by
+  two, four, twenty, hundred;
+                                                                                                                             QUERY PLAN                                                                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.29..285.52 rows=188 width=24) (actual rows=2 loops=1)
+   Group Key: two, four, twenty, hundred
+   Buffers: shared hit=175
+   ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..281.07 rows=206 width=16) (actual rows=200 loops=1)
+         Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (two = ANY ('{-1,0}'::integer[])) AND (four = ANY ('{1,2,3}'::integer[])) AND (twenty = ANY ('{1,2,5,7,8,11,12,13,14,17}'::integer[])) AND (hundred = ANY ('{1,3,4,9,14,51,90,88,41,39,22}'::integer[])))
+         Buffers: shared hit=175
+ Planning:
+   Buffers: shared hit=1
+(8 rows)
+
+select two, four, twenty, hundred
+from
+  tenk1_dyn_saop
+where
+  two in (-1, 0, 1) and four in (1, 2, 3)
+  and two in(0, 1, 2)
+  and two = (select -1+0.0 offset 0) and two = (select count(*) from pg_operator limit 1)
+  and twenty in (1, 2, 5, 7, 8, 11, 12, 13, 14, 17)
+  and hundred in (1, 3, 4, 9, 14, 51, 90, 88, 41, 39, 22);
+ two | four | twenty | hundred 
+-----+------+--------+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select two, four, twenty, hundred
+from
+  tenk1_dyn_saop
+where
+  two in (-1, 0, 1) and four in (1, 2, 3)
+  and two in(0, 1, 2)
+  and two = (select -1+0.0 offset 0) and two = (select count(*) from pg_operator limit 1)
+  and twenty in (1, 2, 5, 7, 8, 11, 12, 13, 14, 17)
+  and hundred in (1, 3, 4, 9, 14, 51, 90, 88, 41, 39, 22);
+                                                                                                                                    QUERY PLAN                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=10000000024.29..10000000306.62 rows=1 width=16) (actual rows=0 loops=1)
+   Index Cond: ((two = ANY ('{-1,0,1}'::integer[])) AND (two = ANY ('{0,1,2}'::integer[])) AND (two = $1) AND (four = ANY ('{1,2,3}'::integer[])) AND (twenty = ANY ('{1,2,5,7,8,11,12,13,14,17}'::integer[])) AND (hundred = ANY ('{1,3,4,9,14,51,90,88,41,39,22}'::integer[])))
+   Filter: ((two)::numeric = $0)
+   Buffers: shared hit=16
+   InitPlan 1 (returns $0)
+     ->  Result  (cost=0.00..0.01 rows=1 width=32) (never executed)
+   InitPlan 2 (returns $1)
+     ->  Limit  (cost=10000000023.99..10000000024.00 rows=1 width=8) (actual rows=1 loops=1)
+           Buffers: shared hit=14
+           ->  Aggregate  (cost=10000000023.99..10000000024.00 rows=1 width=8) (actual rows=1 loops=1)
+                 Buffers: shared hit=14
+                 ->  Seq Scan on pg_operator  (cost=10000000000.00..10000000021.99 rows=799 width=0) (actual rows=799 loops=1)
+                       Buffers: shared hit=14
+(13 rows)
+
