@@ -1,0 +1,123 @@
+# --- Random Backwards Test Queries ---
+# Based on random_backwards_weird.sql
+#
+# Two fillfactor=20 tables (~21 rows/page) with 32 dups/key and a +/-4-row
+# shuffle: t is in key order, t_randomized is CLUSTERed by hash. Each block of
+# t is returned by the read stream callback a few times non-consecutively,
+# 1-2 blocks apart, so the repeats are absorbed by the dedup ring
+# (READ_STREAM_DEDUP_RECENT). RB2 was once noted as depending on
+# the "don't wait for already in-progress IO" (foreign_io) path, where the
+# dups re-requested a page whose read was still in flight; with dedup that
+# path is no longer taken here (EXPLAIN I/O count=49930 for 49933 blocks
+# read, size=1.00).
+#   RB1: ascending blocks, full I/O combining (size=15.98 at io_combine_limit=16).
+#   RB2: descending blocks, eic-bound single-block reads (in-progress ~= eic).
+#   RB3/RB4: random blocks in both directions (RB3 combines a little,
+#     size=2.38, from hash-order runs).
+#
+# Measured 2026-09-10 (scratch cluster, io_uring, eic=100,
+# io_combine_limit=16, uncached, min of 2, patch/master): RB1 0.69x (302 vs
+# 439 ms), RB2 0.078x (433 vs 5512 ms), RB3 0.050x (415 vs 8223 ms),
+# RB4 0.056x (591 vs 10484 ms).
+
+[suite]
+mode_prefix = "random_backwards"
+order = 30
+cli_flag = "--random-backwards-tests"
+cli_dest = "random_backwards_tests"
+help = "Run random backwards benchmark tests (loads data if needed)"
+title = "Random Backwards Benchmark Tests"
+tables = [
+    "t",
+    "t_randomized",
+]
+setup_sql_file = "30-random_backwards.sql"
+row_description = "20M rows"
+
+[queries.RB1]
+name = "Sequential table forward scan"
+sql = """
+
+            SELECT * FROM t
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a
+        """
+evict = [
+    "t",
+]
+prewarm_indexes = [
+    "t_pk",
+]
+prewarm_tables = [
+    "t",
+]
+
+[queries.RB1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.RB2]
+name = "Sequential table backward scan, 32 dups/key: descending eic-bound single-block reads with the dup repeats absorbed by the dedup ring"
+sql = """
+
+            SELECT * FROM t
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a DESC
+        """
+evict = [
+    "t",
+]
+prewarm_indexes = [
+    "t_pk",
+]
+prewarm_tables = [
+    "t",
+]
+
+[queries.RB2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.RB3]
+name = "Randomized table forward scan"
+sql = """
+
+            SELECT * FROM t_randomized
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a
+        """
+evict = [
+    "t_randomized",
+]
+prewarm_indexes = [
+    "t_randomized_pk",
+]
+prewarm_tables = [
+    "t_randomized",
+]
+
+[queries.RB3.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.RB4]
+name = "Randomized table backward scan"
+sql = """
+
+            SELECT * FROM t_randomized
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a DESC
+        """
+evict = [
+    "t_randomized",
+]
+prewarm_indexes = [
+    "t_randomized_pk",
+]
+prewarm_tables = [
+    "t_randomized",
+]
+
+[queries.RB4.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"

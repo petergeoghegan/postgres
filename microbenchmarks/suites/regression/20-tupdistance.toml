@@ -1,0 +1,106 @@
+# --- Tupdistance queries ---
+# Each suite loads only its own table.
+#
+# Same family as worker_regress (suite 50) -- a cold index scan whose heap
+# order revisits recent blocks -- but at the perfectly-CLUSTERED extreme of
+# the scatter spectrum (worker is the scattered extreme; "opposites but
+# fundamentally similar"). This table has ZERO scatter (inner "i +
+# 0*(random)"), 4 dups/key, a +/-4-row shuffle, fillfactor=20 (~21 rows/page).
+# The callback returns each block ~3 times, non-consecutively, with the
+# repeats only 1-2 blocks back.
+#   TD2 (ORDER BY a ASC -> EXPLAIN "Index Scan Backward", ASCENDING heap
+#     blocks): stresses the pending read growing PAST repeat entries up to
+#     io_combine_limit. Since read stream request deduplication
+#     (READ_STREAM_DEDUP_RECENT) the +/-4-row shuffle no longer breaks combining: EXPLAIN I/O size=16.00 at
+#     io_combine_limit=16 (127.71 at 128), count=26935 for 441677 blocks, with
+#     a deep look-ahead (distance avg ~503 of capacity 1616). Master rides
+#     OS+SSD forward read-ahead here, so the baseline is cheap.
+#   TD1 (ORDER BY a DESC -> "Index Scan" forward, DESCENDING heap blocks):
+#     stresses the dedup ring with tight repeats plus eic-bound single-block
+#     reads (no combining possible: size=1.00, count=430884 ~= blocks read,
+#     in-progress ~= eic). Descending defeats read-ahead, so master does slow
+#     serial random reads.
+#
+# Measured 2026-09-10 (scratch cluster, io_uring, eic=100,
+# io_combine_limit=16, uncached, min of 3, patch/master):
+#   TD1 0.070x (3967 vs 56952 ms); TD2 0.815x (4093 vs 5021 ms).
+#   io_method=worker (io_max_workers=32): TD2 0.82x.
+#   io_combine_limit=1: TD2 1.00x (5023 ms) -- TD2's win is entirely the
+#   combining; io_combine_limit=32/128: 3894/3781 ms (size 31.99/127.71).
+#
+# History (figures measured 2026-06-27 on branch index-prefetch-v0.83, BEFORE
+# request deduplication):
+#   TD2 was a mild ~1.03x regression: the patch added buffer-pin overhead from
+#     the 4 same-key dups re-requesting the in-flight page (count/read ~4x --
+#     "dup-driven", vs worker's "scatter-driven" ~10x); size=1.00 because the
+#     +/-4 dup-jitter broke combining; distance stayed shallow (~91), so the
+#     regression was small.
+#   TD1 was a ~11x WIN (master ~62s) and was the targeted regression-test for
+#     the "don't wait for already in-progress IO" (foreign_io) feature: the 4
+#     dups re-requested an in-flight page and ATTACHED instead of blocking.
+#     With dedup those repeats never reach the buffer manager while the read is
+#     in flight (they become repeat entries pinned afresh when their turn
+#     comes); foreign_io remains only as the fallback for repeats older than
+#     the 32-entry ring.
+#   Like worker (and UNLIKE munro, suite 40) the family was then
+#     io_combine_limit-INSENSITIVE (TD2 flat ~1.02-1.05x at icl=1/16/128): the
+#     cost was foreign-re-request pin churn, intrinsic to the access pattern.
+#     Now the combining that io_combine_limit controls is exactly what TD2
+#     measures.
+
+[suite]
+mode_prefix = "tupdistance"
+order = 20
+cli_flag = "--tupdistance"
+cli_dest = "tupdistance_tests"
+help = "Run tupdistance benchmark (cold scan with 4 dups/key and zero scatter; loads data if needed)"
+title = "Tupdistance Regression Benchmark"
+tables = [
+    "t_tupdistance_new_regress",
+]
+setup_sql_file = "20-tupdistance.sql"
+row_description = "10M rows"
+
+[queries.TD1]
+name = "Backward scan, descending heap blocks, 4 dups/key: stresses the dedup ring with tight repeats and eic-bound single-block reads (no combining possible)"
+sql = """
+
+            SELECT * FROM t_tupdistance_new_regress
+            WHERE a BETWEEN 9401 AND 2271544
+            ORDER BY a DESC
+        """
+evict = [
+    "t_tupdistance_new_regress",
+]
+prewarm_indexes = [
+    "t_tupdistance_new_regress_idx",
+]
+prewarm_tables = [
+    "t_tupdistance_new_regress",
+]
+
+[queries.TD1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.TD2]
+name = "Forward scan, ascending heap blocks, 4 dups/key: stresses the pending read growing past repeat entries up to io_combine_limit"
+sql = """
+
+            SELECT * FROM t_tupdistance_new_regress
+            WHERE a BETWEEN 9401 AND 2271544
+            ORDER BY a ASC
+        """
+evict = [
+    "t_tupdistance_new_regress",
+]
+prewarm_indexes = [
+    "t_tupdistance_new_regress_idx",
+]
+prewarm_tables = [
+    "t_tupdistance_new_regress",
+]
+
+[queries.TD2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
