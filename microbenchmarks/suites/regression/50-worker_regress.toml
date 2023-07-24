@@ -1,0 +1,139 @@
+# Cold-run regression (originally thought to be a io_method=worker specific
+# issue, but not actually io_method dependent at all).
+# DESC index on semi-random data with fillfactor=90.
+#
+# (Figures and analysis below measured 2026-06-27 on branch index-prefetch-v0.83.)
+#
+# WR1 and WR2 are the SAME cold, scattered index scan in OPPOSITE directions; the
+# pair isolates *why* prefetch hurts in one case and helps hugely in the other.
+# The whole ~84k-page range is read from disk (uncached: shared buffers evicted,
+# OS cache dropped). The heap is laid out by "ORDER BY i + 1024*(random()-0.5)"
+# (see the data load below): sorted on the key but with a +/-512-row local shuffle
+# (~+/-5 heap pages at ~96 rows/page), so the heap-block sequence the scan feeds
+# the read stream is monotonic-on-average but jitters within a ~10-page band.
+#   WR1: ORDER BY a DESC -> EXPLAIN "Index Scan" (forward), ASCENDING heap blocks.
+#   WR2: ORDER BY a ASC  -> EXPLAIN "Index Scan Backward", DESCENDING heap blocks.
+#
+# Two consequences of the shuffle, identical in both directions:
+#   * No I/O combining: the stream only fuses strictly-ascending contiguous blocks
+#     and the jitter rarely offers P, P+1 adjacently -> every I/O is 1 block
+#     (size=1.00).
+#   * In-flight re-requests: a page's ~96 rows are smeared over ~+/-512 key
+#     positions, so it's requested many times non-consecutively while its single
+#     read is still outstanding. Each repeat takes the BUFFER_IO_IN_PROGRESS /
+#     foreign_io path in AsyncReadBuffers(): it bumps the stream's I/O "count" but
+#     issues no pread. So "count" >> "read" (~84k distinct pages = 8.1M rows/96) --
+#     a fingerprint of the scatter, not a cost.
+#
+# The PATCH cost is the same and DIRECTION-AGNOSTIC: deep look-ahead pins
+# "distance" buffers at once (~423 at eic=100); past REFCOUNT_ARRAY_ENTRIES (=8)
+# pins, the per-backend fast pin array spills to PrivateRefCountHash, so every
+# pin/unpin hits the slow hash + ResourceOwner path (perf: ResourceOwnerForget,
+# Reserve/GetPrivateRefCountEntrySlow). That CPU scales with pins-held = distance
+# = eic x scatter (distance/in-progress ~4-10), so it turns on once distance
+# crosses ~8 (eic=1 -> distance ~1, ~free; eic>=4 -> distance >8 -> it appears),
+# reaching ~+500ms at eic=100. NOT read-stream logic, NOT extra I/O.
+#
+# What FLIPS the outcome is the BASELINE's read cost, set by two stacked,
+# FORWARD-ONLY read-ahead layers that speed the ascending scan and do nothing for
+# the descending one (master serial reads, us/read):
+#                          ascending (WR1)    descending (WR2)
+#     buffered              3.3 (cache hit)    138
+#     direct (O_DIRECT)     92                 136
+#   - OS page-cache readahead: ascending buffered 3.3 vs direct 92 us = ~28x
+#     (ascending+buffered only; dominant -- this is what makes WR1's baseline fast).
+#   - SSD/NVMe controller read-ahead: even under O_DIRECT, ascending 92 vs
+#     descending 136 us = ~1.47x (the drive prefetches an ascending LBA stream).
+#     A standalone O_DIRECT QD1 read of a plain file confirms it's device-level:
+#     pure-sequential ascending 21 us vs descending 134 us = ~6.5x, but the
+#     scan's +/-5 jitter defeats most of the drive prefetch, leaving the ~1.3-1.5x.
+#   - Descending (WR2) gets neither: buffered ~= direct (~11.5s, ~138 us/read).
+#
+# So WR1 (forward/ascending): the baseline's reads are ~free (OS+SSD read-ahead),
+# the patch's io_uring prefetch wins nothing on I/O and only its pin-overflow shows
+# -> ~1.29x REGRESSION. WR2 (backward/descending): the baseline does slow serial
+# random reads (~11.7s), the patch's 100-deep prefetch parallelizes them (~1.9s)
+# and that ~10s win dwarfs the same ~0.5s pin cost -> ~0.27x (3.7x FASTER). Causal
+# proof: running WR1 with --direct removes OS readahead, collapses its baseline to
+# ~8.8s, and flips WR1 to a WIN (~0.27x) like WR2 -- but NOT identical in absolute
+# terms: ascending keeps the SSD's residual read-ahead, so WR1-direct stays ~30%
+# faster than WR2 (8.8s vs 12.5s baseline); the ratios coincide only because the
+# patch's ~3.7x parallel speedup applies to both.
+#
+# (Dropped: a parallel "readstream" suite (RS1/RS2, from
+# tomas-weird-issue-readstream.sql) was removed as largely redundant with these.
+# It showed the identical forward-regresses / backward-wins pattern and the same
+# size=1.00, count>>read pin-overflow signature -- just a bigger, sparser
+# fillfactor=20 table (~5x the pages). WR1/WR2 exercise the same mechanism more
+# sharply (deeper look-ahead distance) and ~20x faster, so RS added cost without
+# distinct coverage.)
+#
+# Family note: tupdistance (suite 20) is this SAME mechanism at the OPPOSITE,
+# perfectly-clustered extreme (0 scatter, 4 dups -> dup-driven ~4x amplification,
+# mild ~1.03x regression) -- opposites but fundamentally similar. Both (and the
+# dropped readstream) are io_combine_limit-INSENSITIVE: the cost is
+# foreign-re-request pin churn (count>>read), intrinsic to the scatter/dups, not
+# the look-ahead depth icl controls. munro (suite 40) is the GENUINELY different
+# one -- its extreme scatter (hundreds of pages) EXCEEDS the look-ahead window, so
+# it has ~no churn (count~=read); its regression is pure wasteful look-ahead
+# DEPTH, which low io_combine_limit removes (icl=1 collapses distance ~255->4,
+# regression gone: 1.08x -> 0.99x).
+
+[suite]
+mode_prefix = "worker_regress"
+order = 50
+cli_flag = "--worker-regress-feb"
+cli_dest = "worker_regress_feb_tests"
+help = "Run worker regression benchmark (io_method=worker regression test)"
+title = "Worker Regression Benchmark"
+tables = [
+    "worker_regress",
+]
+setup_sql_file = "50-worker_regress.sql"
+row_description = "5M rows"
+
+[queries.WR1]
+name = "Worker forward/ascending-block scan: prefetch REGRESSES ~1.3x -- baseline already fast from OS+SSD forward read-ahead, so only buffer-pin overflow shows"
+sql = """
+
+            SELECT * FROM (SELECT a FROM worker_regress
+            WHERE a BETWEEN -4054398 AND -5823
+            ORDER BY a DESC offset 1000000000)
+        """
+evict = [
+    "worker_regress",
+]
+prewarm_indexes = [
+    "idx_worker_regress",
+]
+prewarm_tables = [
+    "worker_regress",
+]
+
+[queries.WR1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+enable_indexonlyscan = "off"
+
+[queries.WR2]
+name = "Worker backward/descending-block scan: prefetch WINS ~3.7x -- no forward read-ahead, so prefetch parallelizes the baseline's serial random reads"
+sql = """
+
+            SELECT * FROM (SELECT a FROM worker_regress
+            WHERE a BETWEEN -4054398 AND -5823
+            ORDER BY a ASC offset 1000000000)
+        """
+evict = [
+    "worker_regress",
+]
+prewarm_indexes = [
+    "idx_worker_regress",
+]
+prewarm_tables = [
+    "worker_regress",
+]
+
+[queries.WR2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+enable_indexonlyscan = "off"

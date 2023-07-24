@@ -1,0 +1,113 @@
+# --- UUID Test Queries ---
+# UUIDv4 primary key table: physical/logical correlation ≈ 0.
+# Since gen_random_uuid() produces uniformly random values, the B-tree
+# index order is entirely uncorrelated with heap tuple order.  Every
+# index scan degenerates into random I/O, making this an ideal workload
+# for measuring index prefetching benefit.
+
+[suite]
+mode_prefix = "uuid"
+order = 60
+cli_flag = "--uuid"
+cli_dest = "uuid_tests"
+help = "Run UUID benchmark (UUIDv4 PK, correlation ~= 0, ideal for prefetching)"
+title = "UUID Benchmark (correlation ~= 0)"
+tables = [
+    "t_uuid",
+]
+setup_sql_file = "60-uuid.sql"
+row_description = "5M rows"
+
+[queries.UU1]
+name = "UUID range scan, ~10% of table (random I/O, forward)"
+sql = """
+
+            SELECT * FROM t_uuid
+            WHERE id >= '10000000-0000-0000-0000-000000000000'::uuid
+              AND id <  '28000000-0000-0000-0000-000000000000'::uuid
+            ORDER BY id ASC
+        """
+evict = [
+    "t_uuid",
+]
+prewarm_indexes = [
+    "t_uuid_pkey",
+]
+prewarm_tables = [
+    "t_uuid",
+]
+
+[queries.UU1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.UU2]
+name = "UUID range scan, ~10% of table (random I/O, backward)"
+sql = """
+
+            SELECT * FROM t_uuid
+            WHERE id >= '10000000-0000-0000-0000-000000000000'::uuid
+              AND id <  '28000000-0000-0000-0000-000000000000'::uuid
+            ORDER BY id DESC
+        """
+evict = [
+    "t_uuid",
+]
+prewarm_indexes = [
+    "t_uuid_pkey",
+]
+prewarm_tables = [
+    "t_uuid",
+]
+
+[queries.UU2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.UU3]
+name = "UUID index-only scan, ~10% of table (no heap fetches if all-visible)"
+sql = """
+
+            SELECT id FROM t_uuid
+            WHERE id >= '10000000-0000-0000-0000-000000000000'::uuid
+              AND id <  '28000000-0000-0000-0000-000000000000'::uuid
+            ORDER BY id ASC
+        """
+evict = [
+    "t_uuid",
+]
+prewarm_indexes = [
+    "t_uuid_pkey",
+]
+prewarm_tables = [
+    "t_uuid",
+]
+index_only = true
+
+[queries.UU3.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.UU4]
+name = "UUID range scan with filter qual (payload column not in index)"
+sql = """
+
+            SELECT * FROM t_uuid
+            WHERE id >= '10000000-0000-0000-0000-000000000000'::uuid
+              AND id <  '28000000-0000-0000-0000-000000000000'::uuid
+              AND val > 500
+            ORDER BY id ASC
+        """
+evict = [
+    "t_uuid",
+]
+prewarm_indexes = [
+    "t_uuid_pkey",
+]
+prewarm_tables = [
+    "t_uuid",
+]
+
+[queries.UU4.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
