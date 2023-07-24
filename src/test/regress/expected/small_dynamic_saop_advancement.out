@@ -1,0 +1,897 @@
+set enable_indexonlyscan to off;
+set enable_seqscan to off;
+set enable_indexscan to off;
+set enable_bitmapscan to on;
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '0', false);
+ set_config 
+------------
+ 0
+(1 row)
+
+set client_min_messages=error;
+drop table if exists multi_test_small;
+drop table if exists duplicate_test_small;
+reset client_min_messages;
+create unlogged table multi_test_small(
+  a int,
+  b int
+);
+create unlogged table duplicate_test_small(dup int4);
+create index multi_test_small_idx on multi_test_small(a, b);
+create index on duplicate_test_small (dup);
+insert into multi_test_small
+select
+  j,
+  case when i < 14 then
+    0
+  else
+    1
+  end
+from
+  generate_series(1, 14) i,
+  generate_series(1, 400) j
+order by
+  j,
+  i;
+insert into duplicate_test_small
+select val from generate_series(1, 18) val,
+                generate_series(1,1000) dups_per_val;
+vacuum (freeze,analyze) multi_test_small;
+vacuum (freeze,analyze) duplicate_test_small; -- Be tidy
+-- Simple contradictory
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a = 181;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a = 181;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
+(4 rows)
+
+-- Simple contradictory, but flip order
+select *
+from multi_test_small
+where
+  a = 181
+  and a in (1, 99, 182, 183, 184);
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a = 181
+  and a in (1, 99, 182, 183, 184);
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
+(4 rows)
+
+-- Simple redundant
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a = 182;
+  a  | b 
+-----+---
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '182' (redundant qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a = 182;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
+         Buffers: shared hit=2
+(7 rows)
+
+-- Simple redundant, but flip order
+select *
+from multi_test_small
+where
+  a = 182
+  and a in (1, 99, 182, 183, 184);
+  a  | b 
+-----+---
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 0
+ 182 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '182' (redundant qual)
+select *
+from multi_test_small
+where
+  a = 182
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
+         Buffers: shared hit=2
+(7 rows)
+
+---------------------------------
+-- '>' operator/strategy tests --
+---------------------------------
+-- Simple > contradictory
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 184;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 184;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.74 rows=38 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 184))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 184))
+(4 rows)
+
+-- Simple > contradictory, but flip order
+select *
+from multi_test_small
+where
+  a > 184
+  and a in (1, 99, 182, 183, 184);
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a > 184
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.74 rows=38 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a > 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a > 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+(4 rows)
+
+-- Simple > redundant
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 183;
+  a  | b 
+-----+---
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '184' (redundant qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 183;
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.75 rows=38 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 183))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 183))
+         Buffers: shared hit=2
+(7 rows)
+
+-- Simple > redundant, but flip order
+select *
+from multi_test_small
+where
+  a > 183
+  and a in (1, 99, 182, 183, 184);
+  a  | b 
+-----+---
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '184' (redundant qual)
+select *
+from multi_test_small
+where
+  a > 183
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.75 rows=38 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a > 183) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a > 183) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+         Buffers: shared hit=2
+(7 rows)
+
+----------------------------------
+-- '>=' operator/strategy tests --
+----------------------------------
+-- Simple >= contradictory
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a >= 185;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a >= 185;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.74 rows=38 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 185))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 185))
+(4 rows)
+
+-- Simple >= contradictory, but flip order
+select *
+from multi_test_small
+where
+  a >= 185
+  and a in (1, 99, 182, 183, 184);
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a >= 185
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.74 rows=38 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a >= 185) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a >= 185) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+(4 rows)
+
+-- Simple >= redundant
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a >= 184;
+  a  | b 
+-----+---
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '184' (redundant qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a >= 184;
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.75 rows=38 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 184))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 184))
+         Buffers: shared hit=2
+(7 rows)
+
+-- Simple >= redundant, but flip order
+select *
+from multi_test_small
+where
+  a >= 184
+  and a in (1, 99, 182, 183, 184);
+  a  | b 
+-----+---
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '184' (redundant qual)
+select *
+from multi_test_small
+where
+  a >= 184
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.67..26.75 rows=38 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a >= 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.66 rows=38 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a >= 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+         Buffers: shared hit=2
+(7 rows)
+
+---------------------------------
+-- '<' operator/strategy tests --
+---------------------------------
+-- Simple < contradictory
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a < 1;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a < 1;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a < 1))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a < 1))
+ Planning:
+   Buffers: shared hit=3
+(6 rows)
+
+-- Simple < contradictory, but flip order
+select *
+from multi_test_small
+where
+  a < 1
+  and a in (1, 99, 182, 183, 184);
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a < 1
+  and a in (1, 99, 182, 183, 184);
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a < 1) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a < 1) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+ Planning:
+   Buffers: shared hit=3
+(6 rows)
+
+-- Simple < redundant
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a < 2;
+ a | b 
+---+---
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '1' (redundant qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a < 2;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a < 2))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a < 2))
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(9 rows)
+
+-- Simple < redundant, but flip order
+select *
+from multi_test_small
+where
+  a < 2
+  and a in (1, 99, 182, 183, 184);
+ a | b 
+---+---
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '1' (redundant qual)
+select *
+from multi_test_small
+where
+  a < 2
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a < 2) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a < 2) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(9 rows)
+
+----------------------------------
+-- '<=' operator/strategy tests --
+----------------------------------
+-- Simple <= contradictory
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a <= 0;
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a <= 0;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a <= 0))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a <= 0))
+ Planning:
+   Buffers: shared hit=3
+(6 rows)
+
+-- Simple <= contradictory, but flip order
+select *
+from multi_test_small
+where
+  a <= 0
+  and a in (1, 99, 182, 183, 184);
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_small
+where
+  a <= 0
+  and a in (1, 99, 182, 183, 184);
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a <= 0) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a <= 0) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+ Planning:
+   Buffers: shared hit=3
+(6 rows)
+
+-- Simple <= redundant
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a <= 1;
+ a | b 
+---+---
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '1' (redundant qual)
+select *
+from multi_test_small
+where
+  a in (1, 99, 182, 183, 184)
+  and a <= 1;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a <= 1))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a <= 1))
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(9 rows)
+
+-- Simple <= redundant, but flip order
+select *
+from multi_test_small
+where
+  a <= 1
+  and a in (1, 99, 182, 183, 184);
+ a | b 
+---+---
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 0
+ 1 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- only 2 buffer hits for '1' (redundant qual)
+select *
+from multi_test_small
+where
+  a <= 1
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_small  (cost=2.29..4.31 rows=1 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a <= 1) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_small_idx  (cost=0.00..2.29 rows=1 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a <= 1) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(9 rows)
+
+-- Duplicate test, index-only scan
+set enable_bitmapscan to off;
+set enable_indexonlyscan to on;
+-- Warm up test
+select count(*), dup from duplicate_test_small
+where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
+group by dup order by dup;
+ count | dup 
+-------+-----
+  1000 |   1
+  1000 |   2
+  1000 |   3
+  1000 |   4
+  1000 |   5
+  1000 |   6
+  1000 |   7
+  1000 |   8
+  1000 |   9
+  1000 |  10
+  1000 |  11
+  1000 |  12
+  1000 |  13
+  1000 |  14
+  1000 |  15
+  1000 |  16
+  1000 |  17
+  1000 |  18
+(18 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 20 hits vs 81 on master
+select count(*), dup from duplicate_test_small
+where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
+group by dup order by dup;
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=10000000000.80..10000000196.75 rows=18 width=12) (actual rows=18 loops=1)
+   Group Key: duplicate_test_small.dup
+   Buffers: shared hit=20
+   InitPlan 1 (returns $0)
+     ->  Aggregate  (cost=0.51..0.52 rows=1 width=32) (actual rows=1 loops=1)
+           ->  Function Scan on generate_series val  (cost=0.00..0.40 rows=40 width=4) (actual rows=40 loops=1)
+   ->  Index Only Scan using duplicate_test_small_dup_idx on duplicate_test_small  (cost=10000000000.29..10000000156.87 rows=7837 width=4) (actual rows=18000 loops=1)
+         Index Cond: (dup = ANY (ARRAY[$0]))
+         Heap Fetches: 0
+         Buffers: shared hit=20
+(10 rows)
+
+-- Now real tests begin
+select count(*), dup from duplicate_test_small
+where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
+and dup > 8 and dup < 11
+group by dup order by dup;
+ count | dup 
+-------+-----
+  1000 |   9
+  1000 |  10
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 4 hits (include one vm hit)
+select count(*), dup from duplicate_test_small
+where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
+and dup > 8 and dup < 11
+group by dup order by dup;
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
+   Group Key: duplicate_test_small.dup
+   Buffers: shared hit=4
+   InitPlan 1 (returns $0)
+     ->  Aggregate  (cost=0.51..0.52 rows=1 width=32) (actual rows=1 loops=1)
+           ->  Function Scan on generate_series val  (cost=0.00..0.40 rows=40 width=4) (actual rows=40 loops=1)
+   ->  Index Only Scan using duplicate_test_small_dup_idx on duplicate_test_small  (cost=10000000000.29..10000000021.88 rows=871 width=4) (actual rows=2000 loops=1)
+         Index Cond: ((dup = ANY (ARRAY[$0])) AND (dup > 8) AND (dup < 11))
+         Heap Fetches: 0
+         Buffers: shared hit=4
+(10 rows)
+
+-- Variant #1 (changes the order, not the true meaning):
+select count(*), dup from duplicate_test_small
+where
+dup > 8 and
+dup = any(array[( select array_agg(val) from generate_series(1, 40) val)]) and
+dup < 11
+group by dup order by dup;
+ count | dup 
+-------+-----
+  1000 |   9
+  1000 |  10
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 4 hits (include one vm hit)
+select count(*), dup from duplicate_test_small
+where
+dup > 8 and
+dup = any(array[( select array_agg(val) from generate_series(1, 40) val)]) and
+dup < 11
+group by dup order by dup;
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
+   Group Key: duplicate_test_small.dup
+   Buffers: shared hit=4
+   InitPlan 1 (returns $0)
+     ->  Aggregate  (cost=0.51..0.52 rows=1 width=32) (actual rows=1 loops=1)
+           ->  Function Scan on generate_series val  (cost=0.00..0.40 rows=40 width=4) (actual rows=40 loops=1)
+   ->  Index Only Scan using duplicate_test_small_dup_idx on duplicate_test_small  (cost=10000000000.29..10000000021.88 rows=871 width=4) (actual rows=2000 loops=1)
+         Index Cond: ((dup > 8) AND (dup = ANY (ARRAY[$0])) AND (dup < 11))
+         Heap Fetches: 0
+         Buffers: shared hit=4
+(10 rows)
+
+-- Variant #2 (changes the order, not the true meaning):
+select count(*), dup from duplicate_test_small
+where
+dup > 8 and
+dup < 11 and
+dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
+group by dup order by dup;
+ count | dup 
+-------+-----
+  1000 |   9
+  1000 |  10
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 4 hits (include one vm hit)
+select count(*), dup from duplicate_test_small
+where
+dup > 8 and
+dup < 11 and
+dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
+group by dup order by dup;
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
+   Group Key: duplicate_test_small.dup
+   Buffers: shared hit=4
+   InitPlan 1 (returns $0)
+     ->  Aggregate  (cost=0.51..0.52 rows=1 width=32) (actual rows=1 loops=1)
+           ->  Function Scan on generate_series val  (cost=0.00..0.40 rows=40 width=4) (actual rows=40 loops=1)
+   ->  Index Only Scan using duplicate_test_small_dup_idx on duplicate_test_small  (cost=10000000000.29..10000000021.88 rows=871 width=4) (actual rows=2000 loops=1)
+         Index Cond: ((dup > 8) AND (dup < 11) AND (dup = ANY (ARRAY[$0])))
+         Heap Fetches: 0
+         Buffers: shared hit=4
+(10 rows)
+
+-- Variant #3 (changes the order, not the true meaning):
+select count(*), dup from duplicate_test_small
+where
+dup < 11 and
+dup > 8 and
+dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
+group by dup order by dup;
+ count | dup 
+-------+-----
+  1000 |   9
+  1000 |  10
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 4 hits (include one vm hit)
+select count(*), dup from duplicate_test_small
+where
+dup < 11 and
+dup > 8 and
+dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
+group by dup order by dup;
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
+   Group Key: duplicate_test_small.dup
+   Buffers: shared hit=4
+   InitPlan 1 (returns $0)
+     ->  Aggregate  (cost=0.51..0.52 rows=1 width=32) (actual rows=1 loops=1)
+           ->  Function Scan on generate_series val  (cost=0.00..0.40 rows=40 width=4) (actual rows=40 loops=1)
+   ->  Index Only Scan using duplicate_test_small_dup_idx on duplicate_test_small  (cost=10000000000.29..10000000021.88 rows=871 width=4) (actual rows=2000 loops=1)
+         Index Cond: ((dup < 11) AND (dup > 8) AND (dup = ANY (ARRAY[$0])))
+         Heap Fetches: 0
+         Buffers: shared hit=4
+(10 rows)
+
