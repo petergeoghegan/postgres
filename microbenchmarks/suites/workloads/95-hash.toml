@@ -1,0 +1,89 @@
+# --- Hash Test Queries ---
+# Hash indexes support only equality (=); they have no ordering (so no
+# forward/backward pair), no index-only scans, and no native array-key support.
+# The single relevant axis for prefetching is therefore the size of the matching
+# row set and whether the heap is touched in scattered order.  The grouping
+# columns are assigned with random(), so the rows matching any one key are
+# scattered uniformly across the heap (correlation ≈ 0) -- the real-world case
+# where prefetching the scattered heap blocks during a single equality scan
+# helps.  A low heap fillfactor spreads rows over more pages to amplify it.
+#   HA1 exercises a large match set (~2k rows, one low-cardinality key);
+#   HA2 exercises a medium match set (~100 rows, one higher-cardinality key);
+#   HA3 adds a filter qual on a non-indexed column (heap fetch then filter).
+
+[suite]
+mode_prefix = "hash"
+order = 95
+cli_flag = "--hash"
+cli_dest = "hash_tests"
+help = "Run hash index benchmark (equality scans, scattered heap I/O)"
+title = "Hash Index Benchmark (equality scans)"
+tables = [
+    "t_hash",
+]
+setup_sql_file = "95-hash.sql"
+row_description = "10M rows"
+
+[queries.HA1]
+name = "Hash equality scan, low-cardinality key (~2k rows, scattered heap I/O)"
+sql = """
+
+            SELECT * FROM t_hash
+            WHERE grp = 42
+        """
+evict = [
+    "t_hash",
+]
+prewarm_indexes = [
+    "idx_hash_grp",
+]
+prewarm_tables = [
+    "t_hash",
+]
+
+[queries.HA1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.HA2]
+name = "Hash equality scan, higher-cardinality key (~100 rows, scattered heap I/O)"
+sql = """
+
+            SELECT * FROM t_hash
+            WHERE mid = 12345
+        """
+evict = [
+    "t_hash",
+]
+prewarm_indexes = [
+    "idx_hash_mid",
+]
+prewarm_tables = [
+    "t_hash",
+]
+
+[queries.HA2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.HA3]
+name = "Hash equality scan with filter qual (payload column not in index)"
+sql = """
+
+            SELECT * FROM t_hash
+            WHERE grp = 42
+              AND val > 500
+        """
+evict = [
+    "t_hash",
+]
+prewarm_indexes = [
+    "idx_hash_grp",
+]
+prewarm_tables = [
+    "t_hash",
+]
+
+[queries.HA3.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
