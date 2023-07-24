@@ -1,0 +1,81 @@
+# --- Tupdistance regression queries ---
+# Each suite loads only its own table.
+#
+# (Figures and analysis below measured 2026-06-27 on branch index-prefetch-v0.83.)
+#
+# Same MECHANISM as worker_regress (suite 50) -- forward/ascending-heap scan
+# regresses, backward/descending wins -- but at the perfectly-CLUSTERED extreme
+# of the scatter spectrum (worker is the scattered extreme; "opposites but
+# fundamentally similar"). This table has ZERO scatter (inner "i + 0*(random)"),
+# 4 dups/key, fillfactor=20.
+#   TD2 (ORDER BY a ASC -> EXPLAIN "Index Scan Backward", ASCENDING heap blocks):
+#     mild ~1.03x regression. Master rides OS+SSD forward read-ahead (cheap
+#     baseline); the patch adds buffer-pin overhead from the 4 same-key dups
+#     re-requesting the in-flight page (count/read ~4x -- "dup-driven", vs
+#     worker's "scatter-driven" ~10x). size=1.00 (the ±4 dup-jitter still breaks
+#     combining); distance stays shallow (~91), so the regression is small.
+#   TD1 (ORDER BY a DESC -> "Index Scan" forward, DESCENDING heap blocks): ~11x
+#     WIN. Descending defeats read-ahead -> master does slow serial random reads
+#     (~62s); the patch parallelizes them. TD1 is the targeted regression-test for
+#     the "don't wait for already in-progress IO" (foreign_io) feature: the 4 dups
+#     re-request an in-flight page and ATTACH instead of blocking.
+# Like worker (and UNLIKE munro, suite 40) this is io_combine_limit-INSENSITIVE
+# (TD2 flat ~1.02-1.05x at icl=1/16/128): the cost is foreign-re-request pin
+# churn, intrinsic to the access pattern, not the look-ahead depth icl controls.
+
+[suite]
+mode_prefix = "tupdistance"
+order = 20
+cli_flag = "--tupdistance"
+cli_dest = "tupdistance_tests"
+help = "Run tupdistance regression benchmark (loads data if needed)"
+title = "Tupdistance Regression Benchmark"
+tables = [
+    "t_tupdistance_new_regress",
+]
+setup_sql_file = "20-tupdistance.sql"
+row_description = "10M rows"
+
+[queries.TD1]
+name = "Tupdistance regression (backward scan), depends on 'Don't wait for already in-progress IO' patch"
+sql = """
+
+            SELECT * FROM t_tupdistance_new_regress
+            WHERE a BETWEEN 9401 AND 2271544
+            ORDER BY a DESC
+        """
+evict = [
+    "t_tupdistance_new_regress",
+]
+prewarm_indexes = [
+    "t_tupdistance_new_regress_idx",
+]
+prewarm_tables = [
+    "t_tupdistance_new_regress",
+]
+
+[queries.TD1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.TD2]
+name = "Tupdistance regression (forward scan)"
+sql = """
+
+            SELECT * FROM t_tupdistance_new_regress
+            WHERE a BETWEEN 9401 AND 2271544
+            ORDER BY a ASC
+        """
+evict = [
+    "t_tupdistance_new_regress",
+]
+prewarm_indexes = [
+    "t_tupdistance_new_regress_idx",
+]
+prewarm_tables = [
+    "t_tupdistance_new_regress",
+]
+
+[queries.TD2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"

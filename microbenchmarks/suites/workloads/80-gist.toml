@@ -1,0 +1,64 @@
+# --- GiST Test Queries ---
+# Geospatial point index (point_ops GiST), the canonical GiST workload.
+# Spatial proximity is uncorrelated with heap (insertion) order, so a region
+# or nearest-neighbor scan returns rows whose heap pages are scattered -- the
+# natural, real-world case where index prefetching of heap blocks helps.
+# GG1 exercises the non-ordered batch path (a large region scan); GG2 exercises
+# the ordered (nearest-neighbor) path.  GiST has no backward scan, so there is
+# no forward/backward pair.
+
+[suite]
+mode_prefix = "gist"
+order = 80
+cli_flag = "--gist"
+cli_dest = "gist_tests"
+help = "Run GiST benchmark (geospatial point index: region + nearest-neighbor scans)"
+title = "GiST Benchmark (geospatial point index)"
+tables = [
+    "t_gist_points",
+]
+setup_sql_file = "80-gist.sql"
+row_description = "10M points"
+
+[queries.GG1]
+name = "GiST region scan: points within a bounding box (~9% of table, scattered heap I/O)"
+sql = """
+
+            SELECT * FROM t_gist_points
+            WHERE location <@ box '(200,200),(500,500)'
+        """
+evict = [
+    "t_gist_points",
+]
+prewarm_indexes = [
+    "idx_gist_points",
+]
+prewarm_tables = [
+    "t_gist_points",
+]
+
+[queries.GG1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.GG2]
+name = "GiST nearest-neighbor scan: 100k points closest to a location (ordered scan)"
+sql = """
+
+            SELECT * FROM t_gist_points
+            ORDER BY location <-> point '(500,500)'
+            LIMIT 100000
+        """
+evict = [
+    "t_gist_points",
+]
+prewarm_indexes = [
+    "idx_gist_points",
+]
+prewarm_tables = [
+    "t_gist_points",
+]
+
+[queries.GG2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
