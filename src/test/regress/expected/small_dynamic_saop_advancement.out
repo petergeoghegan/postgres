@@ -1,0 +1,2496 @@
+set enable_indexonlyscan to off;
+set enable_seqscan to off;
+set enable_indexscan to off;
+set enable_bitmapscan to on;
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '1', false);
+ set_config 
+------------
+ 1
+(1 row)
+
+set statement_timeout='4s';
+set client_min_messages=error;
+drop table if exists tenk1_skipscan;
+reset client_min_messages;
+CREATE UNLOGGED TABLE tenk1_skipscan (
+	unique1		int4,
+	unique2		int4,
+	two			int4,
+	four		int4,
+	ten			int4,
+	twenty		int4,
+	hundred		int4,
+	thousand	int4,
+	twothousand	int4,
+	fivethous	int4,
+	tenthous	int4,
+	odd			int4,
+	even		int4,
+	stringu1	name,
+	stringu2	name,
+	string4		name
+);
+ALTER TABLE tenk1_skipscan SET (autovacuum_enabled=off);
+\getenv abs_srcdir PG_ABS_SRCDIR
+\set filename :abs_srcdir '/data/tenk.data'
+COPY tenk1_skipscan FROM :'filename';
+VACUUM ANALYZE tenk1_skipscan;
+create index name_no_skip_support on tenk1_skipscan (string4, tenthous);
+-- This query shouldn't have to access more than one leaf page (the leftmost),
+-- since string4 < 'AAAAxx' condition matches tuples that are before any
+-- actual extant tuples from the index:
+prepare just_scan_leftmost_page as
+select string4, tenthous
+from tenk1_skipscan
+where string4 < 'AAAAxx' and tenthous = 21;
+execute just_scan_leftmost_page;
+ string4 | tenthous 
+---------+----------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- Expect only 2 buffer hits
+execute just_scan_leftmost_page;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on tenk1_skipscan  (cost=2.30..4.31 rows=1 width=68) (actual rows=0 loops=1)
+   Recheck Cond: ((string4 < 'AAAAxx'::name) AND (tenthous = 21))
+   Buffers: shared hit=2
+   ->  Bitmap Index Scan on name_no_skip_support  (cost=0.00..2.29 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((string4 < 'AAAAxx'::name) AND (tenthous = 21))
+         Buffers: shared hit=2
+(6 rows)
+
+deallocate just_scan_leftmost_page;
+set client_min_messages=error;
+drop table if exists nulls_first_test_numeric;
+reset client_min_messages;
+create unlogged table nulls_first_test_numeric(
+  a numeric,
+  b int
+);
+create index nulls_first_test_numeric_idx on nulls_first_test_numeric(a nulls first, b);
+insert into nulls_first_test_numeric(a, b)
+select NULL, i from generate_series(1, 3500) i;
+insert into nulls_first_test_numeric(a, b)
+select 2147483647, i from generate_series(1, 3500) i;
+set enable_indexscan to on;
+set enable_bitmapscan to off;
+-- Forwards scan
+select * from nulls_first_test_numeric where b = 3 order by a nulls first, b;
+     a      | b 
+------------+---
+            | 3
+ 2147483647 | 3
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from nulls_first_test_numeric where b = 3 order by a nulls first, b;
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using nulls_first_test_numeric_idx on nulls_first_test_numeric  (cost=0.28..125.84 rows=22 width=36) (actual rows=2 loops=1)
+   Index Cond: (b = 3)
+   Buffers: shared hit=8
+(3 rows)
+
+-- Backwards scan
+select * from nulls_first_test_numeric where b = 3 order by a desc nulls last, b desc;
+     a      | b 
+------------+---
+ 2147483647 | 3
+            | 3
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from nulls_first_test_numeric where b = 3 order by a desc nulls last, b desc;
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using nulls_first_test_numeric_idx on nulls_first_test_numeric  (cost=0.28..125.84 rows=22 width=36) (actual rows=2 loops=1)
+   Index Cond: (b = 3)
+   Buffers: shared hit=8
+(3 rows)
+
+-- Now add INT_MIN grouping:
+insert into nulls_first_test_numeric(a, b)
+select (-2147483648)::int4, i from generate_series(1, 3500) i;
+-- Repeat forwards scan
+select * from nulls_first_test_numeric where b = 3 order by a nulls first, b;
+      a      | b 
+-------------+---
+             | 3
+ -2147483648 | 3
+  2147483647 | 3
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from nulls_first_test_numeric where b = 3 order by a nulls first, b;
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using nulls_first_test_numeric_idx on nulls_first_test_numeric  (cost=0.28..190.06 rows=34 width=36) (actual rows=3 loops=1)
+   Index Cond: (b = 3)
+   Buffers: shared hit=12
+(3 rows)
+
+-- Repeat backwards scan
+select * from nulls_first_test_numeric where b = 3 order by a desc nulls last, b desc;
+      a      | b 
+-------------+---
+  2147483647 | 3
+ -2147483648 | 3
+             | 3
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from nulls_first_test_numeric where b = 3 order by a desc nulls last, b desc;
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using nulls_first_test_numeric_idx on nulls_first_test_numeric  (cost=0.28..190.06 rows=34 width=36) (actual rows=3 loops=1)
+   Index Cond: (b = 3)
+   Buffers: shared hit=13
+(3 rows)
+
+------------------------------------------------------------------------
+-- (July 2) Alexander Alekseev failing "char" (not char(1)) test case --
+------------------------------------------------------------------------
+set client_min_messages=error;
+drop table if exists alekseev_test;
+reset client_min_messages;
+create table alekseev_test(c "char", n bigint);
+select setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+insert into alekseev_test
+select chr(ascii('a') + random(0,2)) as c,
+random(0, 1_000_000_000) as n
+from generate_series(0, 10_000);
+create index alekseev_test_idx on alekseev_test using btree(c, n);
+-- Force bitmap index scan:
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Better not have a buggy btree/char_ops skip support function:
+select count(*) from alekseev_test where n > 900_000_000;
+ count 
+-------
+   988
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 11 buffer hits
+select count(*) from alekseev_test where n > 900_000_000;
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=263.14..263.15 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=65
+   ->  Bitmap Heap Scan on alekseev_test  (cost=158.13..254.80 rows=3334 width=0) (actual rows=988 loops=1)
+         Recheck Cond: (n > 900000000)
+         Heap Blocks: exact=54
+         Buffers: shared hit=65
+         ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=3334 width=0) (actual rows=988 loops=1)
+               Index Cond: (n > 900000000)
+               Buffers: shared hit=11
+(9 rows)
+
+-- More selective query:
+select c, n from alekseev_test where n = 952_200_397;
+ c |     n     
+---+-----------
+ c | 952200397
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 952_200_397;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..200.01 rows=50 width=9) (actual rows=1 loops=1)
+   Recheck Cond: (n = 952200397)
+   Heap Blocks: exact=1
+   Buffers: shared hit=11
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 952200397)
+         Buffers: shared hit=10
+(7 rows)
+
+-- More selective query, low value that exists:
+select c, n from alekseev_test where n = 24_759;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 24_759;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..200.01 rows=50 width=9) (actual rows=1 loops=1)
+   Recheck Cond: (n = 24759)
+   Heap Blocks: exact=1
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 24759)
+         Buffers: shared hit=8
+(7 rows)
+
+-- More selective query, low value that does not exist:
+select c, n from alekseev_test where n = -1000;
+ c | n 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = -1000;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..200.01 rows=50 width=9) (actual rows=0 loops=1)
+   Recheck Cond: (n = '-1000'::integer)
+   Buffers: shared hit=8
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=0 loops=1)
+         Index Cond: (n = '-1000'::integer)
+         Buffers: shared hit=8
+(6 rows)
+
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 8 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.33..214.39 rows=150 width=9) (actual rows=2 loops=1)
+   Recheck Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Heap Blocks: exact=2
+   Buffers: shared hit=10
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=150 width=0) (actual rows=2 loops=1)
+         Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+         Buffers: shared hit=8
+(7 rows)
+
+-- Middling elements in SAOP test:
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+ c |     n     
+---+-----------
+ c | 500061970
+ a | 500048538
+ a | 500411856
+ b | 500143236
+ b | 500164863
+ a | 500129489
+ b | 500448495
+ a | 500229159
+ a | 500255696
+ a | 500630870
+(10 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 10 buffer hits
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.44..219.94 rows=500 width=9) (actual rows=10 loops=1)
+   Recheck Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+   Heap Blocks: exact=10
+   Buffers: shared hit=20
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=500 width=0) (actual rows=10 loops=1)
+         Index Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+         Buffers: shared hit=10
+(7 rows)
+
+-- Force index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+---------------------------------
+-- "char" backwards scan tests --
+---------------------------------
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..268.79 rows=150 width=9) (actual rows=2 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Buffers: shared hit=12
+(3 rows)
+
+-------------------------------------------------------
+-- Text tests, which can't use skip support function --
+-------------------------------------------------------
+-- Make "more selective query" work with text, so we have somewhat of a basis
+-- of comparison:
+alter table alekseev_test alter column c type text;
+-- Force bitmap index scan:
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+------------------------------------
+-- Now repeat queries from before --
+------------------------------------
+-- "Better not have a buggy btree/char_ops skip support function", but no skip
+-- support function this time around (since this is text):
+select count(*) from alekseev_test where n > 900_000_000;
+ count 
+-------
+   988
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 11 buffer hits
+select count(*) from alekseev_test where n > 900_000_000;
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=272.14..272.15 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=65
+   ->  Bitmap Heap Scan on alekseev_test  (cost=158.13..263.80 rows=3334 width=0) (actual rows=988 loops=1)
+         Recheck Cond: (n > 900000000)
+         Heap Blocks: exact=54
+         Buffers: shared hit=65
+         ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=3334 width=0) (actual rows=988 loops=1)
+               Index Cond: (n > 900000000)
+               Buffers: shared hit=11
+(9 rows)
+
+-- More selective query:
+select c, n from alekseev_test where n = 952_200_397;
+ c |     n     
+---+-----------
+ c | 952200397
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 952_200_397;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..202.93 rows=50 width=40) (actual rows=1 loops=1)
+   Recheck Cond: (n = 952200397)
+   Heap Blocks: exact=1
+   Buffers: shared hit=13
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 952200397)
+         Buffers: shared hit=12
+(7 rows)
+
+-- More selective query, low value that exists:
+select c, n from alekseev_test where n = 24_759;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 24_759;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..202.93 rows=50 width=40) (actual rows=1 loops=1)
+   Recheck Cond: (n = 24759)
+   Heap Blocks: exact=1
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=1 loops=1)
+         Index Cond: (n = 24759)
+         Buffers: shared hit=8
+(7 rows)
+
+-- More selective query, low value that does not exist:
+select c, n from alekseev_test where n = -1000;
+ c | n 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = -1000;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.30..202.93 rows=50 width=40) (actual rows=0 loops=1)
+   Recheck Cond: (n = '-1000'::integer)
+   Buffers: shared hit=8
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=50 width=0) (actual rows=0 loops=1)
+         Index Cond: (n = '-1000'::integer)
+         Buffers: shared hit=8
+(6 rows)
+
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.33..223.39 rows=150 width=40) (actual rows=2 loops=1)
+   Recheck Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Heap Blocks: exact=2
+   Buffers: shared hit=10
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=150 width=0) (actual rows=2 loops=1)
+         Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+         Buffers: shared hit=8
+(7 rows)
+
+-- Middling elements in SAOP test:
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+ c |     n     
+---+-----------
+ c | 500061970
+ a | 500048538
+ a | 500411856
+ b | 500143236
+ b | 500164863
+ a | 500129489
+ b | 500448495
+ a | 500229159
+ a | 500255696
+ a | 500630870
+(10 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 14 buffer hits vs 10 for "char" due to not naturally needing to visit extremal n values
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on alekseev_test  (cost=157.44..228.94 rows=500 width=40) (actual rows=10 loops=1)
+   Recheck Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+   Heap Blocks: exact=10
+   Buffers: shared hit=24
+   ->  Bitmap Index Scan on alekseev_test_idx  (cost=0.00..157.29 rows=500 width=0) (actual rows=10 loops=1)
+         Index Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+         Buffers: shared hit=14
+(7 rows)
+
+-- Force index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+-------------------------------
+-- text backwards scan tests --
+-------------------------------
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..286.79 rows=150 width=40) (actual rows=2 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Buffers: shared hit=12
+(3 rows)
+
+------------------------------
+-- text NULL tests (July 7) --
+------------------------------
+insert into alekseev_test
+select null, n from alekseev_test;
+-- More selective query:
+select c, n from alekseev_test where n = 952_200_397;
+ c |     n     
+---+-----------
+ c | 952200397
+   | 952200397
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 952_200_397;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..433.70 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: (n = 952200397)
+   Buffers: shared hit=16
+(3 rows)
+
+-- More selective query, low value that exists:
+select c, n from alekseev_test where n = 24_759;
+ c |   n   
+---+-------
+ b | 24759
+   | 24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = 24_759;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..433.70 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: (n = 24759)
+   Buffers: shared hit=10
+(3 rows)
+
+-- More selective query, low value that does not exist:
+select c, n from alekseev_test where n = -1000;
+ c | n 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where n = -1000;
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..433.70 rows=84 width=40) (actual rows=0 loops=1)
+   Index Cond: (n = '-1000'::integer)
+   Buffers: shared hit=8
+(3 rows)
+
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+   |     24759
+   | 999843016
+(4 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016);
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..529.39 rows=253 width=40) (actual rows=4 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Buffers: shared hit=14
+(3 rows)
+
+-- Same again, but IS NOT NULL inequality used on skip attribute:
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016);
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..570.74 rows=252 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c IS NOT NULL) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=10
+(3 rows)
+
+-- Same again, but with regular > inequality used on skip attribute:
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016);
+ c |     n     
+---+-----------
+ b |     24759
+ c | 999843016
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c > 'a'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=8
+(3 rows)
+
+-- Same again, but with regular < inequality used on skip attribute:
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c < 'c'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=7
+(3 rows)
+
+-- Middling elements in SAOP test:
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+ c |     n     
+---+-----------
+ a | 500048538
+ a | 500129489
+ a | 500229159
+ a | 500255696
+ a | 500411856
+ a | 500630870
+ b | 500143236
+ b | 500164863
+ b | 500448495
+ c | 500061970
+   | 500048538
+   | 500061970
+   | 500129489
+   | 500143236
+   | 500164863
+   | 500229159
+   | 500255696
+   | 500411856
+   | 500448495
+   | 500630870
+(20 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 14 buffer hits vs 10 for "char" due to not naturally needing to visit extremal n values
+select c, n
+from
+  alekseev_test
+where
+n in (500_048_538,
+      500_061_970,
+      500_129_489,
+      500_143_236,
+      500_164_863,
+      500_229_159,
+      500_255_696,
+      500_411_856,
+      500_448_495,
+      500_630_870);
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..535.31 rows=844 width=40) (actual rows=20 loops=1)
+   Index Cond: (n = ANY ('{500048538,500061970,500129489,500143236,500164863,500229159,500255696,500411856,500448495,500630870}'::bigint[]))
+   Buffers: shared hit=36
+(3 rows)
+
+---------------------------
+-- NULL + Backwards scan --
+---------------------------
+-- Extremal elements so that scan visits leftmost and rightmost tuples within
+-- each individual "c" grouping:
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+   | 999843016
+   |     24759
+ c | 999843016
+ b |     24759
+(4 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..529.39 rows=253 width=40) (actual rows=4 loops=1)
+   Index Cond: (n = ANY ('{1,24759,999843016}'::bigint[]))
+   Buffers: shared hit=17
+(3 rows)
+
+-- Same again, but with IS NOT NULL on c:
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 12 buffer hits
+select c, n from alekseev_test where c is not null and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..570.74 rows=252 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c IS NOT NULL) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=12
+(3 rows)
+
+-- Same again, but with regular > inequality used on skip attribute:
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |     n     
+---+-----------
+ c | 999843016
+ b |     24759
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  > 'a' and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=2 loops=1)
+   Index Cond: ((c > 'a'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=10
+(3 rows)
+
+-- Same again, but with regular < inequality used on skip attribute:
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- parity with "char" test, 8 buffer hits
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c < 'c'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=8
+(3 rows)
+
+-- Almost the same query again, but now it's an <=:
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016) order by c desc, n desc;
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016) order by c desc, n desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c <= 'b'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=8
+(3 rows)
+
+-- Same exact query again, but now it's a forwards scan:
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where c  < 'c' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c < 'c'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=7
+(3 rows)
+
+-- Almost the same query again, but now it's an <=:
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016);
+ c |   n   
+---+-------
+ b | 24759
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select c, n from alekseev_test where c  <= 'b' and n in (1, 24759, 999843016);
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Index Scan using alekseev_test_idx on alekseev_test  (cost=0.29..241.39 rows=84 width=40) (actual rows=1 loops=1)
+   Index Cond: ((c <= 'b'::text) AND (n = ANY ('{1,24759,999843016}'::bigint[])))
+   Buffers: shared hit=7
+(3 rows)
+
+-----------------------------------------
+-- functional_dependencies test cases  --
+-----------------------------------------
+set client_min_messages=error;
+drop table if exists functional_dependencies;
+reset client_min_messages;
+CREATE UNLOGGED TABLE functional_dependencies (
+    filler1 TEXT,
+    filler2 NUMERIC,
+    a INT,
+    b TEXT,
+    filler3 DATE,
+    c INT,
+    d TEXT
+);
+CREATE INDEX fdeps_abc_idx ON functional_dependencies (a, b, c);
+-- prewarm
+select count(*) from functional_dependencies;
+ count 
+-------
+     0
+(1 row)
+
+vacuum analyze functional_dependencies;
+INSERT INTO functional_dependencies (a, b, c, filler1)
+     SELECT mod(i,100), mod(i,50), mod(i,25), i FROM generate_series(1,5000) s(i);
+-----------------------------------------
+-- Test case from regression tests that failed with binary-search-saop-array
+-- work, even when all other tests in this file passed:
+SELECT count(*) FROM functional_dependencies WHERE a IN (1, 51) AND b IN ('1', '2');
+ count 
+-------
+   100
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+SELECT count(*) FROM functional_dependencies WHERE a IN (1, 51) AND b IN ('1', '2');
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8.88..8.88 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=66
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.87 rows=1 width=0) (actual rows=100 loops=1)
+         Index Cond: ((a = ANY ('{1,51}'::integer[])) AND (b = ANY ('{1,2}'::text[])))
+         Buffers: shared hit=66
+(5 rows)
+
+select count(*) from functional_dependencies
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2);
+ count 
+-------
+   400
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*) from functional_dependencies
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2);
+                                                                   QUERY PLAN                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8.88..8.89 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=256
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.88 rows=1 width=0) (actual rows=400 loops=1)
+         Index Cond: ((a = ANY ('{1,2,26,27,51,52,76,77}'::integer[])) AND (b = ANY ('{1,2,26,27}'::text[])) AND (c = ANY ('{1,2}'::integer[])))
+         Buffers: shared hit=256
+(5 rows)
+
+-- Test case for missing key column in predicate -- simple
+prepare functional_dependencies_norequired_one as
+select count(*), a, b, c
+from
+  functional_dependencies
+where a = 25 and c in (0, 1, 2, 3)
+group by a, b, c;
+execute functional_dependencies_norequired_one;
+ count | a  | b  | c 
+-------+----+----+---
+    50 | 25 | 25 | 0
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_one;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.38 rows=1 width=48) (actual rows=1 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=33
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..4.36 rows=1 width=40) (actual rows=50 loops=1)
+         Index Cond: ((a = 25) AND (c = ANY ('{0,1,2,3}'::integer[])))
+         Buffers: shared hit=33
+(6 rows)
+
+deallocate functional_dependencies_norequired_one;
+-- Test case for missing key column in predicate -- must skip 14 and match on
+-- 15 here, slightly trickier
+prepare functional_dependencies_norequired_two as
+select count(*), a, b, c
+from
+  functional_dependencies
+where a = 65 and c in (14, 15)
+group by a, b, c;
+execute functional_dependencies_norequired_two;
+ count | a  | b  | c  
+-------+----+----+----
+    50 | 65 | 15 | 15
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_two;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.38 rows=1 width=48) (actual rows=1 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=33
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..4.36 rows=1 width=40) (actual rows=50 loops=1)
+         Index Cond: ((a = 65) AND (c = ANY ('{14,15}'::integer[])))
+         Buffers: shared hit=33
+(6 rows)
+
+deallocate functional_dependencies_norequired_two;
+-- Skip to different parts of index for each of 44, 94:
+prepare functional_dependencies_norequired_three as
+select count(*), a, b, c
+from
+  functional_dependencies
+  where a in (44,94) and c in (18,19,20)
+  group by a, b, c;
+execute functional_dependencies_norequired_three;
+ count | a  | b  | c  
+-------+----+----+----
+    50 | 44 | 44 | 19
+    50 | 94 | 44 | 19
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_three;
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..6.72 rows=1 width=48) (actual rows=2 loops=1)
+   Group Key: a, b, c
+   Buffers: shared hit=66
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..6.70 rows=1 width=40) (actual rows=100 loops=1)
+         Index Cond: ((a = ANY ('{44,94}'::integer[])) AND (c = ANY ('{18,19,20}'::integer[])))
+         Buffers: shared hit=66
+(6 rows)
+
+deallocate functional_dependencies_norequired_three;
+prepare functional_dependencies_norequired_four as
+select count(*), a, b, c
+from
+  functional_dependencies
+where
+  a = any (array[1, 51])
+  and b = '1'
+group by a, b, c;
+execute functional_dependencies_norequired_four;
+ count | a  | b | c 
+-------+----+---+---
+    50 |  1 | 1 | 1
+    50 | 51 | 1 | 1
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_four;
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..6.60 rows=1 width=48) (actual rows=2 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=66
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..6.58 rows=1 width=40) (actual rows=100 loops=1)
+         Index Cond: ((a = ANY ('{1,51}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=66
+(6 rows)
+
+deallocate functional_dependencies_norequired_four;
+prepare functional_dependencies_norequired_five as
+select count(*), a, b, c
+from
+  functional_dependencies
+where
+  a = any (array[1, 26, 51, 76])
+  and b = any (array['1', '26'])
+  and c = 1
+group by a, b, c;
+execute functional_dependencies_norequired_five;
+ count | a  | b  | c 
+-------+----+----+---
+    50 |  1 | 1  | 1
+    50 | 26 | 26 | 1
+    50 | 51 | 1  | 1
+    50 | 76 | 26 | 1
+(4 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_five;
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..8.90 rows=1 width=48) (actual rows=4 loops=1)
+   Group Key: a, b
+   Buffers: shared hit=132
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.88 rows=1 width=40) (actual rows=200 loops=1)
+         Index Cond: ((a = ANY ('{1,26,51,76}'::integer[])) AND (b = ANY ('{1,26}'::text[])) AND (c = 1))
+         Buffers: shared hit=132
+(6 rows)
+
+deallocate functional_dependencies_norequired_five;
+prepare functional_dependencies_norequired_six as
+select count(*), a, b, c
+from
+  functional_dependencies
+where
+  a in (1, 2, 51, 52) and b = '1'
+group by a, b, c;
+execute functional_dependencies_norequired_six;
+ count | a  | b | c 
+-------+----+---+---
+    50 |  1 | 1 | 1
+    50 | 51 | 1 | 1
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_six;
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..8.89 rows=1 width=48) (actual rows=2 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=66
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.87 rows=1 width=40) (actual rows=100 loops=1)
+         Index Cond: ((a = ANY ('{1,2,51,52}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=66
+(6 rows)
+
+deallocate functional_dependencies_norequired_six;
+-- Index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+-- Now do backwards scan equivalents of all functional_dependencies tests:
+select a, b, c from functional_dependencies
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2)
+order by a desc, b desc, c desc limit 52;
+ a  | b  | c 
+----+----+---
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 77 | 27 | 2
+ 76 | 26 | 1
+ 76 | 26 | 1
+(52 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select a, b, c from functional_dependencies
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2)
+order by a desc, b desc, c desc limit 52;
+                                                                   QUERY PLAN                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.28..8.88 rows=1 width=40) (actual rows=52 loops=1)
+   Buffers: shared hit=34
+   ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.88 rows=1 width=40) (actual rows=52 loops=1)
+         Index Cond: ((a = ANY ('{1,2,26,27,51,52,76,77}'::integer[])) AND (b = ANY ('{1,2,26,27}'::text[])) AND (c = ANY ('{1,2}'::integer[])))
+         Buffers: shared hit=34
+(5 rows)
+
+-- Test case for missing key column in predicate -- simple
+prepare functional_dependencies_norequired_one_desc as
+select count(*), a, b, c
+from
+  functional_dependencies
+where a = 25 and c in (0, 1, 2, 3)
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_one_desc;
+ count | a  | b  | c 
+-------+----+----+---
+    50 | 25 | 25 | 0
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_one_desc;
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.38 rows=1 width=48) (actual rows=1 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=33
+   ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..4.36 rows=1 width=40) (actual rows=50 loops=1)
+         Index Cond: ((a = 25) AND (c = ANY ('{0,1,2,3}'::integer[])))
+         Buffers: shared hit=33
+(6 rows)
+
+deallocate functional_dependencies_norequired_one_desc;
+-- Test case for missing key column in predicate -- must skip 14 and match on
+-- 15 here, slightly trickier
+prepare functional_dependencies_norequired_two_desc as
+select count(*), a, b, c
+from
+  functional_dependencies
+where a = 65 and c in (14, 15)
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_two_desc;
+ count | a  | b  | c  
+-------+----+----+----
+    50 | 65 | 15 | 15
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_two_desc;
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.38 rows=1 width=48) (actual rows=1 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=34
+   ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..4.36 rows=1 width=40) (actual rows=50 loops=1)
+         Index Cond: ((a = 65) AND (c = ANY ('{14,15}'::integer[])))
+         Buffers: shared hit=34
+(6 rows)
+
+deallocate functional_dependencies_norequired_two_desc;
+-- Skip to different parts of index for each of 44, 94:
+prepare functional_dependencies_norequired_three_desc as
+select count(*), a, b, c
+from
+  functional_dependencies
+  where a in (44,94) and c in (18,19,20)
+  group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_three_desc;
+ count | a  | b  | c  
+-------+----+----+----
+    50 | 94 | 44 | 19
+    50 | 44 | 44 | 19
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_three_desc;
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..6.72 rows=1 width=48) (actual rows=2 loops=1)
+   Group Key: a, b, c
+   Buffers: shared hit=67
+   ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..6.70 rows=1 width=40) (actual rows=100 loops=1)
+         Index Cond: ((a = ANY ('{44,94}'::integer[])) AND (c = ANY ('{18,19,20}'::integer[])))
+         Buffers: shared hit=67
+(6 rows)
+
+deallocate functional_dependencies_norequired_three_desc;
+prepare functional_dependencies_norequired_four_desc as
+select count(*), a, b, c
+from
+  functional_dependencies
+where
+  a = any (array[1, 51])
+  and b = '1'
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_four_desc;
+ count | a  | b | c 
+-------+----+---+---
+    50 | 51 | 1 | 1
+    50 |  1 | 1 | 1
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_four_desc;
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..6.60 rows=1 width=48) (actual rows=2 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=66
+   ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..6.58 rows=1 width=40) (actual rows=100 loops=1)
+         Index Cond: ((a = ANY ('{1,51}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=66
+(6 rows)
+
+deallocate functional_dependencies_norequired_four_desc;
+prepare functional_dependencies_norequired_five_desc as
+select count(*), a, b, c
+from
+  functional_dependencies
+where
+  a = any (array[1, 26, 51, 76])
+  and b = any (array['1', '26'])
+  and c = 1
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_five_desc;
+ count | a  | b  | c 
+-------+----+----+---
+    50 | 76 | 26 | 1
+    50 | 51 | 1  | 1
+    50 | 26 | 26 | 1
+    50 |  1 | 1  | 1
+(4 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_five_desc;
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..8.90 rows=1 width=48) (actual rows=4 loops=1)
+   Group Key: a, b
+   Buffers: shared hit=131
+   ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.88 rows=1 width=40) (actual rows=200 loops=1)
+         Index Cond: ((a = ANY ('{1,26,51,76}'::integer[])) AND (b = ANY ('{1,26}'::text[])) AND (c = 1))
+         Buffers: shared hit=131
+(6 rows)
+
+deallocate functional_dependencies_norequired_five_desc;
+prepare functional_dependencies_norequired_six_desc as
+select count(*), a, b, c
+from
+  functional_dependencies
+where
+  a in (1, 2, 51, 52) and b = '1'
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_six_desc;
+ count | a  | b | c 
+-------+----+---+---
+    50 | 51 | 1 | 1
+    50 |  1 | 1 | 1
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_six_desc;
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..8.89 rows=1 width=48) (actual rows=2 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=66
+   ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.87 rows=1 width=40) (actual rows=100 loops=1)
+         Index Cond: ((a = ANY ('{1,2,51,52}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=66
+(6 rows)
+
+deallocate functional_dependencies_norequired_six_desc;
+-- (February 22)
+--
+-- Assertion failure due to non-required scan key not starting from the first
+-- array element (for current scan direction) after _bt_preprocess_keys was
+-- done:
+prepare functional_dependencies_norequired_no_first_elem as
+select count(*), a, b, c
+from
+  functional_dependencies
+where
+  a in (1,2) and c in (1,2,3) and c = 2
+group by a, b, c;
+-- Original assertion failure:
+--
+-- TRAP: failed Assert("_bt_verify_arrays_bt_first(scan, dir)"), File: "../source/src/backend/access/nbtree/nbtutils.c", Line: 2776, PID: 513412
+-- [0x556451e17798] _bt_preprocess_keys: /mnt/nvme/postgresql/patch/build_meson_dc/../source/src/backend/access/nbtree/nbtutils.c:2776
+-- [0x556451e0e646] _bt_first: /mnt/nvme/postgresql/patch/build_meson_dc/../source/src/backend/access/nbtree/nbtsearch.c:1181
+-- [0x556451e0b0da] btgettuple: /mnt/nvme/postgresql/patch/build_meson_dc/../source/src/backend/access/nbtree/nbtree.c:290
+--
+-- Fix for this was to move the assertion into _bt_array_keys_remain, where
+-- _bt_preprocess_keys incremental advancement cannot break things.
+execute functional_dependencies_norequired_no_first_elem;
+ count | a | b | c 
+-------+---+---+---
+    50 | 2 | 2 | 2
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_no_first_elem;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..6.76 rows=1 width=48) (actual rows=1 loops=1)
+   Group Key: a, b
+   Buffers: shared hit=33
+   ->  Index Scan using fdeps_abc_idx on functional_dependencies  (cost=0.28..6.74 rows=1 width=40) (actual rows=50 loops=1)
+         Index Cond: ((a = ANY ('{1,2}'::integer[])) AND (c = ANY ('{1,2,3}'::integer[])) AND (c = 2))
+         Buffers: shared hit=33
+(6 rows)
+
+deallocate functional_dependencies_norequired_no_first_elem;
+------------------------------------------------
+-- functional_dependencies random test cases  --
+------------------------------------------------
+set client_min_messages=error;
+drop table if exists functional_dependencies_random;
+reset client_min_messages;
+CREATE UNLOGGED TABLE functional_dependencies_random (
+    filler1 TEXT,
+    filler2 NUMERIC,
+    a INT,
+    b TEXT,
+    filler3 DATE,
+    c INT,
+    d TEXT
+);
+CREATE INDEX fdeps_abc_random_idx ON functional_dependencies_random (a, b, c);
+INSERT INTO functional_dependencies_random (a, b, c, filler1)
+     SELECT mod(i, 5), mod(i, 7), mod(i, 11), i FROM generate_series(1,1000) s(i);
+-- prewarm
+select count(*) from functional_dependencies_random;
+ count 
+-------
+  1000
+(1 row)
+
+vacuum analyze functional_dependencies_random;
+SELECT count(*) FROM functional_dependencies_random WHERE a IN (1, 51) AND b IN ('1', '2');
+ count 
+-------
+    58
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+SELECT count(*) FROM functional_dependencies_random  WHERE a IN (1, 51) AND b IN ('1', '2');
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=17.62..17.63 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=62
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..17.48 rows=57 width=0) (actual rows=58 loops=1)
+         Index Cond: ((a = ANY ('{1,51}'::integer[])) AND (b = ANY ('{1,2}'::text[])))
+         Buffers: shared hit=62
+(5 rows)
+
+select count(*) from functional_dependencies_random
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2);
+ count 
+-------
+    22
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*) from functional_dependencies_random
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2);
+                                                                   QUERY PLAN                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=16.84..16.85 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=27
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..16.79 rows=21 width=0) (actual rows=22 loops=1)
+         Index Cond: ((a = ANY ('{1,2,26,27,51,52,76,77}'::integer[])) AND (b = ANY ('{1,2,26,27}'::text[])) AND (c = ANY ('{1,2}'::integer[])))
+         Buffers: shared hit=27
+(5 rows)
+
+-- Test case for missing key column in predicate -- simple
+prepare functional_dependencies_norequired_one_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where a = 25 and c in (0, 1, 2, 3)
+group by a, b, c;
+execute functional_dependencies_norequired_one_random;
+ count | a | b | c 
+-------+---+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_one_random;
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.27 rows=1 width=18) (actual rows=0 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=2
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..4.25 rows=1 width=10) (actual rows=0 loops=1)
+         Index Cond: ((a = 25) AND (c = ANY ('{0,1,2,3}'::integer[])))
+         Buffers: shared hit=2
+(6 rows)
+
+deallocate functional_dependencies_norequired_one_random;
+-- Test case for missing key column in predicate -- must skip 14 and match on
+-- 15 here, slightly trickier
+prepare functional_dependencies_norequired_two_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where a = 65 and c in (14, 15)
+group by a, b, c;
+execute functional_dependencies_norequired_two_random;
+ count | a | b | c 
+-------+---+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_two_random;
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.27 rows=1 width=18) (actual rows=0 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=2
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..4.25 rows=1 width=10) (actual rows=0 loops=1)
+         Index Cond: ((a = 65) AND (c = ANY ('{14,15}'::integer[])))
+         Buffers: shared hit=2
+(6 rows)
+
+deallocate functional_dependencies_norequired_two_random;
+-- Skip to different parts of index for each of 44, 94:
+prepare functional_dependencies_norequired_three_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+  where a in (44,94) and c in (18,19,20)
+  group by a, b, c;
+execute functional_dependencies_norequired_three_random;
+ count | a | b | c 
+-------+---+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_three_random;
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..6.56 rows=1 width=18) (actual rows=0 loops=1)
+   Group Key: a, b, c
+   Buffers: shared hit=2
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..6.54 rows=1 width=10) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{44,94}'::integer[])) AND (c = ANY ('{18,19,20}'::integer[])))
+         Buffers: shared hit=2
+(6 rows)
+
+deallocate functional_dependencies_norequired_three_random;
+prepare functional_dependencies_norequired_four_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where
+  a = any (array[1, 51])
+  and b = '1'
+group by a, b, c;
+execute functional_dependencies_norequired_four_random;
+ count | a | b | c  
+-------+---+---+----
+     3 | 1 | 1 |  0
+     3 | 1 | 1 |  1
+     3 | 1 | 1 |  2
+     3 | 1 | 1 |  3
+     2 | 1 | 1 |  4
+     3 | 1 | 1 |  5
+     2 | 1 | 1 |  6
+     3 | 1 | 1 |  7
+     2 | 1 | 1 |  8
+     3 | 1 | 1 |  9
+     2 | 1 | 1 | 10
+(11 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_four_random;
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..17.34 rows=23 width=18) (actual rows=11 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=33
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..16.90 rows=29 width=10) (actual rows=29 loops=1)
+         Index Cond: ((a = ANY ('{1,51}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=33
+(6 rows)
+
+deallocate functional_dependencies_norequired_four_random;
+prepare functional_dependencies_norequired_five_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where
+  a = any (array[1, 26, 51, 76])
+  and b = any (array['1', '26'])
+  and c = 1
+group by a, b, c;
+execute functional_dependencies_norequired_five_random;
+ count | a | b | c 
+-------+---+---+---
+     3 | 1 | 1 | 1
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_five_random;
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..10.57 rows=3 width=18) (actual rows=1 loops=1)
+   Group Key: a, b
+   Buffers: shared hit=7
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..10.52 rows=3 width=10) (actual rows=3 loops=1)
+         Index Cond: ((a = ANY ('{1,26,51,76}'::integer[])) AND (b = ANY ('{1,26}'::text[])) AND (c = 1))
+         Buffers: shared hit=7
+(6 rows)
+
+deallocate functional_dependencies_norequired_five_random;
+prepare functional_dependencies_norequired_six_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where
+  a in (1, 2, 51, 52) and b = '1'
+group by a, b, c;
+execute functional_dependencies_norequired_six_random;
+ count | a | b | c  
+-------+---+---+----
+     3 | 1 | 1 |  0
+     3 | 1 | 1 |  1
+     3 | 1 | 1 |  2
+     3 | 1 | 1 |  3
+     2 | 1 | 1 |  4
+     3 | 1 | 1 |  5
+     2 | 1 | 1 |  6
+     3 | 1 | 1 |  7
+     2 | 1 | 1 |  8
+     3 | 1 | 1 |  9
+     2 | 1 | 1 | 10
+     3 | 2 | 1 |  0
+     2 | 2 | 1 |  1
+     3 | 2 | 1 |  2
+     2 | 2 | 1 |  3
+     3 | 2 | 1 |  4
+     2 | 2 | 1 |  5
+     3 | 2 | 1 |  6
+     2 | 2 | 1 |  7
+     3 | 2 | 1 |  8
+     2 | 2 | 1 |  9
+     3 | 2 | 1 | 10
+(22 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_six_random;
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..18.26 rows=36 width=18) (actual rows=22 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=62
+   ->  Index Scan using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..17.48 rows=57 width=10) (actual rows=57 loops=1)
+         Index Cond: ((a = ANY ('{1,2,51,52}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=62
+(6 rows)
+
+deallocate functional_dependencies_norequired_six_random;
+select a, b, c from functional_dependencies_random
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2)
+order by a desc, b desc, c desc limit 52;
+ a | b | c 
+---+---+---
+ 2 | 2 | 2
+ 2 | 2 | 2
+ 2 | 2 | 2
+ 2 | 2 | 1
+ 2 | 2 | 1
+ 2 | 2 | 1
+ 2 | 1 | 2
+ 2 | 1 | 2
+ 2 | 1 | 2
+ 2 | 1 | 1
+ 2 | 1 | 1
+ 1 | 2 | 2
+ 1 | 2 | 2
+ 1 | 2 | 2
+ 1 | 2 | 1
+ 1 | 2 | 1
+ 1 | 1 | 2
+ 1 | 1 | 2
+ 1 | 1 | 2
+ 1 | 1 | 1
+ 1 | 1 | 1
+ 1 | 1 | 1
+(22 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select a, b, c from functional_dependencies_random
+where
+  a in (1, 2, 26, 27, 51, 52, 76, 77)
+  and b in ('1', '2', '26', '27')
+  and c in (1, 2)
+order by a desc, b desc, c desc limit 52;
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.28..16.79 rows=21 width=10) (actual rows=22 loops=1)
+   Buffers: shared hit=28
+   ->  Index Scan Backward using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..16.79 rows=21 width=10) (actual rows=22 loops=1)
+         Index Cond: ((a = ANY ('{1,2,26,27,51,52,76,77}'::integer[])) AND (b = ANY ('{1,2,26,27}'::text[])) AND (c = ANY ('{1,2}'::integer[])))
+         Buffers: shared hit=28
+(5 rows)
+
+-- Test case for missing key column in predicate -- simple
+prepare functional_dependencies_norequired_one_desc_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where a = 25 and c in (0, 1, 2, 3)
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_one_desc_random;
+ count | a | b | c 
+-------+---+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_one_desc_random;
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.27 rows=1 width=18) (actual rows=0 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=2
+   ->  Index Scan Backward using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..4.25 rows=1 width=10) (actual rows=0 loops=1)
+         Index Cond: ((a = 25) AND (c = ANY ('{0,1,2,3}'::integer[])))
+         Buffers: shared hit=2
+(6 rows)
+
+deallocate functional_dependencies_norequired_one_desc_random;
+prepare functional_dependencies_norequired_two_desc_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where a = 65 and c in (14, 15)
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_two_desc_random;
+ count | a | b | c 
+-------+---+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_two_desc_random;
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..4.27 rows=1 width=18) (actual rows=0 loops=1)
+   Group Key: b, c
+   Buffers: shared hit=2
+   ->  Index Scan Backward using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..4.25 rows=1 width=10) (actual rows=0 loops=1)
+         Index Cond: ((a = 65) AND (c = ANY ('{14,15}'::integer[])))
+         Buffers: shared hit=2
+(6 rows)
+
+deallocate functional_dependencies_norequired_two_desc_random;
+-- Skip to different parts of index for each of 44, 94:
+prepare functional_dependencies_norequired_three_desc_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+  where a in (44,94) and c in (18,19,20)
+  group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_three_desc_random;
+ count | a | b | c 
+-------+---+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_three_desc_random;
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..6.56 rows=1 width=18) (actual rows=0 loops=1)
+   Group Key: a, b, c
+   Buffers: shared hit=2
+   ->  Index Scan Backward using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..6.54 rows=1 width=10) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{44,94}'::integer[])) AND (c = ANY ('{18,19,20}'::integer[])))
+         Buffers: shared hit=2
+(6 rows)
+
+deallocate functional_dependencies_norequired_three_desc_random;
+prepare functional_dependencies_norequired_four_desc_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where
+  a = any (array[1, 51])
+  and b = '1'
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_four_desc_random;
+ count | a | b | c  
+-------+---+---+----
+     2 | 1 | 1 | 10
+     3 | 1 | 1 |  9
+     2 | 1 | 1 |  8
+     3 | 1 | 1 |  7
+     2 | 1 | 1 |  6
+     3 | 1 | 1 |  5
+     2 | 1 | 1 |  4
+     3 | 1 | 1 |  3
+     3 | 1 | 1 |  2
+     3 | 1 | 1 |  1
+     3 | 1 | 1 |  0
+(11 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_four_desc_random;
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..17.34 rows=23 width=18) (actual rows=11 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=33
+   ->  Index Scan Backward using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..16.90 rows=29 width=10) (actual rows=29 loops=1)
+         Index Cond: ((a = ANY ('{1,51}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=33
+(6 rows)
+
+deallocate functional_dependencies_norequired_four_desc_random;
+prepare functional_dependencies_norequired_five_desc_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where
+  a = any (array[1, 26, 51, 76])
+  and b = any (array['1', '26'])
+  and c = 1
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_five_desc_random;
+ count | a | b | c 
+-------+---+---+---
+     3 | 1 | 1 | 1
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_five_desc_random;
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..10.57 rows=3 width=18) (actual rows=1 loops=1)
+   Group Key: a, b
+   Buffers: shared hit=7
+   ->  Index Scan Backward using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..10.52 rows=3 width=10) (actual rows=3 loops=1)
+         Index Cond: ((a = ANY ('{1,26,51,76}'::integer[])) AND (b = ANY ('{1,26}'::text[])) AND (c = 1))
+         Buffers: shared hit=7
+(6 rows)
+
+deallocate functional_dependencies_norequired_five_desc_random;
+prepare functional_dependencies_norequired_six_desc_random as
+select count(*), a, b, c
+from
+  functional_dependencies_random
+where
+  a in (1, 2, 51, 52) and b = '1'
+group by a, b, c
+order by a desc, b desc, c desc;
+execute functional_dependencies_norequired_six_desc_random;
+ count | a | b | c  
+-------+---+---+----
+     3 | 2 | 1 | 10
+     2 | 2 | 1 |  9
+     3 | 2 | 1 |  8
+     2 | 2 | 1 |  7
+     3 | 2 | 1 |  6
+     2 | 2 | 1 |  5
+     3 | 2 | 1 |  4
+     2 | 2 | 1 |  3
+     3 | 2 | 1 |  2
+     2 | 2 | 1 |  1
+     3 | 2 | 1 |  0
+     2 | 1 | 1 | 10
+     3 | 1 | 1 |  9
+     2 | 1 | 1 |  8
+     3 | 1 | 1 |  7
+     2 | 1 | 1 |  6
+     3 | 1 | 1 |  5
+     2 | 1 | 1 |  4
+     3 | 1 | 1 |  3
+     3 | 1 | 1 |  2
+     3 | 1 | 1 |  1
+     3 | 1 | 1 |  0
+(22 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute functional_dependencies_norequired_six_desc_random;
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.28..18.26 rows=36 width=18) (actual rows=22 loops=1)
+   Group Key: a, c
+   Buffers: shared hit=63
+   ->  Index Scan Backward using fdeps_abc_random_idx on functional_dependencies_random  (cost=0.28..17.48 rows=57 width=10) (actual rows=57 loops=1)
+         Index Cond: ((a = ANY ('{1,2,51,52}'::integer[])) AND (b = '1'::text))
+         Buffers: shared hit=63
+(6 rows)
+
+deallocate functional_dependencies_norequired_six_desc_random;
+set client_min_messages=error;
+drop table if exists wisconsin_numeric;
+reset client_min_messages;
+-----------------------------------------
+-- (July 10) Wisconsin numeric variant --
+-----------------------------------------
+create unlogged table wisconsin_numeric
+(
+unique1 numeric,
+unique2 numeric,
+two numeric,
+four numeric,
+ten numeric,
+twenty numeric,
+onepercent numeric,
+tenpercent numeric,
+twentypercent numeric,
+fiftypercent numeric,
+unique3 numeric,
+evenonepercent numeric,
+oddonepercent numeric,
+stringu1 text,
+stringu2 text,
+string4 text
+);
+\set filename :abs_srcdir '/data/wisconsin.csv'
+COPY wisconsin_numeric FROM :'filename' with (format csv, encoding 'win1252', header false, null $$$$, quote $$'$$); -- Fix the syntax highlighting: '
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+  2147483646,
+  2147483646,
+  2147483646,
+  2147483646,
+  2147483646;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+  2147483647,
+  2147483647,
+  2147483647,
+  2147483647,
+  2147483647;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+(-2147483647),
+(-2147483647),
+(-2147483647),
+(-2147483647),
+(-2147483647);
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,(-2147483648),
+(-2147483648),
+(-2147483648),
+(-2147483648),
+(-2147483648);
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Ten:
+create index numeric_ten_idx on wisconsin_numeric (ten, unique1);
+-- Range instead of skip attribute on "ten":
+select ten, unique1 from wisconsin_numeric where ten between -10000 and 4 and unique1 = 5555;
+ ten | unique1 
+-----+---------
+   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ten, unique1 from wisconsin_numeric where ten between -10000 and 4 and unique1 = 5555;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric  (cost=26.79..42.70 rows=8 width=64) (actual rows=1 loops=1)
+   Recheck Cond: ((ten >= '-10000'::numeric) AND (ten <= '4'::numeric) AND (unique1 = '5555'::numeric))
+   Heap Blocks: exact=1
+   Buffers: shared hit=31
+   ->  Bitmap Index Scan on numeric_ten_idx  (cost=0.00..26.79 rows=8 width=0) (actual rows=1 loops=1)
+         Index Cond: ((ten >= '-10000'::numeric) AND (ten <= '4'::numeric) AND (unique1 = '5555'::numeric))
+         Buffers: shared hit=30
+(7 rows)
+
+-- Range instead of skip attribute on "ten", backwards scan:
+set enable_bitmapscan to off;
+set enable_indexscan to on;
+select ten, unique1 from wisconsin_numeric where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
+ ten | unique1 
+-----+---------
+   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select ten, unique1 from wisconsin_numeric where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using numeric_ten_idx on wisconsin_numeric  (cost=0.42..42.86 rows=8 width=64) (actual rows=1 loops=1)
+   Index Cond: ((ten >= '-10000'::numeric) AND (ten <= '4'::numeric) AND (unique1 = '5555'::numeric))
+   Buffers: shared hit=31
+(3 rows)
+
+set enable_bitmapscan to on;
+set enable_indexscan to off;
+drop index numeric_ten_idx;
+-- Four, ten:
+create index numeric_four_ten_idx on wisconsin_numeric (four, ten, unique1);
+-- Point lookup, skips one col (four), range on other col after that (ten):
+select four, ten, unique1 from wisconsin_numeric where ten between -10000 and 4 and unique1 = 5555;
+ four | ten | unique1 
+------+-----+---------
+    0 |   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select four, ten, unique1 from wisconsin_numeric where ten between -10000 and 4 and unique1 = 5555;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric  (cost=51.14..67.05 rows=8 width=96) (actual rows=1 loops=1)
+   Recheck Cond: ((ten >= '-10000'::numeric) AND (ten <= '4'::numeric) AND (unique1 = '5555'::numeric))
+   Heap Blocks: exact=1
+   Buffers: shared hit=70
+   ->  Bitmap Index Scan on numeric_four_ten_idx  (cost=0.00..51.14 rows=8 width=0) (actual rows=1 loops=1)
+         Index Cond: ((ten >= '-10000'::numeric) AND (ten <= '4'::numeric) AND (unique1 = '5555'::numeric))
+         Buffers: shared hit=69
+(7 rows)
+
+drop index numeric_four_ten_idx;
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select 1, 1, 1, 1, 1, 1, 2147483647 from generate_series(1, 1500) i;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select 1, 1, 1, 1, 1, 1, (-2147483648)::int4 from generate_series(1, 1500) i;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select -666, 1, 1, 1, 1, 1, 2147483647;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select -666, 1, 1, 1, 1, 1, (-2147483648)::int4;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select 1, 1, 1, 1, 1, 1, NULL from generate_series(1, 1500) i;
+insert into wisconsin_numeric(unique1, unique2, two, four, ten, twenty, onepercent)
+select -666, 1, 1, 1, 1, 1, NULL;
+vacuum analyze wisconsin_numeric;
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Four, ten, twenty, unique1 (causes errors about attribute order from
+-- _by_preprocess_keys):
+create index on wisconsin_numeric (four, ten, twenty, unique1);
+-- Simplest version:
+select four, ten, twenty, unique1 from wisconsin_numeric where four in (2 , 3) and ten between 3 and 3 and twenty = 3 and unique1 = 84396;
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    3 |   3 |      3 |   84396
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF)
+select four, ten, twenty, unique1 from wisconsin_numeric where four in (2 , 3) and ten between 3 and 3 and twenty = 3 and unique1 = 84396;
+                                                                                QUERY PLAN                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric (actual rows=1 loops=1)
+   Recheck Cond: ((four = ANY ('{2,3}'::numeric[])) AND (ten >= '3'::numeric) AND (ten <= '3'::numeric) AND (twenty = '3'::numeric) AND (unique1 = '84396'::numeric))
+   Heap Blocks: exact=1
+   Buffers: shared hit=7
+   ->  Bitmap Index Scan on wisconsin_numeric_four_ten_twenty_unique1_idx (actual rows=1 loops=1)
+         Index Cond: ((four = ANY ('{2,3}'::numeric[])) AND (ten >= '3'::numeric) AND (ten <= '3'::numeric) AND (twenty = '3'::numeric) AND (unique1 = '84396'::numeric))
+         Buffers: shared hit=6
+(7 rows)
+
+-- Simplest version of other, similar bug:
+select four, ten, twenty, unique1 from wisconsin_numeric where four between 2 and 3 and ten between 2 and 3 and twenty = 3 and unique1 = 84396;
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    3 |   3 |      3 |   84396
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, COSTS OFF)
+select four, ten, twenty, unique1 from wisconsin_numeric where four between 2 and 3 and ten between 2 and 3 and twenty = 3 and unique1 = 84396;
+                                                                                        QUERY PLAN                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric (actual rows=1 loops=1)
+   Recheck Cond: ((four >= '2'::numeric) AND (four <= '3'::numeric) AND (ten >= '2'::numeric) AND (ten <= '3'::numeric) AND (twenty = '3'::numeric) AND (unique1 = '84396'::numeric))
+   Heap Blocks: exact=1
+   Buffers: shared hit=13
+   ->  Bitmap Index Scan on wisconsin_numeric_four_ten_twenty_unique1_idx (actual rows=1 loops=1)
+         Index Cond: ((four >= '2'::numeric) AND (four <= '3'::numeric) AND (ten >= '2'::numeric) AND (ten <= '3'::numeric) AND (twenty = '3'::numeric) AND (unique1 = '84396'::numeric))
+         Buffers: shared hit=12
+(7 rows)
+
+-- SAOP-only version should return 2 rows:
+select four, ten, twenty, unique1 from wisconsin_numeric where ten in (2,3) and twenty in (2, 3) and unique1 in (84396, 60814);
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    3 |   3 |      3 |   84396
+    2 |   2 |      2 |   60814
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select four, ten, twenty, unique1 from wisconsin_numeric where ten in (2,3) and twenty in (2, 3) and unique1 in (84396, 60814);
+                                                                   QUERY PLAN                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric  (cost=210.28..212.30 rows=1 width=18) (actual rows=2 loops=1)
+   Recheck Cond: ((ten = ANY ('{2,3}'::numeric[])) AND (twenty = ANY ('{2,3}'::numeric[])) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+   Heap Blocks: exact=2
+   Buffers: shared hit=44
+   ->  Bitmap Index Scan on wisconsin_numeric_four_ten_twenty_unique1_idx  (cost=0.00..210.28 rows=1 width=0) (actual rows=2 loops=1)
+         Index Cond: ((ten = ANY ('{2,3}'::numeric[])) AND (twenty = ANY ('{2,3}'::numeric[])) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+         Buffers: shared hit=42
+(7 rows)
+
+-- Equivalent "SAOP, range skip array" version should also return 2 rows:
+select four, ten, twenty, unique1 from wisconsin_numeric where ten in (2,3) and twenty between 2 and 3 and unique1 in (84396, 60814);
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    3 |   3 |      3 |   84396
+    2 |   2 |      2 |   60814
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select four, ten, twenty, unique1 from wisconsin_numeric where ten in (2,3) and twenty between 2 and 3 and unique1 in (84396, 60814);
+                                                                            QUERY PLAN                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric  (cost=154.00..156.02 rows=1 width=18) (actual rows=2 loops=1)
+   Recheck Cond: ((ten = ANY ('{2,3}'::numeric[])) AND (twenty >= '2'::numeric) AND (twenty <= '3'::numeric) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+   Heap Blocks: exact=2
+   Buffers: shared hit=44
+   ->  Bitmap Index Scan on wisconsin_numeric_four_ten_twenty_unique1_idx  (cost=0.00..154.00 rows=1 width=0) (actual rows=2 loops=1)
+         Index Cond: ((ten = ANY ('{2,3}'::numeric[])) AND (twenty >= '2'::numeric) AND (twenty <= '3'::numeric) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+         Buffers: shared hit=42
+(7 rows)
+
+-- Equivalent "range skip array, SAOP" version should also return 2 rows:
+select four, ten, twenty, unique1 from wisconsin_numeric where ten between 2 and 3 and twenty in (2, 3) and unique1 in (84396, 60814);
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    3 |   3 |      3 |   84396
+    2 |   2 |      2 |   60814
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select four, ten, twenty, unique1 from wisconsin_numeric where ten between 2 and 3 and twenty in (2, 3) and unique1 in (84396, 60814);
+                                                                           QUERY PLAN                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric  (cost=200.75..202.77 rows=1 width=18) (actual rows=2 loops=1)
+   Recheck Cond: ((ten >= '2'::numeric) AND (ten <= '3'::numeric) AND (twenty = ANY ('{2,3}'::numeric[])) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+   Heap Blocks: exact=2
+   Buffers: shared hit=44
+   ->  Bitmap Index Scan on wisconsin_numeric_four_ten_twenty_unique1_idx  (cost=0.00..200.75 rows=1 width=0) (actual rows=2 loops=1)
+         Index Cond: ((ten >= '2'::numeric) AND (ten <= '3'::numeric) AND (twenty = ANY ('{2,3}'::numeric[])) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+         Buffers: shared hit=42
+(7 rows)
+
+-- Equivalent "range skip array, range skip array" version should also return 2 rows:
+select four, ten, twenty, unique1 from wisconsin_numeric where ten between 2 and 3 and twenty between 2 and 3 and unique1 in (84396, 60814);
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    3 |   3 |      3 |   84396
+    2 |   2 |      2 |   60814
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select four, ten, twenty, unique1 from wisconsin_numeric where ten between 2 and 3 and twenty between 2 and 3 and unique1 in (84396, 60814);
+                                                                                    QUERY PLAN                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin_numeric  (cost=149.28..151.30 rows=1 width=18) (actual rows=2 loops=1)
+   Recheck Cond: ((ten >= '2'::numeric) AND (ten <= '3'::numeric) AND (twenty >= '2'::numeric) AND (twenty <= '3'::numeric) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+   Heap Blocks: exact=2
+   Buffers: shared hit=44
+   ->  Bitmap Index Scan on wisconsin_numeric_four_ten_twenty_unique1_idx  (cost=0.00..149.28 rows=1 width=0) (actual rows=2 loops=1)
+         Index Cond: ((ten >= '2'::numeric) AND (ten <= '3'::numeric) AND (twenty >= '2'::numeric) AND (twenty <= '3'::numeric) AND (unique1 = ANY ('{84396,60814}'::numeric[])))
+         Buffers: shared hit=42
+(7 rows)
+
+-- (July 12) One of the last failing test cases when adding support for
+-- non-skip-support opclasses.
+--
+-- This is based on int tests from Postgres 17 SAOP test suite, which failed
+-- when I forced nbtree to not use skip support as a simple smoke test
+set client_min_messages=error;
+drop table if exists redescend_numeric_test;
+reset client_min_messages;
+create unlogged table redescend_numeric_test (district numeric, warehouse numeric, orderid numeric, orderline numeric);
+create index must_not_full_scan_numeric on redescend_numeric_test (district, warehouse, orderid, orderline) with (fillfactor=30);
+insert into redescend_numeric_test
+select district, warehouse, orderid, orderline
+from
+  generate_series(1, 3) district,
+  generate_series(1, 5) warehouse,
+  generate_series(1, 150) orderid,
+  generate_series(1, 10) orderline
+order by
+district, warehouse, orderid, orderline;
+-- prewarm
+select count(*) from redescend_numeric_test;
+ count 
+-------
+ 22500
+(1 row)
+
+vacuum analyze redescend_numeric_test;
+---------------------------------------------------------------------------------
+-- Index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+set client_min_messages=error;
+drop table if exists redescend_numeric_test;
+reset client_min_messages;
+create unlogged table redescend_numeric_test (district numeric, warehouse numeric, orderid numeric, orderline numeric);
+create index must_not_full_scan_numeric_idx on redescend_numeric_test (district, warehouse, orderid, orderline) with (fillfactor=30);
+insert into redescend_numeric_test
+select district, warehouse, orderid, orderline
+from
+  generate_series(1, 3) district,
+  generate_series(1, 5) warehouse,
+  generate_series(1, 150) orderid,
+  generate_series(1, 10) orderline
+order by
+district, warehouse, orderid, orderline;
+-- prewarm
+select count(*) from redescend_numeric_test;
+ count 
+-------
+ 22500
+(1 row)
+
+vacuum analyze redescend_numeric_test;
+---------------------------------------------------------------------------------
+insert into redescend_numeric_test
+select district, NULL, NULL, NULL
+from
+  generate_series(1, 3) district,
+  generate_series(1, 5) want_five_nulls_per_district;
+-- Simplest possible repro:
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid = 1 and orderline = 6
+order by district desc, warehouse desc, orderid desc, orderline desc;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        3 |         1 |       1 |         6
+        2 |         1 |       1 |         6
+        1 |         1 |       1 |         6
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid = 1 and orderline = 6
+order by district desc, warehouse desc, orderid desc, orderline desc;
+                                                                     QUERY PLAN                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..34.45 rows=2 width=20) (actual rows=3 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse <= '1'::numeric) AND (orderid = '1'::numeric) AND (orderline = '6'::numeric))
+   Buffers: shared hit=16
+(3 rows)
+
+select * from redescend_numeric_test where district in (1,2,3) and warehouse > 4 and orderid > 149;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        1 |         5 |     150 |         1
+        1 |         5 |     150 |         2
+        1 |         5 |     150 |         3
+        1 |         5 |     150 |         4
+        1 |         5 |     150 |         5
+        1 |         5 |     150 |         6
+        1 |         5 |     150 |         7
+        1 |         5 |     150 |         8
+        1 |         5 |     150 |         9
+        1 |         5 |     150 |        10
+        2 |         5 |     150 |         1
+        2 |         5 |     150 |         2
+        2 |         5 |     150 |         3
+        2 |         5 |     150 |         4
+        2 |         5 |     150 |         5
+        2 |         5 |     150 |         6
+        2 |         5 |     150 |         7
+        2 |         5 |     150 |         8
+        2 |         5 |     150 |         9
+        2 |         5 |     150 |        10
+        3 |         5 |     150 |         1
+        3 |         5 |     150 |         2
+        3 |         5 |     150 |         3
+        3 |         5 |     150 |         4
+        3 |         5 |     150 |         5
+        3 |         5 |     150 |         6
+        3 |         5 |     150 |         7
+        3 |         5 |     150 |         8
+        3 |         5 |     150 |         9
+        3 |         5 |     150 |        10
+(30 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test where district in (1,2,3) and warehouse > 4 and orderid > 149; -- 54 buffer hits (patch + master)
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..51.41 rows=22 width=20) (actual rows=30 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse > '4'::numeric) AND (orderid > '149'::numeric))
+   Buffers: shared hit=21
+(3 rows)
+
+select * from redescend_numeric_test where district in (1,2,3) and warehouse = 5 and orderid > 149;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        1 |         5 |     150 |         1
+        1 |         5 |     150 |         2
+        1 |         5 |     150 |         3
+        1 |         5 |     150 |         4
+        1 |         5 |     150 |         5
+        1 |         5 |     150 |         6
+        1 |         5 |     150 |         7
+        1 |         5 |     150 |         8
+        1 |         5 |     150 |         9
+        1 |         5 |     150 |        10
+        2 |         5 |     150 |         1
+        2 |         5 |     150 |         2
+        2 |         5 |     150 |         3
+        2 |         5 |     150 |         4
+        2 |         5 |     150 |         5
+        2 |         5 |     150 |         6
+        2 |         5 |     150 |         7
+        2 |         5 |     150 |         8
+        2 |         5 |     150 |         9
+        2 |         5 |     150 |        10
+        3 |         5 |     150 |         1
+        3 |         5 |     150 |         2
+        3 |         5 |     150 |         3
+        3 |         5 |     150 |         4
+        3 |         5 |     150 |         5
+        3 |         5 |     150 |         6
+        3 |         5 |     150 |         7
+        3 |         5 |     150 |         8
+        3 |         5 |     150 |         9
+        3 |         5 |     150 |        10
+(30 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test where district in (1,2,3) and warehouse = 5 and orderid > 149; -- 6 buffer hits (patch + master)
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..27.22 rows=22 width=20) (actual rows=30 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse = '5'::numeric) AND (orderid > '149'::numeric))
+   Buffers: shared hit=12
+(3 rows)
+
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        3 |         1 |       1 |         8
+        3 |         1 |       1 |         7
+        3 |         1 |       1 |         6
+        2 |         1 |       1 |         8
+        2 |         1 |       1 |         7
+        2 |         1 |       1 |         6
+        1 |         1 |       1 |         8
+        1 |         1 |       1 |         7
+        1 |         1 |       1 |         6
+(9 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..161.93 rows=6 width=20) (actual rows=9 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse < '2'::numeric) AND (orderid < '2'::numeric) AND (orderline = ANY ('{6,7,8}'::numeric[])))
+   Buffers: shared hit=25
+(3 rows)
+
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        3 |         1 |       1 |         8
+        3 |         1 |       1 |         7
+        3 |         1 |       1 |         6
+        2 |         1 |       1 |         8
+        2 |         1 |       1 |         7
+        2 |         1 |       1 |         6
+        1 |         1 |       1 |         8
+        1 |         1 |       1 |         7
+        1 |         1 |       1 |         6
+(9 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..161.93 rows=6 width=20) (actual rows=9 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse <= '1'::numeric) AND (orderid <= '1'::numeric) AND (orderline = ANY ('{6,7,8}'::numeric[])))
+   Buffers: shared hit=16
+(3 rows)
+
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid in (0, 1) and orderline >= any ('{6,7,8}')
+order by district desc, warehouse desc, orderid desc, orderline desc;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        3 |         1 |       1 |        10
+        3 |         1 |       1 |         9
+        3 |         1 |       1 |         8
+        3 |         1 |       1 |         7
+        3 |         1 |       1 |         6
+        2 |         1 |       1 |        10
+        2 |         1 |       1 |         9
+        2 |         1 |       1 |         8
+        2 |         1 |       1 |         7
+        2 |         1 |       1 |         6
+        1 |         1 |       1 |        10
+        1 |         1 |       1 |         9
+        1 |         1 |       1 |         8
+        1 |         1 |       1 |         7
+        1 |         1 |       1 |         6
+(15 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid in (0, 1) and orderline >= any ('{6,7,8}')
+order by district desc, warehouse desc, orderid desc, orderline desc;
+                                                                                   QUERY PLAN                                                                                   
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..201.05 rows=33 width=20) (actual rows=15 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse <= '1'::numeric) AND (orderid = ANY ('{0,1}'::numeric[])) AND (orderline >= ANY ('{6,7,8}'::numeric[])))
+   Buffers: shared hit=16
+(3 rows)
+
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in (-1, 6, 8, 1000)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        3 |         1 |       1 |         8
+        3 |         1 |       1 |         6
+        2 |         1 |       1 |         8
+        2 |         1 |       1 |         6
+        1 |         1 |       1 |         8
+        1 |         1 |       1 |         6
+(6 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in (-1, 6, 8, 1000)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+                                                                                QUERY PLAN                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..205.99 rows=4 width=20) (actual rows=6 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse <= '1'::numeric) AND (orderid <= '1'::numeric) AND (orderline = ANY ('{-1,6,8,1000}'::numeric[])))
+   Buffers: shared hit=16
+(3 rows)
+
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid < 2 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        3 |         1 |       1 |         8
+        3 |         1 |       1 |         7
+        3 |         1 |       1 |         6
+        2 |         1 |       1 |         8
+        2 |         1 |       1 |         7
+        2 |         1 |       1 |         6
+        1 |         1 |       1 |         8
+        1 |         1 |       1 |         7
+        1 |         1 |       1 |         6
+(9 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse <= 1 and orderid < 2 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+                                                                            QUERY PLAN                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..161.93 rows=6 width=20) (actual rows=9 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse <= '1'::numeric) AND (orderid < '2'::numeric) AND (orderline = ANY ('{6,7,8}'::numeric[])))
+   Buffers: shared hit=16
+(3 rows)
+
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse < 2 and orderid <= 1 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+ district | warehouse | orderid | orderline 
+----------+-----------+---------+-----------
+        3 |         1 |       1 |         8
+        3 |         1 |       1 |         7
+        3 |         1 |       1 |         6
+        2 |         1 |       1 |         8
+        2 |         1 |       1 |         7
+        2 |         1 |       1 |         6
+        1 |         1 |       1 |         8
+        1 |         1 |       1 |         7
+        1 |         1 |       1 |         6
+(9 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from redescend_numeric_test
+where district in (1, 2, 3) and warehouse < 2 and orderid <= 1 and orderline in (6, 7, 8)
+order by district desc, warehouse desc, orderid desc, orderline desc;
+                                                                            QUERY PLAN                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using must_not_full_scan_numeric_idx on redescend_numeric_test  (cost=0.41..161.93 rows=6 width=20) (actual rows=9 loops=1)
+   Index Cond: ((district = ANY ('{1,2,3}'::numeric[])) AND (warehouse < '2'::numeric) AND (orderid <= '1'::numeric) AND (orderline = ANY ('{6,7,8}'::numeric[])))
+   Buffers: shared hit=25
+(3 rows)
+
