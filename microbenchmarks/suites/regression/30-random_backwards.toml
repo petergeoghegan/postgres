@@ -1,0 +1,104 @@
+# --- Random Backwards Test Queries ---
+# Based on random_backwards_weird.sql
+
+[suite]
+mode_prefix = "random_backwards"
+order = 30
+cli_flag = "--random-backwards-tests"
+cli_dest = "random_backwards_tests"
+help = "Run random backwards benchmark tests (loads data if needed)"
+title = "Random Backwards Benchmark Tests"
+tables = [
+    "t",
+    "t_randomized",
+]
+setup_sql_file = "30-random_backwards.sql"
+row_description = "20M rows"
+
+[queries.RB1]
+name = "Sequential table forward scan"
+sql = """
+
+            SELECT * FROM t
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a
+        """
+evict = [
+    "t",
+]
+prewarm_indexes = [
+    "t_pk",
+]
+prewarm_tables = [
+    "t",
+]
+
+[queries.RB1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.RB2]
+name = "Sequential table backward scan (somewhat depends on 'Don't wait for already in-progress IO' patch)"
+sql = """
+
+            SELECT * FROM t
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a DESC
+        """
+evict = [
+    "t",
+]
+prewarm_indexes = [
+    "t_pk",
+]
+prewarm_tables = [
+    "t",
+]
+
+[queries.RB2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.RB3]
+name = "Randomized table forward scan"
+sql = """
+
+            SELECT * FROM t_randomized
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a
+        """
+evict = [
+    "t_randomized",
+]
+prewarm_indexes = [
+    "t_randomized_pk",
+]
+prewarm_tables = [
+    "t_randomized",
+]
+
+[queries.RB3.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+
+[queries.RB4]
+name = "Randomized table backward scan"
+sql = """
+
+            SELECT * FROM t_randomized
+            WHERE a BETWEEN 16336 AND 49103
+            ORDER BY a DESC
+        """
+evict = [
+    "t_randomized",
+]
+prewarm_indexes = [
+    "t_randomized_pk",
+]
+prewarm_tables = [
+    "t_randomized",
+]
+
+[queries.RB4.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
