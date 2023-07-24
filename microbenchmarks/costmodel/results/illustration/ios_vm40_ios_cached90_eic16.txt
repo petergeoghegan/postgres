@@ -1,0 +1,11 @@
+-- SELECT id FROM t_sparse_ios WHERE id BETWEEN 50001 AND 130000
+-- ios, 90% of heap pages in shared_buffers, eic=16
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..160331.06 rows=78544 width=4) (actual time=0.015..57.327 rows=80000.00 loops=1)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+  Heap Fetches: 48093
+  Index Searches: 1
+  Prefetch: avg=153.55 max=271 capacity=272
+  I/O: count=4813 waits=15 size=1.00 in-progress=15.58
+  Buffers: shared hit=110717 read=4814
+Planning Time: 0.056 ms
+Execution Time: 58.471 ms
