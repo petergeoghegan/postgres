@@ -1,0 +1,1362 @@
+# --- Query Definitions ---
+#
+# The number of timed runs per query is chosen dynamically by
+# prefetch_benchmark.py (measure_query): a minimum of 3 runs, extended for fast
+# queries toward a wall-time budget (--runs-budget) so noise averages out of the
+# min, with slow queries (>=500ms) staying at 3.  There is no per-query run count.
+
+[suite]
+mode_prefix = "benchmark"
+order = 0
+default = true
+title = "Prefetch Benchmark"
+tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+    "prefetch_products",
+    "prefetch_sequential",
+    "prefetch_sparse",
+]
+setup_sql_file = "00-benchmark.sql"
+row_description = "50M rows"
+sync_stats = true
+
+[queries.Q1]
+name = "Simple date range scan, plain scan, 25x faster when uncached"
+sql = """
+
+            SELECT order_id, customer_id, amount
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-06-01' AND '2023-06-15'
+            ORDER BY order_date
+            LIMIT 50000
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.Q2]
+name = "JOIN Orders + Customers, merge join, plain index scan on both sides"
+sql = """
+
+            SELECT o.order_id, c.customer_name, o.amount, o.order_date
+            FROM prefetch_orders o
+            JOIN prefetch_customers c ON c.customer_id = o.customer_id
+            WHERE o.customer_id BETWEEN 5000 AND 5500
+              AND o.order_date BETWEEN '2023-06-01' AND '2023-06-30'
+            ORDER BY o.order_date
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.Q4]
+name = "Aggregation with IN list, plain index scan, uses hash agg + sort"
+sql = """
+
+            SELECT order_date, sum(amount) AS total, count(*) AS orders
+            FROM prefetch_orders
+            WHERE customer_id IN (1000, 2000, 3000, 4000, 5000,
+                                  6000, 7000, 8000, 9000, 10000)
+              AND order_date BETWEEN '2023-01-01' AND '2023-12-31'
+            GROUP BY order_date
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.Q5]
+name = "Backwards scan with JOIN"
+sql = """
+
+            SELECT o.order_id, c.customer_name, o.amount, o.order_date
+            FROM prefetch_orders o
+            JOIN prefetch_customers c ON c.customer_id = o.customer_id
+            WHERE o.customer_id BETWEEN 10000 AND 10500
+              AND o.order_date BETWEEN '2023-09-01' AND '2023-09-30'
+            ORDER BY o.customer_id DESC, o.order_date DESC
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.Q5.gucs]
+enable_sort = "off"
+
+[queries.Q6]
+name = "correlated subplan, plain index scan, subplan uses plain index scan"
+sql = """
+
+            SELECT c.customer_name, (
+              SELECT sum(amount) FROM prefetch_orders o
+              WHERE o.customer_id = c.customer_id
+            )
+            FROM prefetch_customers c
+            WHERE c.customer_id BETWEEN 1000 AND 1100
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.Q7]
+name = "LIMIT with large OFFSET, plain index scan"
+sql = """
+
+            SELECT * FROM prefetch_orders
+            WHERE customer_id = 5000
+            ORDER BY order_date
+            OFFSET 400 LIMIT 100
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.Q8]
+name = "Nested loop semi-join with EXISTS, plain outer, plain inner with filter qual"
+sql = """
+
+            SELECT c.customer_id, c.customer_name
+            FROM prefetch_customers c
+            WHERE EXISTS (
+              SELECT 1 FROM prefetch_orders o
+              WHERE o.customer_id = c.customer_id
+                AND o.order_date BETWEEN '2023-07-01' AND '2023-07-31'
+                AND o.amount > 900
+            )
+            AND c.region_id = 5
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.Q9]
+name = "Lateral join (Top N per group), nestloop join, plain on both sides, Limit node above inner "
+sql = """
+
+            SELECT c.customer_name, recent.*
+            FROM prefetch_customers c,
+            LATERAL (
+              SELECT order_id, order_date, amount
+              FROM prefetch_orders o
+              WHERE o.customer_id = c.customer_id
+              ORDER BY o.order_date DESC
+              LIMIT 5
+            ) recent
+            WHERE c.customer_id BETWEEN 2000 AND 2100
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+# --- MergeJoin mark/restore tests ---
+# These isolate the mark/restore code path in the prefetch machinery.
+# MergeJoin inner side uses mark/restore (not full rescan), which resets
+# prefetchPos and tears down the read stream on every restore.
+# Self-join on orders: outer has ~20 rows/customer (duplicate join keys),
+# forcing ~20 restores per group on the inner side.
+[queries.MR1]
+name = "MergeJoin mark/restore, self-join, ~20 restores/group, ~62 inner rows/group"
+sql = """
+
+            SELECT count(*)
+            FROM prefetch_orders o1
+            JOIN prefetch_orders o2 ON o1.customer_id = o2.customer_id
+            WHERE o1.customer_id BETWEEN 5000 AND 5100
+              AND o1.order_date BETWEEN '2023-06-01' AND '2023-06-30'
+              AND o2.order_date BETWEEN '2023-01-01' AND '2023-03-31'
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.MR1.gucs]
+enable_hashjoin = "off"
+enable_nestloop = "off"
+
+[queries.MR2]
+name = "MergeJoin mark/restore, self-join, 501 groups, ~10 inner rows/group, high restore frequency"
+sql = """
+
+            SELECT count(*)
+            FROM prefetch_orders o1
+            JOIN prefetch_orders o2 ON o1.customer_id = o2.customer_id
+            WHERE o1.customer_id BETWEEN 5000 AND 5500
+              AND o1.order_date BETWEEN '2023-06-01' AND '2023-06-30'
+              AND o2.order_date BETWEEN '2023-01-01' AND '2023-01-15'
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.MR2.gucs]
+enable_hashjoin = "off"
+enable_nestloop = "off"
+
+[queries.MR3]
+name = "MR1 plain index scan variant"
+sql = """
+
+            SELECT count(*)
+            FROM prefetch_orders o1
+            JOIN prefetch_orders o2 ON o1.customer_id = o2.customer_id
+            WHERE o1.customer_id BETWEEN 5000 AND 5100
+              AND o1.order_date BETWEEN '2023-06-01' AND '2023-06-30'
+              AND o2.order_date BETWEEN '2023-01-01' AND '2023-03-31'
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.MR3.gucs]
+enable_hashjoin = "off"
+enable_nestloop = "off"
+enable_indexonlyscan = "off"
+
+[queries.MR4]
+name = "MR2 plain index scan variant"
+sql = """
+
+            SELECT count(*)
+            FROM prefetch_orders o1
+            JOIN prefetch_orders o2 ON o1.customer_id = o2.customer_id
+            WHERE o1.customer_id BETWEEN 5000 AND 5500
+              AND o1.order_date BETWEEN '2023-06-01' AND '2023-06-30'
+              AND o2.order_date BETWEEN '2023-01-01' AND '2023-01-15'
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.MR4.gucs]
+enable_hashjoin = "off"
+enable_nestloop = "off"
+enable_indexonlyscan = "off"
+
+# --- Zero-row rescan tests ---
+# These test the per-rescan overhead of the prefetch machinery when the
+# inner index scan frequently finds 0 rows.  The setup/teardown cost of
+# the read stream dominates when there is no actual IO benefit.
+[queries.ZR1]
+name = "LATERAL, 1001 rescans, ~32% find 0 rows (single-date probe per customer)"
+sql = """
+
+            SELECT c.customer_id, o.order_id, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+                SELECT order_id, amount
+                FROM prefetch_orders
+                WHERE customer_id = c.customer_id
+                  AND order_date = '2023-06-15'
+            ) o
+            WHERE c.customer_id BETWEEN 1000 AND 2000
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.ZR2]
+name = "NOT EXISTS, 5001 rescans, ~32% find 0 rows, pure per-rescan overhead"
+sql = """
+
+            SELECT count(*)
+            FROM prefetch_customers c
+            WHERE c.customer_id BETWEEN 1000 AND 6000
+              AND NOT EXISTS (
+                  SELECT 1 FROM prefetch_orders o
+                  WHERE o.customer_id = c.customer_id
+                    AND o.order_date = '2023-06-15'
+              )
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+index_only = true
+
+# Adversarial queries
+[queries.A1]
+name = "Sequential heap access (adversarial)"
+sql = """
+
+            SELECT * FROM prefetch_sequential
+            WHERE id BETWEEN 1 AND 200000
+            ORDER BY id
+        """
+evict = [
+    "prefetch_sequential",
+]
+prewarm_indexes = [
+    "prefetch_sequential_idx",
+]
+prewarm_tables = [
+    "prefetch_sequential",
+]
+setup_table = "prefetch_sequential"
+
+[queries.A3]
+name = "High cache hit ratio, plain index scan"
+sql = """
+
+            SELECT * FROM prefetch_orders
+            WHERE customer_id = 1
+              AND order_date BETWEEN '2023-01-01' AND '2023-12-31'
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A4]
+name = "Early LIMIT termination plain index scan (adversarial)"
+sql = """
+
+            SELECT * FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-01-01' AND '2023-12-31'
+            ORDER BY order_date
+            LIMIT 10
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A5]
+name = "Sparse - 1 TID per block (adversarial)"
+sql = """
+
+            SELECT id, category FROM prefetch_sparse
+            WHERE category BETWEEN 10 AND 20
+        """
+evict = [
+    "prefetch_sparse",
+]
+prewarm_indexes = [
+    "prefetch_sparse_cat_idx",
+]
+prewarm_tables = [
+    "prefetch_sparse",
+]
+setup_table = "prefetch_sparse"
+
+[queries.A6]
+name = "NL inner with LIMIT 1 (adversarial)"
+sql = """
+
+            SELECT c.customer_name, (
+              SELECT amount FROM prefetch_orders o
+              WHERE o.customer_id = c.customer_id
+              ORDER BY o.order_date DESC
+              LIMIT 1
+            )
+            FROM prefetch_customers c
+            WHERE c.customer_id BETWEEN 1000 AND 2000
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A7]
+name = "Index Only Scan (adversarial)"
+sql = """
+
+            SELECT c.customer_id, c.customer_name
+            FROM prefetch_customers c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM prefetch_orders o
+              WHERE o.customer_id = c.customer_id
+                AND o.order_date BETWEEN '2023-12-01' AND '2023-12-31'
+            )
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A8]
+name = "LATERAL regression, nestloop join with limit on inner size, both sides use plain index scans"
+sql = """
+
+            SELECT c.customer_id, o.order_id, o.order_date, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+            SELECT order_id, order_date, amount
+            FROM prefetch_orders
+            WHERE customer_id = c.customer_id
+            AND order_date BETWEEN '2023-05-01' AND '2023-05-20'
+
+            ORDER BY order_date
+            LIMIT 3
+            ) o
+            WHERE c.customer_id BETWEEN 42976 AND 43285
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A9]
+name = "Found a bug in hold-onto-pin-after-all IoS fix"
+sql = """
+
+            SELECT order_date, count(*) as cnt
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-11-21' AND '2023-12-01'
+
+            GROUP BY order_date
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A10]
+name = "regression: LATERAL, outer index-only scan, inner side plain index scan backwards"
+sql = """
+
+            SELECT c.customer_id, o.order_id, o.order_date, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+            SELECT order_id, order_date, amount
+            FROM prefetch_orders
+            WHERE customer_id = c.customer_id
+            AND order_date BETWEEN '2023-11-05' AND '2023-11-06'
+
+            ORDER BY order_date DESC
+            LIMIT 3
+            ) o
+            WHERE c.customer_id BETWEEN 67633 AND 68569
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A11]
+name = "Merge Anti Join regression, index-only scan on outer side, plain index scan on inner side"
+sql = """
+
+            SELECT o.customer_id, o.order_date
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-04-16' AND '2023-05-01'
+            AND o.customer_id BETWEEN 46586 AND 47418
+            AND NOT EXISTS (
+            SELECT 1 FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id
+            AND c.region_id = 14
+            )
+            ORDER BY o.order_date
+            LIMIT 37895
+        """
+evict = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+
+[queries.A12]
+name = "Merge Anti Join regression, index-only"
+sql = """
+
+            SELECT o.customer_id, o.order_date
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-10-21' AND '2023-10-23'
+            AND o.customer_id BETWEEN 15454 AND 23078
+            AND NOT EXISTS (
+            SELECT 1 FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id
+            AND c.region_id = 18
+            )
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A13]
+name = "New index-only scan aggregate regression"
+sql = """
+
+            SELECT order_date, count(*) as cnt
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-02-18' AND '2023-02-28'
+
+            GROUP BY order_date
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A14]
+name = "Regressed range-scan, index-only"
+sql = """
+
+            SELECT product_id
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 3787 AND 6238
+            ORDER BY product_id
+            LIMIT 49763
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A15]
+name = "regressed anti-join, index-only"
+sql = """
+
+            SELECT o.customer_id, o.order_date
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-02-09' AND '2023-02-23'
+            AND o.customer_id BETWEEN 36307 AND 37126
+            AND NOT EXISTS (
+            SELECT 1 FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id
+            AND c.region_id = 4
+            )
+            ORDER BY o.order_date
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A16]
+name = "correlated query with sort, index scan, and index scan subplan, regressed with --cache mode only"
+sql = """
+
+            SELECT o.order_id, o.customer_id, o.amount,
+            (SELECT c.customer_name FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id) as cust_name
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-01-27' AND '2023-04-11'
+            AND o.customer_id BETWEEN 77305 AND 77845
+            ORDER BY o.order_date
+        """
+evict = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+
+[queries.A17]
+name = "regressed aggregate index-only scan"
+sql = """
+
+            SELECT order_date, count(*) as cnt
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-11-15' AND '2023-11-17'
+
+            GROUP BY order_date
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A18]
+name = "Stress #416: LATERAL, backwards, plain scans on both sides, Limit above inner node"
+sql = """
+
+            SELECT c.customer_id, o.order_id, o.order_date, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+            SELECT order_id, order_date, amount
+            FROM prefetch_orders
+            WHERE customer_id = c.customer_id
+            AND order_date BETWEEN '2023-08-06' AND '2023-08-19'
+
+            ORDER BY order_date DESC
+            LIMIT 5
+            ) o
+            WHERE c.customer_id BETWEEN 74197 AND 75043
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A19]
+name = "Stress #1041: range-scan, index-only"
+sql = """
+
+            SELECT customer_id, order_date
+            FROM prefetch_orders
+            WHERE customer_id BETWEEN 91411 AND 91684
+            AND order_date BETWEEN '2023-02-15' AND '2023-02-23'
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A20]
+name = "1.087x slower than master anti-join, outer side index filter qual excludes many rows, LIMIT can't get pushed under join"
+sql = """
+
+            SELECT o.order_id, o.customer_id, o.amount
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-11-16' AND '2023-11-30'
+            AND o.customer_id BETWEEN 71079 AND 71939
+            AND NOT EXISTS (
+            SELECT 1 FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id
+            AND c.region_id = 18
+            )
+            ORDER BY o.order_date
+            LIMIT 2
+        """
+evict = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+
+[queries.A21]
+name = "correlated query, index scan, and index scan subplan, regressed 1.063x with --cache"
+sql = """
+
+            SELECT o.order_id, o.customer_id, o.amount,
+            (SELECT c.customer_name FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id) as cust_name
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-05-30' AND '2023-06-08'
+            AND o.customer_id BETWEEN 82712 AND 83606
+        """
+evict = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+
+[queries.A22]
+name = "correlated query, index scan, and index scan subplan, regressed 1.072x with --cache"
+sql = """
+
+            SELECT o.order_id, o.customer_id, o.amount,
+            (SELECT c.customer_name FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id) as cust_name
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-10-07' AND '2023-12-08'
+            AND o.customer_id BETWEEN 27730 AND 28371
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A23]
+name = "regressed uncached aggregate index-only scan"
+sql = """
+
+            SELECT order_date, count(*) as cnt
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-09-22' AND '2023-10-07'
+
+            GROUP BY order_date
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A24]
+name = "regressed range-scan, index-only #1"
+sql = """
+
+            SELECT product_id
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 2944 AND 3177
+            ORDER BY product_id
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A25]
+name = "regressed range-scan, index-only #2"
+sql = """
+
+            SELECT order_date
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-10-10' AND '2023-10-12'
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A26]
+name = "LATERAL, once broke LIMIT heuristic, nestloop join with plain scans on both sides"
+sql = """
+
+            SELECT c.customer_id, o.order_id, o.order_date, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+            SELECT order_id, order_date, amount
+            FROM prefetch_orders
+            WHERE customer_id = c.customer_id
+            AND order_date BETWEEN '2023-09-09' AND '2023-10-16'
+
+            ORDER BY order_date
+            LIMIT 10
+            ) o
+            WHERE c.customer_id BETWEEN 10634 AND 10636
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A27]
+name = "Merge join, 2 extra buffer hits on inner plain index scan, problem with --cached"
+sql = """
+
+            SELECT o.order_id, p.product_name, o.amount, o.order_date
+            FROM prefetch_orders o
+            JOIN prefetch_products p ON p.product_id = o.product_id
+            WHERE o.product_id BETWEEN 705 AND 714
+            AND o.order_date BETWEEN '2023-09-11' AND '2023-11-07'
+            ORDER BY o.order_date
+        """
+evict = [
+    "prefetch_products",
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+    "prefetch_products_pkey",
+]
+prewarm_tables = [
+    "prefetch_products",
+    "prefetch_orders",
+]
+
+[queries.A28]
+name = "Regressed plain index range-scan, problem with --cached, about 1.023x"
+sql = """
+
+            SELECT order_id, product_id, amount
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 7445 AND 7453
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A29]
+name = "Stress #15: correlated"
+sql = """
+
+            SELECT o.order_id, o.customer_id, o.amount,
+            (SELECT c.customer_name FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id) as cust_name
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-01-02' AND '2023-02-18'
+            AND o.customer_id BETWEEN 76340 AND 76504
+            ORDER BY o.order_date
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A30]
+name = "Stress #142: aggregate, filter"
+sql = """
+
+            SELECT order_date, sum(amount) as total
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-01-27' AND '2023-01-29'
+            AND amount BETWEEN 495 AND 894
+            GROUP BY order_date
+            ORDER BY order_date
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A31]
+name = "Stress #34: range-scan"
+sql = """
+
+            SELECT order_id, product_id, amount
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 3254 AND 3262
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A32]
+name = "Stress #89: range-scan"
+sql = """
+
+            SELECT order_id, product_id, amount
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 291 AND 514
+            ORDER BY product_id
+            LIMIT 27953
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A33]
+name = "Stress #1295: range-scan"
+sql = """
+
+            SELECT order_id, product_id, amount
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 4305 AND 8368
+            ORDER BY product_id
+            LIMIT 25205
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A34]
+name = "Stress #263: range-scan, filter"
+sql = """
+
+            SELECT order_id, product_id, amount
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 4239 AND 4403
+            AND amount BETWEEN 150 AND 417
+            ORDER BY product_id
+            LIMIT 10
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A35]
+name = "Regression when noncached, lateral join with inner plain scan, outer index-only scan"
+sql = """
+
+            SELECT c.customer_id, o.order_id, o.order_date, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+            SELECT order_id, order_date, amount
+            FROM prefetch_orders
+            WHERE customer_id = c.customer_id
+            AND order_date BETWEEN '2023-04-29' AND '2023-05-15'
+
+            ORDER BY order_date
+            LIMIT 9
+            ) o
+            WHERE c.customer_id BETWEEN 97085 AND 97089
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A36]
+name = "Scattered scan + moderate LIMIT 50 (prefetch starts before LIMIT bites)"
+sql = """
+
+            SELECT * FROM prefetch_orders
+            WHERE customer_id = 12345
+            ORDER BY order_date
+            LIMIT 50
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A37]
+name = "Scattered scan + tight LIMIT 16 (prefetch starts before LIMIT bites)"
+sql = """
+
+            SELECT * FROM prefetch_orders
+            WHERE customer_id = 12345
+            ORDER BY order_date
+            LIMIT 16
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A38]
+name = "Large cache-hot scattered scan (stream overhead, no I/O to hide)"
+sql = """
+
+            SELECT * FROM prefetch_orders
+            WHERE customer_id IN (12345, 23456, 34567, 45678, 56789)
+            ORDER BY customer_id
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+
+[queries.A39]
+name = "range-scan, index-only, after v28 was posted"
+sql = """
+
+            SELECT product_id
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 867 AND 3129
+            ORDER BY product_id ASC
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+# Controlled contrast for A39: same table, ~same row count (11.3M), cached,
+# all-visible IOS, but over order_id (unique, sequential heap -> VM-block
+# cache in heapam_index_batch_pos_visibility hits constantly). A39 scans
+# product_id (low-card, dedup off, heap TIDs scattered across the whole
+# heap -> VM cache never hits).
+[queries.A40]
+name = "range-scan, index-only, order_id (unique, sequential heap)"
+sql = """
+
+            SELECT order_id
+            FROM prefetch_orders
+            WHERE order_id BETWEEN 1 AND 11315000
+            ORDER BY order_id ASC
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_id_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
+
+[queries.A41]
+name = "LIMIT 4, breaks INDEX_PREFETCH_BLKSWITCH_THRESHOLD=4 heuristic"
+sql = """
+
+            SELECT c.customer_id, o.order_id, o.order_date, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+            SELECT order_id, order_date, amount
+            FROM prefetch_orders
+            WHERE customer_id = c.customer_id
+            AND order_date BETWEEN '2023-11-26' AND '2023-11-28'
+
+            ORDER BY order_date
+            LIMIT 4
+            ) o
+            WHERE c.customer_id BETWEEN 36599 AND 42721
+        """
+evict = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_orders",
+    "prefetch_customers",
+]
+
+[queries.A42]
+name = "Stress #781: JOIN, filter, merge-forced, single-date"
+sql = """
+
+            SELECT o.order_id, c.customer_name, o.amount, o.order_date
+            FROM prefetch_orders o
+            JOIN prefetch_customers c ON c.customer_id = o.customer_id
+            WHERE o.customer_id BETWEEN 8453 AND 8456
+            AND o.order_date = '2023-06-05'
+            AND o.amount > 384
+            ORDER BY o.order_date
+            LIMIT 4
+        """
+evict = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_cust_date_idx",
+    "prefetch_customers_pkey",
+]
+prewarm_tables = [
+    "prefetch_customers",
+    "prefetch_orders",
+]
+
+[queries.A42.gucs]
+enable_hashjoin = "off"
+enable_nestloop = "off"
+
+# This seems to be a regression against master but not rel18:
+[queries.A43]
+name = "Stress #206: range-scan, index-only, single-date"
+sql = """
+
+            SELECT product_id
+            FROM prefetch_orders
+            WHERE product_id BETWEEN 3198 AND 7345
+            ORDER BY product_id
+        """
+evict = [
+    "prefetch_orders",
+]
+prewarm_indexes = [
+    "prefetch_orders_prod_idx",
+]
+prewarm_tables = [
+    "prefetch_orders",
+]
+index_only = true
