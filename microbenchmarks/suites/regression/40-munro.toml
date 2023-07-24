@@ -1,0 +1,63 @@
+# --- Thomas Munro mid-January regression test queries ---
+# Cold-run regression with fillfactor=90, semi-random tuple layout.
+# MU1 (forward) relies on low io_combine_limit to compete with master.
+# MU2 (backward) big win against master, no matter the io_combine_limit.
+
+[suite]
+mode_prefix = "munro"
+order = 40
+cli_flag = "--munro"
+cli_dest = "munro_tests"
+help = "Run Thomas Munro mid-January regression benchmark (cold-run regression test)"
+title = "Thomas Munro mid-January Regression Benchmark"
+tables = [
+    "t_munro",
+]
+setup_sql_file = "40-munro.sql"
+row_description = "10M rows"
+
+[queries.MU1]
+name = "Thomas Munro mid-January regression, forward index scan (needs low io_combine_limit to not regress)"
+sql = """
+
+            SELECT a FROM t_munro
+            WHERE a BETWEEN 19440 AND 2068015
+            ORDER BY a ASC
+        """
+evict = [
+    "t_munro",
+]
+prewarm_indexes = [
+    "idx_munro",
+]
+prewarm_tables = [
+    "t_munro",
+]
+
+[queries.MU1.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+enable_indexonlyscan = "off"
+
+[queries.MU2]
+name = "Thomas Munro mid-January regression, backward index scan (not affected by io_combine_limit issue)"
+sql = """
+
+            SELECT a FROM t_munro
+            WHERE a BETWEEN 19440 AND 2068015
+            ORDER BY a DESC
+        """
+evict = [
+    "t_munro",
+]
+prewarm_indexes = [
+    "idx_munro",
+]
+prewarm_tables = [
+    "t_munro",
+]
+
+[queries.MU2.gucs]
+enable_bitmapscan = "off"
+enable_seqscan = "off"
+enable_indexonlyscan = "off"
