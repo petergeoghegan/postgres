@@ -1,0 +1,189 @@
+set enable_indexonlyscan to off;
+set enable_seqscan to off;
+set enable_indexscan to off;
+set enable_bitmapscan to on;
+-- set skipscan_skipsupport_enabled=false;
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '3', false);
+ set_config 
+------------
+ 3
+(1 row)
+
+set statement_timeout='4s';
+-- (September 22 2024)
+--
+-- Sunday after Andrew's birthday.  Test case proved that I was right to be
+-- paranoid about reusing NEXTPRIOR flag for backwards and forwards scans --
+-- it is indeed subtly broken.
+--
+-- What if the scan changes direction, and "5 + infinitesimal" becomes
+-- "5 - infinitesimal" without our intending it?  That wouldn't be obviously
+-- broken in most cases, but it would be broken if the scan happened to have a
+-- lower-order SAOP array mixed in.
+set work_mem = 64;
+set enable_sort = off;
+-- (September 22 2024)
+--
+-- Sunday after Andrew's birthday.  Test case proved that I was right to be
+-- paranoid about reusing NEXTPRIOR flag for backwards and forwards scans --
+-- it is indeed subtly broken.
+--
+-- What if the scan changes direction, and "5 + infinitesimal" becomes
+-- "5 - infinitesimal" without our intending it?  That wouldn't be obviously
+-- broken in most cases, but it would be broken if the scan happened to have a
+-- lower-order SAOP array mixed in.
+set work_mem = 64;
+set enable_sort = off;
+-- Index scan:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+set client_min_messages=error;
+drop table if exists nextprior_duplicate_test;
+reset client_min_messages;
+create unlogged table nextprior_duplicate_test(dup numeric, dups_per_val numeric);
+create index nextprior_test_idx on nextprior_duplicate_test (dup, dups_per_val);
+insert into nextprior_duplicate_test(dup, dups_per_val)
+select val, dups_per_val from generate_series(1, 20) val,
+                generate_series(1,900) dups_per_val;
+vacuum analyze nextprior_duplicate_test; -- Be tidy
+begin;
+declare nextprior_cursor cursor for
+select * from nextprior_duplicate_test where dups_per_val in (1, 450) order by dup, dups_per_val;
+fetch forward 2 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   1 |            1
+   1 |          450
+(2 rows)
+
+fetch forward 2 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   2 |            1
+   2 |          450
+(2 rows)
+
+fetch forward 2 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   3 |            1
+   3 |          450
+(2 rows)
+
+-- First wrong answer was seen here with initial failing test:
+fetch backward 1 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   3 |            1
+(1 row)
+
+-- Note: this line hit the familiar "precheck has invalid array keys"
+-- assertion failure from the top of _bt_checkkeys, too:
+-- TRAP: failed Assert("!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc, tupnatts, false, 0, NULL)")
+-- Naturally, these were also wrong, since the state of the array keys is now
+-- corrupt:
+fetch backward 1 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   2 |          450
+(1 row)
+
+fetch forward 1 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   3 |            1
+(1 row)
+
+fetch forward 1 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   3 |          450
+(1 row)
+
+fetch forward 1 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   4 |            1
+(1 row)
+
+fetch forward 1 from nextprior_cursor;
+ dup | dups_per_val 
+-----+--------------
+   4 |          450
+(1 row)
+
+/* nextprior_cursor  */ commit;
+-- (September 23) DESC variant
+--
+-- Same again, but this time use "order by dup desc, dups_per_val desc".  This
+-- can independently fail; it adds coverage for _bt_tuple_before_array_skeys
+-- code path where the initial scan order was forward, and then becomes
+-- backward due to cursor direction changing (original tested the opposite
+-- transition, from forward direction to backward direction)
+begin;
+declare nextprior_cursor_desc cursor for
+select * from nextprior_duplicate_test where dups_per_val in (450, 899)
+order by dup desc, dups_per_val desc;
+fetch forward 2 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  20 |          899
+  20 |          450
+(2 rows)
+
+fetch forward 2 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  19 |          899
+  19 |          450
+(2 rows)
+
+fetch forward 2 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  18 |          899
+  18 |          450
+(2 rows)
+
+-- First wrong answer was seen here, just like original "order by dup asc,
+-- dups_per_val asc" version:
+fetch backward 1 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  18 |          899
+(1 row)
+
+-- Naturally, these were also wrong, since the state of the array keys is now
+-- corrupt:
+fetch backward 1 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  19 |          450
+(1 row)
+
+fetch forward 1 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  18 |          899
+(1 row)
+
+fetch forward 1 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  18 |          450
+(1 row)
+
+fetch forward 1 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  17 |          899
+(1 row)
+
+fetch forward 1 from nextprior_cursor_desc;
+ dup | dups_per_val 
+-----+--------------
+  17 |          450
+(1 row)
+
+/* nextprior_cursor_desc  */ commit;
