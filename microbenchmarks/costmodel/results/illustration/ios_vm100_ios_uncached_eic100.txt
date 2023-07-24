@@ -1,0 +1,9 @@
+-- SELECT id FROM t_sparse_ios WHERE id BETWEEN 50001 AND 130000
+-- ios, vm100, uncached_eic100
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..2512.50 rows=81004 width=4) (actual time=0.011..7.334 rows=80000.00 loops=1)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+  Heap Fetches: 0
+  Index Searches: 1
+  Buffers: shared hit=67438
+Planning Time: 0.027 ms
+Execution Time: 8.205 ms

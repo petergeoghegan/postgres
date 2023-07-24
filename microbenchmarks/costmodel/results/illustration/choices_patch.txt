@@ -1,0 +1,32 @@
+-- t_dups eic=16 (patch)
+Index Scan using t_dups_grp on t_dups  (cost=0.43..239713.44 rows=1021111 width=117)
+  Index Cond: ((grp >= 40001) AND (grp <= 55625))
+
+-- t_dups eic=100 (patch)
+Index Scan using t_dups_grp on t_dups  (cost=0.43..211088.25 rows=1021111 width=117)
+  Index Cond: ((grp >= 40001) AND (grp <= 55625))
+
+-- t_runs eic=16 (patch)
+Index Scan using t_runs_id on t_runs  (cost=0.43..247006.98 rows=1003799 width=117)
+  Index Cond: ((id >= 2500001) AND (id <= 3500000))
+
+-- t_runs eic=100 (patch)
+Index Scan using t_runs_id on t_runs  (cost=0.43..218381.82 rows=1003799 width=117)
+  Index Cond: ((id >= 2500001) AND (id <= 3500000))
+
+-- t_sparse eic=16 (patch)
+Index Scan using t_sparse_id on t_sparse  (cost=0.42..24435.70 rows=20033 width=708)
+  Index Cond: ((id >= 50001) AND (id <= 70000))
+
+-- t_sparse eic=100 (patch)
+Index Scan using t_sparse_id on t_sparse  (cost=0.42..21289.98 rows=20033 width=708)
+  Index Cond: ((id >= 50001) AND (id <= 70000))
+
+-- t_sparse_ios_vm40 eic=16 (patch)
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..49330.90 rows=78544 width=4)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+
+-- t_sparse_ios_vm40 eic=100 (patch)
+Index Only Scan using t_sparse_ios_id on t_sparse_ios  (cost=0.42..43123.39 rows=78544 width=4)
+  Index Cond: ((id >= 50001) AND (id <= 130000))
+

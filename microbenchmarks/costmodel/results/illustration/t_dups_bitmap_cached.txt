@@ -1,0 +1,17 @@
+-- SELECT * FROM t_dups WHERE grp BETWEEN 40001 AND 55625 ORDER BY grp
+-- bitmap scan, cached
+Sort  (cost=312890.09..315442.86 rows=1021111 width=117) (actual time=213.882..235.692 rows=1000000.00 loops=1)
+  Sort Key: grp
+  Sort Method: quicksort  Memory: 157389kB
+  Buffers: shared hit=32842
+  ->  Bitmap Heap Scan on t_dups  (cost=13838.82..210974.49 rows=1021111 width=117) (actual time=19.253..95.275 rows=1000000.00 loops=1)
+        Recheck Cond: ((grp >= 40001) AND (grp <= 55625))
+        Heap Blocks: exact=32017
+        Prefetch: avg=1.00 max=1 capacity=1616
+        Buffers: shared hit=32842
+        ->  Bitmap Index Scan on t_dups_grp  (cost=0.00..13583.55 rows=1021111 width=0) (actual time=15.161..15.161 rows=1000000.00 loops=1)
+              Index Cond: ((grp >= 40001) AND (grp <= 55625))
+              Index Searches: 1
+              Buffers: shared hit=825
+Planning Time: 0.064 ms
+Execution Time: 260.508 ms

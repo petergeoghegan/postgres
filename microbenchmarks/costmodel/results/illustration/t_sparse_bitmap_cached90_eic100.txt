@@ -1,0 +1,18 @@
+-- SELECT * FROM t_sparse WHERE id BETWEEN 50001 AND 70000 ORDER BY id
+-- bitmap, 90% of heap pages in shared_buffers, eic=100
+Sort  (cost=60796.74..60846.83 rows=20033 width=708) (actual time=31.117..32.682 rows=20000.00 loops=1)
+  Sort Key: id
+  Sort Method: quicksort  Memory: 14987kB
+  Buffers: shared hit=18040 read=2018
+  ->  Bitmap Heap Scan on t_sparse  (cost=429.76..59365.38 rows=20033 width=708) (actual time=3.773..29.058 rows=20000.00 loops=1)
+        Recheck Cond: ((id >= 50001) AND (id <= 70000))
+        Heap Blocks: exact=20000
+        Prefetch: avg=501.17 max=511 capacity=1616
+        I/O: count=1992 waits=13 size=1.01 in-progress=50.90
+        Buffers: shared hit=18040 read=2018
+        ->  Bitmap Index Scan on t_sparse_id  (cost=0.00..424.75 rows=20033 width=0) (actual time=1.362..1.362 rows=20000.00 loops=1)
+              Index Cond: ((id >= 50001) AND (id <= 70000))
+              Index Searches: 1
+              Buffers: shared hit=58
+Planning Time: 0.063 ms
+Execution Time: 32.916 ms

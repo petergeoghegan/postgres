@@ -1,0 +1,18 @@
+-- SELECT * FROM t_runs WHERE id BETWEEN 2500001 AND 3500000 ORDER BY id
+-- bitmap, 90% of heap pages in shared_buffers, eic=100
+Sort  (cost=318241.26..320750.76 rows=1003799 width=117) (actual time=228.063..247.139 rows=1000000.00 loops=1)
+  Sort Key: id
+  Sort Method: quicksort  Memory: 157389kB
+  Buffers: shared hit=23061 read=2334
+  ->  Bitmap Heap Scan on t_runs  (cost=21301.37..218177.36 rows=1003799 width=117) (actual time=24.331..98.831 rows=1000000.00 loops=1)
+        Recheck Cond: ((id >= 2500001) AND (id <= 3500000))
+        Heap Blocks: exact=22660
+        Prefetch: avg=60.64 max=63 capacity=1616
+        I/O: count=2147 waits=6 size=1.09 in-progress=6.54
+        Buffers: shared hit=23061 read=2334
+        ->  Bitmap Index Scan on t_runs_id  (cost=0.00..21050.43 rows=1003799 width=0) (actual time=21.436..21.437 rows=1000000.00 loops=1)
+              Index Cond: ((id >= 2500001) AND (id <= 3500000))
+              Index Searches: 1
+              Buffers: shared hit=2735
+Planning Time: 0.060 ms
+Execution Time: 271.020 ms
