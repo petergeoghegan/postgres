@@ -1,0 +1,650 @@
+set enable_seqscan = off;
+set max_parallel_workers_per_gather=0;
+\getenv abs_srcdir PG_ABS_SRCDIR
+-- Set log_btree_verbosity to 1 without depending on having that patch
+-- applied (HACK, just sets commit_siblings instead when we don't have that
+-- patch available):
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '1', false);
+ set_config 
+------------
+ 1
+(1 row)
+
+set client_min_messages=debug1;
+select count(*) from skiptest where b=1;
+DEBUG:  relation "skiptest" does not exist
+LINE 1: select count(*) from skiptest where b=1;
+                             ^
+ERROR:  relation "skiptest" does not exist
+LINE 1: select count(*) from skiptest where b=1;
+                             ^
+SELECT * FROM test_one_int_int WHERE id2 = 1;
+DEBUG:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_one_int_int WHERE id2 = 501;
+DEBUG:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_one_int_int WHERE id2 = 900;
+DEBUG:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_one_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+ERROR:  relation "test_one_int_int" does not exist
+LINE 1: SELECT * FROM test_one_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+SELECT * FROM test_one_int_int_sequential WHERE id2 = 1;
+DEBUG:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 = 1;
+                      ^
+SELECT * FROM test_one_int_int_sequential WHERE id2 = 501;
+DEBUG:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 = 501;
+                      ^
+SELECT * FROM test_one_int_int_sequential WHERE id2 = 900;
+DEBUG:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 = 900;
+                      ^
+SELECT * FROM test_one_int_int_sequential WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 IN (0, 1...
+                      ^
+ERROR:  relation "test_one_int_int_sequential" does not exist
+LINE 1: SELECT * FROM test_one_int_int_sequential WHERE id2 IN (0, 1...
+                      ^
+SELECT * FROM test_five_int_int WHERE id2 = 1;
+DEBUG:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_five_int_int WHERE id2 = 501;
+DEBUG:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_five_int_int WHERE id2 = 900;
+DEBUG:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_five_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+ERROR:  relation "test_five_int_int" does not exist
+LINE 1: SELECT * FROM test_five_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+SELECT * FROM test_ten_int_int WHERE id2 = 1;
+DEBUG:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_ten_int_int WHERE id2 = 501;
+DEBUG:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_ten_int_int WHERE id2 = 900;
+DEBUG:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_ten_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+ERROR:  relation "test_ten_int_int" does not exist
+LINE 1: SELECT * FROM test_ten_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+SELECT * FROM test_fifteen_int_int WHERE id2 = 1;
+DEBUG:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_fifteen_int_int WHERE id2 = 501;
+DEBUG:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_fifteen_int_int WHERE id2 = 900;
+DEBUG:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_fifteen_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+ERROR:  relation "test_fifteen_int_int" does not exist
+LINE 1: SELECT * FROM test_fifteen_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+SELECT * FROM test_seventeen_int_int WHERE id2 = 1;
+DEBUG:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_seventeen_int_int WHERE id2 = 501;
+DEBUG:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_seventeen_int_int WHERE id2 = 900;
+DEBUG:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_seventeen_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 IN (0, 1, 900...
+                      ^
+ERROR:  relation "test_seventeen_int_int" does not exist
+LINE 1: SELECT * FROM test_seventeen_int_int WHERE id2 IN (0, 1, 900...
+                      ^
+SELECT * FROM test_twenty_int_int WHERE id2 = 1;
+DEBUG:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_twenty_int_int WHERE id2 = 501;
+DEBUG:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_twenty_int_int WHERE id2 = 900;
+DEBUG:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_twenty_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+ERROR:  relation "test_twenty_int_int" does not exist
+LINE 1: SELECT * FROM test_twenty_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+SELECT * FROM test_twentyfive_int_int WHERE id2 = 1;
+DEBUG:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_twentyfive_int_int WHERE id2 = 501;
+DEBUG:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_twentyfive_int_int WHERE id2 = 900;
+DEBUG:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_twentyfive_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 IN (0, 1, 90...
+                      ^
+ERROR:  relation "test_twentyfive_int_int" does not exist
+LINE 1: SELECT * FROM test_twentyfive_int_int WHERE id2 IN (0, 1, 90...
+                      ^
+SELECT * FROM test_fifty_int_int WHERE id2 = 1;
+DEBUG:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_fifty_int_int WHERE id2 = 501;
+DEBUG:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_fifty_int_int WHERE id2 = 900;
+DEBUG:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_fifty_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+ERROR:  relation "test_fifty_int_int" does not exist
+LINE 1: SELECT * FROM test_fifty_int_int WHERE id2 IN (0, 1, 900);
+                      ^
+SELECT * FROM test_five_hundred_int_int WHERE id2 = 1;
+DEBUG:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 = 1;
+                      ^
+ERROR:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 = 1;
+                      ^
+SELECT * FROM test_five_hundred_int_int WHERE id2 = 501;
+DEBUG:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 = 501;
+                      ^
+ERROR:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 = 501;
+                      ^
+SELECT * FROM test_five_hundred_int_int WHERE id2 = 900;
+DEBUG:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 = 900;
+                      ^
+ERROR:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 = 900;
+                      ^
+SELECT * FROM test_five_hundred_int_int WHERE id2 IN (0, 1, 900);
+DEBUG:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 IN (0, 1, ...
+                      ^
+ERROR:  relation "test_five_hundred_int_int" does not exist
+LINE 1: SELECT * FROM test_five_hundred_int_int WHERE id2 IN (0, 1, ...
+                      ^
+select * from test_multirange where a = 42 and c = 1;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a = 42 and c = 1;
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a = 42 and c = 1;
+                      ^
+select * from test_multirange where a = 42 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a = 42 and c = 1 order b...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a = 42 and c = 1 order b...
+                      ^
+select * from test_multirange where a between 0 and 42 and b between 0 and 1_000_000 and c = 1;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and b...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and b...
+                      ^
+select * from test_multirange where a between 0 and 42 and b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and b...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and b...
+                      ^
+select * from test_multirange where a between 0 and 42 and c = 1;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and c...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and c...
+                      ^
+select * from test_multirange where a between 0 and 42 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and c...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where a between 0 and 42 and c...
+                      ^
+select * from test_multirange where b between 0 and 1_000_000 and c = 1;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1_000_00...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1_000_00...
+                      ^
+select * from test_multirange where b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1_000_00...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1_000_00...
+                      ^
+select * from test_multirange where b between 0 and 1 and c = 1;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1 and c ...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1 and c ...
+                      ^
+select * from test_multirange where b between 0 and 1 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1 and c ...
+                      ^
+ERROR:  relation "test_multirange" does not exist
+LINE 1: select * from test_multirange where b between 0 and 1 and c ...
+                      ^
+select * from test_multirange_allhighcardinality where a = 42 and c = 1;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a = 4...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a = 4...
+                      ^
+select * from test_multirange_allhighcardinality where a = 42 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a = 4...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a = 4...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42 and b between 0 and 1_000_000 and c = 1;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42 and b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42 and c = 1;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42 and b = 555;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 42 and b = 555 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and b = 555;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and b = 555 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and c = 555;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where a between 0 and 1_000_000 and c = 555 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where a bet...
+                      ^
+select * from test_multirange_allhighcardinality where b between 0 and 1_000_000 and c = 1;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+select * from test_multirange_allhighcardinality where b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+select * from test_multirange_allhighcardinality where b between 0 and 1 and c = 1;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+select * from test_multirange_allhighcardinality where b between 0 and 1 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+select * from test_multirange_allhighcardinality where b between 0 and 1 and c between 0 and 1;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+select * from test_multirange_allhighcardinality where b between 0 and 1 and c between 0 and 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+ERROR:  relation "test_multirange_allhighcardinality" does not exist
+LINE 1: select * from test_multirange_allhighcardinality where b bet...
+                      ^
+select * from test_multirange_medcard where a = 42 and c = 1;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a = 42 and c = 1...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a = 42 and c = 1...
+                      ^
+select * from test_multirange_medcard where a = 42 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a = 42 and c = 1...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a = 42 and c = 1...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42 and b between 0 and 1_000_000 and c = 1;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42 and b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42 and c = 1;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42 and b = 555;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 42 and b = 555 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 1_000_000 and b = 555;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 1_000_000 and b = 555 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 1_000_000 and c = 555;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where a between 0 and 1_000_000 and c = 555 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where a between 0 and ...
+                      ^
+select * from test_multirange_medcard where b between 0 and 1_000_000 and c = 1;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+select * from test_multirange_medcard where b between 0 and 1_000_000 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+select * from test_multirange_medcard where b between 0 and 1 and c = 1;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+select * from test_multirange_medcard where b between 0 and 1 and c = 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+select * from test_multirange_medcard where b between 0 and 1 and c between 0 and 1;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+select * from test_multirange_medcard where b between 0 and 1 and c between 0 and 1 order by a desc, b desc, c desc;
+DEBUG:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
+ERROR:  relation "test_multirange_medcard" does not exist
+LINE 1: select * from test_multirange_medcard where b between 0 and ...
+                      ^
