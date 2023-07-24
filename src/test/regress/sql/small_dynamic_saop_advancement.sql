@@ -1,0 +1,136 @@
+set enable_indexonlyscan to off;
+set enable_seqscan to off;
+set enable_indexscan to off;
+set enable_bitmapscan to on;
+
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '2', false);
+
+set client_min_messages=error;
+drop table if exists multi_test;
+reset client_min_messages;
+
+create unlogged table multi_test(
+  a int,
+  b int
+);
+
+create index multi_test_idx on multi_test(a, b);
+
+insert into multi_test
+select
+  j,
+  case when i < 14 then
+    0
+  else
+    1
+  end
+from
+  generate_series(1, 14) i,
+  generate_series(1, 400) j
+order by
+  j,
+  i;
+
+vacuum analyze multi_test;
+
+-- Looks like this now:
+--
+-- ┌───┬───────┬───────┬────────┬────────┬────────────┬───────┬───────┬───────────────────┬─────────┬───────────┬──────────────┐
+-- │ i │ blkno │ flags │ nhtids │ nhblks │ ndeadhblks │ nlive │ ndead │ nhtidschecksimple │ avgsize │ freespace │   highkey    │
+-- ├───┼───────┼───────┼────────┼────────┼────────────┼───────┼───────┼───────────────────┼─────────┼───────────┼──────────────┤
+-- │ 1 │     1 │     1 │    854 │      4 │          0 │   123 │     0 │                 0 │      55 │       808 │ (a, b)=(62)  │
+-- │ 2 │     2 │     1 │    854 │      5 │          0 │   123 │     0 │                 0 │      55 │       808 │ (a, b)=(123) │
+-- │ 3 │     4 │     1 │    854 │      5 │          0 │   123 │     0 │                 0 │      55 │       808 │ (a, b)=(184) │
+-- │ 4 │     5 │     1 │    854 │      5 │          0 │   123 │     0 │                 0 │      55 │       808 │ (a, b)=(245) │
+-- │ 5 │     6 │     1 │    854 │      4 │          0 │   123 │     0 │                 0 │      55 │       808 │ (a, b)=(306) │
+-- │ 6 │     7 │     1 │    854 │      5 │          0 │   123 │     0 │                 0 │      55 │       808 │ (a, b)=(367) │
+-- │ 7 │     8 │     1 │    476 │      3 │          0 │    80 │     0 │                 0 │      49 │     3,908 │ ∅            │
+-- └───┴───────┴───────┴────────┴────────┴────────────┴───────┴───────┴───────────────────┴─────────┴───────────┴──────────────┘
+--
+-----------------------------------------------------------------------
+
+-- Bitmap index scan:
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+
+select * from multi_test where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11,12);
+select * from multi_test where a in (123, 182, 183) and b in (1,2);
+
+set client_min_messages=error;
+drop table if exists wisconsin;
+reset client_min_messages;
+
+create unlogged table wisconsin
+(
+unique1 int4,
+unique2 int4,
+two int4,
+four int4,
+ten int4,
+twenty int4,
+onepercent int4,
+tenpercent int4,
+twentypercent int4,
+fiftypercent int4,
+unique3 int4,
+evenonepercent int4,
+oddonepercent int4,
+stringu1 text,
+stringu2 text,
+string4 text
+);
+
+\getenv abs_srcdir PG_ABS_SRCDIR
+\set filename :abs_srcdir '/data/wisconsin.csv'
+COPY wisconsin FROM :'filename' with (format csv, encoding 'win1252', header false, null $$$$, quote $$'$$); -- Fix the syntax highlighting: '
+
+-- Ten:
+create index ten_idx on wisconsin (ten, unique1);
+
+-- Range instead of skip attribute on "ten":
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 412 hits
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+
+-----------------------
+-- tenk1 test cases  --
+-----------------------
+set client_min_messages=error;
+drop table if exists tenk1_skipscan;
+reset client_min_messages;
+\getenv abs_srcdir PG_ABS_SRCDIR
+CREATE UNLOGGED TABLE tenk1_skipscan (
+	unique1		int4,
+	unique2		int4,
+	two			int4,
+	four		int4,
+	ten			int4,
+	twenty		int4,
+	hundred		int4,
+	thousand	int4,
+	twothousand	int4,
+	fivethous	int4,
+	tenthous	int4,
+	odd			int4,
+	even		int4,
+	stringu1	name,
+	stringu2	name,
+	string4		name
+);
+ALTER TABLE tenk1_skipscan SET (autovacuum_enabled=off);
+
+\set filename :abs_srcdir '/data/tenk.data'
+COPY tenk1_skipscan FROM :'filename';
+VACUUM ANALYZE tenk1_skipscan;
+
+CREATE INDEX tenk1_skipscan_four_unique1 ON tenk1_skipscan (four, unique1);
+
+prepare tenk1_four_skipscan as
+SELECT hundred, unique1 FROM tenk1_skipscan
+ WHERE unique1 = 444;
+
+execute tenk1_four_skipscan;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 30 hits
+execute tenk1_four_skipscan;
+deallocate tenk1_four_skipscan;
