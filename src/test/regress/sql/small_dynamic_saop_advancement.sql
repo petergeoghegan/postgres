@@ -1,0 +1,86 @@
+--set enable_bitmapscan to off;
+--set enable_indexonlyscan to off;
+--set enable_indexscan to off;
+
+set enable_nestloop to off;
+set enable_hashjoin to off;
+set enable_material to off;
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+set enable_seqscan to off;
+set enable_sort to off;
+
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '0', false);
+--set client_min_messages=debug1;
+
+-- (November 30)
+--
+-- Get test coverage for when so->needPrimScan is set at the point of calling
+-- _bt_restore_array_keys() for backwards scans.  More or less comparable to
+-- the last test.
+set client_min_messages=error;
+drop table if exists backwards_prim_outer_table;
+drop table if exists backwards_restore_buggy_primscan_table;
+reset client_min_messages;
+
+create unlogged table backwards_prim_outer_table             (a int, b int);
+create unlogged table backwards_restore_buggy_primscan_table (x int, y int);
+
+create index backward_prim_buggy_idx  on backwards_restore_buggy_primscan_table (x, y) with (deduplicate_items=off);
+create index backwards_prim_drive_idx on backwards_prim_outer_table             (a, b) with (deduplicate_items=off);
+
+insert into backwards_prim_outer_table                  select 0, 1360;
+insert into backwards_prim_outer_table                  select 1, b_vals from generate_series(1012, 1406) b_vals where b_vals % 10 = 0;
+insert into backwards_prim_outer_table                  select 1, 1370;
+vacuum analyze backwards_prim_outer_table; -- Be tidy
+
+-- Fill up "backwards_prim_drive_idx" index with 396 items, just about fitting
+-- onto its only page, which is a root leaf page:
+insert into backwards_restore_buggy_primscan_table select 0, 1360;
+insert into backwards_restore_buggy_primscan_table select 1, x_vals from generate_series(1012, 1406) x_vals;
+vacuum analyze backwards_restore_buggy_primscan_table; -- Be tidy
+
+-- Now cause two page splits, leaving 4 leaf pages in total:
+insert into backwards_restore_buggy_primscan_table select 1, 1370 from generate_series(1,250) i;
+
+-- Now buggy index looks like this:
+--
+-- ┌───┬───────┬───────┬────────┬────────┬────────────┬───────┬───────┬───────────────────┬─────────┬───────────┬──────────────────┐
+-- │ i │ blkno │ flags │ nhtids │ nhblks │ ndeadhblks │ nlive │ ndead │ nhtidschecksimple │ avgsize │ freespace │     highkey      │
+-- ├───┼───────┼───────┼────────┼────────┼────────────┼───────┼───────┼───────────────────┼─────────┼───────────┼──────────────────┤
+-- │ 1 │     1 │     1 │    203 │      1 │          0 │   204 │     0 │                 0 │      16 │     4,068 │ (x, y)=(1, 1214) │
+-- │ 2 │     4 │     1 │    156 │      2 │          0 │   157 │     0 │                 0 │      16 │     5,008 │ (x, y)=(1, 1370) │
+-- │ 3 │     5 │     1 │    251 │      2 │          0 │   252 │     0 │                 0 │      16 │     3,108 │ (x, y)=(1, 1371) │
+-- │ 4 │     2 │     1 │     36 │      1 │          0 │    36 │     0 │                 0 │      16 │     7,428 │ ∅                │
+-- └───┴───────┴───────┴────────┴────────┴────────────┴───────┴───────┴───────────────────┴─────────┴───────────┴──────────────────┘
+
+prepare backwards_prim_confusion_qry as
+select count(*), o.a, o.b
+  from
+    backwards_prim_outer_table o
+  inner join
+    backwards_restore_buggy_primscan_table bug
+  on o.a = bug.x and o.b = bug.y
+where
+  bug.x in (0, 1) and
+  bug.y = any(array[(select array_agg(i) from generate_series(1360, 1370) i where i % 10 = 0)])
+group by o.a, o.b
+order by o.a desc, o.b desc;
+
+-- These are marks are restores seen for this query:
+--
+-- WARNING:  marking   markPos.currPage: 4294967295, markPos.nextPage: 4294967295, currPos.currPage: 5, currPos.nextPage: 2
+-- WARNING:  marking:  attno: 1, cur_elem/mark_elem: 1 (value 1)
+-- WARNING:  marking:  attno: 2, cur_elem/mark_elem: 1 (value 1370)
+-- WARNING:  restoring markPos.currPage: 5, markPos.nextPage: 2, currPos.currPage: 4, currPos.nextPage: 5
+-- WARNING:            attno: 1, cur_elem: 0 (value 0), mark_elem: 1 (value 1)
+--
+-- (No more interesting mark and restores for this query, the reset omitted
+-- for brevity)
+
+execute backwards_prim_confusion_qry;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute backwards_prim_confusion_qry;
+
+deallocate backwards_prim_confusion_qry;
