@@ -639,6 +639,316 @@ _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
 }
 
 /*
+ * _bt_advance_array_keys_tuple() -- Advance to next matching set of array
+ * elements using the first tuple that doesn't match current set
+ *
+ * Returns true when array keys can be advanced, regardless of whether tuple
+ * matches any set of keys.  Otherwise returns false.  Returning false happens
+ * when most significant array key/attribute is < tuple.
+ *
+ * This function is not idempotent.  It always advances the current array
+ * keys.  It might be necessary to advance the array keys incrementally when
+ * caller's tuple is the page's high key.  This happens when the high key is
+ * an exact match for the current array keys for its non-truncated key
+ * columns.
+ */
+static bool
+_bt_advance_array_keys_tuple(IndexScanDesc scan, BTReadPageState *pstate,
+							 IndexTuple nonmatch)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	TupleDesc	itupdesc = RelationGetDescr(scan->indexRelation);
+	int			ncmpkey;
+	bool		advanced_prev_array = false;
+	bool		changed_keys = false;
+	bool		all_tuple_atts_past_final_array_datum = true;
+	bool		just_wrap_later_arrays = false;
+	BTArrayKeyInfo *curArrayKey;
+	int			arrayidx = 0;
+
+	Assert(so->arrayKeysStarted);
+	Assert(_bt_tuple_advances_keys(scan, nonmatch, pstate->dir));
+
+	ncmpkey = Min(BTreeTupleGetNAtts(nonmatch, rel), so->numberOfKeys);
+	for (int attnum = 1; attnum <= so->numberOfKeys; attnum++)
+	{
+		ScanKey		cur = &so->keyData[attnum - 1],
+					skey,
+					iscankey;
+		int			first_elem,
+					cur_elem,
+					final_elem;
+		Datum		arraydatum,
+					datum;
+		bool		isNull;
+		int32		result;
+		bool		doretry = true;
+
+		if ((ScanDirectionIsForward(pstate->dir) &&
+			 (cur->sk_flags & SK_BT_REQFWD) == 0) ||
+			(ScanDirectionIsBackward(pstate->dir) &&
+			 (cur->sk_flags & SK_BT_REQBKWD) == 0))
+		{
+			/*
+			 * This scan key is not marked as required for the current
+			 * direction, so there are no further attributes to consider. This
+			 * tuple definitely isn't at the start of the next group of
+			 * matching tuples.
+			 */
+			continue;
+		}
+
+		Assert(cur->sk_attno == attnum);
+		if (cur->sk_attno > so->arrayPoskey->keysz)
+		{
+			/*
+			 * There is no equality constraint on this column/scan key to
+			 * break the tie.  This tuple definitely isn't at the start of the
+			 * next group of matching tuples.
+			 */
+			Assert(cur->sk_strategy != BTEqualStrategyNumber);
+			Assert((cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) !=
+				   (SK_BT_REQFWD | SK_BT_REQBKWD));
+			continue;
+		}
+
+		if (cur->sk_flags & SK_SEARCHARRAY)
+		{
+			/* Set up array scan key */
+			curArrayKey = &so->arrayKeys[arrayidx++];
+			skey = &so->arrayKeyData[curArrayKey->scan_key];
+
+			Assert(skey->sk_attno == attnum);
+
+			if (just_wrap_later_arrays)
+			{
+				Assert(attnum > 1);
+				// Assert(advanced_prev_array);
+
+				if (ScanDirectionIsForward(pstate->dir))
+					cur_elem = 0;
+				else
+					cur_elem = curArrayKey->num_elems - 1;
+
+				changed_keys = true;
+				curArrayKey->cur_elem = cur_elem;
+				skey->sk_argument = curArrayKey->elem_values[cur_elem];
+				continue;
+			}
+
+			if (ScanDirectionIsForward(pstate->dir))
+				first_elem = 0;
+			else
+				first_elem = curArrayKey->num_elems - 1;
+
+			/*
+			 * If all previous key columns weren't advanced (because they
+			 * didn't need to be to process this tuple, which has all-equal
+			 * values so far), start with the current array element.
+			 *
+			 * Otherwise, start from the very beginning (or end, in the case
+			 * of a backward scan).  This is required because advancing high
+			 * order columns makes this low order column "wrap around".
+			 */
+			if (!changed_keys)
+				cur_elem = curArrayKey->cur_elem;
+			else
+				cur_elem = first_elem;
+
+			if (ScanDirectionIsForward(pstate->dir))
+				final_elem = curArrayKey->num_elems - 1;
+			else
+				final_elem = 0;
+		}
+		else
+		{
+			/* Treat non-array scan key as degenerate single value array */
+			curArrayKey = NULL;
+			skey = NULL;
+			cur_elem = 0;
+			final_elem = 0;
+		}
+
+		if (attnum > ncmpkey)
+		{
+			if (curArrayKey)
+				all_tuple_atts_past_final_array_datum = false;
+			continue;
+		}
+
+		iscankey = &so->arrayPoskey->scankeys[attnum - 1];
+		datum = index_getattr(nonmatch, attnum, itupdesc, &isNull);
+
+		Assert(iscankey->sk_flags == cur->sk_flags);
+		Assert(iscankey->sk_attno == cur->sk_attno);
+		Assert(iscankey->sk_subtype == cur->sk_subtype);
+		Assert(iscankey->sk_collation == cur->sk_collation);
+
+		for (;;)
+		{
+			bool		tuple_behind = false,
+						tuple_ahead = false;
+
+			if (ScanDirectionIsForward(pstate->dir))
+			{
+				if (cur_elem > final_elem)
+					break;
+			}
+			else
+			{
+				if (cur_elem < final_elem)
+					break;
+			}
+
+			if (iscankey->sk_flags & SK_ISNULL) /* key is NULL */
+			{
+				if (isNull)
+					result = 0; /* NULL "=" NULL */
+				else if (iscankey->sk_flags & SK_BT_NULLS_FIRST)
+					result = -1;	/* NULL "<" NOT_NULL */
+				else
+					result = 1; /* NULL ">" NOT_NULL */
+			}
+			else if (isNull)	/* key is NOT_NULL and item is NULL */
+			{
+				if (iscankey->sk_flags & SK_BT_NULLS_FIRST)
+					result = 1; /* NOT_NULL ">" NULL */
+				else
+					result = -1;	/* NOT_NULL "<" NULL */
+			}
+			else
+			{
+				if (cur->sk_flags & SK_SEARCHARRAY)
+					arraydatum = curArrayKey->elem_values[cur_elem];
+				else
+					arraydatum = cur->sk_argument;
+
+				result = DatumGetInt32(FunctionCall2Coll(&iscankey->sk_func,
+														 cur->sk_collation,
+														 datum,
+														 arraydatum));
+				if (!(iscankey->sk_flags & SK_BT_DESC))
+					INVERT_COMPARE_RESULT(result);
+			}
+
+			if (result != 0)
+			{
+				if (ScanDirectionIsForward(pstate->dir))
+				{
+					tuple_behind = result > 0;
+					tuple_ahead = result < 0;
+				}
+				else
+				{
+					tuple_behind = result < 0;
+					tuple_ahead = result > 0;
+				}
+			}
+
+redo:
+			if (tuple_ahead)
+			{
+				/* array datum < tuple datum */
+
+				if (cur_elem == final_elem)
+				{
+					if (curArrayKey && curArrayKey->cur_elem != cur_elem)
+					{
+						advanced_prev_array = true;
+						changed_keys = true;
+						curArrayKey->cur_elem = cur_elem;
+						skey->sk_argument = curArrayKey->elem_values[cur_elem];
+					}
+
+					break;				/* out of inner/array loop */
+				}
+				else
+					all_tuple_atts_past_final_array_datum = false;
+
+				if (ScanDirectionIsForward(pstate->dir))
+					cur_elem++;
+				else
+					cur_elem--;
+
+				continue;
+			}
+
+			if (tuple_behind)
+			{
+				/* array datum > tuple datum */
+				just_wrap_later_arrays = true;
+				if (ScanDirectionIsForward(pstate->dir) && curArrayKey && doretry)
+				{
+					int		first = cur_elem;
+					int		last = final_elem;
+					int		mid = first + ((last - first) / 2);
+
+					result = 0;
+					doretry = false;
+					while (last >= first)
+					{
+						mid = first + ((last - first) / 2);
+
+						/* We have low <= mid < high, so mid points at a real slot */
+
+						arraydatum = curArrayKey->elem_values[mid];
+						result = DatumGetInt32(FunctionCall2Coll(&iscankey->sk_func,
+																 cur->sk_collation,
+																 datum,
+																 arraydatum));
+						if (!(iscankey->sk_flags & SK_BT_DESC))
+							INVERT_COMPARE_RESULT(result);
+
+						if (result == 0)
+						{
+							cur_elem = mid;
+							tuple_behind = false;
+							tuple_ahead = false;
+							goto equal;
+						}
+
+						if (result > 0)
+							first = mid + 1;
+						else
+							last = mid;
+					}
+
+					cur_elem = Min(mid, cur_elem);
+					arraydatum = curArrayKey->elem_values[cur_elem];
+					tuple_behind = result > 0;
+					tuple_ahead = result < 0;
+					goto redo;
+				}
+			}
+			else
+				all_tuple_atts_past_final_array_datum = false;
+
+equal:
+			if (curArrayKey && curArrayKey->cur_elem != cur_elem)
+			{
+				advanced_prev_array = true;
+				changed_keys = true;
+				just_wrap_later_arrays = true;
+				curArrayKey->cur_elem = cur_elem;
+				skey->sk_argument = curArrayKey->elem_values[cur_elem];
+			}
+
+			break;				/* out of inner/array loop */
+		}
+	}
+
+	if (!advanced_prev_array && all_tuple_atts_past_final_array_datum)
+	{
+		_bt_nocheckkeys(scan, pstate->dir);
+	}
+	else if (!changed_keys)
+		_bt_advance_array_keys(scan, pstate->dir);
+
+	return so->arrayKeysStarted;
+}
+
+/*
  * Check if we need to advance SK_SEARCHARRAY array keys when _bt_checkkeys
  * returns false and sets continuescan=false.  It's possible that the tuple
  * will be a match after we advance the array keys.
@@ -791,7 +1101,8 @@ _bt_advance_array_keys_locally(IndexScanDesc scan, IndexTuple tuple,
 		return false;
 	}
 
-	if (!_bt_advance_array_keys(scan, pstate->dir))
+	pstate->advanced = true;
+	if (!_bt_advance_array_keys_tuple(scan, pstate, tuple))
 	{
 		Assert(!so->arrayKeysStarted);
 
@@ -1818,6 +2129,7 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, bool final,
 	int			natts = BTreeTupleGetNAtts(tuple, scan->indexRelation);
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		res;
+	int i = 0;
 
 	/* This loop handles advancing to the next array elements, if any */
 	do
@@ -1835,6 +2147,11 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, bool final,
 				   _bt_tuple_advances_keys(scan, tuple, pstate->dir));
 			break;
 		}
+
+		i++;
+		if (so->arrayPoskey && i > 410)
+			elog(ERROR, "i: %d, cur_elem: %d",
+				 i, so->arrayKeys[0].cur_elem);
 
 		/* ... otherwise see if we have more array keys to deal with */
 	} while (so->numArrayKeys && !pstate->continuescan &&

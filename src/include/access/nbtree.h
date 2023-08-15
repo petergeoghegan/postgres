@@ -1068,6 +1068,7 @@ typedef struct BTReadPageState
 	 */
 	bool		match_for_cur_array_keys;
 	bool		highkeychecked;
+	bool		advanced;
 } BTReadPageState;
 
 typedef struct BTScanOpaqueData
