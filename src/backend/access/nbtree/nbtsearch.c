@@ -28,7 +28,7 @@
 static void _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp);
 static Buffer _bt_moveright(Relation rel, Relation heaprel, BTScanInsert key,
 							Buffer buf, bool forupdate, BTStack stack,
-							int access);
+							int access, StringInfo debugstr);
 static OffsetNumber _bt_binsrch(Relation rel, BTScanInsert key, Buffer buf);
 static int	_bt_binsrch_posting(BTScanInsert key, Page page,
 								OffsetNumber offnum);
@@ -77,6 +77,207 @@ _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp)
 	}
 }
 
+void
+print_blk_between_itups(StringInfo debugstr,
+						IndexTuple left,
+						IndexTuple right,
+						Relation rel,
+						char *prefix,
+						char *extra)
+{
+	bool		isnull[INDEX_MAX_KEYS];
+	Datum		values[INDEX_MAX_KEYS];
+	char	   *lkey_desc = NULL;
+	char	   *rkey_desc;
+
+	if (!debugstr)
+		return;
+
+	Assert(!IsCatalogRelation(rel));
+
+	if (!left)
+	{
+		appendStringInfo(debugstr,
+						 "%s %s\n",
+						 prefix, extra);
+		return;
+	}
+
+	/* Avoid infinite recursion -- don't instrument catalog indexes */
+	{
+		TupleDesc	itupdesc;
+		int			natts;
+
+		natts = Min(BTreeTupleGetNAtts(left, rel), IndexRelationGetNumberOfKeyAttributes(rel));
+		itupdesc = CreateTupleDescTruncatedCopy(RelationGetDescr(rel), natts);
+		memset(&isnull, 0x00, sizeof(isnull));
+		index_deform_tuple(left, itupdesc, values, isnull);
+
+		/*
+		 * Since the regression tests should pass when the instrumentation
+		 * patch is applied, be prepared for BuildIndexValueDescriptionNatts()
+		 * to return NULL due to security considerations.
+		 */
+		lkey_desc = BuildIndexValueDescriptionNatts(rel, natts, values, isnull);
+		pfree(itupdesc);
+		if (lkey_desc && right)
+		{
+			natts = Min(BTreeTupleGetNAtts(right, rel), IndexRelationGetNumberOfKeyAttributes(rel));
+			itupdesc = CreateTupleDescTruncatedCopy(RelationGetDescr(rel), natts);
+			memset(&isnull, 0x00, sizeof(isnull));
+			index_deform_tuple(right, itupdesc, values, isnull);
+			rkey_desc = BuildIndexValueDescriptionNatts(rel, natts, values, isnull);
+			appendStringInfo(debugstr,
+							 "%ssk > %s, sk <= %s %s\n",
+							 prefix, lkey_desc, rkey_desc, extra);
+			pfree(itupdesc);
+			pfree(rkey_desc);
+		}
+		else
+		{
+			/* Caller just passed us left tuple as standalone tuple */
+			appendStringInfo(debugstr,
+							 "%s%s%s\n",
+							 prefix, lkey_desc, extra);
+		}
+
+		/* Cleanup */
+		if (lkey_desc)
+			pfree(lkey_desc);
+	}
+}
+
+char *
+_nbtree_print_itup(IndexTuple itup, Relation rel)
+{
+	bool		isnull[INDEX_MAX_KEYS];
+	Datum		values[INDEX_MAX_KEYS];
+	char	   *lkey_desc = NULL;
+	TupleDesc	itupdesc;
+	int			natts;
+
+	if (!rel->rd_isvalid || RelationGetSmgr(rel) == NULL)
+		return NULL;
+
+	if (rel->rd_isnailed)
+	{
+		/*
+		 * pg_class_oid_index (and likely other indexes) have issues with
+		 * buffer lock self-deadlocks, so punt in a hacky way.
+		 *
+		 * It would be nice to not have to do this, but it seems as if there
+		 * is no easy way to avoid syscache/catcache misses in system catalog
+		 * indexes.  Just put up with somewhat less useful instrumentation.
+		 */
+		char	   *tp;			/* ptr to tuple data */
+
+		tp = (char *) itup + IndexInfoFindDataOffset(itup->t_info);
+		return psprintf("%zu", *((int64 *) tp));
+	}
+
+	natts = BTreeTupleGetNAtts(itup, rel);
+	natts = Min(natts, IndexRelationGetNumberOfKeyAttributes(rel));
+	itupdesc = CreateTupleDescTruncatedCopy(RelationGetDescr(rel), natts);
+	memset(&values, 0x00, sizeof(values));
+	memset(&isnull, 0x00, sizeof(isnull));
+	index_deform_tuple(itup, itupdesc, values, isnull);
+
+	/*
+	 * Since the regression tests should pass when the instrumentation patch
+	 * is applied, be prepared for BuildIndexValueDescriptionNatts() to return
+	 * NULL due to security considerations.
+	 */
+	lkey_desc = BuildIndexValueDescriptionNatts(rel, natts, values, isnull);
+
+	pfree(itupdesc);
+
+	return lkey_desc;
+}
+
+char *
+dump_scankey_flags(ScanKey cur)
+{
+	StringInfoData output;
+
+	initStringInfo(&output);
+	appendStringInfo(&output, "[");
+
+	/* Generic flags first */
+	if (cur->sk_flags & SK_ISNULL)
+		appendStringInfo(&output, "SK_ISNULL, ");
+	if (cur->sk_flags & SK_UNARY)
+		appendStringInfo(&output, "SK_UNARY, ");
+	if (cur->sk_flags & SK_ROW_HEADER)
+		appendStringInfo(&output, "SK_ROW_HEADER, ");
+	if (cur->sk_flags & SK_ROW_MEMBER)
+		appendStringInfo(&output, "SK_ROW_MEMBER, ");
+	if (cur->sk_flags & SK_ROW_END)
+		appendStringInfo(&output, "SK_ROW_END, ");
+	if (cur->sk_flags & SK_SEARCHARRAY)
+		appendStringInfo(&output, "SK_SEARCHARRAY, ");
+	if (cur->sk_flags & SK_SEARCHNULL)
+		appendStringInfo(&output, "SK_SEARCHNULL, ");
+	if (cur->sk_flags & SK_SEARCHNOTNULL)
+		appendStringInfo(&output, "SK_SEARCHNOTNULL, ");
+	if (cur->sk_flags & SK_ORDER_BY)
+		appendStringInfo(&output, "SK_ORDER_BY, ");
+
+	/* Now nbtree flags */
+	if (cur->sk_flags & SK_BT_REQFWD)
+		appendStringInfo(&output, "SK_BT_REQFWD, ");
+	if (cur->sk_flags & SK_BT_REQBKWD)
+		appendStringInfo(&output, "SK_BT_REQBKWD, ");
+	if (cur->sk_flags & SK_BT_SKIP)
+		appendStringInfo(&output, "SK_BT_SKIP, ");
+	if (cur->sk_flags & SK_BT_MINVAL)
+		appendStringInfo(&output, "SK_BT_MINVAL, ");
+	if (cur->sk_flags & SK_BT_MAXVAL)
+		appendStringInfo(&output, "SK_BT_MAXVAL, ");
+	if (cur->sk_flags & SK_BT_NEXT)
+		appendStringInfo(&output, "SK_BT_NEXT, ");
+	if (cur->sk_flags & SK_BT_PRIOR)
+		appendStringInfo(&output, "SK_BT_PRIOR, ");
+	if (cur->sk_flags & SK_BT_DESC)
+		appendStringInfo(&output, "SK_BT_DESC, ");
+	if (cur->sk_flags & SK_BT_NULLS_FIRST)
+		appendStringInfo(&output, "SK_BT_NULLS_FIRST, ");
+
+	if (output.data[output.len - 1] == ' ')
+	{
+		/* Truncate-away final unneeded ", "  */
+		Assert(output.data[output.len - 2] == ',');
+		output.len -= 2;
+		output.data[output.len] = '\0';
+	}
+
+	appendStringInfoString(&output, "]");
+
+	return output.data;
+}
+
+char *
+dump_scankey_strategy(ScanKey cur)
+{
+	StringInfoData output;
+
+	initStringInfo(&output);
+
+	if (cur->sk_strategy == InvalidStrategy)
+		appendStringInfo(&output, "InvalidStrategy");
+	if (cur->sk_strategy == BTLessStrategyNumber)
+		appendStringInfo(&output, "< ");
+	if (cur->sk_strategy == BTLessEqualStrategyNumber)
+		appendStringInfo(&output, "<=");
+	if (cur->sk_strategy == BTEqualStrategyNumber)
+		appendStringInfo(&output, "= ");
+	if (cur->sk_strategy == BTGreaterEqualStrategyNumber)
+		appendStringInfo(&output, ">=");
+	if (cur->sk_strategy == BTGreaterStrategyNumber)
+		appendStringInfo(&output, "> ");
+
+	return output.data;
+}
+
 /*
  *	_bt_search() -- Search the tree for a particular scankey,
  *		or more precisely for the first leaf page it could be on.
@@ -100,10 +301,12 @@ _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp)
  */
 BTStack
 _bt_search(Relation rel, Relation heaprel, BTScanInsert key, Buffer *bufP,
-		   int access)
+		   int access, StringInfo debugstr)
 {
 	BTStack		stack_in = NULL;
 	int			page_access = BT_READ;
+	Page		page;
+	BTPageOpaque opaque;
 
 	/* heaprel must be set whenever _bt_allocbuf is reachable */
 	Assert(access == BT_READ || access == BT_WRITE);
@@ -116,16 +319,21 @@ _bt_search(Relation rel, Relation heaprel, BTScanInsert key, Buffer *bufP,
 	if (!BufferIsValid(*bufP))
 		return (BTStack) NULL;
 
+	page = BufferGetPage(*bufP);
+	opaque = BTPageGetOpaque(page);
+	if (debugstr)
+		appendStringInfo(debugstr, "🔽  ==================== _bt_search begin at root %u level %u ====================\n",
+						 BufferGetBlockNumber(*bufP), opaque->btpo_level);
+
 	/* Loop iterates once per level descended in the tree */
 	for (;;)
 	{
-		Page		page;
-		BTPageOpaque opaque;
 		OffsetNumber offnum;
 		ItemId		itemid;
 		IndexTuple	itup;
 		BlockNumber child;
 		BTStack		new_stack;
+		IndexTuple	right;
 
 		/*
 		 * Race -- the page we just grabbed may have split since we read its
@@ -140,7 +348,7 @@ _bt_search(Relation rel, Relation heaprel, BTScanInsert key, Buffer *bufP,
 		 * opportunity to finish splits of internal pages too.
 		 */
 		*bufP = _bt_moveright(rel, heaprel, key, *bufP, (access == BT_WRITE),
-							  stack_in, page_access);
+							  stack_in, page_access, debugstr);
 
 		/* if this is a leaf page, we're done */
 		page = BufferGetPage(*bufP);
@@ -157,6 +365,43 @@ _bt_search(Relation rel, Relation heaprel, BTScanInsert key, Buffer *bufP,
 		itup = (IndexTuple) PageGetItem(page, itemid);
 		Assert(BTreeTupleIsPivot(itup) || !key->heapkeyspace);
 		child = BTreeTupleGetDownLink(itup);
+
+		/*
+		 * Every downlink is between two separator keys, provided you pretend
+		 * that even rightmost pages have a positive infinity high key.  The
+		 * key to the left of the downlink is a strict lower bound for items
+		 * that can be found by following the downlink, whereas the right
+		 * separator is a <= bound.
+		 */
+		if (offnum == PageGetMaxOffsetNumber(page))
+		{
+			/*
+			 * XXX: This is correct even on rightmost page, since "high key"
+			 * position item will be negative infinity item, which is printed
+			 * blank.  If you assume that even rightmost pages have a positive
+			 * infinity high key (and don't expect the instrumentation of the
+			 * tuple to say either positive or negative infinity) then it
+			 * makes sense.
+			 *
+			 * An internal page with only one downlink is rare though possible
+			 * (see comments above _bt_binsrch()).  Note that even in that
+			 * case there are two separators (positive and negative infinity).
+			 */
+			itemid = PageGetItemId(page, P_HIKEY);
+			right = (IndexTuple) PageGetItem(page, itemid);
+			print_blk_between_itups(debugstr,
+									itup, right, rel,
+									"_bt_search: ",
+									", (<= separator is high key)");
+		}
+		else if (OffsetNumberNext(offnum) <= PageGetMaxOffsetNumber(page))
+		{
+			itemid = PageGetItemId(page, OffsetNumberNext(offnum));
+			right = (IndexTuple) PageGetItem(page, itemid);
+			print_blk_between_itups(debugstr,
+									itup, right, rel,
+									"_bt_search: ", "");
+		}
 
 		/*
 		 * We need to save the location of the pivot tuple we chose in a new
@@ -180,6 +425,13 @@ _bt_search(Relation rel, Relation heaprel, BTScanInsert key, Buffer *bufP,
 		/* drop the read lock on the page, then acquire one on its child */
 		*bufP = _bt_relandgetbuf(rel, *bufP, child, page_access);
 
+		page = BufferGetPage(*bufP);
+		opaque = BTPageGetOpaque(page);
+		if (debugstr)
+			appendStringInfo(debugstr,
+							 "🔽  -------------------- descended to child blk %u level %u --------------------\n",
+							 child, opaque->btpo_level);
+
 		/* okay, all set to move down a level */
 		stack_in = new_stack;
 	}
@@ -200,9 +452,19 @@ _bt_search(Relation rel, Relation heaprel, BTScanInsert key, Buffer *bufP,
 		 * but before we acquired a write lock.  If it has, we may need to
 		 * move right to its new sibling.  Do that.
 		 */
-		*bufP = _bt_moveright(rel, heaprel, key, *bufP, true, stack_in, BT_WRITE);
+		*bufP = _bt_moveright(rel, heaprel, key, *bufP, true, stack_in, BT_WRITE,
+							  debugstr);
 	}
 
+	if (debugstr)
+	{
+		if (!key->backward)
+			appendStringInfo(debugstr,
+							 "⏹️ ==================== _bt_search end ==================== ➡️\n");
+		else
+			appendStringInfo(debugstr,
+							 "⏹️ ==================== _bt_search end ==================== ⬅️\n");
+	}
 	return stack_in;
 }
 
@@ -244,7 +506,8 @@ _bt_moveright(Relation rel,
 			  Buffer buf,
 			  bool forupdate,
 			  BTStack stack,
-			  int access)
+			  int access,
+			  StringInfo debugstr)
 {
 	Page		page;
 	BTPageOpaque opaque;
@@ -273,11 +536,20 @@ _bt_moveright(Relation rel,
 
 	for (;;)
 	{
+		IndexTuple	hikey;
+		ItemId		itemid;
+
 		page = BufferGetPage(buf);
 		opaque = BTPageGetOpaque(page);
 
 		if (P_RIGHTMOST(opaque))
+		{
+			if (debugstr)
+				appendStringInfo(debugstr,
+								 "_bt_moveright: blk %u is rightmost\n",
+								 BufferGetBlockNumber(buf));
 			break;
+		}
 
 		/*
 		 * Finish any incomplete splits we encounter along the way.
@@ -303,14 +575,46 @@ _bt_moveright(Relation rel,
 			continue;
 		}
 
-		if (P_IGNORE(opaque) || _bt_compare(rel, key, page, P_HIKEY) >= cmpval)
+		if (P_IGNORE(opaque))
 		{
+			/* step right one page */
+			if (debugstr)
+				appendStringInfo(debugstr,
+								 "_bt_moveright: blk %u must move right because page is ignorable\n",
+								 BufferGetBlockNumber(buf));
+			buf = _bt_relandgetbuf(rel, buf, opaque->btpo_next, access);
+			continue;
+		}
+		else if (_bt_compare(rel, key, page, P_HIKEY) >= cmpval)
+		{
+			/*
+			 * Very unlikely to catch this -- repeated moving right at same
+			 * point in index suggests corruption masked by moving right
+			 */
+			itemid = PageGetItemId(page, P_HIKEY);
+			hikey = (IndexTuple) PageGetItem(page, itemid);
+			print_blk_between_itups(debugstr,
+									hikey, NULL, rel,
+									"_bt_moveright: ",
+									", high key move right");
 			/* step right one page */
 			buf = _bt_relandgetbuf(rel, buf, opaque->btpo_next, access);
 			continue;
 		}
 		else
+		{
+			/*
+			 * No need to move right (common case), but report that to be
+			 * consistent
+			 */
+			itemid = PageGetItemId(page, P_HIKEY);
+			hikey = (IndexTuple) PageGetItem(page, itemid);
+			print_blk_between_itups(debugstr,
+									hikey, NULL, rel,
+									"_bt_moveright: ",
+									", high key no move right");
 			break;
+		}
 	}
 
 	if (P_IGNORE(opaque))
@@ -901,6 +1205,10 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 */
 	_bt_preprocess_keys(scan);
 
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr,
+						 "\n➕     ➕     ➕\n");
+
 	/*
 	 * Quit now if _bt_preprocess_keys() discovered that the scan keys can
 	 * never be satisfied (eg, x == 1 AND x > 2).
@@ -909,6 +1217,11 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	{
 		Assert(!so->needPrimScan);
 		_bt_parallel_done(scan);
+
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr,
+							 "_bt_first: preprocessing determined that keys are contradictory\n");
+
 		return false;
 	}
 
@@ -1460,11 +1773,80 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	}
 
 	/*
+	 * Report final insertion scan key entries.
+	 *
+	 * Note: delay this until here in case a RowCompare scan key adds some
+	 * extra insertino scan key entries, incrementing keysz.
+	 */
+	if (so->log_btree_verbosity)
+	{
+		ScanKeyData ss;
+		char	   *strat_total_str;
+
+		for (int i = 0; i < keysz; i++)
+		{
+			Oid			typOutput;
+			bool		varlenatype;
+			char	   *val;
+			ScanKey		ins_scankey = &inskey.scankeys[i];
+			char	   *flags = dump_scankey_flags(ins_scankey);
+
+			if (!(ins_scankey->sk_flags & SK_ISNULL))
+			{
+				char	   *fname = get_func_name(ins_scankey->sk_func.fn_oid);
+
+				if (ins_scankey->sk_argument == 0 &&
+					!TupleDescAttr(RelationGetDescr(rel), ins_scankey->sk_attno - 1)->attbyval)
+					val = NULL;
+				else
+				{
+					if (ins_scankey->sk_subtype != InvalidOid)
+						getTypeOutputInfo(ins_scankey->sk_subtype,
+										  &typOutput, &varlenatype);
+					else
+						getTypeOutputInfo(rel->rd_opcintype[i],
+										  &typOutput, &varlenatype);
+					val = OidOutputFunctionCall(typOutput, ins_scankey->sk_argument);
+				}
+				appendStringInfo(&so->debugstr,
+								 "%ssk_attno %d. val: %s, func: %s, flags: %s\n",
+								 i == 0 ? "_bt_first: " : "           ",
+								 ins_scankey->sk_attno, val ? val : "?????", fname, flags);
+				if (val)
+					pfree(val);
+				if (fname)
+					pfree(fname);
+			}
+			else
+			{
+				appendStringInfo(&so->debugstr,
+								 "%ssk_attno %d. val: NULL, flags: %s\n",
+								 i == 0 ? "_bt_first: " : "           ",
+								 ins_scankey->sk_attno, flags);
+			}
+			if (flags)
+				pfree(flags);
+		}
+
+		/* Report additional insertion scan key details */
+		ss.sk_strategy = strat_total;
+		strat_total_str = dump_scankey_strategy(&ss);
+
+		appendStringInfo(&so->debugstr,
+						 "           with strat_total='%s', inskey.keys=%d, inskey.nextkey=%d, inskey.backward=%d\n",
+						 strat_total_str,
+						 inskey.keysz, inskey.nextkey, inskey.backward);
+
+		pfree(strat_total_str);
+	}
+
+	/*
 	 * Use the manufactured insertion scan key to descend the tree and
 	 * position ourselves on the target leaf page.
 	 */
 	Assert(ScanDirectionIsBackward(dir) == inskey.backward);
-	stack = _bt_search(rel, NULL, &inskey, &so->currPos.buf, BT_READ);
+	stack = _bt_search(rel, NULL, &inskey, &so->currPos.buf, BT_READ,
+					   so->log_btree_verbosity ? &so->debugstr : NULL);
 
 	/* don't need to keep the stack around... */
 	_bt_freestack(stack);
@@ -1483,7 +1865,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		if (IsolationIsSerializable())
 		{
 			PredicateLockRelation(rel, scan->xs_snapshot);
-			stack = _bt_search(rel, NULL, &inskey, &so->currPos.buf, BT_READ);
+			stack = _bt_search(rel, NULL, &inskey, &so->currPos.buf, BT_READ,
+							   so->log_btree_verbosity ? &so->debugstr : NULL);
 			_bt_freestack(stack);
 		}
 
@@ -1599,6 +1982,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Page		page;
 	BTPageOpaque opaque;
+	bool		continuescan_nonpivot = false;
 	OffsetNumber minoff;
 	OffsetNumber maxoff;
 	BTReadPageState pstate;
@@ -1659,6 +2043,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.ikey = 0;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
+
+	so->npages++;
 
 	/*
 	 * Prechecking the value of the continuescan flag for the last item on the
@@ -1724,6 +2110,9 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			 minoff < maxoff)
 		_bt_checkkeys_skipskip(scan, &pstate);
 
+	if (pstate.skipskip)
+		so->nskipskippages++;
+
 	if (ScanDirectionIsForward(dir))
 	{
 		/* SK_SEARCHARRAY forward scans must provide high key up front */
@@ -1748,12 +2137,25 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				if (!_bt_scanbehind_checkkeys(scan, dir, pstate.finaltup))
 				{
 					/* Schedule another primitive index scan after all */
+					if (so->log_btree_verbosity >= 2)
+					{
+						appendStringInfo(&so->debugstr,
+										 "_bt_readpage: 🍀  %u with %u offsets/tuples (leftsib %u, rightsib %u) failed oppodir precheck and set so->currPos.moreRight=false 🛑  ➡️\n",
+										 BufferGetBlockNumber(so->currPos.buf),
+										 PageGetMaxOffsetNumber(page),
+										 opaque->btpo_prev, opaque->btpo_next);
+					}
 					so->currPos.moreRight = false;
 					so->needPrimScan = true;
 					return false;
 				}
 
 				/* Deliberately don't unset scanBehind flag just yet */
+				if (so->log_btree_verbosity >= 2)
+					appendStringInfo(&so->debugstr,
+									 "_bt_readpage: 🍀  %u succeeded with oppodir precheck ➡️\n",
+									 BufferGetBlockNumber(so->currPos.buf));
+
 				if (so->forceNext)
 					pstate.force = true;
 			}
@@ -1764,6 +2166,45 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		itemIndex = 0;
 
 		offnum = Max(offnum, minoff);
+
+		/* Report starting offset/tuple details */
+		if (so->log_btree_verbosity >= 2)
+		{
+			appendStringInfo(&so->debugstr,
+							 "_bt_readpage: 🍀  %u with %u offsets/tuples (leftsib %u, rightsib %u) ➡️\n",
+							 BufferGetBlockNumber(so->currPos.buf),
+							 PageGetMaxOffsetNumber(page),
+							 opaque->btpo_prev, opaque->btpo_next);
+
+			if (offnum <= maxoff)
+			{
+				IndexTuple	instr_itup;
+				ItemId		iid = PageGetItemId(page, offnum);
+				BlockNumber itup_hblk;
+				OffsetNumber itup_hoff;
+				ItemPointer htid;
+				char	   *extra;
+
+				instr_itup = (IndexTuple) PageGetItem(page, iid);
+				htid = BTreeTupleGetHeapTID(instr_itup);
+				itup_hblk = ItemPointerGetBlockNumber(htid);
+				itup_hoff = ItemPointerGetOffsetNumber(htid);
+				extra = psprintf(", TID='(%u,%u)', %p, from %s offnum %u started page",
+								 itup_hblk, itup_hoff, instr_itup,
+								 offnum < P_FIRSTDATAKEY(opaque) ? "high key" : "non-pivot",
+								 offnum);
+				print_blk_between_itups(&so->debugstr,
+										instr_itup, NULL, scan->indexRelation,
+										" _bt_readpage first: ", extra);
+				pfree(extra);
+			}
+			else
+			{
+				appendStringInfo(&so->debugstr,
+								 " _bt_readpage first: none, offnum %u is > maxoff of %u\n",
+								 offnum, maxoff);
+			}
+		}
 
 		while (offnum <= maxoff)
 		{
@@ -1797,6 +2238,14 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum < pstate.skip);
 				Assert(!pstate.skipskip);
+
+				if (so->log_btree_verbosity >= 3)
+				{
+					/* This matches _bt_check_compare indentation: */
+					appendStringInfo(&so->debugstr,
+									 "   _bt_readpage: look ahead skipping forward %d items, from %u to %u\n",
+									 pstate.skip - offnum, offnum, pstate.skip);
+				}
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
@@ -1838,7 +2287,34 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			}
 			/* When !continuescan, there can't be any more matches, so stop */
 			if (!pstate.continuescan)
+			{
+				continuescan_nonpivot = true;
+				if (so->log_btree_verbosity >= 2)
+				{
+					char	   *extra;
+					BlockNumber itup_hblk = InvalidBlockNumber;
+					OffsetNumber itup_hoff = InvalidOffsetNumber;
+					ItemPointer htid;
+
+					htid = BTreeTupleGetHeapTID(itup);
+
+					if (htid)
+					{
+						itup_hblk = ItemPointerGetBlockNumber(htid);
+						itup_hoff = ItemPointerGetOffsetNumber(htid);
+					}
+					extra = psprintf(", TID='(%u,%u)', %p, from %s offnum %u set so->currPos.moreRight=false ➡️  🛑",
+									 itup_hblk, itup_hoff, itup, offnum <
+									 P_FIRSTDATAKEY(opaque) ? "high key" : "non-pivot",
+									 offnum);
+					print_blk_between_itups(&so->debugstr,
+											itup, NULL, scan->indexRelation,
+											" _bt_readpage final: ", extra);
+					pfree(extra);
+				}
+
 				break;
+			}
 
 			offnum = OffsetNumberNext(offnum);
 		}
@@ -1876,6 +2352,39 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
+		if (so->log_btree_verbosity >= 2 && !continuescan_nonpivot)
+		{
+			char	   *extra;
+
+			if (!pstate.continuescan)
+			{
+				extra = psprintf(", %p, continuescan high key check set so->currPos.moreRight=false ➡️  🛑",
+								 pstate.finaltup);
+				print_blk_between_itups(&so->debugstr,
+										pstate.finaltup, NULL, scan->indexRelation,
+										" _bt_readpage final: ",
+										extra);
+			}
+			else if (P_RIGHTMOST(opaque))
+			{
+				extra = psprintf(", %p, continuescan high key check not performed on rightmost page ➡️  🛑",
+								 pstate.finaltup);
+				print_blk_between_itups(&so->debugstr,
+										pstate.finaltup, NULL, scan->indexRelation,
+										" _bt_readpage final: ",
+										extra);
+			}
+			else
+			{
+				extra = psprintf(", %p, continuescan high key check did not set so->currPos.moreRight=false ➡️  🟢",
+								 pstate.finaltup);
+				print_blk_between_itups(&so->debugstr,
+										pstate.finaltup, NULL, scan->indexRelation,
+										" _bt_readpage final: ",
+										extra);
+			}
+		}
+
 		if (!pstate.continuescan)
 			so->currPos.moreRight = false;
 
@@ -1887,6 +2396,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	}
 	else
 	{
+		IndexTuple	itup = NULL;
+
 		/* SK_SEARCHARRAY backward scans must provide final tuple up front */
 		if (arrayKeys && minoff <= maxoff && !P_LEFTMOST(opaque))
 		{
@@ -1916,10 +2427,52 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 		offnum = Min(offnum, maxoff);
 
+		/* Report starting offset/tuple details */
+		if (so->log_btree_verbosity >= 2)
+		{
+			/*
+			 * Note: deliberately show rightsib before leftsib here, inverting
+			 * order (relative to more familiar forward scan order)
+			 */
+			appendStringInfo(&so->debugstr,
+							 "_bt_readpage: 🍀  %u with %u offsets/tuples (rightsib %u, leftsib %u) ⬅️\n",
+							 BufferGetBlockNumber(so->currPos.buf),
+							 PageGetMaxOffsetNumber(page),
+							 opaque->btpo_next, opaque->btpo_prev);
+
+			if (offnum >= minoff)
+			{
+				IndexTuple	instr_itup;
+				ItemId		iid = PageGetItemId(page, offnum);
+				BlockNumber itup_hblk;
+				OffsetNumber itup_hoff;
+				ItemPointer htid;
+				char	   *extra;
+
+				instr_itup = (IndexTuple) PageGetItem(page, iid);
+				htid = BTreeTupleGetHeapTID(instr_itup);
+				itup_hblk = ItemPointerGetBlockNumber(htid);
+				itup_hoff = ItemPointerGetOffsetNumber(htid);
+				extra = psprintf(", TID='(%u,%u)', %p, from %s non-pivot offnum %u started page",
+								 itup_hblk, itup_hoff, instr_itup, offnum <
+								 P_FIRSTDATAKEY(opaque) ? "high key" : "non-pivot",
+								 offnum);
+				print_blk_between_itups(&so->debugstr,
+										instr_itup, NULL, scan->indexRelation,
+										" _bt_readpage first: ", extra);
+				pfree(extra);
+			}
+			else
+			{
+				appendStringInfo(&so->debugstr,
+								 " _bt_readpage first: none, offnum %u is < minoff of %u\n",
+								 offnum, minoff);
+			}
+		}
+
 		while (offnum >= minoff)
 		{
 			ItemId		iid = PageGetItemId(page, offnum);
-			IndexTuple	itup;
 			bool		tuple_alive;
 			bool		passes_quals;
 
@@ -1974,6 +2527,14 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				Assert(offnum > pstate.skip);
 				Assert(!pstate.skipskip);
 
+				if (so->log_btree_verbosity >= 3)
+				{
+					/* This matches _bt_check_compare indentation: */
+					appendStringInfo(&so->debugstr,
+									 "   _bt_readpage: look ahead skipping back %d items, from %u to %u\n",
+									 offnum - pstate.skip, offnum, pstate.skip);
+				}
+
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
 				continue;
@@ -2025,6 +2586,39 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			offnum = OffsetNumberPrev(offnum);
 		}
 
+		if (so->log_btree_verbosity >= 2)
+		{
+			BlockNumber itup_hblk = InvalidBlockNumber;
+			OffsetNumber itup_hoff = InvalidOffsetNumber;
+			ItemPointer htid;
+
+			if (itup)
+			{
+				char	   *extra;
+
+				htid = BTreeTupleGetHeapTID(itup);
+
+				if (htid)
+				{
+					itup_hblk = ItemPointerGetBlockNumber(htid);
+					itup_hoff = ItemPointerGetOffsetNumber(htid);
+				}
+				if (!pstate.continuescan)
+					extra = psprintf(", TID='(%u,%u)', %p, from non-pivot offnum %u set so->currPos.moreLeft=false 🛑  ⬅️ ",
+									 itup_hblk, itup_hoff, itup, offnum);
+				else if (P_LEFTMOST(opaque))
+					extra = psprintf(", TID='(%u,%u)', %p, from non-pivot offnum %u did not set so->currPos.moreLeft=false, but reached leftmost page 🛑  ⬅️ ",
+									 itup_hblk, itup_hoff, itup, offnum);
+				else
+					extra = psprintf(", TID='(%u,%u)', %p, from non-pivot offnum %u did not set so->currPos.moreLeft=false 🟢  ⬅️ ",
+									 itup_hblk, itup_hoff, itup, offnum);
+				print_blk_between_itups(&so->debugstr,
+										itup, NULL, scan->indexRelation,
+										" _bt_readpage final: ", extra);
+				pfree(extra);
+			}
+		}
+
 		/*
 		 * We don't need to visit page to the left when no more matches will
 		 * be found there
@@ -2037,6 +2631,30 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		so->currPos.lastItem = MaxTIDsPerBTreePage - 1;
 		so->currPos.itemIndex = MaxTIDsPerBTreePage - 1;
 		so->lastNextPage = so->currPos.prevPage;
+	}
+
+	if (pstate.force)
+		so->nforcepages++;
+
+	if (so->log_btree_verbosity >= 2)
+	{
+		int			nmatching;
+
+		if (ScanDirectionIsForward(dir))
+			nmatching = itemIndex;
+		else
+			nmatching = MaxTIDsPerBTreePage - itemIndex;
+
+		appendStringInfo(&so->debugstr,
+						 " _bt_readpage stats: currPos.firstItem: %d, currPos.lastItem: %d, nmatching: %d",
+						 so->currPos.firstItem, so->currPos.lastItem,
+						 nmatching);
+		if (nmatching)
+			appendStringInfo(&so->debugstr,
+							 " ✅\n");
+		else
+			appendStringInfo(&so->debugstr,
+							 " ❌\n");
 	}
 
 	return (so->currPos.firstItem <= so->currPos.lastItem);
@@ -2146,6 +2764,14 @@ _bt_returnitem(IndexScanDesc scan, BTScanOpaque so)
 	scan->xs_heaptid = currItem->heapTid;
 	if (so->currTuples)
 		scan->xs_itup = (IndexTuple) (so->currTuples + currItem->tupleOffset);
+
+	if (so->log_btree_verbosity >= 5)	/* level matches "btgettuple invalid
+										 * currPos" style messages */
+		appendStringInfo(&so->debugstr,
+						 "_bt_first: returning offnum %u, TID='(%u,%u)'\n",
+						 currItem->indexOffset,
+						 ItemPointerGetBlockNumber(&currItem->heapTid),
+						 ItemPointerGetOffsetNumber(&currItem->heapTid));
 }
 
 /*
@@ -2693,6 +3319,11 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir)
 	Assert(!BTScanPosIsValid(so->currPos));
 	Assert(!so->needPrimScan);
 
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr,
+						 "_bt_first: sk could not be formed, so descending to %s leaf page in whole index\n",
+						 ScanDirectionIsForward(dir) ? "leftmost" : "rightmost");
+
 	/*
 	 * Scan down to the leftmost or rightmost leaf page.  This is a simplified
 	 * version of _bt_search().
@@ -2707,6 +3338,8 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir)
 		 */
 		PredicateLockRelation(rel, scan->xs_snapshot);
 		_bt_parallel_done(scan);
+		if (so->log_btree_verbosity >= 2)
+			appendStringInfo(&so->debugstr, "_bt_endpoint: index is empty\n");
 		return false;
 	}
 

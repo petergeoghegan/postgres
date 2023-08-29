@@ -32,8 +32,10 @@
 #include "storage/lmgr.h"
 #include "utils/datum.h"
 #include "utils/fmgrprotos.h"
+#include "utils/guc.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
+#include "utils/selfuncs.h"
 
 
 /*
@@ -205,14 +207,41 @@ btinsert(Relation rel, Datum *values, bool *isnull,
 {
 	bool		result;
 	IndexTuple	itup;
+	StringInfo	debug = NULL;
+	StringInfoData debugstr;
+
+	if (!IsCatalogRelation(rel) && log_btree_verbosity >= 4)
+	{
+		debug = &debugstr;
+		initStringInfo(&debugstr);
+	}
+
+	/*
+	 * Index name appears only once, at top of multiline output string from
+	 * stringinfodata:
+	 */
+	if (debug)
+		appendStringInfo(debug, "btinsert to begin insert into index \"%s\"\n",
+						 RelationGetRelationName(rel));
 
 	/* generate an index tuple */
 	itup = index_form_tuple(RelationGetDescr(rel), values, isnull);
 	itup->t_tid = *ht_ctid;
 
-	result = _bt_doinsert(rel, itup, checkUnique, indexUnchanged, heapRel);
+	result = _bt_doinsert(rel, itup, checkUnique, indexUnchanged, heapRel,
+						  debug);
 
 	pfree(itup);
+
+	if (debug)
+	{
+		/* Don't \n here, since it's the last line of output: */
+		appendStringInfo(debug, "END btinsert");
+		ereport(LOG,
+				(errmsg_internal("%s", debug->data)));
+
+		pfree(debug->data);
+	}
 
 	return result;
 }
@@ -238,9 +267,23 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 		 * _bt_first() to get the first item in the scan.
 		 */
 		if (!BTScanPosIsValid(so->currPos))
+		{
+			if (so->log_btree_verbosity >= 5)
+			{
+				appendStringInfo(&so->debugstr,
+								 "🛹  btgettuple invalid currPos\n");
+			}
+
 			res = _bt_first(scan, dir);
+		}
 		else
 		{
+			if (so->log_btree_verbosity >= 5)
+			{
+				appendStringInfo(&so->debugstr,
+								 "🛹  btgettuple valid currPos\n");
+			}
+
 			/*
 			 * Check to see if we should kill the previously-fetched tuple.
 			 */
@@ -286,6 +329,9 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	int64		ntids = 0;
 	ItemPointer heapTid;
+
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr, "🚜  btgetbitmap\n");
 
 	/* Each loop iteration performs another primitive index scan */
 	do
@@ -366,6 +412,23 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	 */
 	so->currTuples = so->markTuples = NULL;
 
+	initStringInfo(&so->debugstr);
+
+	/* Must suppress instrumentation for catalogs */
+	so->log_btree_verbosity = log_btree_verbosity;
+	so->log_array_advance = log_array_advance;
+	if (IsCatalogRelation(scan->indexRelation) ||
+		suppress_get_actual_variable_range_hack)
+		so->log_btree_verbosity = 0;
+
+	/*
+	 * Index name appears only once, at top of multiline output string from
+	 * stringinfodata:
+	 */
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr, "\n👾  btbeginscan to begin scan of index \"%s\" in worker %d\n",
+						 RelationGetRelationName(scan->indexRelation), ParallelWorkerNumber);
+
 	scan->xs_itupdesc = RelationGetDescr(rel);
 
 	scan->opaque = so;
@@ -382,6 +445,9 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr, "♻️  btrescan\n");
+
 	/* we aren't holding any read locks, but gotta drop the pins */
 	if (BTScanPosIsValid(so->currPos))
 	{
@@ -390,7 +456,11 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			_bt_killitems(scan);
 		BTScanPosUnpinIfPinned(so->currPos);
 		BTScanPosInvalidate(so->currPos);
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr, "btrescan: BTScanPosInvalidate() called for currPos\n");
 	}
+	if (scan->parallel_scan && !IsCatalogRelation(scan->indexRelation))
+		so->log_btree_verbosity = 2;
 
 	so->markItemIndex = -1;
 	so->needPrimScan = false;
@@ -398,8 +468,13 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	so->forceNext = false;
 	so->noSkipskipNext = false;
 	so->lastNextPage = P_NONE;
+	so->npages = 0;
+	so->nskipskippages = 0;
+	so->nforcepages = 0;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr, "btrescan: BTScanPosInvalidate() called for markPos\n");
 
 	/*
 	 * Allocate tuple workspace arrays, if needed for an index-only scan and
@@ -441,6 +516,19 @@ btendscan(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
+	if (so->log_btree_verbosity)
+	{
+		/* Don't \n here, since it's the last line of output: */
+		appendStringInfo(&so->debugstr,
+						 "btendscan for index \"%s\", ParallelWorkerNumber: %d, npages: %d, nskipskippages: %d, nforcepages: %d, nsearches: %lu\n",
+						 RelationGetRelationName(scan->indexRelation),
+						 ParallelWorkerNumber, so->npages, so->nskipskippages,
+						 so->nforcepages, scan->nsearches);
+
+		ereport(LOG,
+				(errmsg_internal("%s", so->debugstr.data)));
+	}
+
 	/* we aren't holding any read locks, but gotta drop the pins */
 	if (BTScanPosIsValid(so->currPos))
 	{
@@ -465,6 +553,9 @@ btendscan(IndexScanDesc scan)
 		pfree(so->killedItems);
 	if (so->currTuples != NULL)
 		pfree(so->currTuples);
+
+	pfree(so->debugstr.data);
+
 	/* so->markTuples should not be pfree'd, see btrescan */
 	pfree(so);
 }
@@ -476,6 +567,9 @@ void
 btmarkpos(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr, "btmarkpos\n");
 
 	/* There may be an old mark with a pin (but no lock). */
 	BTScanPosUnpinIfPinned(so->markPos);
@@ -491,6 +585,8 @@ btmarkpos(IndexScanDesc scan)
 	else
 	{
 		BTScanPosInvalidate(so->markPos);
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr, "btmarkpos: BTScanPosInvalidate() called for markPos\n");
 		so->markItemIndex = -1;
 	}
 }
@@ -502,6 +598,9 @@ void
 btrestrpos(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+
+	if (so->log_btree_verbosity)
+		appendStringInfo(&so->debugstr, "btrestrpos\n");
 
 	if (so->markItemIndex >= 0)
 	{
@@ -549,7 +648,11 @@ btrestrpos(IndexScanDesc scan)
 			}
 		}
 		else
+		{
 			BTScanPosInvalidate(so->currPos);
+			if (so->log_btree_verbosity)
+				appendStringInfo(&so->debugstr, "btrestrpos: BTScanPosInvalidate() called for currPos\n");
+		}
 	}
 }
 
