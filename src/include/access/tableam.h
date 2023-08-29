@@ -251,8 +251,13 @@ typedef struct TM_IndexDeleteOp
 
 	/* Mutable per-TID information follows (index AM initializes entries) */
 	int			ndeltids;		/* Current # of deltids/status elements */
+	int			ntidstotal;		/* Current # of TIDs from page, including
+								 * unchecked-by-heapam */
+	int			ncheckedtids;	/* Current # of TIDs checked on page by heapam */
 	TM_IndexDelete *deltids;
 	TM_IndexStatus *status;
+	StringInfoData debugstr;
+	bool		instrument;
 } TM_IndexDeleteOp;
 
 /* "options" flag bits for table_tuple_insert */

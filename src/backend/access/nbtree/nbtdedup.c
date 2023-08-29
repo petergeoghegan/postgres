@@ -18,6 +18,7 @@
 #include "access/nbtxlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
+#include "utils/guc.h"
 #include "utils/rel.h"
 
 static void _bt_bottomupdel_finish_pending(Page page, BTDedupState state,
@@ -316,6 +317,9 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 	TM_IndexDeleteOp delstate;
 	bool		neverdedup;
 	int			nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
+	int			finaldeletedtids;
+	IndexTuple	firstdataitem = NULL,
+				highkey = NULL;
 
 	/* Passed-in newitemsz is MAXALIGNED but does not include line pointer */
 	newitemsz += sizeof(ItemIdData);
@@ -355,8 +359,23 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 	delstate.bottomup = true;
 	delstate.bottomupfreespace = Max(BLCKSZ / 16, newitemsz);
 	delstate.ndeltids = 0;
+	delstate.ntidstotal = 0;
+	delstate.ncheckedtids = 0;
 	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
 	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
+
+	initStringInfo(&delstate.debugstr);
+	appendStringInfo(&delstate.debugstr,
+					 "bottom-up deletion of index \"%s\", block %u:\n",
+					 RelationGetRelationName(rel), BufferGetBlockNumber(buf));
+	delstate.instrument = true;
+
+	if (!P_RIGHTMOST(opaque))
+	{
+		ItemId		itemid = PageGetItemId(page, P_HIKEY);
+
+		highkey = (IndexTuple) PageGetItem(page, itemid);
+	}
 
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -373,6 +392,7 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 		{
 			/* itup starts first pending interval */
 			_bt_dedup_start_pending(state, itup, offnum);
+			firstdataitem = itup;
 		}
 		else if (_bt_keep_natts_fast(rel, state->base, itup) > nkeyatts &&
 				 _bt_dedup_save_htid(state, itup))
@@ -406,11 +426,67 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 	pfree(state->htids);
 	pfree(state);
 
+	if (delstate.instrument)
+	{
+		char	   *firstdataitemstr = NULL;
+		char	   *highkeystr = NULL;
+
+		if (!P_RIGHTMOST(opaque))
+			appendStringInfo(&delstate.debugstr,
+							 "n_tup: %u, including high key\n",
+							 maxoff);
+		else
+			appendStringInfo(&delstate.debugstr,
+							 "n_tup: %u, rightmost page lacking high key\n",
+							 maxoff);
+		appendStringInfo(&delstate.debugstr, "left sib: %u, right sib: %u\n",
+						 opaque->btpo_prev,
+						 opaque->btpo_next);
+
+		if (firstdataitem)
+			firstdataitemstr = _nbtree_print_itup(firstdataitem, rel);
+		appendStringInfo(&delstate.debugstr, "first: %s\n",
+						 firstdataitemstr);
+		if (highkey)
+			highkeystr = _nbtree_print_itup(highkey, rel);
+
+		appendStringInfo(&delstate.debugstr, "h_key: %s\n",
+						 highkeystr);
+
+		if (firstdataitemstr)
+			pfree(firstdataitemstr);
+		if (highkeystr)
+			pfree(highkeystr);
+	}
+
+	/*
+	 * Bottom-up deletion always passes every TID on page, so just use that
+	 * count for count of all TIDs on page:
+	 */
+	delstate.ntidstotal = delstate.ndeltids;
+
 	/* Ask tableam which TIDs are deletable, then physically delete them */
-	_bt_delitems_delete_check(rel, buf, heapRel, &delstate);
+	finaldeletedtids = _bt_delitems_delete_check(rel, buf, heapRel, &delstate);
 
 	pfree(delstate.deltids);
 	pfree(delstate.status);
+
+	if (delstate.instrument)
+	{
+		Size		exactfree = PageGetExactFreeSpace(page);
+		bool		rval = (exactfree >= Max(BLCKSZ / 24, newitemsz));
+
+		/* Deliberately omit \n here: */
+		appendStringInfo(&delstate.debugstr,
+						 "results: exact free space %zu, avoided split-or-dedup '%s', exact TIDs deleted %d",
+						 exactfree, (rval ? "yes" : "no"), finaldeletedtids);
+
+		if (log_btree_verbosity >= 2)
+			ereport(LOG,
+					(errmsg_internal("%s", delstate.debugstr.data)));
+	}
+
+	pfree(delstate.debugstr.data);
 
 	/* Report "success" to caller unconditionally to avoid deduplication */
 	if (neverdedup)
