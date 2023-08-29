@@ -104,6 +104,26 @@ static void _bt_skip_strat_decrement(IndexScanDesc scan, ScanKey arraysk,
 static void _bt_skip_strat_increment(IndexScanDesc scan, ScanKey arraysk,
 									 BTArrayKeyInfo *array);
 
+static void
+_bt_preproc_key_instrument(IndexScanDesc scan, ScanKey cur,
+						   StringInfo debugstr, char *str_prepend)
+{
+	TupleDesc	tupdesc = RelationGetDescr(scan->indexRelation);
+	char	   *flags = dump_scankey_flags(cur);
+	char	   *strat = dump_scankey_strategy(cur);
+	char	   *fname = get_func_name(cur->sk_func.fn_oid);
+	Form_pg_attribute attr = TupleDescAttr(tupdesc, cur->sk_attno - 1);
+
+	appendStringInfo(debugstr,
+					 "%s: [ strategy: %s, attno: %u/\"%s\", func: %s, flags: %s ]\n",
+					 str_prepend, strat, cur->sk_attno,
+					 NameStr(attr->attname), fname, flags);
+
+	pfree(flags);
+	pfree(strat);
+	if (fname)
+		pfree(fname);
+}
 
 /*
  *	_bt_preprocess_keys() -- Preprocess scan keys
@@ -236,6 +256,42 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	if (numberOfKeys < 1)
 		return;					/* done if qual-less scan */
 
+	if (so->log_btree_verbosity)
+	{
+		for (int i = 0; i < numberOfKeys; i++)
+		{
+			ScanKey		cur = scan->keyData + i;
+
+			/*
+			 * Extra space for "inkeys" here to align it with "outkeys" line
+			 * we'll output in loop at the end of function:
+			 */
+			char	   *str_prepend = psprintf("%s  scan->keyData[%d]",
+											   i == 0 ? "_bt_preprocess_keys:" : "                    ",
+											   i);
+
+			_bt_preproc_key_instrument(scan, cur, &so->debugstr, str_prepend);
+			pfree(str_prepend);
+
+			if (cur->sk_flags & SK_ROW_HEADER)
+			{
+				ScanKey		subkey = (ScanKey) DatumGetPointer(cur->sk_argument);
+
+				for (;;)
+				{
+					Assert(subkey->sk_flags & SK_ROW_MEMBER);
+
+					_bt_preproc_key_instrument(scan, subkey, &so->debugstr,
+											   "                               sub key");
+
+					if (subkey->sk_flags & SK_ROW_END)
+						break;
+					subkey++;
+				}
+			}
+		}
+	}
+
 	/* If any keys are SK_SEARCHARRAY type, set up array-key info */
 	arrayKeyData = _bt_preprocess_array_keys(scan, &numberOfKeys);
 	if (!so->qual_ok)
@@ -297,7 +353,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		}
 		Assert(!so->skipScan);
 
-		return;
+		goto done;
 	}
 
 	/*
@@ -649,6 +705,65 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		_bt_preprocess_array_keys_final(scan, keyDataMap);
 
 	/* Could pfree arrayKeyData/keyDataMap now, but not worth the cycles */
+
+done:
+	if (!so->log_btree_verbosity)
+		return;
+
+	for (int i = 0; i < so->numberOfKeys; i++)
+	{
+		ScanKey		cur = &so->keyData[i];
+
+		char	   *str_prepend = psprintf("%s    so->keyData[%d]",
+										   i == 0 ? "_bt_preprocess_keys:" : "                    ",
+										   i);
+
+		_bt_preproc_key_instrument(scan, cur, &so->debugstr, str_prepend);
+		pfree(str_prepend);
+
+		if (cur->sk_flags & SK_ROW_HEADER)
+		{
+			ScanKey		subkey = (ScanKey) DatumGetPointer(cur->sk_argument);
+
+			for (;;)
+			{
+				Assert(subkey->sk_flags & SK_ROW_MEMBER);
+
+				_bt_preproc_key_instrument(scan, subkey, &so->debugstr,
+										   "                               sub key");
+
+				if (subkey->sk_flags & SK_ROW_END)
+					break;
+				subkey++;
+			}
+		}
+
+		if (cur->sk_flags & SK_BT_SKIP)
+		{
+			int			ikey = cur - so->keyData;
+			BTArrayKeyInfo *array = NULL;
+
+			for (int arridx = 0; arridx < so->numArrayKeys; arridx++)
+			{
+				array = &so->arrayKeys[arridx];
+				if (array->scan_key == ikey)
+					break;
+			}
+
+			if (array->low_compare)
+				_bt_preproc_key_instrument(scan, array->low_compare,
+										   &so->debugstr,
+										   "                           low_compare");
+			if (array->high_compare)
+				_bt_preproc_key_instrument(scan, array->high_compare,
+										   &so->debugstr,
+										   "                          high_compare");
+		}
+	}
+
+	appendStringInfo(&so->debugstr,
+					 "_bt_preprocess_keys: scan->numberOfKeys is %d, so->numberOfKeys on output is %d, so->numArrayKeys on output is %d\n",
+					 scan->numberOfKeys, so->numberOfKeys, so->numArrayKeys);
 }
 
 /*
