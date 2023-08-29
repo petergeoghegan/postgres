@@ -3144,6 +3144,66 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 				all_required_satisfied = true,
 				all_satisfied = true;
 
+	if (so->log_btree_verbosity >= 2 && so->log_array_advance)
+	{
+		char	   *str = _nbtree_print_itup(tuple, rel);
+
+		appendStringInfo(&so->debugstr,
+						 "_bt_advance_array_keys, sktrig: %d, %stuple: %s, %p\n\n",
+						 sktrig,
+						 BTreeTupleIsPivot(tuple) ? "pivot " : "", str, tuple);
+		if (str)
+			pfree(str);
+
+		for (int i = 0; i < so->numArrayKeys; i++)
+		{
+			Oid			typOutput;
+			bool		varlenatype;
+			char	   *val;
+			BTArrayKeyInfo *arrk = &so->arrayKeys[i];
+			ScanKey		skey = &so->keyData[arrk->scan_key];
+
+			if (skey->sk_flags & SK_ISNULL)
+			{
+				appendStringInfo(&so->debugstr,
+								 "  - sk: %d, sk_attno: %d, cur_elem: %4d, num_elems: %4d, val: SK_ISNULL%s%s%s%s\n",
+								 arrk->scan_key, skey->sk_attno,
+								 arrk->cur_elem, arrk->num_elems,
+								 (skey->sk_flags & SK_BT_NEXT) != 0 ? " SK_BT_NEXT" : "",
+								 (skey->sk_flags & SK_BT_PRIOR) != 0 ? " SK_BT_PRIOR" : "",
+								 (skey->sk_flags & SK_BT_NEGPOSINF) != 0 ? " SK_BT_NEGPOSINF" : "",
+								 arrk->scan_key == sktrig ? "            <--" : "");
+				continue;
+			}
+
+			if (skey->sk_flags & SK_BT_NEGPOSINF)
+			{
+				Assert(skey->sk_argument == 0);
+				val = NULL;
+			}
+			else
+			{
+				if (skey->sk_subtype != InvalidOid)
+					getTypeOutputInfo(skey->sk_subtype,
+									  &typOutput, &varlenatype);
+				else
+					getTypeOutputInfo(scan->indexRelation->rd_opcintype[skey->sk_attno - 1],
+									  &typOutput, &varlenatype);
+				val = OidOutputFunctionCall(typOutput, skey->sk_argument);
+			}
+			appendStringInfo(&so->debugstr,
+							 "  - sk: %d, sk_attno: %d, cur_elem: %4d, num_elems: %4d, val: %s%s%s%s%s\n",
+							 arrk->scan_key, skey->sk_attno, arrk->cur_elem,
+							 arrk->num_elems, val ? val : "?????",
+							 (skey->sk_flags & SK_BT_NEXT) != 0 ? " SK_BT_NEXT" : "",
+							 (skey->sk_flags & SK_BT_PRIOR) != 0 ? " SK_BT_PRIOR" : "",
+							 (skey->sk_flags & SK_BT_NEGPOSINF) != 0 ? " SK_BT_NEGPOSINF" : "",
+							 arrk->scan_key == sktrig ? "            <--" : "");
+			if (val)
+				pfree(val);
+		}
+	}
+
 	if (sktrig_required)
 	{
 		/*
@@ -3503,6 +3563,57 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 	if (beyond_end_advance && !_bt_advance_array_keys_increment(scan, dir))
 		goto end_toplevel_scan;
 
+	if (so->log_btree_verbosity >= 2 && so->log_array_advance)
+	{
+		appendStringInfo(&so->debugstr, "\n");
+		for (int i = 0; i < so->numArrayKeys; i++)
+		{
+			Oid			typOutput;
+			bool		varlenatype;
+			char	   *val;
+			BTArrayKeyInfo *arrk = &so->arrayKeys[i];
+			ScanKey		skey = &so->keyData[arrk->scan_key];
+
+			if (skey->sk_flags & SK_ISNULL)
+			{
+				appendStringInfo(&so->debugstr,
+								 "  + sk: %d, sk_attno: %d, cur_elem: %4d, num_elems: %4d, val: SK_ISNULL%s%s%s\n",
+								 arrk->scan_key, skey->sk_attno,
+								 arrk->cur_elem, arrk->num_elems,
+								 (skey->sk_flags & SK_BT_NEXT) != 0 ? " SK_BT_NEXT" : "",
+								 (skey->sk_flags & SK_BT_PRIOR) != 0 ? " SK_BT_PRIOR" : "",
+								 (skey->sk_flags & SK_BT_NEGPOSINF) != 0 ? " SK_BT_NEGPOSINF" : "");
+				continue;
+			}
+
+			if (skey->sk_flags & SK_BT_NEGPOSINF)
+			{
+				Assert(skey->sk_argument == 0);
+				val = NULL;
+			}
+			else
+			{
+				if (skey->sk_subtype != InvalidOid)
+					getTypeOutputInfo(skey->sk_subtype,
+									  &typOutput, &varlenatype);
+				else
+					getTypeOutputInfo(scan->indexRelation->rd_opcintype[skey->sk_attno - 1],
+									  &typOutput, &varlenatype);
+				val = OidOutputFunctionCall(typOutput, skey->sk_argument);
+			}
+			appendStringInfo(&so->debugstr,
+							 "  + sk: %d, sk_attno: %d, cur_elem: %4d, num_elems: %4d, val: %s%s%s%s\n",
+							 arrk->scan_key, skey->sk_attno, arrk->cur_elem,
+							 arrk->num_elems, val ? val : "?????",
+							 (skey->sk_flags & SK_BT_NEXT) != 0 ? " SK_BT_NEXT" : "",
+							 (skey->sk_flags & SK_BT_PRIOR) != 0 ? " SK_BT_PRIOR" : "",
+							 (skey->sk_flags & SK_BT_NEGPOSINF) != 0 ? " SK_BT_NEGPOSINF" : "");
+			if (val)
+				pfree(val);
+		}
+		appendStringInfo(&so->debugstr, "\n");
+	}
+
 	Assert(_bt_verify_keys_with_arraykeys(scan));
 
 	/*
@@ -3831,8 +3942,32 @@ end_toplevel_scan:
 	pstate->continuescan = false;	/* Tell _bt_readpage we're done... */
 	so->needPrimScan = false;	/* ...don't call _bt_first again, though */
 
+	if (so->log_btree_verbosity >= 2 && so->log_array_advance)
+		appendStringInfo(&so->debugstr, "  + arrays_exhausted=true\n");
+
 	/* Caller's tuple doesn't match any qual */
 	return false;
+}
+
+static void
+_bt_preproc_key_instrument(IndexScanDesc scan, ScanKey cur,
+						   StringInfo debugstr, char *str_prepend)
+{
+	TupleDesc	tupdesc = RelationGetDescr(scan->indexRelation);
+	char	   *flags = dump_scankey_flags(cur);
+	char	   *strat = dump_scankey_strategy(cur);
+	char	   *fname = get_func_name(cur->sk_func.fn_oid);
+	Form_pg_attribute attr = TupleDescAttr(tupdesc, cur->sk_attno - 1);
+
+	appendStringInfo(debugstr,
+					 "%s: [ strategy: %s, attno: %u/\"%s\", func: %s, flags: %s ]\n",
+					 str_prepend, strat, cur->sk_attno,
+					 NameStr(attr->attname), fname, flags);
+
+	pfree(flags);
+	pfree(strat);
+	if (fname)
+		pfree(fname);
 }
 
 /*
@@ -3978,7 +4113,49 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	so->numberOfKeys = 0;
 
 	if (numberOfKeys < 1)
+	{
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr,
+							 "_bt_preprocess_keys: qual-less scan (i.e. numberOfKeys is 0)\n");
+
 		return;					/* done if qual-less scan */
+	}
+
+	if (so->log_btree_verbosity)
+	{
+		for (int i = 0; i < numberOfKeys; i++)
+		{
+			ScanKey		cur = scan->keyData + i;
+
+			/*
+			 * Extra space for "inkeys" here to align it with "outkeys" line
+			 * we'll output in loop at the end of function:
+			 */
+			char	   *str_prepend = psprintf("%s  scan->keyData[%d]",
+											   i == 0 ? "_bt_preprocess_keys:" : "                    ",
+											   i);
+
+			_bt_preproc_key_instrument(scan, cur, &so->debugstr, str_prepend);
+			pfree(str_prepend);
+
+			if (cur->sk_flags & SK_ROW_HEADER)
+			{
+				ScanKey		subkey = (ScanKey) DatumGetPointer(cur->sk_argument);
+
+				for (;;)
+				{
+					Assert(subkey->sk_flags & SK_ROW_MEMBER);
+
+					_bt_preproc_key_instrument(scan, subkey, &so->debugstr,
+											   "                               sub key");
+
+					if (subkey->sk_flags & SK_ROW_END)
+						break;
+					subkey++;
+				}
+			}
+		}
+	}
 
 	/* If any keys are SK_SEARCHARRAY type, set up array-key info */
 	arrayKeyData = _bt_preprocess_array_keys(scan, &numberOfKeys);
@@ -4040,7 +4217,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 					OidIsValid(so->orderProcs[0].fn_oid)));
 		}
 
-		return;
+		goto done;
 	}
 
 	/*
@@ -4395,6 +4572,65 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		_bt_preprocess_array_keys_final(scan, keyDataMap);
 
 	/* Could pfree arrayKeyData/keyDataMap now, but not worth the cycles */
+
+done:
+	if (!so->log_btree_verbosity)
+		return;
+
+	for (int i = 0; i < so->numberOfKeys; i++)
+	{
+		ScanKey		cur = &so->keyData[i];
+
+		char	   *str_prepend = psprintf("%s    so->keyData[%d]",
+										   i == 0 ? "_bt_preprocess_keys:" : "                    ",
+										   i);
+
+		_bt_preproc_key_instrument(scan, cur, &so->debugstr, str_prepend);
+		pfree(str_prepend);
+
+		if (cur->sk_flags & SK_ROW_HEADER)
+		{
+			ScanKey		subkey = (ScanKey) DatumGetPointer(cur->sk_argument);
+
+			for (;;)
+			{
+				Assert(subkey->sk_flags & SK_ROW_MEMBER);
+
+				_bt_preproc_key_instrument(scan, subkey, &so->debugstr,
+										   "                               sub key");
+
+				if (subkey->sk_flags & SK_ROW_END)
+					break;
+				subkey++;
+			}
+		}
+
+		if (cur->sk_flags & SK_BT_SKIP)
+		{
+			int			ikey = cur - so->keyData;
+			BTArrayKeyInfo *array = NULL;
+
+			for (int arridx = 0; arridx < so->numArrayKeys; arridx++)
+			{
+				array = &so->arrayKeys[arridx];
+				if (array->scan_key == ikey)
+					break;
+			}
+
+			if (array->low_compare)
+				_bt_preproc_key_instrument(scan, array->low_compare,
+										   &so->debugstr,
+										   "                           low_compare");
+			if (array->high_compare)
+				_bt_preproc_key_instrument(scan, array->high_compare,
+										   &so->debugstr,
+										   "                          high_compare");
+		}
+	}
+
+	appendStringInfo(&so->debugstr,
+					 "_bt_preprocess_keys: scan->numberOfKeys is %d, so->numberOfKeys on output is %d, so->numArrayKeys on output is %d\n",
+					 scan->numberOfKeys, so->numberOfKeys, so->numArrayKeys);
 }
 
 #ifdef USE_ASSERT_CHECKING
@@ -4957,6 +5193,9 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 	{
 		bool		dcontinuescan;
 		int			dikey = 0;
+		int			log_btree_verbosity = so->log_btree_verbosity;
+
+		so->log_btree_verbosity = 0;
 
 		/*
 		 * Call relied on continuescan/firstmatch prechecks -- assert that we
@@ -4966,6 +5205,8 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 										false, pstate->skipskip, false, false,
 										&dcontinuescan, &dikey));
 		Assert(pstate->continuescan == dcontinuescan);
+
+		so->log_btree_verbosity = log_btree_verbosity;
 	}
 #endif
 
@@ -5157,6 +5398,31 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 
 	*continuescan = true;		/* default assumption */
 
+	if (so->log_btree_verbosity >= 3)
+	{
+		Relation	rel = scan->indexRelation;
+		char	   *pitup;
+		ItemPointer tid;
+
+		pitup = _nbtree_print_itup(tuple, rel);
+		tid = BTreeTupleGetHeapTID(tuple);
+
+		if (tid)
+			appendStringInfo(&so->debugstr,
+							 "  _bt_checkkeys: comparing %s with TID (%u,%u), %p\n",
+							 pitup,
+							 ItemPointerGetBlockNumberNoCheck(tid),
+							 ItemPointerGetOffsetNumberNoCheck(tid),
+							 tuple);
+		else
+			appendStringInfo(&so->debugstr,
+							 "  _bt_checkkeys: comparing %s with TID -inf, %p\n",
+							 pitup, tuple);
+
+		if (pitup)
+			pfree(pitup);
+	}
+
 	for (; *ikey < so->numberOfKeys; (*ikey)++)
 	{
 		ScanKey		key = so->keyData + *ikey;
@@ -5271,6 +5537,12 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 			/*
 			 * In any case, this indextuple doesn't match the qual.
 			 */
+			if (so->log_btree_verbosity >= 4)
+				appendStringInfo(&so->debugstr,
+								 "   ikey %d/sk_attno %d: (sk_argument SK_ISNULL) final result: false, with continuescan=false in dir %s\n",
+								 *ikey, key->sk_attno,
+								 ScanDirectionIsForward(dir) ? "forward" : "backward");
+
 			return false;
 		}
 
@@ -5312,6 +5584,12 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 					!skipskip && ScanDirectionIsForward(dir))
 					*continuescan = false;
 			}
+
+			if (so->log_btree_verbosity >= 4)
+				appendStringInfo(&so->debugstr,
+								 "   ikey %d/sk_attno %d: (sk_argument %lu) final result: false, with continuescan=false in dir %s\n",
+								 *ikey, key->sk_attno, key->sk_argument,
+								 ScanDirectionIsForward(dir) ? "forward" : "backward");
 
 			/*
 			 * In any case, this indextuple doesn't match the qual.
@@ -5355,11 +5633,23 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 				return _bt_advance_array_keys(scan, NULL, tuple, tupnatts,
 											  tupdesc, *ikey, false);
 
+			if (so->log_btree_verbosity >= 4)
+				appendStringInfo(&so->debugstr,
+								 "   ikey %d/sk_attno %d: (sk_argument %lu) result: false, with continuescan=%d in dir %s\n",
+								 *ikey, key->sk_attno, key->sk_argument, *continuescan,
+								 ScanDirectionIsForward(dir) ? "forward" : "backward");
+
 			/*
 			 * This indextuple doesn't match the qual.
 			 */
 			return false;
 		}
+	}
+
+	if (so->log_btree_verbosity >= 4)
+	{
+		appendStringInfo(&so->debugstr,
+						 "                 final result is true\n");
 	}
 
 	/* If we get here, the tuple passes all index quals. */
@@ -5776,6 +6066,7 @@ _bt_killitems(IndexScanDesc scan)
 	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
 	bool		droppedpin PG_USED_FOR_ASSERTS_ONLY;
+	int			nkilled = 0;
 
 	Assert(BTScanPosIsValid(so->currPos));
 
@@ -5917,6 +6208,7 @@ _bt_killitems(IndexScanDesc scan)
 				/* found the item/all posting list items */
 				ItemIdMarkDead(iid);
 				killedsomething = true;
+				nkilled++;
 				break;			/* out of inner search loop */
 			}
 			offnum = OffsetNumberNext(offnum);
@@ -5934,6 +6226,11 @@ _bt_killitems(IndexScanDesc scan)
 	{
 		opaque->btpo_flags |= BTP_HAS_GARBAGE;
 		MarkBufferDirtyHint(so->currPos.buf, true);
+
+		if (so->log_btree_verbosity)
+			appendStringInfo(&so->debugstr,
+							 "_bt_killitems: killed %d out of %d numKilled from kill_prior_tuple heapam state\n",
+							 nkilled, numKilled);
 	}
 
 	_bt_unlockbuf(scan->indexRelation, so->currPos.buf);
