@@ -53,6 +53,7 @@
 #include "access/xlogutils.h"
 #include "catalog/catalog.h"
 #include "commands/vacuum.h"
+#include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/atomics.h"
@@ -7738,7 +7739,13 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 				 * blocks).
 				 */
 				if (bottomup_final_block)
+				{
+					appendStringInfo(&delstate->debugstr,
+									 "finished up on heap block %u (having accessed %d blocks in total) because satisfactory amount of space can be freed\n",
+									 blkno, nblocksaccessed);
+
 					break;
+				}
 
 				/*
 				 * Give up when we didn't enable our caller to free any
@@ -7747,7 +7754,12 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 				 * we keep the cost of bottom-up deletion under control.
 				 */
 				if (nblocksaccessed >= 1 && actualfreespace == lastfreespace)
+				{
+					appendStringInfo(&delstate->debugstr,
+									 "finished up on heap block %u (having accessed %d blocks in total) because it lacks any deletable TIDs\n",
+									 blkno, nblocksaccessed);
 					break;
+				}
 				lastfreespace = actualfreespace;	/* for next time */
 
 				/*
@@ -7814,6 +7826,7 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 		 */
 		index_delete_check_htid(delstate, page, maxoff, htid, istatus);
 
+		delstate->ncheckedtids++;
 		if (istatus->knowndeletable)
 			Assert(!delstate->bottomup && !istatus->promising);
 		else
@@ -7927,6 +7940,15 @@ heap_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
 	 */
 	Assert(finalndeltids > 0 || delstate->bottomup);
 	delstate->ndeltids = finalndeltids;
+
+	/*
+	 * Simple deletion case needs a message matching similar end messages for
+	 * bottom-up deletion:
+	 */
+	if (delstate->instrument && !delstate->bottomup)
+		appendStringInfo(&delstate->debugstr,
+						 "finished up on heap block %u (having accessed %d blocks in total)\n",
+						 blkno, nblocksaccessed);
 
 	return snapshotConflictHorizon;
 }
@@ -8258,6 +8280,16 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
 	for (int b = 0; b < nblockgroups; b++)
 	{
 		IndexDeleteCounts *group = blockgroups + b;
+		TM_IndexDelete *firstdtid = delstate->deltids + group->ifirsttid;
+
+		if (delstate->instrument)
+		{
+			appendStringInfo(&delstate->debugstr,
+							 "%d. heap block %u has %d/%d promising TIDs and %d/%d TIDs total\n",
+							 b + 1, ItemPointerGetBlockNumber(&firstdtid->tid),
+							 group->npromisingtids, group->npromisingtids == 0 ? 0 : Max(pg_nextpower2_32((uint32) group->npromisingtids), 4),
+							 group->ntids, pg_nextpower2_32((uint32) group->ntids));
+		}
 
 		/* Better off falling back on nhtids with low npromisingtids */
 		if (group->npromisingtids <= 4)
