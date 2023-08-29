@@ -70,9 +70,10 @@ static bool _bt_afternewitemoff(FindSplitData *state, OffsetNumber maxoff,
 								int leaffillfactor, bool *usemult);
 static bool _bt_adjacenthtid(ItemPointer lowhtid, ItemPointer highhtid);
 static OffsetNumber _bt_bestsplitloc(FindSplitData *state, int perfectpenalty,
-									 bool *newitemonleft, FindSplitStrat strategy);
+									 bool *newitemonleft, FindSplitStrat strategy, int *place);
 static int	_bt_defaultinterval(FindSplitData *state);
-static int	_bt_strategy(FindSplitData *state, SplitPoint *leftpage,
+static int	_bt_strategy(FindSplitData *state, StringInfo debugstr,
+						 SplitPoint *leftpage,
 						 SplitPoint *rightpage, FindSplitStrat *strategy);
 static void _bt_interval_edges(FindSplitData *state,
 							   SplitPoint **leftinterval, SplitPoint **rightinterval);
@@ -127,6 +128,7 @@ static inline IndexTuple _bt_split_firstright(FindSplitData *state,
  */
 OffsetNumber
 _bt_findsplitloc(Relation rel,
+				 StringInfo debugstr,
 				 Page origpage,
 				 OffsetNumber newitemoff,
 				 Size newitemsz,
@@ -150,6 +152,7 @@ _bt_findsplitloc(Relation rel,
 	bool		usemult;
 	SplitPoint	leftpage,
 				rightpage;
+	int			place;
 
 	opaque = BTPageGetOpaque(origpage);
 	maxoff = PageGetMaxOffsetNumber(origpage);
@@ -361,7 +364,8 @@ _bt_findsplitloc(Relation rel,
 	 * duplicates, and we need to consider if it's even possible to avoid
 	 * appending a heap TID.
 	 */
-	perfectpenalty = _bt_strategy(&state, &leftpage, &rightpage, &strategy);
+	perfectpenalty = _bt_strategy(&state, debugstr, &leftpage, &rightpage,
+								  &strategy);
 
 	if (strategy == SPLIT_DEFAULT)
 	{
@@ -421,7 +425,13 @@ _bt_findsplitloc(Relation rel,
 	 * maximize fan-out.  Sets *newitemonleft for us.
 	 */
 	firstrightoff = _bt_bestsplitloc(&state, perfectpenalty, newitemonleft,
-									 strategy);
+									 strategy, &place);
+
+	appendStringInfo(debugstr,
+					 "Used %s to decide to split at page offset number %u, which placed %d in interval of size %d\n",
+					 strategy == SPLIT_DEFAULT ? "default strategy" :
+					 strategy == SPLIT_MANY_DUPLICATES ? "many duplicates strategy" : "single value strategy",
+					 firstrightoff, place, state.interval);
 	pfree(state.splits);
 
 	return firstrightoff;
@@ -786,7 +796,7 @@ _bt_adjacenthtid(ItemPointer lowhtid, ItemPointer highhtid)
  */
 static OffsetNumber
 _bt_bestsplitloc(FindSplitData *state, int perfectpenalty,
-				 bool *newitemonleft, FindSplitStrat strategy)
+				 bool *newitemonleft, FindSplitStrat strategy, int *place)
 {
 	int			bestpenalty,
 				lowsplit;
@@ -795,6 +805,7 @@ _bt_bestsplitloc(FindSplitData *state, int perfectpenalty,
 
 	bestpenalty = INT_MAX;
 	lowsplit = 0;
+	*place = 0;
 	for (int i = lowsplit; i < highsplit; i++)
 	{
 		int			penalty;
@@ -812,6 +823,7 @@ _bt_bestsplitloc(FindSplitData *state, int perfectpenalty,
 	}
 
 	final = &state->splits[lowsplit];
+	*place = lowsplit;
 
 	/*
 	 * There is a risk that the "many duplicates" strategy will repeatedly do
@@ -840,6 +852,7 @@ _bt_bestsplitloc(FindSplitData *state, int perfectpenalty,
 		 * of the split point is conservative.)
 		 */
 		final = &state->splits[0];
+		*place = 0;
 	}
 
 	*newitemonleft = final->newitemonleft;
@@ -931,7 +944,9 @@ _bt_defaultinterval(FindSplitData *state)
  * strategy (it also saves _bt_bestsplitloc() useless cycles).
  */
 static int
-_bt_strategy(FindSplitData *state, SplitPoint *leftpage,
+_bt_strategy(FindSplitData *state,
+			 StringInfo debugstr,
+			 SplitPoint *leftpage,
 			 SplitPoint *rightpage, FindSplitStrat *strategy)
 {
 	IndexTuple	leftmost,
@@ -961,6 +976,19 @@ _bt_strategy(FindSplitData *state, SplitPoint *leftpage,
 	_bt_interval_edges(state, &leftinterval, &rightinterval);
 	leftmost = _bt_split_lastleft(state, leftinterval);
 	rightmost = _bt_split_firstright(state, rightinterval);
+
+	{
+		char	   *leftmoststr = NULL;
+		char	   *rightmoststr = NULL;
+
+		leftmoststr = _nbtree_print_itup(leftmost, state->rel);
+		rightmoststr = _nbtree_print_itup(rightmost, state->rel);
+		appendStringInfo(debugstr, "leftmost %s, rightmost %s\n",
+						 leftmoststr, rightmoststr);
+
+		pfree(leftmoststr);
+		pfree(rightmoststr);
+	}
 
 	/*
 	 * If initial split interval can produce a split point that will at least

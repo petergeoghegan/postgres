@@ -132,15 +132,11 @@ if ($ENV{with_icu} eq 'yes')
 	command_like(
 		[
 			'initdb', '--no-sync',
-			'--auth' => 'trust',
-			'--locale-provider' => 'icu',
-			'--locale' => 'und',
-			'--lc-collate' => 'C',
-			'--lc-ctype' => 'C',
-			'--lc-messages' => 'C',
-			'--lc-numeric' => 'C',
-			'--lc-monetary' => 'C',
-			'--lc-time' => 'C',
+			'-A' => 'trust',
+			'--locale-provider=icu', '--locale=und',
+			'--lc-collate=C', '--lc-ctype=C',
+			'--lc-messages=C', '--lc-numeric=C',
+			'--lc-monetary=C', '--lc-time=C',
 			"$tempdir/data4"
 		],
 		qr/^\s+default collation:\s+und\n/ms,
