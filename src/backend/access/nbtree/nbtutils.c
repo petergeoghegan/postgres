@@ -578,6 +578,8 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
 
 	/* Tell _bt_advance_array_keys to advance array keys when called */
 	so->arrayKeysStarted = true;
+
+	so->lastpage = 0;
 }
 
 /*
@@ -2115,11 +2117,30 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, bool final,
 	int			natts = BTreeTupleGetNAtts(tuple, scan->indexRelation);
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		res;
+	int			nadvancedkeys PG_USED_FOR_ASSERTS_ONLY = 0;
 
 	/* This loop handles advancing to the next array elements, if any */
 	pstate->ikey = 0;
 	do
 	{
+		/*
+		 * Up to 2 _bt_advance_array_keys_locally calls per tuple can be
+		 * normal
+		 */
+		if (nadvancedkeys > 2)
+		{
+			if (nadvancedkeys < 4)
+			{
+				elog(WARNING, "tuploops: %d %p",
+					 nadvancedkeys, tuple);
+			}
+			else
+			{
+				elog(ERROR, "tuploops: %d , %p",
+					 nadvancedkeys, tuple);
+			}
+		}
+
 		res = _bt_check_compare(so->keyData, so->numberOfKeys,
 								tuple, natts, tupdesc, pstate);
 
@@ -2130,6 +2151,8 @@ _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple, bool final,
 				   !_bt_tuple_terminates_primitive_scan(scan, tuple, pstate));
 			break;
 		}
+
+		nadvancedkeys++;
 
 		/* ... otherwise see if we have more array keys to deal with */
 	} while (so->numArrayKeys && pstate->continuescan != BT_TRUE &&

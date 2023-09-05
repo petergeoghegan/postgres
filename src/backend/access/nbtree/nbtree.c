@@ -368,6 +368,7 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	so->arrayKeysStarted = false;
 	so->arrayKeysInvalid = false;
 	so->arrayKeysNoAdvance = false;
+	so->lastpage = 0;
 	so->arrayKeys = NULL;
 	so->arrayPoskey = NULL;
 	so->arrayContext = NULL;
@@ -413,6 +414,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	so->arrayKeysStarted = false;
 	so->arrayKeysInvalid = false;
 	so->arrayKeysNoAdvance = false;
+	so->lastpage = 0;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
 
@@ -567,6 +569,8 @@ btrestrpos(IndexScanDesc scan)
 		else
 			BTScanPosInvalidate(so->currPos);
 	}
+
+	so->lastpage = 0;
 }
 
 /*
