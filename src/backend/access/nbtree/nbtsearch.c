@@ -22,6 +22,7 @@
 #include "pgstat.h"
 #include "storage/predicate.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_rusage.h"
 #include "utils/rel.h"
 
 
@@ -1562,6 +1563,12 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 	OffsetNumber maxoff;
 	BTReadPageState pstate;
 	int			itemIndex;
+	PGRUsage	ru0;
+	instr_time	start;
+	instr_time	duration;
+
+	pg_rusage_init(&ru0);
+	INSTR_TIME_SET_CURRENT(start);
 
 	/*
 	 * We must have the buffer pinned and locked, but the usual macro can't be
@@ -1569,6 +1576,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 	 */
 	Assert(BufferIsValid(so->currPos.buf));
 
+	so->lastpage = BufferGetBlockNumber(so->currPos.buf);
 	page = BufferGetPage(so->currPos.buf);
 	opaque = BTPageGetOpaque(page);
 
@@ -1830,6 +1838,25 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 		so->currPos.lastItem = MaxTIDsPerBTreePage - 1;
 		so->currPos.itemIndex = MaxTIDsPerBTreePage - 1;
 	}
+
+	if (pstate.advanced)
+	{
+		INSTR_TIME_SET_CURRENT(duration);
+		INSTR_TIME_SUBTRACT(duration, start);
+		ereport(DEBUG1,
+				(errmsg("advanced: %s, us: %ld",
+						pg_rusage_show(&ru0),
+						INSTR_TIME_GET_MICROSEC(duration))));
+	}
+	// else
+	// {
+	// 	INSTR_TIME_SET_CURRENT(duration);
+	// 	INSTR_TIME_SUBTRACT(duration, start);
+	// 	ereport(DEBUG1,
+	// 			(errmsg("non-advanced: %s, us: %ld",
+	// 					pg_rusage_show(&ru0),
+	// 					INSTR_TIME_GET_MICROSEC(duration))));
+	// }
 
 	return (so->currPos.firstItem <= so->currPos.lastItem);
 }
