@@ -845,9 +845,9 @@ _bt_advance_array_keys_tuple(IndexScanDesc scan, BTReadPageState *pstate,
 			for (int i = 0; i < so->numArrayKeys; i++)
 			{
 				BTArrayKeyInfo *arrk = &so->arrayKeys[i];
-				ScanKey		skey = &so->arrayKeyData[arrk->scan_key];
+				ScanKey		skeyk = &so->arrayKeyData[arrk->scan_key];
 
-				if (skey->sk_attno == attnum)
+				if (skeyk->sk_attno == attnum)
 				{
 					arrayidx = i;
 					break;
