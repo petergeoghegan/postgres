@@ -597,6 +597,13 @@ _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
 	bool		found = false;
 	int			i;
 
+	if (so->arrayKeysNoAdvance)
+	{
+		Assert(so->arrayKeysStarted);
+		so->arrayKeysNoAdvance = false;
+		return true;
+	}
+
 	if (!so->arrayKeysStarted)
 		return false;
 
