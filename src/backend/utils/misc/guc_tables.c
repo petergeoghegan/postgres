@@ -521,7 +521,6 @@ int			log_min_duration_statement = -1;
 int			log_parameter_max_length = -1;
 int			log_parameter_max_length_on_error = 0;
 int			log_temp_files = -1;
-int			log_btree_verbosity = 2;
 double		log_statement_sample_rate = 1.0;
 double		log_xact_sample_rate = 0;
 int			trace_recovery_messages = LOG;
@@ -3393,16 +3392,6 @@ struct config_int ConfigureNamesInt[] =
 		},
 		&log_temp_files,
 		-1, -1, INT_MAX,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"log_btree_verbosity", PGC_USERSET, DEVELOPER_OPTIONS,
-			NULL, NULL,
-			GUC_NOT_IN_SAMPLE
-		},
-		&log_btree_verbosity,
-		2, 0, 3,
 		NULL, NULL, NULL
 	},
 
