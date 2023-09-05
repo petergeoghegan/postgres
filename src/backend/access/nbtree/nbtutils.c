@@ -910,26 +910,16 @@ _bt_advance_array_keys_tuple(IndexScanDesc scan, BTReadPageState *pstate,
 		datum = index_getattr(nonmatch, attnum, itupdesc, &isNull);
 		arrdatum = curArrayKey->elem_values[low_elem_search];
 
+#define OPTIMIZED_SEARCH
 #ifdef OPTIMIZED_SEARCH			/* keep it simple, for now */
 		result = _bt_compare_arraydatum(datum, isNull, arrdatum,
 										cur, poskey);
 		if (result == 0)
 			high_elem_search = low_elem_search;
-		else if (result < 0)
-		{
-			/* Index tuple is > first array key -- update search bounds */
-			if (++low_elem_search >= curArrayKey->num_elems)
-			{
-				high_elem_search = curArrayKey->num_elems - 1;
-				low_elem_search = 0;
-			}
-		}
 		else
-		{
-			/* Index tuple is < first/current array key -- we're done */
-			break;
-		}
+			result = 0;
 		binsearch = (high_elem_search - low_elem_search > 15);
+		binsearch = true;
 #else
 		binsearch = true;
 #endif
