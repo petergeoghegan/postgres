@@ -903,9 +903,10 @@ _bt_advance_array_keys_tuple(IndexScanDesc scan, BTReadPageState *pstate,
 		datum = index_getattr(nonmatch, attnum, itupdesc, &isNull);
 		arrdatum = curArrayKey->elem_values[low_elem_search];
 
+#define OPTIMIZED_SEARCH
 #ifdef OPTIMIZED_SEARCH /* keep it simple, for now */
 		result = _bt_compare_arraydatum(datum, isNull, arrdatum,
-										cur, iscankey);
+										cur, poskey);
 		if (result == 0)
 			high_elem_search = low_elem_search;
 		else if (result < 0)
