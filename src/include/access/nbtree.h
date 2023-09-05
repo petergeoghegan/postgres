@@ -1091,7 +1091,6 @@ typedef struct BTScanOpaqueData
 	bool		arrayKeysStarted;	/* Scan still processing array keys? */
 	bool		arrayKeysInvalid;	/* Scan still processing array keys? */
 	bool		arrayKeysNoAdvance;	/* Scan still processing array keys? */
-	int			lastpage;
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
 	FmgrInfo	 *arrayPoskey;	/* initial positioning insertion scan key */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
