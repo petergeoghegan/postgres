@@ -1992,6 +1992,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 	page = BufferGetPage(so->currPos.buf);
 	opaque = BTPageGetOpaque(page);
 
+	so->npages_read++;
 	/* allow next page be processed by parallel worker */
 	if (scan->parallel_scan)
 	{

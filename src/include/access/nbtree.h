@@ -1075,6 +1075,7 @@ typedef struct BTScanOpaqueData
 
 	StringInfoData debugstr;
 	int			log_btree_verbosity;
+	int			npages_read;
 
 	/* keep these last in struct for efficiency */
 	BTScanPosData currPos;		/* current position data */
