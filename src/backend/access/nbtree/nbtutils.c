@@ -1154,6 +1154,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		 * sets things up for the next _bt_preprocess_keys call.
 		 */
 		orderproc = &so->orderProcs[attnum - 1];
+		first_elem_dir = 0;		/* keep compiler quiet */
 		final_elem_dir = 0;		/* keep compiler quiet */
 		if (cur->sk_flags & SK_SEARCHARRAY)
 		{
