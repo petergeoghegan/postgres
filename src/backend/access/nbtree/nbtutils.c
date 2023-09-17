@@ -2360,11 +2360,12 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate,
 			 * scan must be required (if the top-level scan could be
 			 * terminated then we'd have done so by now).
 			 *
-			 * Note: _bt_readpage stashes the page high key, enabling us to make
-			 * this check early in the case of forward scans.  We thereby avoid
-			 * scanning very many extra tuples on the page.  This is purely an
-			 * optimization -- it doesn't affect the behavior of the scan (not in
-			 * a way that can be observed outside of _bt_readpage, at least).
+			 * Note: _bt_readpage stashes the page high key, enabling us to
+			 * make this check early in the case of forward scans.  We thereby
+			 * avoid scanning very many extra tuples on the page.  This is
+			 * purely an optimization -- it doesn't affect the behavior of the
+			 * scan (not in a way that can be observed outside of
+			 * _bt_readpage, at least).
 			 */
 			pstate->continuescan = false;
 			so->needPrimScan = true;

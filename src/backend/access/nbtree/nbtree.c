@@ -70,8 +70,8 @@ typedef struct BTParallelScanDescData
 	BTPS_State	btps_pageStatus;	/* indicates whether next page is
 									 * available for scan. see above for
 									 * possible states of parallel scan. */
-	int			btps_numPrimScans; /* count indicating number of primitive
-									  * index scans for array scan keys */
+	int			btps_numPrimScans;	/* count indicating number of primitive
+									 * index scans for array scan keys */
 	slock_t		btps_mutex;		/* protects above variables */
 	ConditionVariable btps_cv;	/* used to synchronize parallel scan */
 }			BTParallelScanDescData;

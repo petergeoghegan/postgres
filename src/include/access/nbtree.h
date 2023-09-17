@@ -1045,8 +1045,8 @@ typedef struct BTScanOpaqueData
 	ScanKey		arrayKeyData;	/* modified copy of scan->keyData */
 	int			numArrayKeys;	/* number of equality-type array keys (-1 if
 								 * there are any unsatisfiable array keys) */
-	int			numPrimScans;	/* count indicating number of primitive
-								 * index scans for array scan keys */
+	int			numPrimScans;	/* count indicating number of primitive index
+								 * scans for array scan keys */
 	bool		needPrimScan;	/* Perform another primitive scan? */
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
 	FmgrInfo   *orderProcs;		/* ORDER procs for equality constraint keys */
