@@ -1070,9 +1070,6 @@ _bt_array_keys_remain(IndexScanDesc scan, ScanDirection dir)
 		/* Begin primitive index scan */
 		so->needPrimScan = false;
 
-		elog(WARNING, "PID %d beginning new primitive index scan after scanning %d pages",
-			 MyProcPid, so->npages_read);
-
 		if (scan->parallel_scan != NULL)
 			_bt_parallel_next_primitive_scan(scan);
 
@@ -2587,24 +2584,6 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate,
 			 */
 			pstate->continuescan = false;
 			so->needPrimScan = true;
-
-			{
-				char	   *str = _nbtree_print_itup(tuple, scan->indexRelation);
-				ItemPointer tid = BTreeTupleGetHeapTID(tuple);
-
-				if (tid)
-					elog(WARNING, "PID %d triggered new primitive index scan with tuple %s, TID (%u,%u), %p",
-						 MyProcPid, str,
-						 ItemPointerGetBlockNumberNoCheck(tid),
-						 ItemPointerGetOffsetNumberNoCheck(tid),
-						 tuple);
-				else
-					elog(WARNING, "PID %d triggered new primitive index scan with tuple %s, %p",
-						 MyProcPid, str, tuple);
-
-				if (str)
-					pfree(str);
-			}
 		}
 		else if (!finaltup && pstate->highkey)
 		{

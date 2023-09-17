@@ -442,8 +442,6 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 		suppress_get_actual_variable_range_hack)
 		so->log_btree_verbosity = 0;
 
-	so->npages_read = 0;
-
 	/*
 	 * Index name appears only once, at top of multiline output string from
 	 * stringinfodata:
@@ -538,7 +536,6 @@ btendscan(IndexScanDesc scan)
 	{
 		/* Don't \n here, since it's the last line of output: */
 		appendStringInfo(&so->debugstr, "btendscan");
-		elog(WARNING, "PID %d total of %d pages read", MyProcPid, so->npages_read);
 
 		ereport(LOG,
 				(errmsg_internal("%s", so->debugstr.data)));
