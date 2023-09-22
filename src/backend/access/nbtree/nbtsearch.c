@@ -18,7 +18,6 @@
 #include "access/nbtree.h"
 #include "access/relscan.h"
 #include "access/xact.h"
-#include "executor/instrument.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/predicate.h"
@@ -1971,11 +1970,6 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 	OffsetNumber maxoff;
 	BTReadPageState pstate;
 	int			itemIndex;
-	instr_time	start,
-				duration;
-
-	/* Initialize the starttime if we check for conflicting lock requests */
-	INSTR_TIME_SET_CURRENT(start);
 
 	/*
 	 * We must have the buffer pinned and locked, but the usual macro can't be
@@ -2406,13 +2400,6 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum)
 		so->currPos.lastItem = MaxTIDsPerBTreePage - 1;
 		so->currPos.itemIndex = MaxTIDsPerBTreePage - 1;
 	}
-	INSTR_TIME_SET_CURRENT(duration);
-	INSTR_TIME_SUBTRACT(duration, start);
-
-	elog(WARNING, "\"%s\" blkno %u, usecs: %ld",
-		 RelationGetRelationName(scan->indexRelation),
-		 BufferGetBlockNumber(so->currPos.buf),
-		 INSTR_TIME_GET_MICROSEC(duration));
 
 	if (so->log_btree_verbosity)
 	{
