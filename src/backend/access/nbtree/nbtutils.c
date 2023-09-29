@@ -1407,6 +1407,15 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 			result = _bt_compare_array_skey(cur, orderproc, datum, null,
 											cur->sk_argument);
 
+			/*
+			 * _bt_tuple_before_array_skeys should always prevent us from
+			 * being called when the current tuple indicates that the scan
+			 * isn't yet ready to have its array keys advanced.  Check with an
+			 * assert.
+			 */
+			Assert((ScanDirectionIsForward(dir) && result >= 0) ||
+				   (ScanDirectionIsBackward(dir) && result <= 0));
+
 			if (result != 0)
 			{
 				/*
