@@ -1435,7 +1435,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		}
 
 		/* Consider advancing array keys */
-		Assert(!array || set_elem >= 0 && set_elem < array->num_elems);
+		Assert(!array || (set_elem >= 0 && set_elem < array->num_elems));
 		if (array && array->cur_elem != set_elem)
 		{
 			array->cur_elem = set_elem;
