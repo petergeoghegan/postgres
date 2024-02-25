@@ -3474,7 +3474,10 @@ _bt_check_compare(ScanDirection dir, BTScanOpaque so,
 		if (prechecked &&
 			(requiredSameDir || (requiredOppositeDirOnly && firstmatch)) &&
 			!(key->sk_flags & SK_ROW_HEADER))
+		{
+			so->skipsamecount++;
 			continue;
+		}
 
 		if (key->sk_attno > tupnatts)
 		{
@@ -3631,6 +3634,8 @@ _bt_check_compare(ScanDirection dir, BTScanOpaque so,
 			 */
 			return false;
 		}
+		if (requiredOppositeDirOnly && firstmatch)
+			so->skipoppocount++;
 	}
 
 	if (so->log_btree_verbosity >= 3)
