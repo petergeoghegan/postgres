@@ -4005,7 +4005,10 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 		if (prechecked &&
 			(requiredSameDir || (requiredOppositeDirOnly && firstmatch)) &&
 			!(key->sk_flags & SK_ROW_HEADER))
+		{
+			so->skipsamecount++;
 			continue;
+		}
 
 		if (key->sk_attno > tupnatts)
 		{
@@ -4166,6 +4169,8 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 			 */
 			return false;
 		}
+		if (requiredOppositeDirOnly && firstmatch)
+			so->skipoppocount++;
 	}
 
 	if (so->log_btree_verbosity >= 3)
