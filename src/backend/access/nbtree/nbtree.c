@@ -381,6 +381,8 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	so->arrayKeys = NULL;
 	so->orderProcs = NULL;
 	so->arrayContext = NULL;
+	so->skipsamecount = 0;
+	so->skipoppocount = 0;
 
 	so->killedItems = NULL;		/* until needed */
 	so->numKilled = 0;
@@ -502,6 +504,11 @@ btendscan(IndexScanDesc scan)
 		ereport(LOG,
 				(errmsg_internal("%s", so->debugstr.data)));
 	}
+
+	if (so->numArrayKeys && (so->skipsamecount > 0 /* || so->skipoppocount > 0 */))
+		elog(WARNING, "rel %s, skipsamecount: %d, skipoppocount: %d",
+			 RelationGetRelationName(scan->indexRelation),
+			 so->skipsamecount, so->skipoppocount);
 
 	/* we aren't holding any read locks, but gotta drop the pins */
 	if (BTScanPosIsValid(so->currPos))
