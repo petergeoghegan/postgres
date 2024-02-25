@@ -1048,6 +1048,8 @@ typedef struct BTScanOpaqueData
 	int			numPrimScans;	/* Running tally of # primitive index scans
 								 * (used to coordinate parallel workers) */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
+	int			skipsamecount;
+	int			skipoppocount;
 
 	/* info about killed items if any (killedItems is NULL if never used) */
 	int		   *killedItems;	/* currPos.items indexes of killed items */
