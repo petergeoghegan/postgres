@@ -26,14 +26,13 @@
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
-#include "utils/guc.h"
 
 /* Minimum tree height for application of fastpath optimization */
 #define BTREE_FASTPATH_MIN_LEVEL	2
 
 
 static BTStack _bt_search_insert(Relation rel, Relation heaprel,
-								 BTInsertState insertstate, StringInfo debugstr);
+								 BTInsertState insertstate);
 static TransactionId _bt_check_unique(Relation rel, BTInsertState insertstate,
 									  Relation heapRel,
 									  IndexUniqueCheck checkUnique, bool *is_unique,
@@ -103,7 +102,7 @@ static inline int _bt_blk_cmp(const void *arg1, const void *arg2);
 bool
 _bt_doinsert(Relation rel, IndexTuple itup,
 			 IndexUniqueCheck checkUnique, bool indexUnchanged,
-			 Relation heapRel, StringInfo debugstr)
+			 Relation heapRel)
 {
 	bool		is_unique = false;
 	BTInsertStateData insertstate;
@@ -166,7 +165,7 @@ search:
 	 * searching from the root page.  insertstate.buf will hold a buffer that
 	 * is locked in exclusive mode afterwards.
 	 */
-	stack = _bt_search_insert(rel, heapRel, &insertstate, debugstr);
+	stack = _bt_search_insert(rel, heapRel, &insertstate);
 
 	/*
 	 * checkingunique inserts are not allowed to go ahead when two tuples with
@@ -316,7 +315,7 @@ search:
  * since each per-backend cache won't stay valid for long.
  */
 static BTStack
-_bt_search_insert(Relation rel, Relation heaprel, BTInsertState insertstate, StringInfo debugstr)
+_bt_search_insert(Relation rel, Relation heaprel, BTInsertState insertstate)
 {
 	Assert(insertstate->buf == InvalidBuffer);
 	Assert(!insertstate->bounds_valid);
@@ -380,7 +379,7 @@ _bt_search_insert(Relation rel, Relation heaprel, BTInsertState insertstate, Str
 
 	/* Cannot use optimization -- descend tree, return proper descent stack */
 	return _bt_search(rel, heaprel, insertstate->itup_key, &insertstate->buf,
-					  BT_WRITE, debugstr);
+					  BT_WRITE);
 }
 
 /*
@@ -1486,7 +1485,6 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 	ItemId		itemid;
 	IndexTuple	firstright,
 				lefthighkey;
-	IndexTuple	lastleft;
 	OffsetNumber firstrightoff;
 	OffsetNumber afterleftoff,
 				afterrightoff,
@@ -1497,7 +1495,6 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 	bool		newitemonleft,
 				isleaf,
 				isrightmost;
-	StringInfoData debugstr;
 
 	/*
 	 * origpage is the original page to be split.  leftpage is a temporary
@@ -1518,13 +1515,6 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 	isrightmost = P_RIGHTMOST(oopaque);
 	maxoff = PageGetMaxOffsetNumber(origpage);
 	origpagenumber = BufferGetBlockNumber(buf);
-
-	initStringInfo(&debugstr);
-	appendStringInfo(&debugstr,
-					 "page split of index \"%s\", %s block %u:\n",
-					 RelationGetRelationName(rel),
-					 isleaf ? "leaf" : "internal",
-					 BufferGetBlockNumber(buf));
 
 	/*
 	 * Choose a point to split origpage at.
@@ -1550,7 +1540,7 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 	 * newitem the firstright tuple, though, so this case isn't a special
 	 * case.
 	 */
-	firstrightoff = _bt_findsplitloc(rel, &debugstr, origpage, newitemoff, newitemsz,
+	firstrightoff = _bt_findsplitloc(rel, origpage, newitemoff, newitemsz,
 									 newitem, &newitemonleft);
 
 	/* Allocate temp buffer for leftpage */
@@ -1642,27 +1632,29 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 			firstright = nposting;
 	}
 
-	/* Attempt suffix truncation for leaf page splits */
-	if (newitemonleft && newitemoff == firstrightoff)
-	{
-		/* incoming tuple becomes lastleft */
-		lastleft = newitem;
-	}
-	else
-	{
-		OffsetNumber lastleftoff;
-
-		/* existing item before firstrightoff becomes lastleft */
-		lastleftoff = OffsetNumberPrev(firstrightoff);
-		Assert(lastleftoff >= P_FIRSTDATAKEY(oopaque));
-		itemid = PageGetItemId(origpage, lastleftoff);
-		lastleft = (IndexTuple) PageGetItem(origpage, itemid);
-		if (lastleftoff == origpagepostingoff)
-			lastleft = nposting;
-	}
-
 	if (isleaf)
 	{
+		IndexTuple	lastleft;
+
+		/* Attempt suffix truncation for leaf page splits */
+		if (newitemonleft && newitemoff == firstrightoff)
+		{
+			/* incoming tuple becomes lastleft */
+			lastleft = newitem;
+		}
+		else
+		{
+			OffsetNumber lastleftoff;
+
+			/* existing item before firstrightoff becomes lastleft */
+			lastleftoff = OffsetNumberPrev(firstrightoff);
+			Assert(lastleftoff >= P_FIRSTDATAKEY(oopaque));
+			itemid = PageGetItemId(origpage, lastleftoff);
+			lastleft = (IndexTuple) PageGetItem(origpage, itemid);
+			if (lastleftoff == origpagepostingoff)
+				lastleft = nposting;
+		}
+
 		lefthighkey = _bt_truncate(rel, lastleft, firstright, itup_key);
 		itemsz = IndexTupleSize(lefthighkey);
 	}
@@ -1695,57 +1687,6 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 		 * page).
 		 */
 		lefthighkey = firstright;
-	}
-
-	{
-		char	   *lastleftstr = NULL;
-		char	   *firstrightstr = NULL;
-		char	   *lefthighkeystr = NULL;
-		char	   *orighighkeystr = NULL;
-
-		if (!P_RIGHTMOST(oopaque))
-			appendStringInfo(&debugstr,
-							 "origpage n_tup: %u, including high key\n",
-							 maxoff);
-		else
-			appendStringInfo(&debugstr,
-							 "origpage n_tup: %u, rightmost page lacking high key\n",
-							 maxoff);
-
-		appendStringInfo(&debugstr, "origpage left sib: %u, origpage right sib: %u\n",
-						 oopaque->btpo_prev,
-						 oopaque->btpo_next);
-
-		lefthighkeystr = _nbtree_print_itup(lefthighkey, rel);
-		appendStringInfo(&debugstr, "lefthighkey: %s\n",
-						 lefthighkeystr);
-
-		lastleftstr = _nbtree_print_itup(lastleft, rel);
-		firstrightstr = _nbtree_print_itup(firstright, rel);
-		appendStringInfo(&debugstr, "  (  lastleft: %s)\n",
-						 lastleftstr);
-		appendStringInfo(&debugstr, "  (firstright: %s)\n",
-						 firstrightstr);
-
-		if (!isrightmost)
-		{
-			IndexTuple	righthighkey;
-
-			itemid = PageGetItemId(origpage, P_HIKEY);
-			righthighkey = (IndexTuple) PageGetItem(origpage, itemid);
-
-			orighighkeystr = _nbtree_print_itup(righthighkey, rel);
-		}
-		else
-			orighighkeystr = psprintf("(-none-)");
-
-		appendStringInfo(&debugstr, "orighighkey: %s\n",
-						 orighighkeystr);
-
-		pfree(lastleftstr);
-		pfree(firstrightstr);
-		pfree(lefthighkeystr);
-		pfree(orighighkeystr);
 	}
 
 	/*
@@ -2134,17 +2075,6 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 	/* be tidy */
 	if (isleaf)
 		pfree(lefthighkey);
-
-	/* Deliberately omit \n here: */
-	appendStringInfo(&debugstr,
-					 "results: new right sibling is %u, exact free space %zu",
-					 rightpagenumber, PageGetExactFreeSpace(origpage));
-
-	if (log_btree_verbosity >= 3)
-		ereport(LOG,
-				(errmsg_internal("%s", debugstr.data)));
-
-	pfree(debugstr.data);
 
 	/* split's done */
 	return rbuf;
@@ -2889,10 +2819,6 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 	int			ndeadblocks;
 	TM_IndexDeleteOp delstate;
 	OffsetNumber offnum;
-	int			finaldeletedtids;
-	IndexTuple	firstdataitem = NULL,
-				highkey = NULL;
-	BTPageOpaque opaque = BTPageGetOpaque(page);
 
 	/* Get array of table blocks pointed to by LP_DEAD-set tuples */
 	deadblocks = _bt_deadblocks(page, deletable, ndeletable, newitem,
@@ -2904,23 +2830,8 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 	delstate.bottomup = false;
 	delstate.bottomupfreespace = 0;
 	delstate.ndeltids = 0;
-	delstate.ntidstotal = 0;
-	delstate.ncheckedtids = 0;
 	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
 	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
-	initStringInfo(&delstate.debugstr);
-	appendStringInfo(&delstate.debugstr,
-					 "simple deletion of index \"%s\", block %u:\n",
-					 RelationGetRelationName(rel), BufferGetBlockNumber(buffer));
-
-	if (!P_RIGHTMOST(opaque))
-	{
-		ItemId		itemid = PageGetItemId(page, P_HIKEY);
-
-		highkey = (IndexTuple) PageGetItem(page, itemid);
-	}
-
-	delstate.instrument = true;
 
 	for (offnum = minoff;
 		 offnum <= maxoff;
@@ -2933,16 +2844,11 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 		BlockNumber tidblock;
 		void	   *match;
 
-		if (offnum == minoff)
-			firstdataitem = itup;
-
 		if (!BTreeTupleIsPosting(itup))
 		{
 			tidblock = ItemPointerGetBlockNumber(&itup->t_tid);
 			match = bsearch(&tidblock, deadblocks, ndeadblocks,
 							sizeof(BlockNumber), _bt_blk_cmp);
-
-			delstate.ntidstotal++;
 
 			if (!match)
 			{
@@ -2975,7 +2881,6 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 				match = bsearch(&tidblock, deadblocks, ndeadblocks,
 								sizeof(BlockNumber), _bt_blk_cmp);
 
-				delstate.ntidstotal++;
 				if (!match)
 				{
 					Assert(!ItemIdIsDead(itemid));
@@ -3000,61 +2905,13 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
 		}
 	}
 
-	if (delstate.instrument)
-	{
-		char	   *firstdataitemstr = NULL;
-		char	   *highkeystr = NULL;
-
-		if (!P_RIGHTMOST(opaque))
-			appendStringInfo(&delstate.debugstr,
-							 "n_tup: %u, including high key\n",
-							 maxoff);
-		else
-			appendStringInfo(&delstate.debugstr,
-							 "n_tup: %u, rightmost page lacking high key\n",
-							 maxoff);
-
-		appendStringInfo(&delstate.debugstr, "left sib: %u, right sib: %u\n",
-						 opaque->btpo_prev,
-						 opaque->btpo_next);
-
-		if (firstdataitem)
-			firstdataitemstr = _nbtree_print_itup(firstdataitem, rel);
-		appendStringInfo(&delstate.debugstr, "first: %s\n",
-						 firstdataitemstr);
-		if (highkey)
-			highkeystr = _nbtree_print_itup(highkey, rel);
-
-		appendStringInfo(&delstate.debugstr, "h_key: %s\n",
-						 highkeystr);
-
-		if (firstdataitemstr)
-			pfree(firstdataitemstr);
-		if (highkeystr)
-			pfree(highkeystr);
-	}
-
 	pfree(deadblocks);
 
 	Assert(delstate.ndeltids >= ndeletable);
 
 	/* Physically delete LP_DEAD tuples (plus any delete-safe extra TIDs) */
-	finaldeletedtids = _bt_delitems_delete_check(rel, buffer, heapRel, &delstate);
+	_bt_delitems_delete_check(rel, buffer, heapRel, &delstate);
 
-	if (delstate.instrument)
-	{
-		/* Deliberately omit \n here: */
-		appendStringInfo(&delstate.debugstr,
-						 "results: exact free space %zu, exact TIDs deleted %d/LP_DEAD tuples %d (RR %.2f), LP_DEAD-related table blocks %d",
-						 PageGetExactFreeSpace(page), finaldeletedtids, ndeletable,
-						 (double) finaldeletedtids / (double) ndeletable, ndeadblocks);
-
-		if (log_btree_verbosity >= 3)
-			ereport(LOG,
-					(errmsg_internal("%s", delstate.debugstr.data)));
-	}
-
-	pfree(delstate.debugstr.data);
 	pfree(delstate.deltids);
 	pfree(delstate.status);
 }
