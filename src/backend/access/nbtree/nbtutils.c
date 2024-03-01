@@ -2558,7 +2558,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 						 * Ideally, we'd handle this by adding a preprocessing
 						 * step to _bt_preprocess_array_keys that eliminates
 						 * the subset of array elements that the inequality
-						 * ipso facto rule outs (and eliminates the inequality
+						 * ipso facto rules out (and eliminates the inequality
 						 * itself, too).  But that seems like a lot of code
 						 * for such a small benefit (_bt_checkkeys is already
 						 * capable of advancing the array keys by a great many
