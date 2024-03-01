@@ -2567,7 +2567,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 						 */
 					}
 					else if (_bt_compare_scankey_args(scan, chk, eq, chk,
-												 &test_result))
+													  &test_result))
 					{
 						if (!test_result)
 						{
