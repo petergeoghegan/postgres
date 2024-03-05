@@ -608,7 +608,10 @@ btrestrpos(IndexScanDesc scan)
 					   so->markPos.nextTupleOffset);
 			/* Rewind the scan's array keys, if any */
 			if (so->numArrayKeys)
-				_bt_rewind_array_keys(scan);
+			{
+				// _bt_rewind_array_keys(scan);
+				_bt_start_array_keys(scan, so->advanceDir);
+			}
 		}
 		else
 		{

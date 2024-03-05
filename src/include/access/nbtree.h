@@ -964,6 +964,8 @@ typedef struct BTScanPosData
 	 */
 	bool		moreLeft;
 	bool		moreRight;
+	bool		needPrimScanLeft;
+	bool		needPrimScanRight;
 
 	/*
 	 * If we are doing an index-only scan, nextTupleOffset is the first free
