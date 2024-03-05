@@ -526,23 +526,6 @@ int			log_min_duration_statement = -1;
 int			log_parameter_max_length = -1;
 int			log_parameter_max_length_on_error = 0;
 int			log_temp_files = -1;
-
-/*
- * log_btree_verbosity settings:
- *
- * 0 means silent
- *
- * 1 means just show page-level stuff, and some details of high key
- *
- * 2 (the default) means show more detail about preprocessing, etc
- *
- * 3 means show _bt_checkkeys stuff, which can be very verbose but also often
- * isn't
- *
- * 4 shows everything, including details of which TIDs were returned to the
- * executor
- */
-int			log_btree_verbosity = 2;
 double		log_statement_sample_rate = 1.0;
 double		log_xact_sample_rate = 0;
 char	   *backtrace_functions;
@@ -3539,16 +3522,6 @@ struct config_int ConfigureNamesInt[] =
 		},
 		&log_temp_files,
 		-1, -1, INT_MAX,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"log_btree_verbosity", PGC_USERSET, DEVELOPER_OPTIONS,
-			NULL, NULL,
-			GUC_NOT_IN_SAMPLE
-		},
-		&log_btree_verbosity,
-		2, 0, 4,
 		NULL, NULL, NULL
 	},
 
