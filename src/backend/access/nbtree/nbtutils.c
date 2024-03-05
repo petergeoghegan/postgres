@@ -1388,20 +1388,13 @@ _bt_start_prim_scan(IndexScanDesc scan, ScanDirection dir)
 	 * cases, but that's the correct behavior (even _bt_advance_array_keys
 	 * won't always advance the arrays at the point they become "exhausted").
 	 */
-	if ((so->currPos.needPrimScanRight && ScanDirectionIsForward(dir)) ||
-		(so->currPos.needPrimScanLeft && ScanDirectionIsBackward(dir)))
+	if (so->needPrimScan)
 	{
 		Assert(_bt_verify_arrays_bt_first(scan, dir));
 
 		/* Flag was set -- must call _bt_first again */
 		so->needPrimScan = false;
 		so->scanBehind = false;
-
-		if (ScanDirectionIsForward(dir))
-			so->currPos.needPrimScanRight = false;
-		else if (ScanDirectionIsBackward(dir))
-			so->currPos.needPrimScanLeft = false;
-
 		if (scan->parallel_scan != NULL)
 			_bt_parallel_next_primitive_scan(scan);
 

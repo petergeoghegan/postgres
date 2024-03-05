@@ -2300,8 +2300,6 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 		if (!pstate.continuescan)
 			so->currPos.moreRight = false;
-		if (so->needPrimScan)
-			so->currPos.needPrimScanRight = true;
 
 		Assert(itemIndex <= MaxTIDsPerBTreePage);
 		so->currPos.firstItem = 0;
@@ -2484,8 +2482,6 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 		if (!pstate.continuescan)
 			so->currPos.moreLeft = false;
-		if (so->needPrimScan)
-			so->currPos.needPrimScanLeft = true;
 
 		Assert(itemIndex >= 0);
 		so->currPos.firstItem = itemIndex;
@@ -3277,8 +3273,6 @@ _bt_initialize_more_data(BTScanOpaque so, ScanDirection dir)
 		so->currPos.moreLeft = true;
 		so->currPos.moreRight = false;
 	}
-	so->currPos.needPrimScanLeft = false;
-	so->currPos.needPrimScanRight = false;
 	so->numKilled = 0;			/* just paranoia */
 	so->markItemIndex = -1;		/* ditto */
 }
