@@ -405,7 +405,6 @@ vacuum analyze skippy_tbl;
 -- master does at least avoid visiting the same leaf page a second time in its
 -- second _bt_first-wise scan of the index.
 select count(*) from skippy_tbl where bar in (500,555);
-WARNING:  rel skippy_idx, skipsamecount: 51, skipoppocount: 0
  count 
 -------
   3001
@@ -413,7 +412,6 @@ WARNING:  rel skippy_idx, skipsamecount: 51, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from skippy_tbl where bar in (500,555);
-WARNING:  rel skippy_idx, skipsamecount: 51, skipoppocount: 0
                                                   QUERY PLAN                                                  
 --------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=96.83..96.84 rows=1 width=8) (actual rows=1 loops=1)
@@ -439,7 +437,6 @@ WARNING:  rel skippy_idx, skipsamecount: 51, skipoppocount: 0
 -- compared to last time (by 2 buffer accesses) because the master branch
 -- wasn't so lucky about not having to visit the same leaf page a second time.
 select count(*) from skippy_tbl where bar in (555,556);
-WARNING:  rel skippy_idx, skipsamecount: 45, skipoppocount: 0
  count 
 -------
   3000
@@ -447,7 +444,6 @@ WARNING:  rel skippy_idx, skipsamecount: 45, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from skippy_tbl where bar in (555,556);
-WARNING:  rel skippy_idx, skipsamecount: 45, skipoppocount: 0
                                                   QUERY PLAN                                                  
 --------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=96.83..96.84 rows=1 width=8) (actual rows=1 loops=1)
@@ -631,7 +627,6 @@ with a as (
 )
 select count(*) from skippy_tbl
 where bar = any(array[(select array_agg(i) from a)]);
-WARNING:  rel skippy_idx, skipsamecount: 12, skipoppocount: 0
  count 
 -------
   3506
@@ -646,7 +641,6 @@ with a as (
 )
 select count(*) from skippy_tbl
 where bar = any(array[(select array_agg(i) from a)]);
-WARNING:  rel skippy_idx, skipsamecount: 12, skipoppocount: 0
                                                        QUERY PLAN                                                        
 -------------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=1895.56..1895.57 rows=1 width=8) (actual rows=1 loops=1)
@@ -673,7 +667,6 @@ with a as (
 )
 select * from skippy_tbl
 where bar = any(array[(select array_agg(i) from a)]) order by bar desc limit 50 offset 3000;
-WARNING:  rel skippy_idx, skipsamecount: 12, skipoppocount: 0
  bar 
 -----
  500
@@ -737,7 +730,6 @@ with a as (
 )
 select * from skippy_tbl
 where bar = any(array[(select array_agg(i) from a)]) order by bar desc limit 50 offset 3000;
-WARNING:  rel skippy_idx, skipsamecount: 12, skipoppocount: 0
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=10000001880.52..10000001880.59 rows=1 width=4) (actual rows=50 loops=1)
@@ -3898,7 +3890,6 @@ group by
   two,
   twenty;
 execute four_omitted;
-WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 33, skipoppocount: 0
  count | two | twenty 
 -------+-----+--------
    500 |   0 |     10
@@ -3906,7 +3897,6 @@ WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 33, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute four_omitted;
-WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 33, skipoppocount: 0
                                                                QUERY PLAN                                                                
 -----------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate  (cost=70.07..70.27 rows=20 width=16) (actual rows=1 loops=1)
@@ -3936,7 +3926,6 @@ from
 where
   two in (0, 1) -- i.e., every possible "two" value
   and twenty in (0, 1);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 62, skipoppocount: 0
  count 
 -------
   1000
@@ -3950,7 +3939,6 @@ from
 where
   two in (0, 1) -- i.e., every possible "two" value
   and twenty in (0, 1);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 62, skipoppocount: 0
                                                                  QUERY PLAN                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=730.35..730.36 rows=1 width=8) (actual rows=1 loops=1)
@@ -3972,7 +3960,6 @@ where
   two in (0, 1) -- i.e., every possible "two" value
   and four is not null -- no value in "four" is ever a NULL
   and twenty in (0, 1);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 124, skipoppocount: 0
  count 
 -------
   1000
@@ -3987,7 +3974,6 @@ where
   two in (0, 1) -- i.e., every possible "two" value
   and four is not null -- no value in "four" is ever a NULL
   and twenty in (0, 1);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 124, skipoppocount: 0
                                                                  QUERY PLAN                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=755.35..755.36 rows=1 width=8) (actual rows=1 loops=1)
@@ -4014,7 +4000,6 @@ where
   two in (0, 1) -- i.e., every possible "two" value
   and four >= any (array[1, 2]) -- ScalarArrayOpExr inequality
   and twenty in (0, 1);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 44, skipoppocount: 5
  count 
 -------
    500
@@ -4029,7 +4014,6 @@ where
   two in (0, 1) -- i.e., every possible "two" value
   and four >= any (array[1, 2]) -- ScalarArrayOpExr inequality
   and twenty in (0, 1);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 44, skipoppocount: 5
                                                                 QUERY PLAN                                                                 
 -------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=735.58..735.59 rows=1 width=8) (actual rows=1 loops=1)
@@ -4050,7 +4034,6 @@ from
 where
   two in (0, 1) -- i.e., every possible "two" value
   and twenty in (0, 1, 2);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 62, skipoppocount: 0
  count 
 -------
   1500
@@ -4064,7 +4047,6 @@ from
 where
   two in (0, 1) -- i.e., every possible "two" value
   and twenty in (0, 1, 2);
-WARNING:  rel tenk1_idx_extra_column_in_middle, skipsamecount: 62, skipoppocount: 0
                                                                  QUERY PLAN                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=739.07..739.08 rows=1 width=8) (actual rows=1 loops=1)
@@ -4172,7 +4154,6 @@ where
   thousand in (19, 29, 39, 49, 57, 66, 77, 8, 90, 12, 22, 32)
   and (ten >= 5) and (ten > 5 or unique1 > 5000)
 order by ten, unique1 limit 1;
-WARNING:  rel rhodium_toad, skipsamecount: 257, skipoppocount: 1
  unique1 | unique2 | two | four | ten | twenty | hundred | thousand | twothousand | fivethous | tenthous | odd | even | stringu1 | stringu2 | string4 
 ---------+---------+-----+------+-----+--------+---------+----------+-------------+-----------+----------+-----+------+----------+----------+---------
       66 |    6723 |   0 |    2 |   6 |      6 |      66 |       66 |          66 |        66 |       66 | 132 |  133 | OCAAAA   | PYJAAA   | VVVVxx
@@ -4184,7 +4165,6 @@ where
   thousand in (19, 29, 39, 49, 57, 66, 77, 8, 90, 12, 22, 32)
   and (ten >= 5) and (ten > 5 or unique1 > 5000)
 order by ten, unique1 limit 1;
-WARNING:  rel rhodium_toad, skipsamecount: 257, skipoppocount: 1
                                                       QUERY PLAN                                                      
 ----------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..5.22 rows=1 width=244) (actual rows=1 loops=1)
@@ -6287,7 +6267,6 @@ where
 group by two, four, twenty, hundred
 order by two, four, twenty, hundred;
 execute qual_on_two_multiple_saops;
-WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 44, skipoppocount: 0
  count | two | four | twenty | hundred 
 -------+-----+------+--------+---------
    100 |   1 |    1 |      1 |       1
@@ -6344,7 +6323,6 @@ WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 44, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute qual_on_two_multiple_saops;
-WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 44, skipoppocount: 0
                                                                QUERY PLAN                                                               
 ----------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..760.77 rows=991 width=24) (actual rows=50 loops=1)
@@ -6440,7 +6418,6 @@ group by
 order by
   two, four, twenty, hundred;
 execute qual_on_four_skew;
-WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 22, skipoppocount: 0
  count | two | four | twenty | hundred 
 -------+-----+------+--------+---------
    100 |   0 |    2 |      2 |       2
@@ -6472,7 +6449,6 @@ WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 22, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute qual_on_four_skew;
-WARNING:  rel tenk1_dyn_saop_idx_lowcard, skipsamecount: 22, skipoppocount: 0
                                                                QUERY PLAN                                                               
 ----------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..713.89 rows=964 width=24) (actual rows=25 loops=1)
@@ -7950,7 +7926,6 @@ select * from redescend_test where district = 3 and warehouse = 3 and orderid in
 
 -- Can support ScalarArrayOpExr-as-index-quals alongside RowCompareExpr:
 select count(*) from redescend_test where district = 3 and warehouse in (4,5) and (orderid,orderline) >= (3,3);
-WARNING:  rel must_not_full_scan, skipsamecount: 5760, skipoppocount: 0
  count 
 -------
   2956
@@ -7958,7 +7933,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 5760, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from redescend_test where district = 3 and warehouse in (4,5) and (orderid,orderline) >= (3,3);
-WARNING:  rel must_not_full_scan, skipsamecount: 5760, skipoppocount: 0
                                                             QUERY PLAN                                                            
 ----------------------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=292.91..292.92 rows=1 width=8) (actual rows=1 loops=1)
@@ -8022,7 +7996,6 @@ from
   generate_series(1, 3) district,
   generate_series(1, 5) want_five_nulls_per_district;
 select * from redescend_test where district in (1,2,3) and warehouse > 4 and orderid > 149;
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 27
  district | warehouse | orderid | orderline 
 ----------+-----------+---------+-----------
         1 |         5 |     150 |         1
@@ -8059,7 +8032,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 27
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test where district in (1,2,3) and warehouse > 4 and orderid > 149; -- 54 buffer hits (patch + master)
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 27
                                                  QUERY PLAN                                                  
 -------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on redescend_test  (cost=112.45..146.15 rows=22 width=16) (actual rows=30 loops=1)
@@ -8147,7 +8119,6 @@ select * from redescend_test where district in (1,2,3) and warehouse = 5 and ord
 -- of the non-required "orderline in (6,7,8)" array makes it slightly harder.
 select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in (6, 7, 8);
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 12
  district | warehouse | orderid | orderline 
 ----------+-----------+---------+-----------
         1 |         5 |     150 |         6
@@ -8164,7 +8135,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 12
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in (6, 7, 8);
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 12
                                                                      QUERY PLAN                                                                     
 ----------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on redescend_test  (cost=122.09..132.89 rows=6 width=16) (actual rows=9 loops=1)
@@ -8279,7 +8249,6 @@ where district in (1, 2, 3) and warehouse >= 5 and orderid > 149 and orderline i
 -- Mix >= and > again:
 select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid >= 150 and orderline in (6, 7, 8);
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 12
  district | warehouse | orderid | orderline 
 ----------+-----------+---------+-----------
         1 |         5 |     150 |         6
@@ -8296,7 +8265,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 12
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid >= 150 and orderline in (6, 7, 8);
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 12
                                                                      QUERY PLAN                                                                      
 -----------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on redescend_test  (cost=122.09..132.89 rows=6 width=16) (actual rows=9 loops=1)
@@ -8316,7 +8284,6 @@ set enable_indexscan to on;
 select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 8100, skipoppocount: 0
  district | warehouse | orderid | orderline 
 ----------+-----------+---------+-----------
         3 |         5 |     150 |         8
@@ -8334,7 +8301,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 8100, skipoppocount: 0
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..128.52 rows=6 width=16) (actual rows=9 loops=1)
@@ -8394,7 +8360,6 @@ _bt_first: input startKeys[1]: [ flags: [SK_ISNULL, SK_SEARCHNOTNULL], attno: 2 
 select * from redescend_test
 where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 4237, skipoppocount: 14
  district | warehouse | orderid | orderline 
 ----------+-----------+---------+-----------
         3 |         1 |       1 |         8
@@ -8412,7 +8377,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test
 where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 4237, skipoppocount: 14
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..128.52 rows=6 width=16) (actual rows=9 loops=1)
@@ -8556,7 +8520,6 @@ order by district desc, warehouse desc, orderid desc, orderline desc;
 select * from redescend_test
 where district in (1, 2, 3) and warehouse < 2 and orderid <= 1 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 4237, skipoppocount: 14
  district | warehouse | orderid | orderline 
 ----------+-----------+---------+-----------
         3 |         1 |       1 |         8
@@ -8574,7 +8537,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test
 where district in (1, 2, 3) and warehouse < 2 and orderid <= 1 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 4237, skipoppocount: 14
                                                                  QUERY PLAN                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..128.52 rows=6 width=16) (actual rows=9 loops=1)
@@ -8593,7 +8555,6 @@ where district in (1, 2, 3) and (warehouse, orderid) > (4, 149)
 group by district, warehouse, orderid
 order by district, warehouse, orderid;
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 0
  count | district | warehouse | orderid 
 -------+----------+-----------+---------
     10 |        1 |         4 |     150
@@ -9053,7 +9014,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 0
                                                            QUERY PLAN                                                           
 --------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..302.87 rows=1756 width=20) (actual rows=453 loops=1)
@@ -9073,7 +9033,6 @@ where district in (1, 2, 3) and (warehouse, orderid) > (4, 149) and orderline in
 group by district, warehouse, orderid
 order by district, warehouse, orderid;
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 0
  count | district | warehouse | orderid 
 -------+----------+-----------+---------
      4 |        1 |         4 |     150
@@ -9533,7 +9492,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4050, skipoppocount: 0
                                                                            QUERY PLAN                                                                            
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..263.25 rows=990 width=20) (actual rows=453 loops=1)
@@ -9553,7 +9511,6 @@ where district in (1, 2, 3) and (warehouse, orderid) > (4, NULL) and orderline i
 group by district, warehouse, orderid
 order by district, warehouse, orderid;
 execute test_rowcompare_null;
-WARNING:  rel must_not_full_scan, skipsamecount: 8460, skipoppocount: 0
  count | district | warehouse | orderid 
 -------+----------+-----------+---------
      4 |        1 |         5 |       1
@@ -10010,7 +9967,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 8460, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute test_rowcompare_null;
-WARNING:  rel must_not_full_scan, skipsamecount: 8460, skipoppocount: 0
                                                                                 QUERY PLAN                                                                                 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..263.25 rows=990 width=20) (actual rows=450 loops=1)
@@ -10092,7 +10048,6 @@ where district in (1, 2, 3) and (warehouse, orderid) < (2, 2)
 group by district, warehouse, orderid
 order by district desc, warehouse desc, orderid desc;
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4320, skipoppocount: 0
  count | district | warehouse | orderid 
 -------+----------+-----------+---------
     10 |        3 |         2 |       1
@@ -10552,7 +10507,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 4320, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4320, skipoppocount: 0
                                                                QUERY PLAN                                                                
 -----------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..302.87 rows=1756 width=20) (actual rows=453 loops=1)
@@ -10572,7 +10526,6 @@ where district in (1, 2, 3) and (warehouse, orderid) < (2, 2) and orderline in (
 group by district, warehouse, orderid
 order by district desc, warehouse desc, orderid desc;
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4320, skipoppocount: 0
  count | district | warehouse | orderid 
 -------+----------+-----------+---------
      4 |        3 |         2 |       1
@@ -11032,7 +10985,6 @@ WARNING:  rel must_not_full_scan, skipsamecount: 4320, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute test_rowcompare;
-WARNING:  rel must_not_full_scan, skipsamecount: 4320, skipoppocount: 0
                                                                           QUERY PLAN                                                                           
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..263.25 rows=990 width=20) (actual rows=453 loops=1)
@@ -11083,14 +11035,12 @@ where district in (1, 2, 3) and (warehouse, orderid) <= (1, NULL)
 group by district, warehouse, orderid
 order by district desc, warehouse desc, orderid desc;
 execute test_rowcompare_null;
-WARNING:  rel must_not_full_scan, skipsamecount: 4230, skipoppocount: 0
  count | district | warehouse | orderid 
 -------+----------+-----------+---------
 (0 rows)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute test_rowcompare_null;
-WARNING:  rel must_not_full_scan, skipsamecount: 4230, skipoppocount: 0
                                                               QUERY PLAN                                                              
 --------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..302.87 rows=1756 width=20) (actual rows=0 loops=1)
@@ -11142,7 +11092,6 @@ set enable_indexscan to off;
 select * from redescend_test
 where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 4237, skipoppocount: 14
  district | warehouse | orderid | orderline 
 ----------+-----------+---------+-----------
         3 |         1 |       1 |         8
@@ -11160,7 +11109,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test
 where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
-WARNING:  rel must_not_full_scan, skipsamecount: 4237, skipoppocount: 14
                                                                   QUERY PLAN                                                                   
 -----------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using must_not_full_scan on redescend_test  (cost=10000000000.29..10000000128.52 rows=6 width=16) (actual rows=9 loops=1)
@@ -11521,7 +11469,6 @@ select :cur_blocks_hit - :old_blocks_hit bh;
 (1 row)
 
 /* default_scroll_cursor */ commit;
-WARNING:  rel must_not_full_scan, skipsamecount: 33480, skipoppocount: 0
 -- Show EXPLAIN ANALYZE for cursor from transaction block (doing better than
 -- this seems nontrivial):
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
@@ -11529,7 +11476,6 @@ declare default_scroll_cursor cursor for
 select * from redescend_test
 where district in (1, 3) and warehouse in (3, 4, 5, 6, 7)
 order by district, warehouse, orderid, orderline;
-WARNING:  rel must_not_full_scan, skipsamecount: 16560, skipoppocount: 0
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using must_not_full_scan on redescend_test  (cost=10000000000.29..10000000519.75 rows=9000 width=16) (actual rows=9000 loops=1)
@@ -11883,14 +11829,12 @@ select :cur_blocks_hit - :old_blocks_hit bh;
 (1 row)
 
 /* full_scroll_cursor */ commit;
-WARNING:  rel must_not_full_scan, skipsamecount: 33480, skipoppocount: 0
 -- Show EXPLAIN ANALYZE for cursor from transaction block:
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 declare full_scroll_cursor scroll cursor for
 select * from redescend_test
 where district in (1, 3) and warehouse in (3, 4, 5, 6, 7)
 order by district, warehouse, orderid, orderline;
-WARNING:  rel must_not_full_scan, skipsamecount: 16560, skipoppocount: 0
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using must_not_full_scan on redescend_test  (cost=10000000000.29..10000000519.75 rows=9000 width=16) (actual rows=9000 loops=1)
@@ -12094,7 +12038,6 @@ declare noscroll_cursor no scroll cursor for
 select * from redescend_test
 where district in (1, 3) and warehouse in (3, 4, 5, 6, 7)
 order by district, warehouse, orderid, orderline;
-WARNING:  rel must_not_full_scan, skipsamecount: 16560, skipoppocount: 0
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using must_not_full_scan on redescend_test  (cost=10000000000.29..10000000519.75 rows=9000 width=16) (actual rows=9000 loops=1)
@@ -12462,7 +12405,6 @@ select :cur_blocks_hit - :old_blocks_hit bh;
 (1 row)
 
 /* default_scroll_cursor */ commit;
-WARNING:  rel must_not_full_scan, skipsamecount: 66415, skipoppocount: 1785
 -- (November 23) Show EXPLAIN ANALYZE for cursor from transaction block (doing
 -- better than this seems nontrivial):
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 151 buffer hits (matches original)
@@ -12471,7 +12413,6 @@ select * from redescend_test
 where district in (1, 3) and warehouse in (3, 4, 5, 6, 7)
 and orderid > 0 and orderid <= 150
 order by district, warehouse, orderid, orderline;
-WARNING:  rel must_not_full_scan, skipsamecount: 32669, skipoppocount: 895
                                                                   QUERY PLAN                                                                   
 -----------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using must_not_full_scan on redescend_test  (cost=0.29..562.72 rows=8999 width=16) (actual rows=9000 loops=1)
@@ -13837,7 +13778,6 @@ select :cur_blocks_hit - :old_blocks_hit bh;
 (1 row)
 
 /* inequalities_orderid */ commit;
-WARNING:  rel must_not_full_scan, skipsamecount: 65241, skipoppocount: 1719
 -- Show EXPLAIN ANALYZE for cursor from transaction block:
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 declare inequalities_orderid cursor for
@@ -13846,7 +13786,6 @@ where district in (1, 3) and warehouse in (3, 4, 5, 6, 7)
 and orderid >= 1 and orderid <= 1000
 and orderline in (-500,5,7,8,9,500)
 order by district, warehouse, orderid, orderline;
-WARNING:  rel must_not_full_scan, skipsamecount: 32305, skipoppocount: 851
                                                                                                QUERY PLAN                                                                                                
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using must_not_full_scan on redescend_test  (cost=0.29..529.29 rows=3600 width=16) (actual rows=3600 loops=1)
@@ -14221,7 +14160,6 @@ set enable_indexonlyscan to off;
 set enable_indexscan to off;
 -- Don't get confused by DESC condition with pivot tuple high key termination:
 select count(*) from skippy_tbl_desc where bar in (500,555);
-WARNING:  rel skippy_idx_desc, skipsamecount: 46, skipoppocount: 0
  count 
 -------
   3001
@@ -14229,7 +14167,6 @@ WARNING:  rel skippy_idx_desc, skipsamecount: 46, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from skippy_tbl_desc where bar in (500,555);
-WARNING:  rel skippy_idx_desc, skipsamecount: 46, skipoppocount: 0
                                                     QUERY PLAN                                                     
 -------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=100.83..100.84 rows=1 width=8) (actual rows=1 loops=1)
@@ -14249,7 +14186,6 @@ WARNING:  rel skippy_idx_desc, skipsamecount: 46, skipoppocount: 0
 -- the leftmost page (a similar test for forward scans happens elsewhere).
 set enable_sort=off;
 select distinct bar from skippy_tbl_desc where bar in (500,555,556,557,558,559,600) order by bar asc;
-WARNING:  rel skippy_idx_desc, skipsamecount: 12, skipoppocount: 0
  bar 
 -----
  500
@@ -14258,7 +14194,6 @@ WARNING:  rel skippy_idx_desc, skipsamecount: 12, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select distinct bar from skippy_tbl_desc where bar in (500,555,556,557,558,559,600) order by bar asc;
-WARNING:  rel skippy_idx_desc, skipsamecount: 12, skipoppocount: 0
                                                                        QUERY PLAN                                                                       
 --------------------------------------------------------------------------------------------------------------------------------------------------------
  Unique  (cost=10000000000.28..10000000091.96 rows=501 width=4) (actual rows=2 loops=1)
@@ -14361,7 +14296,6 @@ select count(*) from nulls_test where a is NULL and b in (1,2);
 -- 13, 14, and 10):
 -- Note: provides coverage of "NULL < NOT_NULL" case
 select count(*) from nulls_test where a is NULL and b in (0,1);
-WARNING:  rel nulls_test_idx, skipsamecount: 268, skipoppocount: 0
  count 
 -------
   5600
@@ -14369,7 +14303,6 @@ WARNING:  rel nulls_test_idx, skipsamecount: 268, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from nulls_test where a is NULL and b in (0,1); -- shouldn't be visiting 9, though
-WARNING:  rel nulls_test_idx, skipsamecount: 268, skipoppocount: 0
                                                     QUERY PLAN                                                    
 ------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=207.97..207.98 rows=1 width=8) (actual rows=1 loops=1)
@@ -14386,7 +14319,6 @@ WARNING:  rel nulls_test_idx, skipsamecount: 268, skipoppocount: 0
 -- On the other hand we'll only need 6 here (root, plus another 5 for pages 1,
 -- 11, 13, and 14).
 select count(*) from nulls_test where a is NULL and b in (-1, 0);
-WARNING:  rel nulls_test_idx, skipsamecount: 268, skipoppocount: 0
  count 
 -------
   5200
@@ -14394,7 +14326,6 @@ WARNING:  rel nulls_test_idx, skipsamecount: 268, skipoppocount: 0
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from nulls_test where a is NULL and b in (-1, 0); -- shouldn't be visiting 10, though
-WARNING:  rel nulls_test_idx, skipsamecount: 268, skipoppocount: 0
                                                     QUERY PLAN                                                    
 ------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=195.87..195.88 rows=1 width=8) (actual rows=1 loops=1)
@@ -16575,7 +16506,6 @@ from
     on small.a = big.a and small.b = big.b
 where small.a in (1, 3) and big.a in (1, 3)
 group by small_a order by small_a;
-WARNING:  rel amber_big_idx, skipsamecount: 444, skipoppocount: 0
  count | small_a 
 -------+---------
  57344 |       1
@@ -16590,7 +16520,6 @@ from
     on small.a = big.a and small.b = big.b
 where small.a in (1, 3) and big.a in (1, 3)
 group by small_a order by small_a;
-WARNING:  rel amber_big_idx, skipsamecount: 444, skipoppocount: 0
                                                            QUERY PLAN                                                            
 ---------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.43..2653.42 rows=1 width=12) (actual rows=1 loops=1)
@@ -17049,7 +16978,6 @@ group by dup order by dup;
 select count(*), dup from duplicate_test
 where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 89, skipoppocount: 0
  count | dup 
 -------+-----
   1000 |   1
@@ -17076,7 +17004,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 20 hits vs 81 on master
 select count(*), dup from duplicate_test
 where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 89, skipoppocount: 0
                                                                         QUERY PLAN                                                                         
 -----------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=10000000000.80..10000000196.75 rows=18 width=12) (actual rows=18 loops=1)
@@ -17109,7 +17036,6 @@ select count(*), dup from duplicate_test
 where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
 and dup > 8 and dup < 11
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
  count | dup 
 -------+-----
   1000 |   9
@@ -17121,7 +17047,6 @@ select count(*), dup from duplicate_test
 where dup = any (array[( select array_agg(val) from generate_series(1, 40) val)])
 and dup > 8 and dup < 11
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
                                                                        QUERY PLAN                                                                        
 ---------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
@@ -17143,7 +17068,6 @@ dup > 8 and
 dup = any(array[( select array_agg(val) from generate_series(1, 40) val)]) and
 dup < 11
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
  count | dup 
 -------+-----
   1000 |   9
@@ -17157,7 +17081,6 @@ dup > 8 and
 dup = any(array[( select array_agg(val) from generate_series(1, 40) val)]) and
 dup < 11
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
                                                                        QUERY PLAN                                                                        
 ---------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
@@ -17179,7 +17102,6 @@ dup > 8 and
 dup < 11 and
 dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
  count | dup 
 -------+-----
   1000 |   9
@@ -17193,7 +17115,6 @@ dup > 8 and
 dup < 11 and
 dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
                                                                        QUERY PLAN                                                                        
 ---------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
@@ -17215,7 +17136,6 @@ dup < 11 and
 dup > 8 and
 dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
  count | dup 
 -------+-----
   1000 |   9
@@ -17229,7 +17149,6 @@ dup < 11 and
 dup > 8 and
 dup = any(array[( select array_agg(val) from generate_series(1, 40) val)])
 group by dup order by dup;
-WARNING:  rel duplicate_test_dup_idx, skipsamecount: 5, skipoppocount: 0
                                                                        QUERY PLAN                                                                        
 ---------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=10000000000.80..10000000026.93 rows=18 width=12) (actual rows=2 loops=1)
