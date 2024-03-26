@@ -723,6 +723,9 @@ _bt_parallel_primscan_advance(IndexScanDesc scan, BlockNumber prev_scan_page)
 	BTParallelScanDesc btscan;
 	bool		advanced = false;
 
+	if (!IsParallelWorker())
+		return false;
+
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
 
