@@ -679,8 +679,6 @@ _bt_parallel_done(IndexScanDesc scan)
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
 	bool		status_changed = false;
-	BlockNumber btps_scanPage;	/* latest or next page to be scanned */
-	BTPS_State	btps_pageStatus;
 
 	/* Do nothing, for non-parallel scans */
 	if (parallel_scan == NULL)
@@ -694,8 +692,6 @@ _bt_parallel_done(IndexScanDesc scan)
 	 * already
 	 */
 	SpinLockAcquire(&btscan->btps_mutex);
-	btps_scanPage = btscan->btps_scanPage;
-	btps_pageStatus = btscan->btps_pageStatus;
 	if (btscan->btps_pageStatus != BTPARALLEL_DONE)
 	{
 		btscan->btps_pageStatus = BTPARALLEL_DONE;
@@ -706,9 +702,6 @@ _bt_parallel_done(IndexScanDesc scan)
 	/* wake up all the workers associated with this parallel scan */
 	if (status_changed)
 		ConditionVariableBroadcast(&btscan->btps_cv);
-
-	elog(WARNING, "_bt_parallel_done ParallelWorkerNumber %d status_changed: %d, btps_scanPage: %u, btps_pageStatus: %d",
-		 ParallelWorkerNumber, status_changed, btps_scanPage, btps_pageStatus);
 }
 
 /*
@@ -729,21 +722,14 @@ _bt_parallel_primscan_advance(IndexScanDesc scan, BlockNumber prev_scan_page)
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
 	bool		advanced = false;
-	BlockNumber btps_scanPage;	/* latest or next page to be scanned */
 
 	if (!IsParallelWorker())
-	{
-		elog(WARNING, "parallel leader giving up on prev_scan_page %u",
-			 prev_scan_page);
 		return false;
-	}
 
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
 
 	SpinLockAcquire(&btscan->btps_mutex);
-
-	btps_scanPage = btscan->btps_scanPage;
 	if (btscan->btps_pageStatus == BTPARALLEL_IDLE &&
 		btscan->btps_scanPage == prev_scan_page)
 	{
@@ -752,9 +738,6 @@ _bt_parallel_primscan_advance(IndexScanDesc scan, BlockNumber prev_scan_page)
 		advanced = true;
 	}
 	SpinLockRelease(&btscan->btps_mutex);
-
-	elog(WARNING, "_bt_parallel_primscan_advance ParallelWorkerNumber %d advanced: %d, btps_scanPage: %u",
-		 ParallelWorkerNumber, advanced, btps_scanPage);
 
 	return advanced;
 }
