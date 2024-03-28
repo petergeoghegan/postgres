@@ -610,7 +610,10 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno)
 	 * scan for that purpose already
 	 */
 	if (so->needPrimScan)
+	{
+		elog(WARNING, "_bt_parallel_seize force return true because needPrimScan --> ParallelWorkerNumber: %d", ParallelWorkerNumber);
 		return false;
+	}
 
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
@@ -676,13 +679,18 @@ _bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page)
 void
 _bt_parallel_done(IndexScanDesc scan)
 {
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
 	bool		status_changed = false;
 
 	/* Do nothing, for non-parallel scans */
 	if (parallel_scan == NULL)
+	{
+		// elog(WARNING, "do nothing %s",
+		// 	 RelationGetRelationName(scan->indexRelation));
 		return;
+	}
 
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
@@ -702,6 +710,8 @@ _bt_parallel_done(IndexScanDesc scan)
 	/* wake up all the workers associated with this parallel scan */
 	if (status_changed)
 		ConditionVariableBroadcast(&btscan->btps_cv);
+
+	elog(WARNING, "_bt_parallel_done --> ParallelWorkerNumber: %d, needPrimScan: %d", ParallelWorkerNumber, so->needPrimScan);
 }
 
 /*
@@ -719,17 +729,23 @@ _bt_parallel_done(IndexScanDesc scan)
 bool
 _bt_parallel_primscan_advance(IndexScanDesc scan, BlockNumber prev_scan_page)
 {
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
 	bool		advanced = false;
+	BlockNumber btps_scanPage;
 
 	if (!IsParallelWorker())
+	{
+		elog(WARNING, "_bt_parallel_primscan_advance leader rejected ParallelWorkerNumber: %d, needPrimScan: %d, prev_scan_page: %u", ParallelWorkerNumber, so->needPrimScan, prev_scan_page);
 		return false;
+	}
 
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
 
 	SpinLockAcquire(&btscan->btps_mutex);
+	btps_scanPage = btscan->btps_scanPage;
 	if (btscan->btps_pageStatus == BTPARALLEL_IDLE &&
 		btscan->btps_scanPage == prev_scan_page)
 	{
@@ -738,6 +754,10 @@ _bt_parallel_primscan_advance(IndexScanDesc scan, BlockNumber prev_scan_page)
 		advanced = true;
 	}
 	SpinLockRelease(&btscan->btps_mutex);
+
+	elog(WARNING, "_bt_parallel_primscan_advance --> ParallelWorkerNumber: %d, advanced: %d, needPrimScan: %d, btps_scanPage: %u, prev_scan_page: %u",
+		 ParallelWorkerNumber, advanced, so->needPrimScan, btps_scanPage,
+		 prev_scan_page);
 
 	return advanced;
 }

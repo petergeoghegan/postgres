@@ -9,7 +9,7 @@ set enable_bitmapscan=off;
 set enable_indexonlyscan=on;
 set log_btree_verbosity=0;
 
-SELECT 200 AS row_count
+SELECT 5000 AS row_count
 \gset
 
 create unlogged table parallel_index_scan_medium

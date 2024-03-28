@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "access/nbtree.h"
+#include "access/parallel.h"
 #include "access/relscan.h"
 #include "access/xact.h"
 #include "miscadmin.h"
@@ -927,6 +928,10 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * way while keeping other participating processes waiting.  If the scan
 	 * has already begun, use the page number from the shared structure.
 	 */
+	if (scan->parallel_scan != NULL)
+		elog(WARNING, "_bt_first --> ParallelWorkerNumber: %d, needPrimScan: %d",
+			 ParallelWorkerNumber, so->needPrimScan);
+
 	if (scan->parallel_scan != NULL && !so->needPrimScan)
 	{
 		status = _bt_parallel_seize(scan, &blkno);
@@ -2013,6 +2018,9 @@ _bt_steppage(IndexScanDesc scan, ScanDirection dir)
 
 	Assert(BTScanPosIsValid(so->currPos));
 
+	if (scan->parallel_scan)
+		elog(WARNING, "_bt_steppage worker %d, ", ParallelWorkerNumber);
+
 	/* Before leaving current page, deal with any killed items */
 	if (so->numKilled > 0)
 		_bt_killitems(scan);
@@ -2146,6 +2154,9 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno, ScanDirection dir)
 	Page		page;
 	BTPageOpaque opaque;
 	bool		status;
+
+	if (scan->parallel_scan)
+		elog(WARNING, "_bt_readnextpage worker %d", ParallelWorkerNumber);
 
 	rel = scan->indexRelation;
 
