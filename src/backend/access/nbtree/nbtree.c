@@ -809,6 +809,10 @@ _bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber prev_scan_page)
 	}
 	SpinLockRelease(&btscan->btps_mutex);
 
+	/*
+	 * Notify another worker, just in case this backend takes a while to
+	 * arrive back in _bt_first
+	 */
 	if (advanced)
 		ConditionVariableSignal(&btscan->btps_cv);
 
