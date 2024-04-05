@@ -4073,7 +4073,6 @@ static void
 _bt_check_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 					 ScanDirection dir, int tupnatts, TupleDesc tupdesc)
 {
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	OffsetNumber mid;
 	IndexTuple	ahead;
 	int			distance;
@@ -4129,9 +4128,6 @@ _bt_check_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 			pstate->skip = mid + 1;
 		else
 			pstate->skip = mid - 1;
-		elog(WARNING, "blkno %u/offnum %u successfully skipping to offnum %u after %d rechecks, at distance %d",
-			 so->currPos.currPage, pstate->offnum, pstate->skip,
-			 pstate->rechecks, pstate->targetdistance);
 	}
 	else
 	{
@@ -4142,9 +4138,6 @@ _bt_check_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 		 * distance.  Note that we're much more aggressive here than when
 		 * initially ramping up.
 		 */
-		elog(WARNING, "blkno %u/offnum %u failed on offnum %u after %d rechecks, at distance %d",
-			 so->currPos.currPage, pstate->offnum, mid, pstate->rechecks,
-			 pstate->targetdistance);
 		pstate->rechecks = 0;
 		pstate->targetdistance /= 8;
 	}
