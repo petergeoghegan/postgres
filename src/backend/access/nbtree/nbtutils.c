@@ -4093,7 +4093,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 
 	/*
 	 * The look ahead distance starts small, and ramps up as each call here
-	 * allows _bt_readpage to skip ever-more tuples from the current page
+	 * allows _bt_readpage to skip over more tuples
 	 */
 	if (!pstate->targetdistance)
 		pstate->targetdistance = LOOK_AHEAD_DEFAULT_DISTANCE;
@@ -4103,10 +4103,10 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 	/* Don't read past the end (or before the start) of the page, though */
 	if (ScanDirectionIsForward(dir))
 		aheadoffnum = Min(pstate->maxoff,
-						  pstate->offnum + pstate->targetdistance);
+						  (int) pstate->offnum + pstate->targetdistance);
 	else
 		aheadoffnum = Max(pstate->minoff,
-						  pstate->offnum - pstate->targetdistance);
+						  (int) pstate->offnum - pstate->targetdistance);
 
 	ahead = (IndexTuple) PageGetItem(pstate->page,
 									 PageGetItemId(pstate->page, aheadoffnum));
