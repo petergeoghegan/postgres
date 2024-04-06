@@ -99,7 +99,7 @@ static bool _bt_check_rowcompare(ScanKey skey,
 								 IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 								 ScanDirection dir, bool *continuescan);
 static void _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
-									 ScanDirection dir, int tupnatts, TupleDesc tupdesc);
+									 int tupnatts, TupleDesc tupdesc);
 static int	_bt_keep_natts(Relation rel, IndexTuple lastleft,
 						   IndexTuple firstright, BTScanInsert itup_key);
 
@@ -3614,7 +3614,7 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 			if (pstate->rechecks >= LOOK_AHEAD_REQUIRED_RECHECKS)
 			{
 				/* See if we should skip ahead within the current leaf page */
-				_bt_checkkeys_look_ahead(scan, pstate, dir, tupnatts, tupdesc);
+				_bt_checkkeys_look_ahead(scan, pstate, tupnatts, tupdesc);
 
 				/*
 				 * Might have set pstate.skip to a later page offset.  When
@@ -4069,9 +4069,10 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
  */
 static void
 _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
-						 ScanDirection dir, int tupnatts, TupleDesc tupdesc)
+						 int tupnatts, TupleDesc tupdesc)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	ScanDirection dir = pstate->dir;
 	OffsetNumber aheadoffnum;
 	IndexTuple	ahead;
 
