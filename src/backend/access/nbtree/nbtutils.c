@@ -1817,13 +1817,11 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		Assert(!pstate->prechecked);
 
 		/*
-		 * Once we return we'll have a new set of required array keys, whose
-		 * "tuple before array keys" recheck counter should start from 0.
-		 *
-		 * Note that we deliberately avoid touching targetdistance, since
-		 * that's still considered representative of the page as a whole.
+		 * Once we return we'll have a new set of required array keys, so
+		 * reset state used by "look ahead" optimization
 		 */
 		pstate->rechecks = 0;
+		pstate->targetdistance = 0;
 	}
 
 	Assert(_bt_verify_keys_with_arraykeys(scan));
