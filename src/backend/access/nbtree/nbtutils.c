@@ -4102,10 +4102,10 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 
 	/* Don't read past the end (or before the start) of the page, though */
 	if (ScanDirectionIsForward(dir))
-		aheadoffnum = Min(pstate->maxoff,
+		aheadoffnum = Min((int) pstate->maxoff,
 						  (int) pstate->offnum + pstate->targetdistance);
 	else
-		aheadoffnum = Max(pstate->minoff,
+		aheadoffnum = Max((int) pstate->minoff,
 						  (int) pstate->offnum - pstate->targetdistance);
 
 	ahead = (IndexTuple) PageGetItem(pstate->page,
