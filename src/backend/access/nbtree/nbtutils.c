@@ -4139,7 +4139,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 			 so->currPos.currPage, pstate->offnum, skipoffnum, pstate->rechecks,
 			 pstate->targetdistance);
 		pstate->rechecks = 0;
-		pstate->targetdistance /= 8;
+		pstate->targetdistance = Max(pstate->targetdistance / 8, 1);
 	}
 }
 
