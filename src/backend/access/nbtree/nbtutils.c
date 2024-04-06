@@ -4074,7 +4074,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 						 ScanDirection dir, int tupnatts, TupleDesc tupdesc)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	OffsetNumber skipoffnum;
+	OffsetNumber aheadoffnum;
 	IndexTuple	ahead;
 
 	/* Avoid looking ahead when comparing the page high key */
@@ -4103,14 +4103,14 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 
 	/* Don't read past the end (or before the start) of the page, though */
 	if (ScanDirectionIsForward(dir))
-		skipoffnum = Min(pstate->maxoff,
-						 pstate->offnum + pstate->targetdistance);
+		aheadoffnum = Min(pstate->maxoff,
+						  pstate->offnum + pstate->targetdistance);
 	else
-		skipoffnum = Max(pstate->minoff,
-						 pstate->offnum - pstate->targetdistance);
+		aheadoffnum = Max(pstate->minoff,
+						  pstate->offnum - pstate->targetdistance);
 
 	ahead = (IndexTuple) PageGetItem(pstate->page,
-									 PageGetItemId(pstate->page, skipoffnum));
+									 PageGetItemId(pstate->page, aheadoffnum));
 	if (_bt_tuple_before_array_skeys(scan, dir, ahead, tupdesc, tupnatts,
 									 false, 0, NULL))
 	{
@@ -4119,9 +4119,9 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 		 * after the one we determined was still before the current array keys
 		 */
 		if (ScanDirectionIsForward(dir))
-			pstate->skip = skipoffnum + 1;
+			pstate->skip = aheadoffnum + 1;
 		else
-			pstate->skip = skipoffnum - 1;
+			pstate->skip = aheadoffnum - 1;
 		elog(WARNING, "blkno %u/offnum %u successfully skipping to offnum %u after %d rechecks, at distance %d",
 			 so->currPos.currPage, pstate->offnum, pstate->skip,
 			 pstate->rechecks, pstate->targetdistance);
@@ -4136,7 +4136,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 		 * distance was initially ramped up).
 		 */
 		elog(WARNING, "blkno %u/offnum %u failed on offnum %u after %d rechecks, at distance %d",
-			 so->currPos.currPage, pstate->offnum, skipoffnum, pstate->rechecks,
+			 so->currPos.currPage, pstate->offnum, aheadoffnum, pstate->rechecks,
 			 pstate->targetdistance);
 		pstate->rechecks = 0;
 		pstate->targetdistance = Max(pstate->targetdistance / 8, 1);
