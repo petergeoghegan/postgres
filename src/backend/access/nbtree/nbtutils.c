@@ -4121,8 +4121,8 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 			pstate->skip = aheadoffnum + 1;
 		else
 			pstate->skip = aheadoffnum - 1;
-		elog(WARNING, "blkno %u/offnum %u successfully skipping to offnum %u after %d rechecks, at distance %d",
-			 so->currPos.currPage, pstate->offnum, pstate->skip,
+		elog(WARNING, "blkno %u/offnum %u dir %d successfully skipping to offnum %u after %d rechecks, at distance %d",
+			 so->currPos.currPage, pstate->offnum, dir, pstate->skip,
 			 pstate->rechecks, pstate->targetdistance);
 	}
 	else
@@ -4134,9 +4134,9 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 		 * distance (we're much more aggressive here than we were when the
 		 * distance was initially ramped up).
 		 */
-		elog(WARNING, "blkno %u/offnum %u failed on offnum %u after %d rechecks, at distance %d",
-			 so->currPos.currPage, pstate->offnum, aheadoffnum, pstate->rechecks,
-			 pstate->targetdistance);
+		elog(WARNING, "blkno %u/offnum %u dir %d failed on offnum %u after %d rechecks, at distance %d",
+			 so->currPos.currPage, pstate->offnum, dir, aheadoffnum,
+			 pstate->rechecks, pstate->targetdistance);
 		pstate->rechecks = 0;
 		pstate->targetdistance = Max(pstate->targetdistance / 8, 1);
 	}
