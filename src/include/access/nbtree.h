@@ -1033,8 +1033,10 @@ typedef struct BTArrayKeyInfo
 {
 	int			scan_key;		/* index of associated key in keyData */
 	int			cur_elem;		/* index of current element in elem_values */
-	int			num_elems;		/* number of elems in current array value */
+	int			num_elems;		/* number of elems (-1 for skip array) */
 	Datum	   *elem_values;	/* array of num_elems Datums */
+	Datum		min_value;		/* min value (skip array only) */
+	Datum		max_value;		/* min value (skip array only) */
 } BTArrayKeyInfo;
 
 typedef struct BTScanOpaqueData

@@ -20,6 +20,7 @@
 #include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
+#include "catalog/pg_opfamily_d.h"
 #include "commands/progress.h"
 #include "lib/qunique.h"
 #include "miscadmin.h"
@@ -62,7 +63,7 @@ static bool _bt_compare_array_scankey_args(IndexScanDesc scan,
 										   ScanKey arraysk, ScanKey skey,
 										   FmgrInfo *orderproc, BTArrayKeyInfo *array,
 										   bool *qual_ok);
-static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan);
+static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan, int *numberOfKeys);
 static void _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap);
 static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
 static inline int32 _bt_compare_array_skey(FmgrInfo *orderproc,
@@ -266,11 +267,10 @@ _bt_freestack(BTStack stack)
  * without supplying a new set of scankey data.
  */
 static ScanKey
-_bt_preprocess_array_keys(IndexScanDesc scan)
+_bt_preprocess_array_keys(IndexScanDesc scan, int *numberOfKeys)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
-	int			numberOfKeys = scan->numberOfKeys;
 	int16	   *indoption = rel->rd_indoption;
 	int			numArrayKeys;
 	int			origarrayatt = InvalidAttrNumber,
@@ -279,12 +279,19 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 	ScanKey		cur;
 	MemoryContext oldContext;
 	ScanKey		arrayKeyData;	/* modified copy of scan->keyData */
+	int			numberOfSkipKeys = 0,
+				add_skip_attno = 0,
+				last_skip_attno = 0,
+				outk = 0;
 
-	Assert(numberOfKeys);
+	Assert(*numberOfKeys);
 
-	/* Quick check to see if there are any array keys */
+	/*
+	 * Quick check to see if there are any array keys, or any missing keys we
+	 * can generate a "skip scan" array key for ourselves
+	 */
 	numArrayKeys = 0;
-	for (int i = 0; i < numberOfKeys; i++)
+	for (int i = 0; i < *numberOfKeys; i++)
 	{
 		cur = &scan->keyData[i];
 		if (cur->sk_flags & SK_SEARCHARRAY)
@@ -297,6 +304,97 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 				so->qual_ok = false;
 				return NULL;
 			}
+		}
+	}
+
+	/*
+	 * Consider generating an array + scan key for missing key attributes for
+	 * index attributes before the first input scan key's attribute now.  This
+	 * enables our caller to mark non-missing scan keys as required, since its
+	 * value is "anchored" to the scan's progress through the key space by the
+	 * scan tracking earlier attributes to a prefix of skip array elements.
+	 */
+	if (scan->numberOfKeys > 0 && !IsSystemRelation(rel))
+	{
+		int			last_equal = 0;
+
+		for (int i = 0; i < scan->numberOfKeys; i++)
+		{
+			int			last_equal_temp;
+
+			cur = &scan->keyData[i];
+
+			/*
+			 * Check if opclass/type supports skip scan.
+			 *
+			 * For now we only support the default opclass for types int4 and
+			 * date.  This needs to be generalized by inventing a new type of
+			 * btree support function that generates the next/previous value
+			 * in the key space.  We'll also require infrastructure within
+			 * nbtsearch.c to find the next value for types/opfamilies where
+			 * using the "add or subtract 1" approach is either impractical or
+			 * impossible (e.g., when text is used with collations).
+			 */
+			last_equal_temp = last_equal;
+			while (last_equal_temp < cur->sk_attno)
+			{
+				Oid			opfamily = rel->rd_opfamily[last_equal_temp];
+				Oid			opcintype = rel->rd_opcintype[last_equal_temp];
+
+				if (!(opfamily == INTEGER_BTREE_FAM_OID && opcintype == INT4OID) &&
+					!(opfamily == DATETIME_BTREE_FAM_OID && opcintype == DATEOID))
+				{
+					/* Skipping unsupported with this opclass/type */
+					last_equal_temp = 0;
+					numberOfSkipKeys = 0;
+					add_skip_attno = 0;
+					break;
+				}
+
+				last_equal_temp++;
+			}
+			if (!last_equal_temp)
+				break;
+			if (cur->sk_flags & SK_ROW_HEADER)
+			{
+				/* FIXME think about row comparisons */
+				numberOfSkipKeys = 0;
+				break;
+			}
+			if (cur->sk_flags & SK_SEARCHNULL)
+			{
+				/* FIXME think about IS NULL support */
+				numberOfSkipKeys = 0;
+				break;
+			}
+			if (cur->sk_flags & SK_SEARCHNOTNULL)
+			{
+				/* FIXME think about IS NOT NULL support */
+				numberOfSkipKeys = 0;
+				break;
+			}
+
+			if (!numberOfSkipKeys)
+				add_skip_attno = last_equal;
+			if (cur->sk_strategy == BTEqualStrategyNumber)
+			{
+				numberOfSkipKeys += cur->sk_attno - last_equal - 1;
+				last_equal = cur->sk_attno;
+			}
+			else
+			{
+				numberOfSkipKeys++;
+				last_equal++;
+			}
+		}
+		numberOfSkipKeys = Max(numberOfSkipKeys, 0);
+
+		if (numberOfSkipKeys)
+		{
+			if (scan->keyData[0].sk_attno > 1)
+				add_skip_attno = 0;
+			numArrayKeys += numberOfSkipKeys;
+			*numberOfKeys += numberOfSkipKeys;
 		}
 	}
 
@@ -318,19 +416,25 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 	oldContext = MemoryContextSwitchTo(so->arrayContext);
 
 	/* Create modifiable copy of scan->keyData in the workspace context */
-	arrayKeyData = (ScanKey) palloc(numberOfKeys * sizeof(ScanKeyData));
-	memcpy(arrayKeyData, scan->keyData, numberOfKeys * sizeof(ScanKeyData));
+	arrayKeyData = (ScanKey) palloc(*numberOfKeys * sizeof(ScanKeyData));
 
 	/* Allocate space for per-array data in the workspace context */
 	so->arrayKeys = (BTArrayKeyInfo *) palloc(numArrayKeys * sizeof(BTArrayKeyInfo));
 
 	/* Allocate space for ORDER procs used to help _bt_checkkeys */
-	so->orderProcs = (FmgrInfo *) palloc(numberOfKeys * sizeof(FmgrInfo));
+	so->orderProcs = (FmgrInfo *) palloc(*numberOfKeys * sizeof(FmgrInfo));
 
 	/* Now process each array key */
 	numArrayKeys = 0;
-	for (int i = 0; i < numberOfKeys; i++)
+
+	/*
+	 * Consider creating a skip scan array + scan key.  Anything allocated
+	 * here (including a possibly detoasted array value) is in the workspace
+	 * context.
+	 */
+	for (int i = 0; i < scan->numberOfKeys; i++)
 	{
+		ScanKey		curout = arrayKeyData + outk;
 		FmgrInfo	sortproc;
 		FmgrInfo   *sortprocp = &sortproc;
 		Oid			elemtype;
@@ -345,14 +449,65 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		int			num_nonnulls;
 		int			j;
 
-		cur = &arrayKeyData[i];
+		cur = &scan->keyData[i];
+
+		if (last_skip_attno < cur->sk_attno)
+		{
+			while (add_skip_attno < cur->sk_attno && numberOfSkipKeys)
+			{
+				Oid			opcintype = rel->rd_opcintype[add_skip_attno];
+				Oid			eq_op = get_opfamily_member(rel->rd_opfamily[add_skip_attno],
+														opcintype, opcintype,
+														BTEqualStrategyNumber);
+				RegProcedure cmp_proc = get_opcode(eq_op);
+
+				Assert(opcintype == INT4OID || opcintype == DATEOID);
+
+				/* Initialize cur scan key from scratch */
+				ScanKeyEntryInitialize(curout, SK_SEARCHARRAY, add_skip_attno + 1,
+									   BTEqualStrategyNumber,
+									   InvalidOid, InvalidOid,
+									   cmp_proc, (Datum) 0);
+
+				/*
+				 * We'll need a 3-way ORDER proc to determine if the "array"
+				 * needs to advance.  Set that up now.
+				 */
+				_bt_setup_array_cmp(scan, curout, opcintype,
+									&so->orderProcs[outk], NULL);
+				so->arrayKeys[numArrayKeys].scan_key = outk;
+				so->arrayKeys[numArrayKeys].cur_elem = 0;
+				so->arrayKeys[numArrayKeys].num_elems = -1;
+				so->arrayKeys[numArrayKeys].elem_values = NULL;
+				if ((indoption[cur->sk_attno - 1] & INDOPTION_DESC) == 0)
+				{
+					so->arrayKeys[numArrayKeys].min_value = Int32GetDatum(INT_MIN);
+					so->arrayKeys[numArrayKeys].max_value = Int32GetDatum(INT_MAX);
+				}
+				else
+				{
+					so->arrayKeys[numArrayKeys].min_value = Int32GetDatum(INT_MAX);
+					so->arrayKeys[numArrayKeys].max_value = Int32GetDatum(INT_MIN);
+				}
+
+				numArrayKeys++;
+				outk++;
+				curout = arrayKeyData + outk;
+				add_skip_attno++;
+				numberOfSkipKeys--;
+				last_skip_attno = cur->sk_attno;
+			}
+		}
+
 		if (!(cur->sk_flags & SK_SEARCHARRAY))
+		{
+			*curout = *cur;
+			outk++;
 			continue;
+		}
 
 		/*
-		 * First, deconstruct the array into elements.  Anything allocated
-		 * here (including a possibly detoasted array value) is in the
-		 * workspace context.
+		 * Deconstruct the array into elements
 		 */
 		arrayval = DatumGetArrayTypeP(cur->sk_argument);
 		/* We could cache this data, but not clear it's worth it */
@@ -406,6 +561,8 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 					_bt_find_extreme_element(scan, cur, elemtype,
 											 BTGreaterStrategyNumber,
 											 elem_values, num_nonnulls);
+				*curout = *cur;
+				outk++;
 				continue;
 			case BTEqualStrategyNumber:
 				/* proceed with rest of loop */
@@ -416,6 +573,8 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 					_bt_find_extreme_element(scan, cur, elemtype,
 											 BTLessStrategyNumber,
 											 elem_values, num_nonnulls);
+				*curout = *cur;
+				outk++;
 				continue;
 			default:
 				elog(ERROR, "unrecognized StrategyNumber: %d",
@@ -432,7 +591,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		 * sortproc just points to the same proc used during binary searches.
 		 */
 		_bt_setup_array_cmp(scan, cur, elemtype,
-							&so->orderProcs[i], &sortprocp);
+							&so->orderProcs[outk], &sortprocp);
 
 		/*
 		 * Sort the non-null elements and eliminate any duplicates.  We must
@@ -481,6 +640,8 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 				 * this scan key
 				 */
 				cur->sk_strategy = InvalidStrategy;
+				*curout = *cur;
+				outk++;
 				continue;
 			}
 
@@ -511,15 +672,28 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		 * Note: _bt_preprocess_array_keys_final will fix-up each array's
 		 * scan_key field later on, after so->keyData[] has been finalized.
 		 */
-		so->arrayKeys[numArrayKeys].scan_key = i;
+		so->arrayKeys[numArrayKeys].scan_key = outk;
 		so->arrayKeys[numArrayKeys].num_elems = num_elems;
 		so->arrayKeys[numArrayKeys].elem_values = elem_values;
 		numArrayKeys++;
+		*curout = *cur;
+		outk++;
 	}
 
 	so->numArrayKeys = numArrayKeys;
+	*numberOfKeys = outk;
 
 	MemoryContextSwitchTo(oldContext);
+
+	if (scan->numberOfKeys < *numberOfKeys)
+	{
+		/* Have to enlarge output scan key buffer for skip scan keys */
+		so->keyData = repalloc(so->keyData,
+							   sizeof(ScanKeyData) * *numberOfKeys);
+
+		Assert(arrayKeyData[0].sk_attno == 1 &&
+			   arrayKeyData[0].sk_strategy == BTEqualStrategyNumber);
+	}
 
 	return arrayKeyData;
 }
@@ -624,7 +798,8 @@ _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap)
 		{
 			BTArrayKeyInfo *array = &so->arrayKeys[arrayidx];
 
-			Assert(array->num_elems > 0);
+			Assert(array->num_elems > 0 || array->num_elems == -1);
+			Assert(array->num_elems != -1 || outkey->sk_flags & SK_BT_REQFWD);
 
 			if (array->scan_key == input_ikey)
 			{
@@ -987,7 +1162,6 @@ _bt_compare_array_scankey_args(IndexScanDesc scan, ScanKey arraysk, ScanKey skey
 	FmgrInfo   *orderprocp = orderproc;
 
 	Assert(arraysk->sk_attno == skey->sk_attno);
-	Assert(array->num_elems > 0);
 	Assert(!(arraysk->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_ROW_MEMBER)));
 	Assert((arraysk->sk_flags & SK_SEARCHARRAY) &&
 		   arraysk->sk_strategy == BTEqualStrategyNumber);
@@ -1036,6 +1210,43 @@ _bt_compare_array_scankey_args(IndexScanDesc scan, ScanKey arraysk, ScanKey skey
 		orderprocp = &crosstypeproc;
 		fmgr_info(cmp_proc, orderprocp);
 	}
+
+	if (array->num_elems == -1)
+	{
+		int32		result = 0;
+
+		switch (skey->sk_strategy)
+		{
+			case BTLessStrategyNumber:
+				array->max_value = skey->sk_argument;
+				array->max_value--;
+				break;
+			case BTLessEqualStrategyNumber:
+				array->max_value = skey->sk_argument;
+				break;
+			case BTEqualStrategyNumber:
+				array->max_value = skey->sk_argument;
+				array->min_value = skey->sk_argument;
+				break;
+			case BTGreaterEqualStrategyNumber:
+				array->min_value = skey->sk_argument;
+				break;
+			case BTGreaterStrategyNumber:
+				array->min_value = skey->sk_argument;
+				array->min_value++;
+				break;
+			default:
+				elog(ERROR, "unrecognized StrategyNumber: %d",
+					 (int) skey->sk_strategy);
+				break;
+		}
+		result = _bt_compare_array_skey(orderproc, array->min_value, false,
+										array->max_value, arraysk);
+		*qual_ok = (result <= 0);
+		return true;
+	}
+
+	Assert(array->num_elems > 0);
 
 	matchelem = _bt_binsrch_array_skey(orderprocp, false,
 									   NoMovementScanDirection,
@@ -1213,6 +1424,51 @@ _bt_binsrch_array_skey(FmgrInfo *orderproc,
 	Assert(cur->sk_flags & SK_SEARCHARRAY);
 	Assert(cur->sk_strategy == BTEqualStrategyNumber);
 
+	if (array->num_elems == -1)
+	{
+		Datum		firstdatumdir,
+					lastdatumdir;
+
+		if (tupnull)
+			elog(WARNING, "tried to use NULL tuple value with skip array");
+
+		Assert(!ScanDirectionIsNoMovement(dir));
+		Assert(cur->sk_flags & SK_BT_REQFWD);
+
+		if (ScanDirectionIsForward(dir))
+			firstdatumdir = array->min_value;
+		else
+			firstdatumdir = array->max_value;
+
+		result = _bt_compare_array_skey(orderproc, tupdatum, tupnull,
+										firstdatumdir, cur);
+
+		if ((ScanDirectionIsForward(dir) && result < 0) ||
+			(ScanDirectionIsBackward(dir) && result > 0))
+		{
+			*set_elem_result = result;
+			return 0;
+		}
+
+		if (ScanDirectionIsForward(dir))
+			lastdatumdir = array->max_value;
+		else
+			lastdatumdir = array->min_value;
+
+		result = _bt_compare_array_skey(orderproc, tupdatum, tupnull,
+										lastdatumdir, cur);
+
+		if ((ScanDirectionIsForward(dir) && result > 0) ||
+			(ScanDirectionIsBackward(dir) && result < 0))
+		{
+			*set_elem_result = result;
+			return 0;
+		}
+
+		*set_elem_result = 0;
+		return 0;
+	}
+
 	if (cur_elem_trig)
 	{
 		Assert(!ScanDirectionIsNoMovement(dir));
@@ -1353,14 +1609,24 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
 		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
 		ScanKey		skey = &so->keyData[curArrayKey->scan_key];
 
-		Assert(curArrayKey->num_elems > 0);
+		Assert(curArrayKey->num_elems > 0 || curArrayKey->num_elems == -1);
 		Assert(skey->sk_flags & SK_SEARCHARRAY);
 
-		if (ScanDirectionIsBackward(dir))
-			curArrayKey->cur_elem = curArrayKey->num_elems - 1;
+		if (curArrayKey->num_elems == -1)
+		{
+			if (ScanDirectionIsForward(dir))
+				skey->sk_argument = curArrayKey->min_value;
+			else
+				skey->sk_argument = curArrayKey->max_value;
+		}
 		else
-			curArrayKey->cur_elem = 0;
-		skey->sk_argument = curArrayKey->elem_values[curArrayKey->cur_elem];
+		{
+			if (ScanDirectionIsBackward(dir))
+				curArrayKey->cur_elem = curArrayKey->num_elems - 1;
+			else
+				curArrayKey->cur_elem = 0;
+			skey->sk_argument = curArrayKey->elem_values[curArrayKey->cur_elem];
+		}
 	}
 	so->scanBehind = false;
 }
@@ -1391,11 +1657,61 @@ _bt_advance_array_keys_increment(IndexScanDesc scan, ScanDirection dir)
 	{
 		BTArrayKeyInfo *curArrayKey = &so->arrayKeys[i];
 		ScanKey		skey = &so->keyData[curArrayKey->scan_key];
+		FmgrInfo   *orderproc = so->orderProcs + curArrayKey->scan_key;
 		int			cur_elem = curArrayKey->cur_elem;
 		int			num_elems = curArrayKey->num_elems;
 		bool		rolled = false;
 
-		if (ScanDirectionIsForward(dir) && ++cur_elem >= num_elems)
+		if (num_elems == -1)
+		{
+			Assert(skey->sk_flags & SK_BT_REQFWD);
+
+			if ((ScanDirectionIsForward(dir) &&
+				 _bt_compare_array_skey(orderproc, curArrayKey->max_value,
+										false, skey->sk_argument, skey) > 0) ||
+				(ScanDirectionIsBackward(dir) &&
+				 _bt_compare_array_skey(orderproc, curArrayKey->min_value,
+										false, skey->sk_argument, skey) < 0))
+			{
+				/* Skip scan key can never rollover */
+				if (ScanDirectionIsForward(dir))
+				{
+					if (!(skey->sk_flags & SK_BT_DESC))
+						skey->sk_argument++;
+					else
+						skey->sk_argument--;
+				}
+				else
+				{
+					if (!(skey->sk_flags & SK_BT_DESC))
+						skey->sk_argument--;
+					else
+						skey->sk_argument++;
+				}
+
+				if ((ScanDirectionIsForward(dir) &&
+					 _bt_compare_array_skey(orderproc, curArrayKey->max_value,
+											false, skey->sk_argument,
+											skey) >= 0) ||
+					(ScanDirectionIsBackward(dir) &&
+					 _bt_compare_array_skey(orderproc, curArrayKey->min_value,
+											false, skey->sk_argument,
+											skey) <= 0))
+				{
+					/* FIXME What if we need to rollover to NULL? */
+					return true;
+				}
+			}
+
+			/* Skip scan key can never rollover */
+			if (ScanDirectionIsForward(dir))
+				skey->sk_argument = curArrayKey->min_value;
+			else
+				skey->sk_argument = curArrayKey->max_value;
+
+			continue;
+		}
+		else if (ScanDirectionIsForward(dir) && ++cur_elem >= num_elems)
 		{
 			cur_elem = 0;
 			rolled = true;
@@ -1484,6 +1800,8 @@ _bt_rewind_nonrequired_arrays(IndexScanDesc scan, ScanDirection dir)
 
 		if ((cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)))
 			continue;
+
+		Assert(array->num_elems > 0);	/* No skipping of non-required arrays */
 
 		if (ScanDirectionIsForward(dir))
 			first_elem_dir = 0;
@@ -1961,10 +2279,18 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 			else
 				final_elem_dir = array->num_elems - 1;
 
-			if (array && array->cur_elem != final_elem_dir)
+			if (array && array->num_elems > 0 &&
+				array->cur_elem != final_elem_dir)
 			{
 				array->cur_elem = final_elem_dir;
 				cur->sk_argument = array->elem_values[final_elem_dir];
+			}
+			else if (array && array->num_elems == -1)
+			{
+				if (ScanDirectionIsForward(dir))
+					cur->sk_argument = array->max_value;
+				else
+					cur->sk_argument = array->min_value;
 			}
 
 			continue;
@@ -1997,10 +2323,18 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 			else
 				first_elem_dir = array->num_elems - 1;
 
-			if (array && array->cur_elem != first_elem_dir)
+			if (array && array->num_elems > 0 &&
+				array->cur_elem != first_elem_dir)
 			{
 				array->cur_elem = first_elem_dir;
 				cur->sk_argument = array->elem_values[first_elem_dir];
+			}
+			else if (array && array->num_elems == -1)
+			{
+				if (ScanDirectionIsForward(dir))
+					cur->sk_argument = array->min_value;
+				else
+					cur->sk_argument = array->max_value;
 			}
 
 			continue;
@@ -2024,7 +2358,8 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 											  tupdatum, tupnull, array, cur,
 											  &result);
 
-			Assert(set_elem >= 0 && set_elem < array->num_elems);
+			Assert(array->num_elems == -1 ||
+				   (set_elem >= 0 && set_elem < array->num_elems));
 		}
 		else
 		{
@@ -2101,10 +2436,31 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		}
 
 		/* Advance array keys, even when set_elem isn't an exact match */
-		if (array && array->cur_elem != set_elem)
+		if (array)
 		{
 			array->cur_elem = set_elem;
-			cur->sk_argument = array->elem_values[set_elem];
+			if (array->num_elems > 0)
+				cur->sk_argument = array->elem_values[set_elem];
+			else
+			{
+				Assert(required && sktrig_required);
+				if (result == 0)
+					cur->sk_argument = tupdatum;
+				else if (beyond_end_advance)
+				{
+					if (ScanDirectionIsForward(dir))
+						cur->sk_argument = array->max_value;
+					else
+						cur->sk_argument = array->min_value;
+				}
+				else
+				{
+					if (ScanDirectionIsForward(dir))
+						cur->sk_argument = array->min_value;
+					else
+						cur->sk_argument = array->max_value;
+				}
+			}
 		}
 	}
 
@@ -2594,7 +2950,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		return;					/* done if qual-less scan */
 
 	/* If any keys are SK_SEARCHARRAY type, set up array-key info */
-	arrayKeyData = _bt_preprocess_array_keys(scan);
+	arrayKeyData = _bt_preprocess_array_keys(scan, &numberOfKeys);
 	if (!so->qual_ok)
 	{
 		/* unmatchable array, so give up */
@@ -2751,7 +3107,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 							return;
 						}
 						/* else discard the redundant non-equality key */
-						Assert(!array || array->num_elems > 0);
+						Assert(!array || array->num_elems != 0);
 						xform[j].skey = NULL;
 						xform[j].ikey = -1;
 					}
@@ -2925,7 +3281,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				/* Have all we need to determine redundancy */
 				if (test_result)
 				{
-					Assert(!array || array->num_elems > 0);
+					Assert(!array || array->num_elems != 0);
 
 					/*
 					 * New key is more restrictive, and so replaces old key...
@@ -3067,10 +3423,11 @@ _bt_verify_keys_with_arraykeys(IndexScanDesc scan)
 		if (array->scan_key != ikey)
 			return false;
 
-		if (array->num_elems <= 0)
+		if (array->num_elems == 0 || array->num_elems < -1)
 			return false;
 
-		if (cur->sk_argument != array->elem_values[array->cur_elem])
+		if (array->num_elems != -1 &&
+			cur->sk_argument != array->elem_values[array->cur_elem])
 			return false;
 		if (last_sk_attno > cur->sk_attno)
 			return false;
@@ -3217,6 +3574,7 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 		if (leftarray && rightarray)
 		{
 			/* Can't make the comparison */
+			Assert(array->num_elems > 0);
 			*result = false;	/* suppress compiler warnings */
 			return false;
 		}

@@ -1909,19 +1909,18 @@ select * from int4_tbl i4, tenk1 a
 where exists(select * from tenk1 b
              where a.twothousand = b.twothousand and a.fivethous <> b.fivethous)
       and i4.f1 = a.tenthous;
-                  QUERY PLAN                  
-----------------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Hash Semi Join
    Hash Cond: (a.twothousand = b.twothousand)
    Join Filter: (a.fivethous <> b.fivethous)
-   ->  Hash Join
-         Hash Cond: (a.tenthous = i4.f1)
-         ->  Seq Scan on tenk1 a
-         ->  Hash
-               ->  Seq Scan on int4_tbl i4
+   ->  Nested Loop
+         ->  Seq Scan on int4_tbl i4
+         ->  Index Scan using tenk1_thous_tenthous on tenk1 a
+               Index Cond: (tenthous = i4.f1)
    ->  Hash
          ->  Seq Scan on tenk1 b
-(10 rows)
+(9 rows)
 
 --
 -- More complicated constructs
@@ -3721,17 +3720,18 @@ explain (costs off)
 select * from
   tenk1, int8_tbl a, int8_tbl b
 where thousand = a.q1 and tenthous = b.q1 and a.q2 = 1 and b.q2 = 2;
-                             QUERY PLAN                              
----------------------------------------------------------------------
+                         QUERY PLAN                         
+------------------------------------------------------------
  Nested Loop
-   ->  Seq Scan on int8_tbl b
-         Filter: (q2 = 2)
+   Join Filter: (tenk1.thousand = a.q1)
    ->  Nested Loop
-         ->  Seq Scan on int8_tbl a
-               Filter: (q2 = 1)
+         ->  Seq Scan on int8_tbl b
+               Filter: (q2 = 2)
          ->  Index Scan using tenk1_thous_tenthous on tenk1
-               Index Cond: ((thousand = a.q1) AND (tenthous = b.q1))
-(8 rows)
+               Index Cond: (tenthous = b.q1)
+   ->  Seq Scan on int8_tbl a
+         Filter: (q2 = 1)
+(9 rows)
 
 --
 -- test a corner case in which we shouldn't apply the star-schema optimization
@@ -4315,24 +4315,25 @@ select b.unique1 from
   join int4_tbl i1 on b.thousand = f1
   right join int4_tbl i2 on i2.f1 = b.tenthous
   order by 1;
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
  Sort
    Sort Key: b.unique1
    ->  Nested Loop Left Join
          ->  Seq Scan on int4_tbl i2
-         ->  Nested Loop Left Join
-               Join Filter: (b.unique1 = 42)
-               ->  Nested Loop
+         ->  Nested Loop
+               Join Filter: (b.thousand = i1.f1)
+               ->  Nested Loop Left Join
+                     Join Filter: (b.unique1 = 42)
                      ->  Nested Loop
-                           ->  Seq Scan on int4_tbl i1
                            ->  Index Scan using tenk1_thous_tenthous on tenk1 b
-                                 Index Cond: ((thousand = i1.f1) AND (tenthous = i2.f1))
-                     ->  Index Scan using tenk1_unique1 on tenk1 a
-                           Index Cond: (unique1 = b.unique2)
-               ->  Index Only Scan using tenk1_thous_tenthous on tenk1 c
-                     Index Cond: (thousand = a.thousand)
-(15 rows)
+                                 Index Cond: (tenthous = i2.f1)
+                           ->  Index Scan using tenk1_unique1 on tenk1 a
+                                 Index Cond: (unique1 = b.unique2)
+                     ->  Index Only Scan using tenk1_thous_tenthous on tenk1 c
+                           Index Cond: (thousand = a.thousand)
+               ->  Seq Scan on int4_tbl i1
+(16 rows)
 
 select b.unique1 from
   tenk1 a join tenk1 b on a.unique1 = b.unique2

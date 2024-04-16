@@ -30,7 +30,7 @@
   opfmethod => 'btree', opfname => 'char_ops' },
 { oid => '431',
   opfmethod => 'hash', opfname => 'char_ops' },
-{ oid => '434',
+{ oid => '434', oid_symbol => 'DATETIME_BTREE_FAM_OID',
   opfmethod => 'btree', opfname => 'datetime_ops' },
 { oid => '435',
   opfmethod => 'hash', opfname => 'date_ops' },
