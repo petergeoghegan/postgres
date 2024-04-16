@@ -324,10 +324,7 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	so = (BTScanOpaque) palloc(sizeof(BTScanOpaqueData));
 	BTScanPosInvalidate(so->currPos);
 	BTScanPosInvalidate(so->markPos);
-	if (scan->numberOfKeys > 0)
-		so->keyData = (ScanKey) palloc(scan->numberOfKeys * sizeof(ScanKeyData));
-	else
-		so->keyData = NULL;
+	so->keyData = NULL;
 
 	so->needPrimScan = false;
 	so->scanBehind = false;
