@@ -583,6 +583,18 @@ options(<replaceable>relopts</replaceable> <type>local_relopts *</type>) returns
     </para>
    </listitem>
   </varlistentry>
+  <varlistentry>
+   <term><function>skipsupport</function></term>
+   <listitem>
+    <para>
+     Optionally, a btree operator family may provide a <firstterm>skip
+      support</firstterm> function, registered under support function number
+     6.  These functions allow the B-tree code to more efficiently navigate
+     the index structure via <quote>skipping</quote>.  The APIs involved in
+     this are defined in <filename>src/include/utils/skipsupport.h</filename>.
+    </para>
+   </listitem>
+  </varlistentry>
  </variablelist>
 
 </sect2>
