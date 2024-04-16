@@ -96,6 +96,7 @@ OBJS = \
 	rowtypes.o \
 	ruleutils.o \
 	selfuncs.o \
+	skipsupport.o \
 	tid.o \
 	timestamp.o \
 	trigfuncs.o \
