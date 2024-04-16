@@ -880,7 +880,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	Buffer		buf;
 	BTStack		stack;
 	OffsetNumber offnum;
-	StrategyNumber strat;
 	BTScanInsertData inskey;
 	ScanKey		startKeys[INDEX_MAX_KEYS];
 	ScanKeyData notnullkeys[INDEX_MAX_KEYS];
@@ -1022,6 +1021,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		ScanKey		chosen;
 		ScanKey		impliesNN;
 		ScanKey		cur;
+		int			ikey = 0,
+					ichosen = 0;
 
 		/*
 		 * chosen is the so-far-chosen key for the current attribute, if any.
@@ -1042,6 +1043,53 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		{
 			if (i >= so->numberOfKeys || cur->sk_attno != curattr)
 			{
+				/*
+				 * Conceptually, skip arrays consist of array elements whose
+				 * values are generated procedurally and on demand.  We need
+				 * special handling for that here.
+				 *
+				 * We must interpret various sentinel values to generate an
+				 * insertion scan key.  This is only actually needed for index
+				 * attributes whose input opclass lacks a skip support routine
+				 * (when skip support is available we'll always be able to
+				 * generate true array element datum values instead).
+				 */
+				if (chosen && (chosen->sk_flags & SK_BT_NEGPOSINF))
+				{
+					ScanKey		origchosen = chosen;
+					BTArrayKeyInfo *array = NULL;
+
+					for (; ikey < so->numArrayKeys; ikey++)
+					{
+						array = &so->arrayKeys[ikey];
+						if (array->scan_key == ichosen)
+							break;
+					}
+
+					/* use array's inequality key in startKeys[] */
+					if (ScanDirectionIsForward(dir))
+						chosen = array->low_compare;
+					else
+						chosen = array->high_compare;
+
+					if (!chosen && !array->null_elem)
+					{
+						/*
+						 * Array doesn't have any explicit low_compare or
+						 * high_compare that we can use (given the current
+						 * scan direction).  The array does not include a NULL
+						 * element (to generate an IS NULL qual), though, so
+						 * we might need to deduce a NOT NULL key to skip over
+						 * any NULLs.  Prepare for that.
+						 *
+						 * Note: this is also how we handle an explicit NOT
+						 * NULL key that preprocessing folded into the skip
+						 * array.
+						 */
+						impliesNN = origchosen;
+					}
+				}
+
 				/*
 				 * Done looking at keys for curattr.  If we didn't find a
 				 * usable boundary key, see if we can deduce a NOT NULL key.
@@ -1076,15 +1124,33 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				startKeys[keysz++] = chosen;
 
 				/*
+				 * Skip arrays can also use a sk_argument which is marked
+				 * "next key".  This is another sentinel array element value
+				 * requiring special handling here by us.  As with -inf/+inf
+				 * sentinels, there cannot be any exact non-pivot matches.
+				 */
+				if (chosen->sk_flags & SK_BT_NEXTPRIOR)
+				{
+					/*
+					 * Adjust strat_total, so that our = key gets treated like
+					 * a > key (or like a < key)
+					 */
+					if (ScanDirectionIsForward(dir))
+						strat_total = BTGreaterStrategyNumber;
+					else
+						strat_total = BTLessStrategyNumber;
+					break;
+				}
+
+				/*
 				 * Adjust strat_total, and quit if we have stored a > or <
 				 * key.
 				 */
-				strat = chosen->sk_strategy;
-				if (strat != BTEqualStrategyNumber)
+				if (chosen->sk_strategy != BTEqualStrategyNumber)
 				{
-					strat_total = strat;
-					if (strat == BTGreaterStrategyNumber ||
-						strat == BTLessStrategyNumber)
+					strat_total = chosen->sk_strategy;
+					if (chosen->sk_strategy == BTGreaterStrategyNumber ||
+						chosen->sk_strategy == BTLessStrategyNumber)
 						break;
 				}
 
@@ -1103,6 +1169,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				curattr = cur->sk_attno;
 				chosen = NULL;
 				impliesNN = NULL;
+				ichosen = -1;
 			}
 
 			/*
@@ -1127,6 +1194,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				case BTEqualStrategyNumber:
 					/* override any non-equality choice */
 					chosen = cur;
+					ichosen = i;
 					break;
 				case BTGreaterEqualStrategyNumber:
 				case BTGreaterStrategyNumber:
