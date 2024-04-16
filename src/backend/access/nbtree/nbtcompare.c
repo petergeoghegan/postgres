@@ -58,6 +58,7 @@
 #include <limits.h>
 
 #include "utils/fmgrprotos.h"
+#include "utils/skipsupport.h"
 #include "utils/sortsupport.h"
 
 #ifdef STRESS_SORT_INT_MIN
@@ -76,6 +77,39 @@ btboolcmp(PG_FUNCTION_ARGS)
 	bool		b = PG_GETARG_BOOL(1);
 
 	PG_RETURN_INT32((int32) a - (int32) b);
+}
+
+static Datum
+bool_decrement(Relation rel, Datum existing)
+{
+	bool		bexisting = DatumGetBool(existing);
+
+	Assert(bexisting == true);
+
+	return BoolGetDatum(bexisting - 1);
+}
+
+static Datum
+bool_increment(Relation rel, Datum existing)
+{
+	bool		bexisting = DatumGetBool(existing);
+
+	Assert(bexisting == false);
+
+	return BoolGetDatum(bexisting + 1);
+}
+
+Datum
+btboolskipsupport(PG_FUNCTION_ARGS)
+{
+	SkipSupport sksup = (SkipSupport) PG_GETARG_POINTER(0);
+
+	sksup->decrement = bool_decrement;
+	sksup->increment = bool_increment;
+	sksup->low_elem = BoolGetDatum(false);
+	sksup->high_elem = BoolGetDatum(true);
+
+	PG_RETURN_VOID();
 }
 
 Datum
@@ -105,6 +139,39 @@ btint2sortsupport(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+static Datum
+int2_decrement(Relation rel, Datum existing)
+{
+	int16		iexisting = DatumGetInt16(existing);
+
+	Assert(iexisting > PG_INT16_MIN);
+
+	return Int16GetDatum(iexisting - 1);
+}
+
+static Datum
+int2_increment(Relation rel, Datum existing)
+{
+	int16		iexisting = DatumGetInt16(existing);
+
+	Assert(iexisting < PG_INT16_MAX);
+
+	return Int16GetDatum(iexisting + 1);
+}
+
+Datum
+btint2skipsupport(PG_FUNCTION_ARGS)
+{
+	SkipSupport sksup = (SkipSupport) PG_GETARG_POINTER(0);
+
+	sksup->decrement = int2_decrement;
+	sksup->increment = int2_increment;
+	sksup->low_elem = Int16GetDatum(PG_INT16_MIN);
+	sksup->high_elem = Int16GetDatum(PG_INT16_MAX);
+
+	PG_RETURN_VOID();
+}
+
 Datum
 btint4cmp(PG_FUNCTION_ARGS)
 {
@@ -125,6 +192,39 @@ btint4sortsupport(PG_FUNCTION_ARGS)
 	SortSupport ssup = (SortSupport) PG_GETARG_POINTER(0);
 
 	ssup->comparator = ssup_datum_int32_cmp;
+	PG_RETURN_VOID();
+}
+
+static Datum
+int4_decrement(Relation rel, Datum existing)
+{
+	int32		iexisting = DatumGetInt32(existing);
+
+	Assert(iexisting > PG_INT32_MIN);
+
+	return Int32GetDatum(iexisting - 1);
+}
+
+static Datum
+int4_increment(Relation rel, Datum existing)
+{
+	int32		iexisting = DatumGetInt32(existing);
+
+	Assert(iexisting < PG_INT32_MAX);
+
+	return Int32GetDatum(iexisting + 1);
+}
+
+Datum
+btint4skipsupport(PG_FUNCTION_ARGS)
+{
+	SkipSupport sksup = (SkipSupport) PG_GETARG_POINTER(0);
+
+	sksup->decrement = int4_decrement;
+	sksup->increment = int4_increment;
+	sksup->low_elem = Int32GetDatum(PG_INT32_MIN);
+	sksup->high_elem = Int32GetDatum(PG_INT32_MAX);
+
 	PG_RETURN_VOID();
 }
 
@@ -168,6 +268,39 @@ btint8sortsupport(PG_FUNCTION_ARGS)
 #else
 	ssup->comparator = btint8fastcmp;
 #endif
+	PG_RETURN_VOID();
+}
+
+static Datum
+int8_decrement(Relation rel, Datum existing)
+{
+	int64		iexisting = DatumGetInt64(existing);
+
+	Assert(iexisting > PG_INT64_MIN);
+
+	return Int64GetDatum(iexisting - 1);
+}
+
+static Datum
+int8_increment(Relation rel, Datum existing)
+{
+	int64		iexisting = DatumGetInt64(existing);
+
+	Assert(iexisting < PG_INT64_MAX);
+
+	return Int64GetDatum(iexisting + 1);
+}
+
+Datum
+btint8skipsupport(PG_FUNCTION_ARGS)
+{
+	SkipSupport sksup = (SkipSupport) PG_GETARG_POINTER(0);
+
+	sksup->decrement = int8_decrement;
+	sksup->increment = int8_increment;
+	sksup->low_elem = Int64GetDatum(PG_INT64_MIN);
+	sksup->high_elem = Int64GetDatum(PG_INT64_MAX);
+
 	PG_RETURN_VOID();
 }
 
@@ -292,6 +425,39 @@ btoidsortsupport(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+static Datum
+oid_decrement(Relation rel, Datum existing)
+{
+	Oid			oexisting = DatumGetObjectId(existing);
+
+	Assert(oexisting > InvalidOid);
+
+	return ObjectIdGetDatum(oexisting - 1);
+}
+
+static Datum
+oid_increment(Relation rel, Datum existing)
+{
+	Oid			oexisting = DatumGetObjectId(existing);
+
+	Assert(oexisting < OID_MAX);
+
+	return ObjectIdGetDatum(oexisting + 1);
+}
+
+Datum
+btoidskipsupport(PG_FUNCTION_ARGS)
+{
+	SkipSupport sksup = (SkipSupport) PG_GETARG_POINTER(0);
+
+	sksup->decrement = oid_decrement;
+	sksup->increment = oid_increment;
+	sksup->low_elem = ObjectIdGetDatum(InvalidOid);
+	sksup->high_elem = ObjectIdGetDatum(OID_MAX);
+
+	PG_RETURN_VOID();
+}
+
 Datum
 btoidvectorcmp(PG_FUNCTION_ARGS)
 {
@@ -324,4 +490,37 @@ btcharcmp(PG_FUNCTION_ARGS)
 
 	/* Be careful to compare chars as unsigned */
 	PG_RETURN_INT32((int32) ((uint8) a) - (int32) ((uint8) b));
+}
+
+static Datum
+char_decrement(Relation rel, Datum existing)
+{
+	char		cexisting = DatumGetChar(existing);
+
+	Assert(cexisting > SCHAR_MIN);
+
+	return CharGetDatum(cexisting - 1);
+}
+
+static Datum
+char_increment(Relation rel, Datum existing)
+{
+	char		cexisting = DatumGetChar(existing);
+
+	Assert(cexisting < SCHAR_MAX);
+
+	return CharGetDatum(cexisting + 1);
+}
+
+Datum
+btcharskipsupport(PG_FUNCTION_ARGS)
+{
+	SkipSupport sksup = (SkipSupport) PG_GETARG_POINTER(0);
+
+	sksup->decrement = char_decrement;
+	sksup->increment = char_increment;
+	sksup->low_elem = CharGetDatum(SCHAR_MIN);
+	sksup->high_elem = CharGetDatum(SCHAR_MAX);
+
+	PG_RETURN_VOID();
 }
