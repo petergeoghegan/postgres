@@ -880,7 +880,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	Buffer		buf;
 	BTStack		stack;
 	OffsetNumber offnum;
-	StrategyNumber strat;
 	BTScanInsertData inskey;
 	ScanKey		startKeys[INDEX_MAX_KEYS];
 	ScanKeyData notnullkeys[INDEX_MAX_KEYS];
@@ -1022,6 +1021,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		ScanKey		chosen;
 		ScanKey		impliesNN;
 		ScanKey		cur;
+		int			ichosen = 0;
 
 		/*
 		 * chosen is the so-far-chosen key for the current attribute, if any.
@@ -1040,8 +1040,112 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		 */
 		for (cur = so->keyData, i = 0;; cur++, i++)
 		{
+			StrategyNumber strat;
+
 			if (i >= so->numberOfKeys || cur->sk_attno != curattr)
 			{
+				/*
+				 * Skip arrays (for input opclasses that lack a skip support
+				 * routine) can use negative infinity as an array element.
+				 * This is conceptually like any other array element.  This is
+				 * just a sentinel value, that will never find an equality
+				 * match.
+				 *
+				 * Handle this by not generating an insertion scan key entry
+				 * for the attribute, nor for the later non-skip attribute
+				 * scan keys (there must be at least one later key).
+				 */
+				if (chosen && chosen->sk_flags & (SK_BT_NEG_INF | SK_BT_POS_INF))
+				{
+					BTArrayKeyInfo *array = NULL;
+
+					Assert(chosen->sk_flags & SK_BT_SKIP);
+
+					for (int ikey = 0; ikey < so->numArrayKeys; ikey++)
+					{
+						array = &so->arrayKeys[ikey];
+						if (array->scan_key == ichosen)
+							break;
+					}
+
+					Assert(array->scan_key == ichosen);
+					Assert(!array->use_sksup);
+
+					if ((chosen->sk_flags & SK_BT_NEG_INF) &&
+						array->sksup.low_compare)
+					{
+						ScanKey		low_compare = array->sksup.low_compare;
+
+						/* build an inequality key in notnullkeys[keysz] */
+						chosen = &notnullkeys[keysz];
+						ScanKeyEntryInitialize(chosen,
+											   low_compare->sk_flags,
+											   low_compare->sk_attno,
+											   low_compare->sk_strategy,
+											   InvalidOid,
+											   InvalidOid,
+											   low_compare->sk_func.fn_oid,
+											   low_compare->sk_argument);
+						strat_total = chosen->sk_strategy;
+						if (strat_total == BTGreaterEqualStrategyNumber)
+						{
+							chosen->sk_flags &= ~SK_BT_NEXTKEY;
+							strat = strat_total = BTEqualStrategyNumber;
+						}
+
+						startKeys[keysz++] = chosen;
+					}
+					else if ((chosen->sk_flags & SK_BT_POS_INF) &&
+							 array->sksup.high_compare)
+					{
+						ScanKey		high_compare = array->sksup.high_compare;
+
+						/* build an inequality key in notnullkeys[keysz] */
+						chosen = &notnullkeys[keysz];
+						ScanKeyEntryInitialize(chosen,
+											   high_compare->sk_flags,
+											   high_compare->sk_attno,
+											   high_compare->sk_strategy,
+											   InvalidOid,
+											   InvalidOid,
+											   high_compare->sk_func.fn_oid,
+											   high_compare->sk_argument);
+						strat_total = chosen->sk_strategy;
+						if (strat_total == BTLessEqualStrategyNumber)
+						{
+							chosen->sk_flags &= ~SK_BT_PREVKEY;
+							strat = strat_total = BTEqualStrategyNumber;
+						}
+
+						startKeys[keysz++] = chosen;
+					}
+					else if (!array->null_elem &&
+							 (((chosen->sk_flags & SK_BT_POS_INF) &&
+							   !(chosen->sk_flags & SK_BT_NULLS_FIRST)) ||
+							  ((chosen->sk_flags & SK_BT_NEG_INF) &&
+							   (chosen->sk_flags & SK_BT_NULLS_FIRST))))
+					{
+						/* build a NOT NULL key in notnullkeys[keysz] */
+						impliesNN = chosen;
+						chosen = &notnullkeys[keysz];
+						ScanKeyEntryInitialize(chosen,
+											   (SK_SEARCHNOTNULL | SK_ISNULL |
+												(impliesNN->sk_flags &
+												 (SK_BT_DESC | SK_BT_NULLS_FIRST))),
+											   curattr,
+											   ((impliesNN->sk_flags & SK_BT_NULLS_FIRST) ?
+												BTGreaterStrategyNumber :
+												BTLessStrategyNumber),
+											   InvalidOid,
+											   InvalidOid,
+											   InvalidOid,
+											   (Datum) 0);
+						strat_total = chosen->sk_strategy;
+						startKeys[keysz++] = chosen;
+					}
+					break;
+				}
+
 				/*
 				 * Done looking at keys for curattr.  If we didn't find a
 				 * usable boundary key, see if we can deduce a NOT NULL key.
@@ -1080,6 +1184,41 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				 * key.
 				 */
 				strat = chosen->sk_strategy;
+
+				/*
+				 * Skip arrays can also use a sk_argument which is marked
+				 * "next key".  This is a sentinel array element value.  There
+				 * cannot be an exact match (just like with negative infinity
+				 * sentinels).
+				 *
+				 * Handle this by changing our strategy to > (or < in the
+				 * backwards scan/"previous key" case).  We do this even
+				 * though "chosen" uses the equality strategy.
+				 */
+				Assert(!chosen || !(chosen->sk_flags & SK_ISNULL) ||
+					   !(chosen->sk_flags & (SK_BT_NEG_INF | SK_BT_POS_INF)));
+				if (chosen->sk_flags & (SK_BT_NEXTKEY | SK_BT_PREVKEY))
+				{
+					BTArrayKeyInfo *array = NULL;
+
+					for (int ikey = 0; ikey < so->numArrayKeys; ikey++)
+					{
+						array = &so->arrayKeys[ikey];
+						if (array->scan_key == ichosen)
+							break;
+					}
+
+					Assert(chosen->sk_flags & SK_BT_SKIP);
+					Assert(array->scan_key == ichosen);
+					Assert(!array->use_sksup);
+
+					if (chosen->sk_flags & (SK_BT_NEXTKEY))
+						strat_total = BTGreaterStrategyNumber;
+					else
+						strat_total = BTLessStrategyNumber;
+					break;
+				}
+
 				if (strat != BTEqualStrategyNumber)
 				{
 					strat_total = strat;
@@ -1103,6 +1242,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				curattr = cur->sk_attno;
 				chosen = NULL;
 				impliesNN = NULL;
+				ichosen = -1;
 			}
 
 			/*
@@ -1127,6 +1267,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				case BTEqualStrategyNumber:
 					/* override any non-equality choice */
 					chosen = cur;
+					ichosen = i;
 					break;
 				case BTGreaterEqualStrategyNumber:
 				case BTGreaterStrategyNumber:

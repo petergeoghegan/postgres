@@ -6800,6 +6800,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	List	   *indexBoundQuals;
 	int			indexcol;
 	bool		eqQualHere;
+	bool		found_skip;
 	bool		found_saop;
 	bool		found_is_null_op;
 	double		num_sa_scans;
@@ -6825,6 +6826,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	indexBoundQuals = NIL;
 	indexcol = 0;
 	eqQualHere = false;
+	found_skip = false;
 	found_saop = false;
 	found_is_null_op = false;
 	num_sa_scans = 1;
@@ -6833,15 +6835,38 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		IndexClause *iclause = lfirst_node(IndexClause, lc);
 		ListCell   *lc2;
 
+		/*
+		 * XXX For now we just cost skip scans via generic rules: make a
+		 * uniform assumption that there will be 10 primitive index scans per
+		 * skipped attribute, relying on the "1/3 of all index pages" cap that
+		 * this costing has used since Postgres 17.  Also assume that skipping
+		 * won't take place for an index that has fewer than 100 pages.
+		 *
+		 * The current approach to costing leaves much to be desired, but is
+		 * at least better than nothing at all (keeping the code as it is on
+		 * HEAD just makes testing and review inconvenient).
+		 */
 		if (indexcol != iclause->indexcol)
 		{
 			/* Beginning of a new column's quals */
 			if (!eqQualHere)
-				break;			/* done if no '=' qual for indexcol */
+			{
+				found_skip = true;	/* skip when no '=' qual for indexcol */
+				if (index->pages < 100)
+					break;
+				num_sa_scans += 10;
+			}
 			eqQualHere = false;
 			indexcol++;
 			if (indexcol != iclause->indexcol)
-				break;			/* no quals at all for indexcol */
+			{
+				/* no quals at all for indexcol */
+				found_skip = true;
+				if (index->pages < 100)
+					break;
+				num_sa_scans += 10 * (indexcol - iclause->indexcol);
+				continue;
+			}
 		}
 
 		/* Examine each indexqual associated with this index clause */
@@ -6914,6 +6939,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	if (index->unique &&
 		indexcol == index->nkeycolumns - 1 &&
 		eqQualHere &&
+		!found_skip &&
 		!found_saop &&
 		!found_is_null_op)
 		numIndexTuples = 1.0;
