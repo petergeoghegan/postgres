@@ -32,6 +32,7 @@
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
+#include "utils/datum.h"
 #include "utils/fmgrprotos.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
@@ -71,7 +72,7 @@ typedef struct BTParallelScanDescData
 									 * available for scan. see above for
 									 * possible states of parallel scan. */
 	uint64		btps_nsearches; /* instrumentation */
-	slock_t		btps_mutex;		/* protects above variables, btps_arrElems */
+	LWLock		btps_lock;		/* protects above variables, btps_arrElems */
 	ConditionVariable btps_cv;	/* used to synchronize parallel scan */
 
 	/*
@@ -79,11 +80,21 @@ typedef struct BTParallelScanDescData
 	 * index scan.  Holds BTArrayKeyInfo.cur_elem offsets for scan keys.
 	 */
 	int			btps_arrElems[FLEXIBLE_ARRAY_MEMBER];
+
+	/*
+	 * The reset of the space allocated in shared memory is also used when
+	 * scans need to schedule another primitive index scan.  It holds a
+	 * flattened representation of the backend's skip array datums, if any.
+	 */
 }			BTParallelScanDescData;
 
 typedef struct BTParallelScanDescData *BTParallelScanDesc;
 
 
+static void _bt_parallel_serialize_arrays(Relation rel, BTParallelScanDesc btscan,
+										  BTScanOpaque so);
+static void _bt_parallel_restore_arrays(Relation rel, BTParallelScanDesc btscan,
+										BTScanOpaque so);
 static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 						 IndexBulkDeleteCallback callback, void *callback_state,
 						 BTCycleId cycleid);
@@ -538,10 +549,155 @@ btrestrpos(IndexScanDesc scan)
  * btestimateparallelscan -- estimate storage for BTParallelScanDescData
  */
 Size
-btestimateparallelscan(int nkeys, int norderbys)
+btestimateparallelscan(Relation rel, int nkeys, int norderbys)
 {
+	int16		nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
+	Size		estnbtreeshared,
+				genericattrspace;
+
 	/* Pessimistically assume all input scankeys will be output with arrays */
-	return offsetof(BTParallelScanDescData, btps_arrElems) + sizeof(int) * nkeys;
+	estnbtreeshared = offsetof(BTParallelScanDescData, btps_arrElems) +
+		sizeof(int) * nkeys;
+
+	/*
+	 * Assume every index attribute might require that we generate a skip scan
+	 * key
+	 */
+	genericattrspace = datumEstimateSpace((Datum) 0, false, true,
+										  sizeof(Datum));
+	for (int attnum = 1; attnum <= nkeyatts; attnum++)
+	{
+		Form_pg_attribute attr;
+
+		/* Every skip array needs a space for storing sk_flags */
+		estnbtreeshared = add_size(estnbtreeshared, sizeof(int));
+
+		attr = TupleDescAttr(rel->rd_att, attnum - 1);
+		if (attr->attlen > 0)
+		{
+			/* Fixed length datum */
+			Size		estfixed = datumEstimateSpace((Datum) 0, false,
+													  attr->attbyval,
+													  attr->attlen);
+
+			estnbtreeshared = add_size(estnbtreeshared, estfixed);
+			continue;
+		}
+
+		/*
+		 * Varlena (or other variable-length) datum.
+		 *
+		 * Assume that serializing the arrays will use just as much space as a
+		 * pass-by-value datum, in addition to a full third of a page of
+		 * space.
+		 */
+		estnbtreeshared = add_size(estnbtreeshared, genericattrspace);
+		estnbtreeshared = add_size(estnbtreeshared, BLCKSZ / 3);
+	}
+
+	return estnbtreeshared;
+}
+
+/*
+ * _bt_parallel_serialize_arrays() -- Serialize parallel array state.
+ *
+ * Caller must have exclusively locked btscan->btps_lock when called.
+ */
+static void
+_bt_parallel_serialize_arrays(Relation rel, BTParallelScanDesc btscan,
+							  BTScanOpaque so)
+{
+	char	   *datumshared;
+
+	/* Space for serialized datums begins immediately after btps_arrElems[] */
+	datumshared = ((char *) &btscan->btps_arrElems[so->numArrayKeys]);
+	for (int i = 0; i < so->numArrayKeys; i++)
+	{
+		BTArrayKeyInfo *array = &so->arrayKeys[i];
+		ScanKey		skey = &so->keyData[array->scan_key];
+		Form_pg_attribute attr;
+
+		if (array->num_elems != -1)
+		{
+			/* Serialize regular (non-skip) array */
+			Assert(!(skey->sk_flags & SK_BT_SKIP));
+			btscan->btps_arrElems[i] = array->cur_elem;
+			continue;
+		}
+
+		/* Serialize skip array */
+		Assert(skey->sk_flags & SK_BT_SKIP);
+		memcpy(datumshared, &skey->sk_flags, sizeof(int));
+		datumshared += sizeof(int);
+
+		if (skey->sk_flags & SK_BT_NEGPOSINF)
+		{
+			/* No sk_argument to serialize */
+			Assert(skey->sk_argument == 0);
+			continue;
+		}
+
+		attr = TupleDescAttr(RelationGetDescr(rel), skey->sk_attno - 1);
+		datumSerialize(skey->sk_argument, (skey->sk_flags & SK_ISNULL) != 0,
+					   attr->attbyval, attr->attlen, &datumshared);
+	}
+}
+
+/*
+ * _bt_parallel_restore_arrays() -- Restore serialized parallel array state.
+ *
+ * Caller must have exclusively locked btscan->btps_lock when called.
+ */
+static void
+_bt_parallel_restore_arrays(Relation rel, BTParallelScanDesc btscan,
+							BTScanOpaque so)
+{
+	char	   *datumshared;
+
+	/* Space for serialized datums begins immediately after btps_arrElems[] */
+	datumshared = ((char *) &btscan->btps_arrElems[so->numArrayKeys]);
+	for (int i = 0; i < so->numArrayKeys; i++)
+	{
+		BTArrayKeyInfo *array = &so->arrayKeys[i];
+		ScanKey		skey = &so->keyData[array->scan_key];
+		bool		isnull;
+		Form_pg_attribute attr;
+
+		if (array->num_elems != -1)
+		{
+			/* Restore regular (non-skip) array */
+			Assert(!(skey->sk_flags & SK_BT_SKIP));
+			array->cur_elem = btscan->btps_arrElems[i];
+			skey->sk_argument = array->elem_values[array->cur_elem];
+			continue;
+		}
+
+		/* Restore skip array */
+		attr = TupleDescAttr(RelationGetDescr(rel), skey->sk_attno - 1);
+		if (!attr->attbyval && skey->sk_argument)
+			pfree(DatumGetPointer(skey->sk_argument));
+		skey->sk_argument = (Datum) 0;
+
+		/* Now that old sk_argument memory is freed, copy over sk_flags */
+		memcpy(&skey->sk_flags, datumshared, sizeof(int));
+		datumshared += sizeof(int);
+
+		Assert(skey->sk_flags & SK_BT_SKIP);
+
+		if (skey->sk_flags & SK_BT_NEGPOSINF)
+		{
+			/* No sk_argument to serialize */
+			continue;
+		}
+
+		skey->sk_argument = datumRestore(&datumshared, &isnull);
+		if (isnull)
+		{
+			Assert(skey->sk_argument == 0);
+			Assert(skey->sk_flags & SK_SEARCHNULL);
+			Assert(skey->sk_flags & SK_ISNULL);
+		}
+	}
 }
 
 /*
@@ -552,7 +708,8 @@ btinitparallelscan(void *target)
 {
 	BTParallelScanDesc bt_target = (BTParallelScanDesc) target;
 
-	SpinLockInit(&bt_target->btps_mutex);
+	LWLockInitialize(&bt_target->btps_lock,
+					 LWTRANCHE_PARALLEL_BTREE_SCAN);
 	bt_target->btps_scanPage = InvalidBlockNumber;
 	bt_target->btps_pageStatus = BTPARALLEL_NOT_INITIALIZED;
 	bt_target->btps_nsearches = 0;
@@ -574,15 +731,15 @@ btparallelrescan(IndexScanDesc scan)
 												  parallel_scan->ps_offset);
 
 	/*
-	 * In theory, we don't need to acquire the spinlock here, because there
+	 * In theory, we don't need to acquire the LWLock here, because there
 	 * shouldn't be any other workers running at this point, but we do so for
 	 * consistency.
 	 */
-	SpinLockAcquire(&btscan->btps_mutex);
+	LWLockAcquire(&btscan->btps_lock, LW_EXCLUSIVE);
 	btscan->btps_scanPage = InvalidBlockNumber;
 	btscan->btps_pageStatus = BTPARALLEL_NOT_INITIALIZED;
 	/* deliberately don't reset btps_nsearches (matches index_rescan) */
-	SpinLockRelease(&btscan->btps_mutex);
+	LWLockRelease(&btscan->btps_lock);
 }
 
 /*
@@ -609,6 +766,7 @@ btparallelrescan(IndexScanDesc scan)
 bool
 _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 {
+	Relation	rel = scan->indexRelation;
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		exit_loop = false;
 	bool		status = true;
@@ -642,7 +800,7 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 
 	while (1)
 	{
-		SpinLockAcquire(&btscan->btps_mutex);
+		LWLockAcquire(&btscan->btps_lock, LW_EXCLUSIVE);
 
 		if (btscan->btps_pageStatus == BTPARALLEL_DONE)
 		{
@@ -657,14 +815,9 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 			{
 				/* Can start scheduled primitive scan right away, so do so */
 				btscan->btps_pageStatus = BTPARALLEL_ADVANCING;
-				for (int i = 0; i < so->numArrayKeys; i++)
-				{
-					BTArrayKeyInfo *array = &so->arrayKeys[i];
-					ScanKey		skey = &so->keyData[array->scan_key];
 
-					array->cur_elem = btscan->btps_arrElems[i];
-					skey->sk_argument = array->elem_values[array->cur_elem];
-				}
+				/* Restore scan's array keys from serialized values */
+				_bt_parallel_restore_arrays(rel, btscan, so);
 				*pageno = InvalidBlockNumber;
 				exit_loop = true;
 			}
@@ -701,7 +854,7 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 			*pageno = btscan->btps_scanPage;
 			exit_loop = true;
 		}
-		SpinLockRelease(&btscan->btps_mutex);
+		LWLockRelease(&btscan->btps_lock);
 		if (exit_loop || !status)
 			break;
 		ConditionVariableSleep(&btscan->btps_cv, WAIT_EVENT_BTREE_PAGE);
@@ -731,10 +884,10 @@ _bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page)
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
 
-	SpinLockAcquire(&btscan->btps_mutex);
+	LWLockAcquire(&btscan->btps_lock, LW_EXCLUSIVE);
 	btscan->btps_scanPage = scan_page;
 	btscan->btps_pageStatus = BTPARALLEL_IDLE;
-	SpinLockRelease(&btscan->btps_mutex);
+	LWLockRelease(&btscan->btps_lock);
 	ConditionVariableSignal(&btscan->btps_cv);
 }
 
@@ -771,7 +924,7 @@ _bt_parallel_done(IndexScanDesc scan)
 	 * Mark the parallel scan as done, unless some other process did so
 	 * already
 	 */
-	SpinLockAcquire(&btscan->btps_mutex);
+	LWLockAcquire(&btscan->btps_lock, LW_EXCLUSIVE);
 	Assert(btscan->btps_pageStatus != BTPARALLEL_NEED_PRIMSCAN);
 	if (btscan->btps_pageStatus != BTPARALLEL_DONE)
 	{
@@ -780,7 +933,7 @@ _bt_parallel_done(IndexScanDesc scan)
 	}
 	/* Copy the authoritative shared primitive scan counter to local field */
 	scan->nsearches = btscan->btps_nsearches;
-	SpinLockRelease(&btscan->btps_mutex);
+	LWLockRelease(&btscan->btps_lock);
 
 	/* wake up all the workers associated with this parallel scan */
 	if (status_changed)
@@ -798,6 +951,7 @@ _bt_parallel_done(IndexScanDesc scan)
 void
 _bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber prev_scan_page)
 {
+	Relation	rel = scan->indexRelation;
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
@@ -807,7 +961,7 @@ _bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber prev_scan_page)
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
 
-	SpinLockAcquire(&btscan->btps_mutex);
+	LWLockAcquire(&btscan->btps_lock, LW_EXCLUSIVE);
 	if (btscan->btps_scanPage == prev_scan_page &&
 		btscan->btps_pageStatus == BTPARALLEL_IDLE)
 	{
@@ -816,14 +970,9 @@ _bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber prev_scan_page)
 		btscan->btps_nsearches++;
 
 		/* Serialize scan's current array keys */
-		for (int i = 0; i < so->numArrayKeys; i++)
-		{
-			BTArrayKeyInfo *array = &so->arrayKeys[i];
-
-			btscan->btps_arrElems[i] = array->cur_elem;
-		}
+		_bt_parallel_serialize_arrays(rel, btscan, so);
 	}
-	SpinLockRelease(&btscan->btps_mutex);
+	LWLockRelease(&btscan->btps_lock);
 }
 
 /*
