@@ -324,11 +324,8 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	so = (BTScanOpaque) palloc(sizeof(BTScanOpaqueData));
 	BTScanPosInvalidate(so->currPos);
 	BTScanPosInvalidate(so->markPos);
-	if (scan->numberOfKeys > 0)
-		so->keyData = (ScanKey) palloc(scan->numberOfKeys * sizeof(ScanKeyData));
-	else
-		so->keyData = NULL;
 
+	so->keyData = NULL;
 	so->needPrimScan = false;
 	so->scanBehind = false;
 	so->arrayKeys = NULL;
@@ -408,6 +405,11 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 				scan->numberOfKeys * sizeof(ScanKeyData));
 	so->numberOfKeys = 0;		/* until _bt_preprocess_keys sets it */
 	so->numArrayKeys = 0;		/* ditto */
+
+	/* Release private storage allocated in previous btrescan, if any */
+	if (so->keyData != NULL)
+		pfree(so->keyData);
+	so->keyData = NULL;
 }
 
 /*

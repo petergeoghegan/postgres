@@ -28,6 +28,7 @@
 
 #include "access/commit_ts.h"
 #include "access/gin.h"
+#include "access/nbtree.h"
 #include "access/slru.h"
 #include "access/toast_compression.h"
 #include "access/twophase.h"
@@ -3520,6 +3521,17 @@ struct config_int ConfigureNamesInt[] =
 		},
 		&min_parallel_index_scan_size,
 		(512 * 1024) / BLCKSZ, 0, INT_MAX / 3,
+		NULL, NULL, NULL
+	},
+
+	/* XXX Remove before commit */
+	{
+		{"skipscan_prefix_cols", PGC_SUSET, DEVELOPER_OPTIONS,
+			NULL, NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&skipscan_prefix_cols,
+		INDEX_MAX_KEYS, 0, INDEX_MAX_KEYS,
 		NULL, NULL, NULL
 	},
 
