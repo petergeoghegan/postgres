@@ -984,6 +984,13 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * attributes to its right, because it would break our simplistic notion
 	 * of what initial positioning strategy to use.
 	 *
+	 * In practice we rarely see any attributes with no boundary key here.
+	 * Preprocessing can usually backfill skip array keys for any attributes
+	 * that were omitted from the original scan->keyData[] input keys.  Skip
+	 * array keys are = keys, though we'll sometimes need to treat the key as
+	 * if it was some kind of inequality instead.  This is required whenever
+	 * the skip array's current array element is a sentinel value.
+	 *
 	 * When the scan keys include cross-type operators, _bt_preprocess_keys
 	 * may not be able to eliminate redundant keys; in such cases we will
 	 * arbitrarily pick a usable one for each attribute.  This is correct
@@ -1058,8 +1065,38 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 			if (i >= so->numberOfKeys || cur->sk_attno != curattr)
 			{
 				/*
-				 * Done looking at keys for curattr.  If we didn't find a
-				 * usable boundary key, see if we can deduce a NOT NULL key.
+				 * Done looking at keys for curattr.
+				 *
+				 * If this is a scan key for a skip array whose current
+				 * element is -inf or +inf, choose low_compare/high_compare
+				 * (or consider if they imply a NOT NULL constraint).
+				 */
+				if (chosen && (chosen->sk_flags & SK_BT_NEGPOSINF))
+				{
+					ScanKey		skiparraysk = chosen;
+					BTArrayKeyInfo *array = NULL;
+
+					for (int j = 0; j < so->numArrayKeys; j++)
+					{
+						array = &so->arrayKeys[j];
+						if (array->scan_key == skiparraysk - so->keyData)
+							break;
+					}
+
+					if (ScanDirectionIsForward(dir))
+						chosen = array->low_compare;
+					else
+						chosen = array->high_compare;
+
+					if (!array->null_elem)
+						impliesNN = skiparraysk;
+					else
+						Assert(chosen == NULL && impliesNN == NULL);
+				}
+
+				/*
+				 * If we didn't find a usable boundary key, see if we can
+				 * deduce a NOT NULL key
 				 */
 				if (chosen == NULL && impliesNN != NULL &&
 					((impliesNN->sk_flags & SK_BT_NULLS_FIRST) ?
@@ -1095,6 +1132,39 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				if (strat_total == BTGreaterStrategyNumber ||
 					strat_total == BTLessStrategyNumber)
 					break;
+
+				/*
+				 * If this is a scan key for a skip array whose current
+				 * element is marked NEXT or PRIOR, adjust strat_total
+				 */
+				if (chosen->sk_flags & (SK_BT_NEXT | SK_BT_PRIOR))
+				{
+					Assert(strat_total == BTEqualStrategyNumber);
+					Assert(chosen->sk_flags & SK_BT_SKIP);
+
+					if (ScanDirectionIsForward(dir))
+					{
+						Assert(!(chosen->sk_flags & SK_BT_PRIOR));
+						strat_total = BTGreaterStrategyNumber;
+					}
+					else
+					{
+						Assert(!(chosen->sk_flags & SK_BT_NEXT));
+						strat_total = BTLessStrategyNumber;
+					}
+
+					/*
+					 * We'll never find an exact = match for a NEXT or PRIOR
+					 * sentinel sk_argument value, so there's no reason to
+					 * save any later would-be boundary keys in startKeys[].
+					 *
+					 * Note: 'chosen' could be marked SK_ISNULL, in which case
+					 * startKeys[] will position us at first tuple ">" NULL
+					 * (for backwards scans it'll position us at _last_ tuple
+					 * "<" NULL instead).
+					 */
+					break;
+				}
 
 				/*
 				 * Done if that was the last attribute, or if next key is not
