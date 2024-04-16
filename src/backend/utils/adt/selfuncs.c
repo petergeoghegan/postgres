@@ -94,7 +94,6 @@
 
 #include "postgres.h"
 
-#include <ctype.h>
 #include <math.h>
 
 #include "access/brin.h"
@@ -193,6 +192,8 @@ static double convert_timevalue_to_scalar(Datum value, Oid typid,
 										  bool *failure);
 static void examine_simple_variable(PlannerInfo *root, Var *var,
 									VariableStatData *vardata);
+static void examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
+									  int indexcol, VariableStatData *vardata);
 static bool get_variable_range(PlannerInfo *root, VariableStatData *vardata,
 							   Oid sortop, Oid collation,
 							   Datum *min, Datum *max);
@@ -214,6 +215,8 @@ static bool get_actual_variable_endpoint(Relation heapRel,
 										 MemoryContext outercontext,
 										 Datum *endpointDatum);
 static RelOptInfo *find_join_input_rel(PlannerInfo *root, Relids relids);
+static double btcost_correlation(IndexOptInfo *index,
+								 VariableStatData *vardata);
 
 
 /*
@@ -5760,6 +5763,92 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 }
 
 /*
+ * examine_indexcol_variable
+ *		Try to look up statistical data about an index column/expression.
+ *		Fill in a VariableStatData struct to describe the column.
+ *
+ * Inputs:
+ *	root: the planner info
+ *	index: the index whose column we're interested in
+ *	indexcol: 0-based index column number (subscripts index->indexkeys[])
+ *
+ * Outputs: *vardata is filled as follows:
+ *	var: the input expression (with any binary relabeling stripped, if
+ *		it is or contains a variable; but otherwise the type is preserved)
+ *	rel: RelOptInfo for table relation containing variable.
+ *	statsTuple: the pg_statistic entry for the variable, if one exists;
+ *		otherwise NULL.
+ *	freefunc: pointer to a function to release statsTuple with.
+ *
+ * Caller is responsible for doing ReleaseVariableStats() before exiting.
+ */
+static void
+examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
+						  int indexcol, VariableStatData *vardata)
+{
+	AttrNumber	colnum;
+	Oid			relid;
+
+	if (index->indexkeys[indexcol] != 0)
+	{
+		/* Simple variable --- look to stats for the underlying table */
+		RangeTblEntry *rte = planner_rt_fetch(index->rel->relid, root);
+
+		Assert(rte->rtekind == RTE_RELATION);
+		relid = rte->relid;
+		Assert(relid != InvalidOid);
+		colnum = index->indexkeys[indexcol];
+		vardata->rel = index->rel;
+
+		if (get_relation_stats_hook &&
+			(*get_relation_stats_hook) (root, rte, colnum, vardata))
+		{
+			/*
+			 * The hook took control of acquiring a stats tuple.  If it did
+			 * supply a tuple, it'd better have supplied a freefunc.
+			 */
+			if (HeapTupleIsValid(vardata->statsTuple) &&
+				!vardata->freefunc)
+				elog(ERROR, "no function provided to release variable stats with");
+		}
+		else
+		{
+			vardata->statsTuple = SearchSysCache3(STATRELATTINH,
+												  ObjectIdGetDatum(relid),
+												  Int16GetDatum(colnum),
+												  BoolGetDatum(rte->inh));
+			vardata->freefunc = ReleaseSysCache;
+		}
+	}
+	else
+	{
+		/* Expression --- maybe there are stats for the index itself */
+		relid = index->indexoid;
+		colnum = indexcol + 1;
+
+		if (get_index_stats_hook &&
+			(*get_index_stats_hook) (root, relid, colnum, vardata))
+		{
+			/*
+			 * The hook took control of acquiring a stats tuple.  If it did
+			 * supply a tuple, it'd better have supplied a freefunc.
+			 */
+			if (HeapTupleIsValid(vardata->statsTuple) &&
+				!vardata->freefunc)
+				elog(ERROR, "no function provided to release variable stats with");
+		}
+		else
+		{
+			vardata->statsTuple = SearchSysCache3(STATRELATTINH,
+												  ObjectIdGetDatum(relid),
+												  Int16GetDatum(colnum),
+												  BoolGetDatum(false));
+			vardata->freefunc = ReleaseSysCache;
+		}
+	}
+}
+
+/*
  * Check whether it is permitted to call func_oid passing some of the
  * pg_statistic data in vardata.  We allow this either if the user has SELECT
  * privileges on the table or column underlying the pg_statistic data or if
@@ -6817,6 +6906,53 @@ add_predicate_to_index_quals(IndexOptInfo *index, List *indexQuals)
 	return list_concat(predExtraQuals, indexQuals);
 }
 
+/*
+ * Estimate correlation of btree index's first column.
+ *
+ * If we can get an estimate of the first column's ordering correlation C
+ * from pg_statistic, estimate the index correlation as C for a single-column
+ * index, or C * 0.75 for multiple columns.  The idea here is that multiple
+ * columns dilute the importance of the first column's ordering, but don't
+ * negate it entirely.
+ *
+ * We already filled in the stats tuple for *vardata when called.
+ */
+static double
+btcost_correlation(IndexOptInfo *index, VariableStatData *vardata)
+{
+	Oid			sortop;
+	AttStatsSlot sslot;
+	double		indexCorrelation = 0;
+
+	Assert(HeapTupleIsValid(vardata->statsTuple));
+
+	sortop = get_opfamily_member(index->opfamily[0],
+								 index->opcintype[0],
+								 index->opcintype[0],
+								 BTLessStrategyNumber);
+	if (OidIsValid(sortop) &&
+		get_attstatsslot(&sslot, vardata->statsTuple,
+						 STATISTIC_KIND_CORRELATION, sortop,
+						 ATTSTATSSLOT_NUMBERS))
+	{
+		double		varCorrelation;
+
+		Assert(sslot.nnumbers == 1);
+		varCorrelation = sslot.numbers[0];
+
+		if (index->reverse_sort[0])
+			varCorrelation = -varCorrelation;
+
+		if (index->nkeycolumns > 1)
+			indexCorrelation = varCorrelation * 0.75;
+		else
+			indexCorrelation = varCorrelation;
+
+		free_attstatsslot(&sslot);
+	}
+
+	return indexCorrelation;
+}
 
 void
 btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
@@ -6826,17 +6962,21 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 {
 	IndexOptInfo *index = path->indexinfo;
 	GenericCosts costs = {0};
-	Oid			relid;
-	AttrNumber	colnum;
 	VariableStatData vardata = {0};
 	double		numIndexTuples;
+	double		correlation = 0;
 	Cost		descentCost;
 	List	   *indexBoundQuals;
 	int			indexcol;
+	bool		set_correlation = false;
 	bool		eqQualHere;
-	bool		found_saop;
+	bool		found_array;
+	bool		found_rowcompare;
 	bool		found_is_null_op;
+	bool		upper_inequal_col;
+	bool		lower_inequal_col;
 	double		num_sa_scans;
+	double		inequalselectivity;
 	ListCell   *lc;
 
 	/*
@@ -6852,16 +6992,21 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	 * For a RowCompareExpr, we consider only the first column, just as
 	 * rowcomparesel() does.
 	 *
-	 * If there's a ScalarArrayOpExpr in the quals, we'll actually perform up
-	 * to N index descents (not just one), but the ScalarArrayOpExpr's
-	 * operator can be considered to act the same as it normally does.
+	 * If there's a ScalarArrayOpExpr in the quals, or if we expect to
+	 * generate a skip scan array, then we'll actually perform up to N index
+	 * descents (not just one), but the underlying operator can be considered
+	 * to act the same as it normally does.
 	 */
 	indexBoundQuals = NIL;
 	indexcol = 0;
 	eqQualHere = false;
-	found_saop = false;
+	found_array = false;
+	found_rowcompare = false;
 	found_is_null_op = false;
+	upper_inequal_col = false;
+	lower_inequal_col = false;
 	num_sa_scans = 1;
+	inequalselectivity = 1;
 	foreach(lc, path->indexclauses)
 	{
 		IndexClause *iclause = lfirst_node(IndexClause, lc);
@@ -6869,13 +7014,103 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 
 		if (indexcol != iclause->indexcol)
 		{
+			bool		past_first_skipped = false;
+
 			/* Beginning of a new column's quals */
-			if (!eqQualHere)
-				break;			/* done if no '=' qual for indexcol */
-			eqQualHere = false;
-			indexcol++;
+			if (eqQualHere)
+				indexcol++;		/* don't skip the previous '=' qual's column */
+			else if (found_rowcompare)
+				break;			/* Skip arrays can't come after a RowCompare */
+
+			/*
+			 * Now estimate number of "array elements" using ndistinct.
+			 *
+			 * Internally, nbtree treats skip scans as scans with SAOP style
+			 * arrays that generate elements procedurally.  We effectively
+			 * assume a "col = ANY('{every possible col value}')" qual.
+			 */
+			while (indexcol < iclause->indexcol)
+			{
+				double		ndistinct = DEFAULT_NUM_DISTINCT,
+							new_num_sa_scans;
+				bool		isdefault = true;
+
+				/* Attain ndistinct for index column/indexed expression */
+				examine_indexcol_variable(root, index, indexcol, &vardata);
+				if (HeapTupleIsValid(vardata.statsTuple))
+				{
+					ndistinct = get_variable_numdistinct(&vardata, &isdefault);
+
+					if (indexcol == 0)
+					{
+						/*
+						 * Get an estimate of the leading column's correlation
+						 * in passing (avoids rereading variable stats below)
+						 */
+						Assert(!set_correlation);
+						correlation = btcost_correlation(index, &vardata);
+						set_correlation = true;
+					}
+				}
+
+				ReleaseVariableStats(vardata);
+
+				if (!past_first_skipped)
+				{
+					/*
+					 * Apply the selectivities of any inequalities to
+					 * ndistinct (unless ndistinct is only a default estimate)
+					 */
+					if (!isdefault)
+						ndistinct *= inequalselectivity;
+
+					/*
+					 * Skip scan will likely require an initial index descent
+					 * to find out what the real first element is...
+					 */
+					if (!upper_inequal_col)
+						ndistinct += 1;
+
+					/*
+					 * ...and another extra descent to confirm no further
+					 * groupings/matches
+					 */
+					if (!lower_inequal_col)
+						ndistinct += 1;
+
+					past_first_skipped = true;
+				}
+
+				/*
+				 * Multiply our running estimate by ndistinct to update it.
+				 * Here we make the pessimistic assumption that there is no
+				 * naturally occurring cross-column correlation.  This is
+				 * often wrong, but it seems best to err on the side of not
+				 * relying on skipping.
+				 */
+				found_array = true;
+				new_num_sa_scans = num_sa_scans * ndistinct;
+
+				/*
+				 * Stop adding new skip arrays when the would-be new
+				 * num_sa_scans exceeds a third of the number of index pages
+				 */
+				if (ceil(index->pages * 0.3333333) < new_num_sa_scans)
+					break;
+
+				/* Done costing skipping for this index column */
+				num_sa_scans = new_num_sa_scans;
+				indexcol++;
+			}
+
 			if (indexcol != iclause->indexcol)
-				break;			/* no quals at all for indexcol */
+				break;			/* no quals for indexcol (can't skip scan) */
+
+			/* reset for next indexcol */
+			eqQualHere = false;
+			upper_inequal_col = false;
+			lower_inequal_col = false;
+			inequalselectivity = 1.0;
 		}
 
 		/* Examine each indexqual associated with this index clause */
@@ -6897,6 +7132,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				RowCompareExpr *rc = (RowCompareExpr *) clause;
 
 				clause_op = linitial_oid(rc->opnos);
+				found_rowcompare = true;
 			}
 			else if (IsA(clause, ScalarArrayOpExpr))
 			{
@@ -6905,7 +7141,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				double		alength = estimate_array_length(root, other_operand);
 
 				clause_op = saop->opno;
-				found_saop = true;
+				found_array = true;
 				/* estimate SA descents by indexBoundQuals only */
 				if (alength > 1)
 					num_sa_scans *= alength;
@@ -6917,7 +7153,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				if (nt->nulltesttype == IS_NULL)
 				{
 					found_is_null_op = true;
-					/* IS NULL is like = for selectivity purposes */
+					/* IS NULL is like = for selectivity/skip scan purposes */
 					eqQualHere = true;
 				}
 			}
@@ -6933,6 +7169,34 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				Assert(op_strategy != 0);	/* not a member of opfamily?? */
 				if (op_strategy == BTEqualStrategyNumber)
 					eqQualHere = true;
+				else if (rinfo->norm_selec >= 0)
+				{
+					/*
+					 * Skip scan requires tracking inequality selectivities to
+					 * compute an adjusted whole-column ndistinct.
+					 *
+					 * Assume inequality selectivities are _not_ independent,
+					 * but only track up to one upper bound inequality and up
+					 * to one lower bound inequality.  This avoids wildly
+					 * wrong estimates given redundant operators.
+					 */
+					if (op_strategy < BTEqualStrategyNumber)
+					{
+						if (!upper_inequal_col)
+							inequalselectivity =
+								Max(inequalselectivity - (1.0 - rinfo->norm_selec),
+									DEFAULT_RANGE_INEQ_SEL);
+						upper_inequal_col = true;
+					}
+					else
+					{
+						if (!lower_inequal_col)
+							inequalselectivity =
+								Max(inequalselectivity - (1.0 - rinfo->norm_selec),
+									DEFAULT_RANGE_INEQ_SEL);
+						lower_inequal_col = true;
+					}
+				}
 			}
 
 			indexBoundQuals = lappend(indexBoundQuals, rinfo);
@@ -6948,7 +7212,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	if (index->unique &&
 		indexcol == index->nkeycolumns - 1 &&
 		eqQualHere &&
-		!found_saop &&
+		!found_array &&
 		!found_is_null_op)
 		numIndexTuples = 1.0;
 	else
@@ -6988,14 +7252,18 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		 * of leaf pages (we make it 1/3 the total number of pages instead) to
 		 * give the btree code credit for its ability to continue on the leaf
 		 * level with low selectivity scans.
+		 *
+		 * Note: num_sa_scans is derived in a way that treats any skip scan
+		 * quals as if they were ScalarArrayOpExpr quals whose array has as
+		 * many distinct elements as possibly-matching values in the index.
 		 */
 		num_sa_scans = Min(num_sa_scans, ceil(index->pages * 0.3333333));
 		num_sa_scans = Max(num_sa_scans, 1);
 
 		/*
 		 * As in genericcostestimate(), we have to adjust for any
-		 * ScalarArrayOpExpr quals included in indexBoundQuals, and then round
-		 * to integer.
+		 * ScalarArrayOpExpr quals (as well as any skip scan quals) included
+		 * in indexBoundQuals, and then round to integer.
 		 *
 		 * It is tempting to make genericcostestimate behave as if SAOP
 		 * clauses work in almost the same way as scalar operators during
@@ -7050,109 +7318,24 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	 * cost is somewhat arbitrarily set at 50x cpu_operator_cost per page
 	 * touched.  The number of such pages is btree tree height plus one (ie,
 	 * we charge for the leaf page too).  As above, charge once per estimated
-	 * SA index descent.
+	 * index descent.
 	 */
 	descentCost = (index->tree_height + 1) * DEFAULT_PAGE_CPU_MULTIPLIER * cpu_operator_cost;
 	costs.indexStartupCost += descentCost;
 	costs.indexTotalCost += costs.num_sa_scans * descentCost;
 
-	/*
-	 * If we can get an estimate of the first column's ordering correlation C
-	 * from pg_statistic, estimate the index correlation as C for a
-	 * single-column index, or C * 0.75 for multiple columns. (The idea here
-	 * is that multiple columns dilute the importance of the first column's
-	 * ordering, but don't negate it entirely.  Before 8.0 we divided the
-	 * correlation by the number of columns, but that seems too strong.)
-	 */
-	if (index->indexkeys[0] != 0)
+	if (!set_correlation)
 	{
-		/* Simple variable --- look to stats for the underlying table */
-		RangeTblEntry *rte = planner_rt_fetch(index->rel->relid, root);
-
-		Assert(rte->rtekind == RTE_RELATION);
-		relid = rte->relid;
-		Assert(relid != InvalidOid);
-		colnum = index->indexkeys[0];
-
-		if (get_relation_stats_hook &&
-			(*get_relation_stats_hook) (root, rte, colnum, &vardata))
-		{
-			/*
-			 * The hook took control of acquiring a stats tuple.  If it did
-			 * supply a tuple, it'd better have supplied a freefunc.
-			 */
-			if (HeapTupleIsValid(vardata.statsTuple) &&
-				!vardata.freefunc)
-				elog(ERROR, "no function provided to release variable stats with");
-		}
-		else
-		{
-			vardata.statsTuple = SearchSysCache3(STATRELATTINH,
-												 ObjectIdGetDatum(relid),
-												 Int16GetDatum(colnum),
-												 BoolGetDatum(rte->inh));
-			vardata.freefunc = ReleaseSysCache;
-		}
+		examine_indexcol_variable(root, index, 0, &vardata);
+		if (HeapTupleIsValid(vardata.statsTuple))
+			costs.indexCorrelation = btcost_correlation(index, &vardata);
+		ReleaseVariableStats(vardata);
 	}
 	else
 	{
-		/* Expression --- maybe there are stats for the index itself */
-		relid = index->indexoid;
-		colnum = 1;
-
-		if (get_index_stats_hook &&
-			(*get_index_stats_hook) (root, relid, colnum, &vardata))
-		{
-			/*
-			 * The hook took control of acquiring a stats tuple.  If it did
-			 * supply a tuple, it'd better have supplied a freefunc.
-			 */
-			if (HeapTupleIsValid(vardata.statsTuple) &&
-				!vardata.freefunc)
-				elog(ERROR, "no function provided to release variable stats with");
-		}
-		else
-		{
-			vardata.statsTuple = SearchSysCache3(STATRELATTINH,
-												 ObjectIdGetDatum(relid),
-												 Int16GetDatum(colnum),
-												 BoolGetDatum(false));
-			vardata.freefunc = ReleaseSysCache;
-		}
+		/* get_variable_index_correlation called earlier */
+		costs.indexCorrelation = correlation;
 	}
-
-	if (HeapTupleIsValid(vardata.statsTuple))
-	{
-		Oid			sortop;
-		AttStatsSlot sslot;
-
-		sortop = get_opfamily_member(index->opfamily[0],
-									 index->opcintype[0],
-									 index->opcintype[0],
-									 BTLessStrategyNumber);
-		if (OidIsValid(sortop) &&
-			get_attstatsslot(&sslot, vardata.statsTuple,
-							 STATISTIC_KIND_CORRELATION, sortop,
-							 ATTSTATSSLOT_NUMBERS))
-		{
-			double		varCorrelation;
-
-			Assert(sslot.nnumbers == 1);
-			varCorrelation = sslot.numbers[0];
-
-			if (index->reverse_sort[0])
-				varCorrelation = -varCorrelation;
-
-			if (index->nkeycolumns > 1)
-				costs.indexCorrelation = varCorrelation * 0.75;
-			else
-				costs.indexCorrelation = varCorrelation;
-
-			free_attstatsslot(&sslot);
-		}
-	}
-
-	ReleaseVariableStats(vardata);
 
 	*indexStartupCost = costs.indexStartupCost;
 	*indexTotalCost = costs.indexTotalCost;

@@ -846,7 +846,8 @@ SELECT count(*) FROM dupindexcols
   WHERE f1 BETWEEN 'WA' AND 'ZZZ' and id < 1000 and f1 ~<~ 'YX';
 
 --
--- Check that index scans with =ANY indexquals return rows in index order
+-- Check that index scans with SAOP array and/or skip array indexquals
+-- return rows in index order
 --
 
 explain (costs off)
@@ -858,7 +859,7 @@ SELECT unique1 FROM tenk1
 WHERE unique1 IN (1,42,7)
 ORDER BY unique1;
 
--- Non-required array scan key on "tenthous":
+-- Skip array on "thousand", SAOP array on "tenthous":
 explain (costs off)
 SELECT thousand, tenthous FROM tenk1
 WHERE thousand < 2 AND tenthous IN (1001,3000)
@@ -868,7 +869,7 @@ SELECT thousand, tenthous FROM tenk1
 WHERE thousand < 2 AND tenthous IN (1001,3000)
 ORDER BY thousand;
 
--- Non-required array scan key on "tenthous", backward scan:
+-- Skip array on "thousand", SAOP array on "tenthous", backward scan:
 explain (costs off)
 SELECT thousand, tenthous FROM tenk1
 WHERE thousand < 2 AND tenthous IN (1001,3000)
@@ -877,6 +878,15 @@ ORDER BY thousand DESC, tenthous DESC;
 SELECT thousand, tenthous FROM tenk1
 WHERE thousand < 2 AND tenthous IN (1001,3000)
 ORDER BY thousand DESC, tenthous DESC;
+
+explain (costs off)
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand > 995 and tenthous in (998, 999)
+ORDER BY thousand desc;
+
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand > 995 and tenthous in (998, 999)
+ORDER BY thousand desc;
 
 --
 -- Check elimination of redundant and contradictory index quals
@@ -892,6 +902,21 @@ SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{7, 14, 22}') and unique1 = ANY('
 SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{7, 14, 22}') and unique1 = ANY('{33, 44}'::bigint[]);
 
 explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 = ANY(NULL);
+
+SELECT unique1 FROM tenk1 WHERE unique1 = ANY(NULL);
+
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{NULL,NULL,NULL}');
+
+SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{NULL,NULL,NULL}');
+
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 IS NULL AND unique1 IS NULL;
+
+SELECT unique1 FROM tenk1 WHERE unique1 IS NULL AND unique1 IS NULL;
+
+explain (costs off)
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 1;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 1;
@@ -935,6 +960,26 @@ explain (costs off)
 SELECT unique1 FROM tenk1 WHERE (thousand, tenthous) > (NULL, 5);
 
 SELECT unique1 FROM tenk1 WHERE (thousand, tenthous) > (NULL, 5);
+
+-- Skip array redundancy (pair of redundant low_compare inequalities)
+explain (costs off)
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand > -1 and thousand >= 0 AND tenthous = 3000
+ORDER BY thousand;
+
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand > -1 and thousand >= 0 AND tenthous = 3000
+ORDER BY thousand;
+
+-- Skip array redundancy (pair of redundant high_compare inequalities)
+explain (costs off)
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand < 3 and thousand <= 2 AND tenthous = 1001
+ORDER BY thousand;
+
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand < 3 and thousand <= 2 AND tenthous = 1001
+ORDER BY thousand;
 
 --
 -- Check elimination of constant-NULL subexpressions
