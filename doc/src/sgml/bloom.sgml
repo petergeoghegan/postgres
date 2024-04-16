@@ -206,6 +206,7 @@ CREATE INDEX
                Index Searches: 1
          -&gt;  Bitmap Index Scan on btreeidx2  (cost=0.00..12.04 rows=500 width=0) (never executed)
                Index Cond: (i2 = 898732)
+               Index Searches: 0
  Planning Time: 0.491 ms
  Execution Time: 0.055 ms
 (10 rows)
