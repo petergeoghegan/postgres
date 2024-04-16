@@ -1,0 +1,944 @@
+set enable_indexonlyscan to off;
+set enable_seqscan to off;
+set enable_indexscan to off;
+set enable_bitmapscan to on;
+set client_min_messages=error;
+drop table if exists scan_key_test;
+reset client_min_messages;
+create unlogged table scan_key_test(
+  a int,
+  b int,
+  c int,
+  d int,
+  e int,
+  f int,
+  g int,
+  h int
+);
+create index scan_key_test_idx on scan_key_test(a, b, c, d, e, f, g, h);
+set client_min_messages=log;
+set log_btree_verbosity=1;
+-- Simplest possible (no skipping, just first column):
+select * from scan_key_test where a = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+_bt_preprocess_array_keys: numArrayKeys == 0 so nothing to do
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=1, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip column 'a' only:
+select * from scan_key_test where b = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 2 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 1, so->numberOfKeys on output is 2, so->numArrayKeys on output is 1
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=2, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' and 'b' only:
+select * from scan_key_test where c = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 1, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' and 'b' only -- carry over c scan key with > strategy:
+select * from scan_key_test where c > 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: > , attno: 3 func: int4gt, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 1, so->numberOfKeys on output is 3, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 2, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' and 'b' only -- carry over c scan key with >= strategy:
+select * from scan_key_test where c >= 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 1, so->numberOfKeys on output is 3, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' and 'b' only -- carry over c scan key with < strategy:
+select * from scan_key_test where c < 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: < , attno: 3 func: int4lt, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 1, so->numberOfKeys on output is 3, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' only -- carry over b, and carry over c scan key with <= strategy:
+select * from scan_key_test where b = 1 and c <= 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 2 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 3 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' only -- carry over b, and carry over c scan key with > strategy:
+select * from scan_key_test where b = 1 and c > 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 2 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: > , attno: 3 func: int4gt, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: 2, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' only -- carry over b, and carry over c scan key with >= strategy:
+select * from scan_key_test where b = 1 and c >= 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 2 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' only -- carry over b, and carry over c scan key with < strategy:
+select * from scan_key_test where b = 1 and c < 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 2 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: < , attno: 3 func: int4lt, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip columns 'a' only -- carry over b, and carry over c scan key with <= strategy:
+select * from scan_key_test where b = 1 and c <= 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 2 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 3 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip middle column, carry over a and c:
+select * from scan_key_test where a = 1 and c = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 1
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip middle columns, carry over a and d:
+select * from scan_key_test where a = 1 and d = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: = , attno: 4 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 4, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           sk_attno 4. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=4, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip middle columns, carry over a and e:
+select * from scan_key_test where a = 1 and e = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: = , attno: 5 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 5, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           sk_attno 4. val: -2147483648, func: btint4cmp
+           sk_attno 5. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=5, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip middle column, carry over a and c:
+select * from scan_key_test where a = 1 and c >= 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip middle columns, carry over a and d:
+select * from scan_key_test where a = 1 and d >= 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 4 func: int4ge, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 4, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           sk_attno 4. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=4, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip middle columns, carry over a and e:
+select * from scan_key_test where a = 1 and e >= 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 5 func: int4ge, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 5, so->numArrayKeys on output is 4
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           sk_attno 4. val: -2147483648, func: btint4cmp
+           sk_attno 5. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=5, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip column 'a' only, range on b:
+select * from scan_key_test where b between 1 and 42;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 2 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 2 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 2, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=2, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip column 'a' and 'b' only, range on c:
+select * from scan_key_test where c between 1 and 42;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 3 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Skip column 'b' only, range on c:
+select * from scan_key_test where a = 1 and c between 1 and 3;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+                      scan->keyData[2]: [ strategy: <=, attno: 3 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 3, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Range of 'a', skip column 'b' only, range on c:
+select * from scan_key_test where a between 1 and 3 and c between 1 and 3;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 1 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 1 func: int4le, flags: [] ]
+                      scan->keyData[2]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+                      scan->keyData[3]: [ strategy: <=, attno: 3 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 4, so->numberOfKeys on output is 3, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Range of 'a', range on 'b', range on c:
+select * from scan_key_test where a between 1 and 3 and b between 1 and 3 and c between 1 and 3;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 1 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 1 func: int4le, flags: [] ]
+                      scan->keyData[2]: [ strategy: >=, attno: 2 func: int4ge, flags: [] ]
+                      scan->keyData[3]: [ strategy: <=, attno: 2 func: int4le, flags: [] ]
+                      scan->keyData[4]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+                      scan->keyData[5]: [ strategy: <=, attno: 3 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 6, so->numberOfKeys on output is 3, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Range of 'a', range on 'b', range on c, range on d:
+select * from scan_key_test where a between 1 and 3 and b between 1 and 3 and c between 1 and 3 and d between 1 and 3;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 1 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 1 func: int4le, flags: [] ]
+                      scan->keyData[2]: [ strategy: >=, attno: 2 func: int4ge, flags: [] ]
+                      scan->keyData[3]: [ strategy: <=, attno: 2 func: int4le, flags: [] ]
+                      scan->keyData[4]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+                      scan->keyData[5]: [ strategy: <=, attno: 3 func: int4le, flags: [] ]
+                      scan->keyData[6]: [ strategy: >=, attno: 4 func: int4ge, flags: [] ]
+                      scan->keyData[7]: [ strategy: <=, attno: 4 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 8, so->numberOfKeys on output is 4, so->numArrayKeys on output is 4
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           sk_attno 4. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=4, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Range of 'a', range on d:
+select * from scan_key_test where a between 1 and 3 and d between 1 and 3;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 1 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 1 func: int4le, flags: [] ]
+                      scan->keyData[2]: [ strategy: >=, attno: 4 func: int4ge, flags: [] ]
+                      scan->keyData[3]: [ strategy: <=, attno: 4 func: int4le, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 4, so->numberOfKeys on output is 4, so->numArrayKeys on output is 4
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           sk_attno 4. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=4, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- skips 'a', range on b, point on c:
+select * from scan_key_test where b between 1 and 3 and c = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 2 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 2 func: int4le, flags: [] ]
+                      scan->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 3, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Range of 'a', range on d, = on e:
+select * from scan_key_test where a between 1 and 3 and d between 1 and 3 and e = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 1 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 1 func: int4le, flags: [] ]
+                      scan->keyData[2]: [ strategy: >=, attno: 4 func: int4ge, flags: [] ]
+                      scan->keyData[3]: [ strategy: <=, attno: 4 func: int4le, flags: [] ]
+                      scan->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 5, so->numberOfKeys on output is 5, so->numArrayKeys on output is 4
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: -2147483648, func: btint4cmp
+           sk_attno 4. val: 1, func: btint4cmp
+           sk_attno 5. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=5, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- skips 'a', range on b, point on c, = on e:
+select * from scan_key_test where b between 1 and 3 and c = 1 and e = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: >=, attno: 2 func: int4ge, flags: [] ]
+                      scan->keyData[1]: [ strategy: <=, attno: 2 func: int4le, flags: [] ]
+                      scan->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+                      scan->keyData[3]: [ strategy: = , attno: 5 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 4, so->numberOfKeys on output is 5, so->numArrayKeys on output is 3
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: 1, func: btint4cmp
+           sk_attno 4. val: -2147483648, func: btint4cmp
+           sk_attno 5. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=5, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- skips 'b' and 'c' only:
+select * from scan_key_test where a= 1 and b >= 5 and c >= 4;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 2 func: int4ge, flags: [] ]
+                      scan->keyData[2]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 3, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: 5, func: btint4cmp
+           sk_attno 3. val: 4, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- skips 'b' and 'c':
+select * from scan_key_test where a= 1 and c >= 4;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 3 func: int4ge, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+_bt_preprocess_keys: scan->numberOfKeys is 2, so->numberOfKeys on output is 3, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 4, func: btint4cmp
+           with strat_total='= ', inskey.keys=3, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- skips 'b' only:
+select * from scan_key_test where a= 1 and c = 4 and d = 5;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+                      scan->keyData[2]: [ strategy: = , attno: 4 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 3, so->numberOfKeys on output is 4, so->numArrayKeys on output is 1
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 4, func: btint4cmp
+           sk_attno 4. val: 5, func: btint4cmp
+           with strat_total='= ', inskey.keys=4, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- skips 'b' range condition only:
+ select * from scan_key_test where a= 1 and b between 1 and 2 and c = 4 and d = 5;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: >=, attno: 2 func: int4ge, flags: [] ]
+                      scan->keyData[2]: [ strategy: <=, attno: 2 func: int4le, flags: [] ]
+                      scan->keyData[3]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+                      scan->keyData[4]: [ strategy: = , attno: 4 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 5, so->numberOfKeys on output is 4, so->numArrayKeys on output is 1
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: 1, func: btint4cmp
+           sk_attno 3. val: 4, func: btint4cmp
+           sk_attno 4. val: 5, func: btint4cmp
+           with strat_total='= ', inskey.keys=4, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- skips 'b' and e only:
+select * from scan_key_test where a= 1 and c = 4 and d = 5 and f = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+                      scan->keyData[2]: [ strategy: = , attno: 4 func: int4eq, flags: [] ]
+                      scan->keyData[3]: [ strategy: = , attno: 6 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[5]: [ strategy: = , attno: 6 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 4, so->numberOfKeys on output is 6, so->numArrayKeys on output is 2
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 4, func: btint4cmp
+           sk_attno 4. val: 5, func: btint4cmp
+           sk_attno 5. val: -2147483648, func: btint4cmp
+           sk_attno 6. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=6, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Very complicated variant #1:
+select * from scan_key_test where a= 1 and c = 5 and f = 4 and g between 1 and 3 and h = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+                      scan->keyData[2]: [ strategy: = , attno: 6 func: int4eq, flags: [] ]
+                      scan->keyData[3]: [ strategy: >=, attno: 7 func: int4ge, flags: [] ]
+                      scan->keyData[4]: [ strategy: <=, attno: 7 func: int4le, flags: [] ]
+                      scan->keyData[5]: [ strategy: = , attno: 8 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[5]: [ strategy: = , attno: 6 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[6]: [ strategy: = , attno: 7 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[7]: [ strategy: = , attno: 8 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 6, so->numberOfKeys on output is 8, so->numArrayKeys on output is 4
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 1, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 5, func: btint4cmp
+           sk_attno 4. val: -2147483648, func: btint4cmp
+           sk_attno 5. val: -2147483648, func: btint4cmp
+           sk_attno 6. val: 4, func: btint4cmp
+           sk_attno 7. val: 1, func: btint4cmp
+           sk_attno 8. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=8, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+
+-- Very complicated variant #2:
+select * from scan_key_test where c = 5 and f = 4 and g between 1 and 3 and h = 1;
+LOG:  
+👾  btbeginscan to begin scan of index "scan_key_test_idx" in worker -1
+♻️  btrescan
+btrescan: BTScanPosInvalidate() called for markPos
+🚜  btgetbitmap
+_bt_preprocess_keys:  scan->keyData[0]: [ strategy: = , attno: 3 func: int4eq, flags: [] ]
+                      scan->keyData[1]: [ strategy: = , attno: 6 func: int4eq, flags: [] ]
+                      scan->keyData[2]: [ strategy: >=, attno: 7 func: int4ge, flags: [] ]
+                      scan->keyData[3]: [ strategy: <=, attno: 7 func: int4le, flags: [] ]
+                      scan->keyData[4]: [ strategy: = , attno: 8 func: int4eq, flags: [] ]
+_bt_preprocess_keys:    so->keyData[0]: [ strategy: = , attno: 1 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[1]: [ strategy: = , attno: 2 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[2]: [ strategy: = , attno: 3 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[3]: [ strategy: = , attno: 4 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[4]: [ strategy: = , attno: 5 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[5]: [ strategy: = , attno: 6 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+                        so->keyData[6]: [ strategy: = , attno: 7 func: int4eq, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD, SK_BT_SKIP] ]
+                        so->keyData[7]: [ strategy: = , attno: 8 func: int4eq, flags: [SK_BT_REQFWD, SK_BT_REQBKWD] ]
+_bt_preprocess_keys: scan->numberOfKeys is 5, so->numberOfKeys on output is 8, so->numArrayKeys on output is 5
+
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: -2147483648, func: btint4cmp
+           sk_attno 2. val: -2147483648, func: btint4cmp
+           sk_attno 3. val: 5, func: btint4cmp
+           sk_attno 4. val: -2147483648, func: btint4cmp
+           sk_attno 5. val: -2147483648, func: btint4cmp
+           sk_attno 6. val: 4, func: btint4cmp
+           sk_attno 7. val: 1, func: btint4cmp
+           sk_attno 8. val: 1, func: btint4cmp
+           with strat_total='= ', inskey.keys=8, inskey.nextkey=0, inskey.backward=0
+btendscan ParallelWorkerNumber: -1, npages: 0, nsearches: 1
+
+ a | b | c | d | e | f | g | h 
+---+---+---+---+---+---+---+---
+(0 rows)
+

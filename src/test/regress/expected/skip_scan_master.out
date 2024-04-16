@@ -1,0 +1,2470 @@
+set work_mem='100MB';
+set effective_cache_size='24GB';
+set random_page_cost=2.0;
+set track_io_timing to off;
+set enable_seqscan to off;
+set client_min_messages=error;
+set vacuum_freeze_min_age = 0;
+set cursor_tuple_fraction=1.000;
+create extension if not exists pageinspect; -- just to have it
+reset client_min_messages;
+-- Set log_btree_verbosity to 1 without depending on having that patch
+-- applied (HACK, just sets commit_siblings instead when we don't have that
+-- patch available):
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '1', false);
+ set_config 
+------------
+ 1
+(1 row)
+
+-- Establish if this server is master or the patch -- want to skip stress
+-- tests if it's the latter
+--
+-- Reminder: Don't vary the database state between master and patch (just the
+-- tests run, which must be read-only)
+select (setting = '5432') as testing_patch from pg_settings where name = 'port'
+       \gset
+----------------------
+-- Misc multi tests --
+----------------------
+set client_min_messages=error;
+drop table if exists multi_test_skip;
+reset client_min_messages;
+create unlogged table multi_test_skip(
+  a int,
+  b int
+);
+create index multi_test_skip_idx on multi_test_skip(a, b);
+insert into multi_test_skip
+select
+  j,
+  case when i < 14 then
+    0
+  else
+    1
+  end
+from
+  generate_series(1, 14) i,
+  generate_series(1, 400) j
+order by
+  j,
+  i;
+vacuum analyze multi_test_skip;
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Harder case
+select * from multi_test_skip where a in (123, 182, 183) and b in (1,2);
+  a  | b 
+-----+---
+ 123 | 1
+ 182 | 1
+ 183 | 1
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (123, 182, 183) and b in (1,2);
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_skip  (cost=6.88..11.89 rows=3 width=8) (actual rows=3 loops=1)
+   Recheck Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
+   Heap Blocks: exact=2
+   Buffers: shared hit=4
+   ->  Bitmap Index Scan on multi_test_skip_idx  (cost=0.00..6.88 rows=3 width=0) (actual rows=3 loops=1)
+         Index Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
+         Buffers: shared hit=2
+(7 rows)
+
+-- Hard case
+select * from multi_test_skip where a in (182, 183, 184) and b in (1,2);
+  a  | b 
+-----+---
+ 182 | 1
+ 183 | 1
+ 184 | 1
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (182, 183, 184) and b in (1,2);
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_skip  (cost=6.88..11.89 rows=3 width=8) (actual rows=3 loops=1)
+   Recheck Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=4
+   ->  Bitmap Index Scan on multi_test_skip_idx  (cost=0.00..6.88 rows=3 width=0) (actual rows=3 loops=1)
+         Index Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
+         Buffers: shared hit=3
+(7 rows)
+
+select * from multi_test_skip where a in (3,4,5) and b > 0;
+ a | b 
+---+---
+ 3 | 1
+ 4 | 1
+ 5 | 1
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (3,4,5) and b > 0;
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_skip  (cost=6.88..11.89 rows=3 width=8) (actual rows=3 loops=1)
+   Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_skip_idx  (cost=0.00..6.88 rows=3 width=0) (actual rows=3 loops=1)
+         Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
+         Buffers: shared hit=2
+(7 rows)
+
+set enable_indexscan to on;
+-- Backwards scan:
+select * from multi_test_skip where a in (3,4,5) and b > 0
+order by a desc, b desc;
+ a | b 
+---+---
+ 5 | 1
+ 4 | 1
+ 3 | 1
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (3,4,5) and b > 0
+order by a desc, b desc;
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using multi_test_skip_idx on multi_test_skip  (cost=0.28..10.66 rows=3 width=8) (actual rows=3 loops=1)
+   Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
+   Buffers: shared hit=3
+(3 rows)
+
+set enable_indexscan to off;
+-- Redundant test:
+select *
+from multi_test_skip
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 183;
+  a  | b 
+-----+---
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test_skip
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 183;
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_skip  (cost=7.25..31.32 rows=38 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 183))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_skip_idx  (cost=0.00..7.24 rows=38 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 183))
+         Buffers: shared hit=2
+(7 rows)
+
+-- Redundant test, flip order:
+select *
+from multi_test_skip
+where
+  a > 183
+  and a in (1, 99, 182, 183, 184);
+  a  | b 
+-----+---
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 0
+ 184 | 1
+(14 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_skip
+where
+  a > 183
+  and a in (1, 99, 182, 183, 184);
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_skip  (cost=7.25..31.32 rows=38 width=8) (actual rows=14 loops=1)
+   Recheck Cond: ((a > 183) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+   Heap Blocks: exact=1
+   Buffers: shared hit=3
+   ->  Bitmap Index Scan on multi_test_skip_idx  (cost=0.00..7.24 rows=38 width=0) (actual rows=14 loops=1)
+         Index Cond: ((a > 183) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
+         Buffers: shared hit=2
+(7 rows)
+
+select *
+from multi_test_skip
+where
+  a in (180, 345)
+  and a in (230, 300);
+ a | b 
+---+---
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_skip
+where
+  a in (180, 345)
+  and a in (230, 300);
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_skip  (cost=6.88..8.89 rows=1 width=8) (actual rows=0 loops=1)
+   Recheck Cond: ((a = ANY ('{180,345}'::integer[])) AND (a = ANY ('{230,300}'::integer[])))
+   ->  Bitmap Index Scan on multi_test_skip_idx  (cost=0.00..6.88 rows=1 width=0) (actual rows=0 loops=1)
+         Index Cond: ((a = ANY ('{180,345}'::integer[])) AND (a = ANY ('{230,300}'::integer[])))
+(4 rows)
+
+insert into multi_test_skip
+select
+  NULL,
+  j
+from
+  generate_series(1, 10) j
+order by j;
+vacuum analyze multi_test_skip;
+select *
+from multi_test_skip
+where b = 1;
+  a  | b 
+-----+---
+   1 | 1
+   2 | 1
+   3 | 1
+   4 | 1
+   5 | 1
+   6 | 1
+   7 | 1
+   8 | 1
+   9 | 1
+  10 | 1
+  11 | 1
+  12 | 1
+  13 | 1
+  14 | 1
+  15 | 1
+  16 | 1
+  17 | 1
+  18 | 1
+  19 | 1
+  20 | 1
+  21 | 1
+  22 | 1
+  23 | 1
+  24 | 1
+  25 | 1
+  26 | 1
+  27 | 1
+  28 | 1
+  29 | 1
+  30 | 1
+  31 | 1
+  32 | 1
+  33 | 1
+  34 | 1
+  35 | 1
+  36 | 1
+  37 | 1
+  38 | 1
+  39 | 1
+  40 | 1
+  41 | 1
+  42 | 1
+  43 | 1
+  44 | 1
+  45 | 1
+  46 | 1
+  47 | 1
+  48 | 1
+  49 | 1
+  50 | 1
+  51 | 1
+  52 | 1
+  53 | 1
+  54 | 1
+  55 | 1
+  56 | 1
+  57 | 1
+  58 | 1
+  59 | 1
+  60 | 1
+  61 | 1
+  62 | 1
+  63 | 1
+  64 | 1
+  65 | 1
+  66 | 1
+  67 | 1
+  68 | 1
+  69 | 1
+  70 | 1
+  71 | 1
+  72 | 1
+  73 | 1
+  74 | 1
+  75 | 1
+  76 | 1
+  77 | 1
+  78 | 1
+  79 | 1
+  80 | 1
+  81 | 1
+  82 | 1
+  83 | 1
+  84 | 1
+  85 | 1
+  86 | 1
+  87 | 1
+  88 | 1
+  89 | 1
+  90 | 1
+  91 | 1
+  92 | 1
+  93 | 1
+  94 | 1
+  95 | 1
+  96 | 1
+  97 | 1
+  98 | 1
+  99 | 1
+ 100 | 1
+ 101 | 1
+ 102 | 1
+ 103 | 1
+ 104 | 1
+ 105 | 1
+ 106 | 1
+ 107 | 1
+ 108 | 1
+ 109 | 1
+ 110 | 1
+ 111 | 1
+ 112 | 1
+ 113 | 1
+ 114 | 1
+ 115 | 1
+ 116 | 1
+ 117 | 1
+ 118 | 1
+ 119 | 1
+ 120 | 1
+ 121 | 1
+ 122 | 1
+ 123 | 1
+ 124 | 1
+ 125 | 1
+ 126 | 1
+ 127 | 1
+ 128 | 1
+ 129 | 1
+ 130 | 1
+ 131 | 1
+ 132 | 1
+ 133 | 1
+ 134 | 1
+ 135 | 1
+ 136 | 1
+ 137 | 1
+ 138 | 1
+ 139 | 1
+ 140 | 1
+ 141 | 1
+ 142 | 1
+ 143 | 1
+ 144 | 1
+ 145 | 1
+ 146 | 1
+ 147 | 1
+ 148 | 1
+ 149 | 1
+ 150 | 1
+ 151 | 1
+ 152 | 1
+ 153 | 1
+ 154 | 1
+ 155 | 1
+ 156 | 1
+ 157 | 1
+ 158 | 1
+ 159 | 1
+ 160 | 1
+ 161 | 1
+ 162 | 1
+ 163 | 1
+ 164 | 1
+ 165 | 1
+ 166 | 1
+ 167 | 1
+ 168 | 1
+ 169 | 1
+ 170 | 1
+ 171 | 1
+ 172 | 1
+ 173 | 1
+ 174 | 1
+ 175 | 1
+ 176 | 1
+ 177 | 1
+ 178 | 1
+ 179 | 1
+ 180 | 1
+ 181 | 1
+ 182 | 1
+ 183 | 1
+ 184 | 1
+ 185 | 1
+ 186 | 1
+ 187 | 1
+ 188 | 1
+ 189 | 1
+ 190 | 1
+ 191 | 1
+ 192 | 1
+ 193 | 1
+ 194 | 1
+ 195 | 1
+ 196 | 1
+ 197 | 1
+ 198 | 1
+ 199 | 1
+ 200 | 1
+ 201 | 1
+ 202 | 1
+ 203 | 1
+ 204 | 1
+ 205 | 1
+ 206 | 1
+ 207 | 1
+ 208 | 1
+ 209 | 1
+ 210 | 1
+ 211 | 1
+ 212 | 1
+ 213 | 1
+ 214 | 1
+ 215 | 1
+ 216 | 1
+ 217 | 1
+ 218 | 1
+ 219 | 1
+ 220 | 1
+ 221 | 1
+ 222 | 1
+ 223 | 1
+ 224 | 1
+ 225 | 1
+ 226 | 1
+ 227 | 1
+ 228 | 1
+ 229 | 1
+ 230 | 1
+ 231 | 1
+ 232 | 1
+ 233 | 1
+ 234 | 1
+ 235 | 1
+ 236 | 1
+ 237 | 1
+ 238 | 1
+ 239 | 1
+ 240 | 1
+ 241 | 1
+ 242 | 1
+ 243 | 1
+ 244 | 1
+ 245 | 1
+ 246 | 1
+ 247 | 1
+ 248 | 1
+ 249 | 1
+ 250 | 1
+ 251 | 1
+ 252 | 1
+ 253 | 1
+ 254 | 1
+ 255 | 1
+ 256 | 1
+ 257 | 1
+ 258 | 1
+ 259 | 1
+ 260 | 1
+ 261 | 1
+ 262 | 1
+ 263 | 1
+ 264 | 1
+ 265 | 1
+ 266 | 1
+ 267 | 1
+ 268 | 1
+ 269 | 1
+ 270 | 1
+ 271 | 1
+ 272 | 1
+ 273 | 1
+ 274 | 1
+ 275 | 1
+ 276 | 1
+ 277 | 1
+ 278 | 1
+ 279 | 1
+ 280 | 1
+ 281 | 1
+ 282 | 1
+ 283 | 1
+ 284 | 1
+ 285 | 1
+ 286 | 1
+ 287 | 1
+ 288 | 1
+ 289 | 1
+ 290 | 1
+ 291 | 1
+ 292 | 1
+ 293 | 1
+ 294 | 1
+ 295 | 1
+ 296 | 1
+ 297 | 1
+ 298 | 1
+ 299 | 1
+ 300 | 1
+ 301 | 1
+ 302 | 1
+ 303 | 1
+ 304 | 1
+ 305 | 1
+ 306 | 1
+ 307 | 1
+ 308 | 1
+ 309 | 1
+ 310 | 1
+ 311 | 1
+ 312 | 1
+ 313 | 1
+ 314 | 1
+ 315 | 1
+ 316 | 1
+ 317 | 1
+ 318 | 1
+ 319 | 1
+ 320 | 1
+ 321 | 1
+ 322 | 1
+ 323 | 1
+ 324 | 1
+ 325 | 1
+ 326 | 1
+ 327 | 1
+ 328 | 1
+ 329 | 1
+ 330 | 1
+ 331 | 1
+ 332 | 1
+ 333 | 1
+ 334 | 1
+ 335 | 1
+ 336 | 1
+ 337 | 1
+ 338 | 1
+ 339 | 1
+ 340 | 1
+ 341 | 1
+ 342 | 1
+ 343 | 1
+ 344 | 1
+ 345 | 1
+ 346 | 1
+ 347 | 1
+ 348 | 1
+ 349 | 1
+ 350 | 1
+ 351 | 1
+ 352 | 1
+ 353 | 1
+ 354 | 1
+ 355 | 1
+ 356 | 1
+ 357 | 1
+ 358 | 1
+ 359 | 1
+ 360 | 1
+ 361 | 1
+ 362 | 1
+ 363 | 1
+ 364 | 1
+ 365 | 1
+ 366 | 1
+ 367 | 1
+ 368 | 1
+ 369 | 1
+ 370 | 1
+ 371 | 1
+ 372 | 1
+ 373 | 1
+ 374 | 1
+ 375 | 1
+ 376 | 1
+ 377 | 1
+ 378 | 1
+ 379 | 1
+ 380 | 1
+ 381 | 1
+ 382 | 1
+ 383 | 1
+ 384 | 1
+ 385 | 1
+ 386 | 1
+ 387 | 1
+ 388 | 1
+ 389 | 1
+ 390 | 1
+ 391 | 1
+ 392 | 1
+ 393 | 1
+ 394 | 1
+ 395 | 1
+ 396 | 1
+ 397 | 1
+ 398 | 1
+ 399 | 1
+ 400 | 1
+     | 1
+(401 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test_skip
+where b = 1;
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_skip  (cost=60.46..90.47 rows=401 width=8) (actual rows=401 loops=1)
+   Recheck Cond: (b = 1)
+   Heap Blocks: exact=25
+   Buffers: shared hit=33
+   ->  Bitmap Index Scan on multi_test_skip_idx  (cost=0.00..60.36 rows=401 width=0) (actual rows=401 loops=1)
+         Index Cond: (b = 1)
+         Buffers: shared hit=8
+(7 rows)
+
+-- Reset
+set enable_indexonlyscan to on;
+set enable_indexscan to on;
+drop index multi_test_skip_idx;
+-- Test that roll over logic doesn't increment sk_datum plus remove NULL sk
+-- marking when it should just do the latter.  Bug found in NULLS FIRST case
+-- after returning from pgConf.dev.
+--
+-- (June 3)
+create index multi_test_skip_idx_nulls_first on multi_test_skip(a nulls first, b);
+-- Insert INT_MIN value that had better not be overlooked here:
+insert into multi_test_skip
+select -2147483648, 1;
+vacuum analyze multi_test_skip;
+select *
+from multi_test_skip
+where b = 1
+order by a nulls first, b limit 5;
+      a      | b 
+-------------+---
+             | 1
+ -2147483648 | 1
+           1 | 1
+           2 | 1
+           3 | 1
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test_skip
+where b = 1
+order by a nulls first, b limit 5;
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.28..1.08 rows=5 width=8) (actual rows=5 loops=1)
+   Buffers: shared hit=3
+   ->  Index Only Scan using multi_test_skip_idx_nulls_first on multi_test_skip  (cost=0.28..64.38 rows=402 width=8) (actual rows=5 loops=1)
+         Index Cond: (b = 1)
+         Heap Fetches: 0
+         Buffers: shared hit=3
+(6 rows)
+
+----------------
+-- UUID tests --
+----------------
+set client_min_messages=error;
+DROP TABLE if exists uuid_tests;
+reset client_min_messages;
+create unlogged table uuid_tests
+(
+  skippy uuid,
+  predval int4,
+  i       int4
+);
+create index uuid_tests_idx on uuid_tests(skippy, predval);
+with www as (
+  select i, gen_random_uuid() urand from
+  generate_series(1, 5) i
+)
+insert into uuid_tests
+select '00000000-0000-0000-0000-000000000001', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '10000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '20000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '30000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '40000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '50000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '60000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '70000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '80000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select '90000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'A0000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'B0000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'C0000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'D0000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'E0000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'F0000000-0000-0000-0000-000000000000', j, j from
+  generate_series(1, 5000) j;
+insert into uuid_tests
+select 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFE', j, j from
+  generate_series(1, 5000) j;
+vacuum analyze uuid_tests;
+-- Basic skip scan test case for UUID, a pass-by-reference type that can use
+-- increment/decrement stuff:
+select count(*)
+from uuid_tests
+where predval in (333, 4000, 4500, 5000);
+ count 
+-------
+    68
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*)
+from uuid_tests
+where predval in (333, 4000, 4500, 5000);
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=1486.77..1486.78 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=422
+   ->  Index Only Scan using uuid_tests_idx on uuid_tests  (cost=0.42..1486.60 rows=68 width=0) (actual rows=68 loops=1)
+         Index Cond: (predval = ANY ('{333,4000,4500,5000}'::integer[]))
+         Heap Fetches: 0
+         Buffers: shared hit=422
+(6 rows)
+
+-- Equivalent-ish range scan formulation (expected to do same accesses, and
+-- give same answer):
+select count(*)
+from uuid_tests
+where skippy between '00000000-0000-0000-0000-000000000000' and 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+ count 
+-------
+    68
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*)
+from uuid_tests
+where skippy between '00000000-0000-0000-0000-000000000000' and 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+                                                                                             QUERY PLAN                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=1911.77..1911.78 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=422
+   ->  Index Only Scan using uuid_tests_idx on uuid_tests  (cost=0.42..1911.60 rows=68 width=0) (actual rows=68 loops=1)
+         Index Cond: ((skippy >= '00000000-0000-0000-0000-000000000000'::uuid) AND (skippy <= 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid) AND (predval = ANY ('{333,4000,4500,5000}'::integer[])))
+         Heap Fetches: 0
+         Buffers: shared hit=422
+(6 rows)
+
+-- Equivalent-ish range scan formulation using > and < operators (expected to do same accesses, and
+-- give same answer) -- stresses preprocessing with pass-by-reference types:
+select count(*)
+from uuid_tests
+where skippy > '00000000-0000-0000-0000-000000000000' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+ count 
+-------
+    68
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*)
+from uuid_tests
+where skippy > '00000000-0000-0000-0000-000000000000' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
+and
+predval in (333, 4000, 4500, 5000);
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=1911.77..1911.78 rows=1 width=8) (actual rows=1 loops=1)
+   Buffers: shared hit=422
+   ->  Index Only Scan using uuid_tests_idx on uuid_tests  (cost=0.42..1911.60 rows=68 width=0) (actual rows=68 loops=1)
+         Index Cond: ((skippy > '00000000-0000-0000-0000-000000000000'::uuid) AND (skippy < 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid) AND (predval = ANY ('{333,4000,4500,5000}'::integer[])))
+         Heap Fetches: 0
+         Buffers: shared hit=422
+(6 rows)
+
+-- For good luck, more inequality stuff designed to stress preprocessing code
+-- (note that these are boundary cases):
+prepare uuid_good_luck as
+select count(*)
+from uuid_tests
+where skippy > '0FFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFE'
+and
+predval in (333, 4000, 4500, 5000);
+execute uuid_good_luck;
+ count 
+-------
+    60
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF) -- COSTS OFF added to get stable test output
+execute uuid_good_luck;
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   Buffers: shared hit=373
+   ->  Index Only Scan using uuid_tests_idx on uuid_tests (actual rows=60 loops=1)
+         Index Cond: ((skippy > '0fffffff-ffff-ffff-ffff-ffffffffffff'::uuid) AND (skippy < 'ffffffff-ffff-ffff-ffff-fffffffffffe'::uuid) AND (predval = ANY ('{333,4000,4500,5000}'::integer[])))
+         Heap Fetches: 0
+         Buffers: shared hit=373
+(6 rows)
+
+deallocate uuid_good_luck;
+-----------------------------
+-- create_index NULL tests --
+-----------------------------
+set client_min_messages=error;
+DROP TABLE if exists onek_skipscan;
+DROP TABLE if exists onek_with_null;
+reset client_min_messages;
+CREATE unlogged TABLE onek_skipscan (
+	unique1		int4,
+	unique2		int4,
+	two			int4,
+	four		int4,
+	ten			int4,
+	twenty		int4,
+	hundred		int4,
+	thousand	int4,
+	twothousand	int4,
+	fivethous	int4,
+	tenthous	int4,
+	odd			int4,
+	even		int4,
+	stringu1	name,
+	stringu2	name,
+	string4		name
+);
+\getenv abs_srcdir PG_ABS_SRCDIR
+\set filename :abs_srcdir '/data/onek.data'
+COPY onek_skipscan FROM :'filename';
+VACUUM ANALYZE onek_skipscan;
+CREATE unlogged TABLE onek_with_null AS SELECT unique1, unique2 FROM onek_skipscan ;
+INSERT INTO onek_with_null (unique1,unique2) VALUES (NULL, -1), (NULL, NULL);
+CREATE UNIQUE INDEX onek_with_null_unique2_unique1 ON onek_with_null (unique2,unique1);
+SET enable_indexscan = ON;
+SET enable_bitmapscan = ON;
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
+ count 
+-------
+     2
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
+ count 
+-------
+   499
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
+ count 
+-------
+     0
+(1 row)
+
+DROP INDEX onek_with_null_unique2_unique1;
+CREATE UNIQUE INDEX onek_with_null_unique2desc_unique1 ON onek_with_null (unique2 desc,unique1);
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
+ count 
+-------
+     2
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
+ count 
+-------
+   499
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IN (-1, 0, 1);
+ count 
+-------
+     1
+(1 row)
+
+DROP INDEX onek_with_null_unique2desc_unique1;
+CREATE UNIQUE INDEX onek_with_null_unique2descnullslast_unique1 ON onek_with_null (unique2 desc nulls last,unique1);
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
+ count 
+-------
+     2
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
+ count 
+-------
+   499
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
+ count 
+-------
+     0
+(1 row)
+
+DROP INDEX onek_with_null_unique2descnullslast_unique1;
+CREATE UNIQUE INDEX onek_with_null_unique2ascnullsfirst_unique1 ON onek_with_null (unique2  nulls first,unique1);
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
+ count 
+-------
+     2
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
+ count 
+-------
+   499
+(1 row)
+
+SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
+ count 
+-------
+     0
+(1 row)
+
+DROP INDEX onek_with_null_unique2ascnullsfirst_unique1;
+-- Check initial-positioning logic too
+CREATE UNIQUE INDEX onek_with_null_unique2 ON onek_with_null (unique2);
+SET enable_indexscan = ON;
+SET enable_bitmapscan = OFF;
+SELECT unique1, unique2 FROM onek_with_null
+  ORDER BY unique2 LIMIT 2;
+ unique1 | unique2 
+---------+---------
+         |      -1
+     147 |       0
+(2 rows)
+
+SELECT unique1, unique2 FROM onek_with_null WHERE unique2 >= 0
+  ORDER BY unique2 LIMIT 2;
+ unique1 | unique2 
+---------+---------
+     147 |       0
+     931 |       1
+(2 rows)
+
+SELECT unique1, unique2 FROM onek_with_null
+  ORDER BY unique2 DESC LIMIT 2;
+ unique1 | unique2 
+---------+---------
+         |        
+     278 |     999
+(2 rows)
+
+SELECT unique1, unique2 FROM onek_with_null WHERE unique2 >= -1
+  ORDER BY unique2 DESC LIMIT 2;
+ unique1 | unique2 
+---------+---------
+     278 |     999
+       0 |     998
+(2 rows)
+
+SELECT unique1, unique2 FROM onek_with_null WHERE unique2 < 999
+  ORDER BY unique2 DESC LIMIT 2;
+ unique1 | unique2 
+---------+---------
+       0 |     998
+     744 |     997
+(2 rows)
+
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+--------------------------------
+-- MDAM paper small test case --
+--------------------------------
+set client_min_messages=error;
+drop table if exists sales_mdam_paper_small;
+reset client_min_messages;
+create unlogged table sales_mdam_paper_small
+(
+  dept int4,
+  sdate date,
+  item_class serial,
+  store int4,
+  item int4,
+  total_sales numeric
+);
+create index mdam_small_idx on sales_mdam_paper_small(dept, sdate, item_class, store);
+-- Load data
+insert into sales_mdam_paper_small (dept, sdate, item_class, store, total_sales)
+select
+  dept,
+  '1995-01-01'::date + sdate,
+  item_class,
+  store,
+  (random() * 500.0) as total_sales
+from
+  generate_series(1, 1) dept,
+  generate_series(1, 4) sdate,
+  generate_series(1, 8) item_class,
+  generate_series(1, 3) store;
+-- Mixes range arrays with conventional SAOPs, leading to confusion about
+-- boundary conditions:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+  ctid  | dept |   sdate    | item_class | store 
+--------+------+------------+------------+-------
+ (0,8)  |    1 | 01-04-1995 |          1 |     2
+ (0,9)  |    1 | 01-04-1995 |          1 |     3
+ (0,32) |    1 | 01-04-1995 |          3 |     2
+ (0,33) |    1 | 01-04-1995 |          3 |     3
+ (0,56) |    1 | 01-04-1995 |          5 |     2
+ (0,57) |    1 | 01-04-1995 |          5 |     3
+ (0,11) |    1 | 01-05-1995 |          1 |     2
+ (0,12) |    1 | 01-05-1995 |          1 |     3
+ (0,35) |    1 | 01-05-1995 |          3 |     2
+ (0,36) |    1 | 01-05-1995 |          3 |     3
+ (0,59) |    1 | 01-05-1995 |          5 |     2
+ (0,60) |    1 | 01-05-1995 |          5 |     3
+(12 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+                                                                              QUERY PLAN                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..21.46 rows=1 width=22) (actual rows=12 loops=1)
+   Index Cond: ((sdate >= '01-04-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,3,5}'::integer[])) AND (store = ANY ('{2,3}'::integer[])))
+   Buffers: shared hit=2
+(3 rows)
+
+-- Same again, but this time we use different operators/constants to get the
+-- same effective date range as original BETWEEN version:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate <= '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+  ctid  | dept |   sdate    | item_class | store 
+--------+------+------------+------------+-------
+ (0,8)  |    1 | 01-04-1995 |          1 |     2
+ (0,9)  |    1 | 01-04-1995 |          1 |     3
+ (0,32) |    1 | 01-04-1995 |          3 |     2
+ (0,33) |    1 | 01-04-1995 |          3 |     3
+ (0,56) |    1 | 01-04-1995 |          5 |     2
+ (0,57) |    1 | 01-04-1995 |          5 |     3
+ (0,11) |    1 | 01-05-1995 |          1 |     2
+ (0,12) |    1 | 01-05-1995 |          1 |     3
+ (0,35) |    1 | 01-05-1995 |          3 |     2
+ (0,36) |    1 | 01-05-1995 |          3 |     3
+ (0,59) |    1 | 01-05-1995 |          5 |     2
+ (0,60) |    1 | 01-05-1995 |          5 |     3
+(12 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate <= '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..21.46 rows=1 width=22) (actual rows=12 loops=1)
+   Index Cond: ((sdate > '01-03-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,3,5}'::integer[])) AND (store = ANY ('{2,3}'::integer[])))
+   Buffers: shared hit=2
+(3 rows)
+
+-- Ditto:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate < '1995-01-06'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+  ctid  | dept |   sdate    | item_class | store 
+--------+------+------------+------------+-------
+ (0,8)  |    1 | 01-04-1995 |          1 |     2
+ (0,9)  |    1 | 01-04-1995 |          1 |     3
+ (0,32) |    1 | 01-04-1995 |          3 |     2
+ (0,33) |    1 | 01-04-1995 |          3 |     3
+ (0,56) |    1 | 01-04-1995 |          5 |     2
+ (0,57) |    1 | 01-04-1995 |          5 |     3
+ (0,11) |    1 | 01-05-1995 |          1 |     2
+ (0,12) |    1 | 01-05-1995 |          1 |     3
+ (0,35) |    1 | 01-05-1995 |          3 |     2
+ (0,36) |    1 | 01-05-1995 |          3 |     3
+ (0,59) |    1 | 01-05-1995 |          5 |     2
+ (0,60) |    1 | 01-05-1995 |          5 |     3
+(12 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate < '1995-01-06'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..21.46 rows=1 width=22) (actual rows=12 loops=1)
+   Index Cond: ((sdate > '01-03-1995'::date) AND (sdate < '01-06-1995'::date) AND (item_class = ANY ('{1,3,5}'::integer[])) AND (store = ANY ('{2,3}'::integer[])))
+   Buffers: shared hit=2
+(3 rows)
+
+-- range on date has no lower bound (or lower bound is -inf):
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate < '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+  ctid  | dept |   sdate    | item_class | store 
+--------+------+------------+------------+-------
+ (0,2)  |    1 | 01-02-1995 |          1 |     2
+ (0,3)  |    1 | 01-02-1995 |          1 |     3
+ (0,26) |    1 | 01-02-1995 |          3 |     2
+ (0,27) |    1 | 01-02-1995 |          3 |     3
+ (0,50) |    1 | 01-02-1995 |          5 |     2
+ (0,51) |    1 | 01-02-1995 |          5 |     3
+ (0,5)  |    1 | 01-03-1995 |          1 |     2
+ (0,6)  |    1 | 01-03-1995 |          1 |     3
+ (0,29) |    1 | 01-03-1995 |          3 |     2
+ (0,30) |    1 | 01-03-1995 |          3 |     3
+ (0,53) |    1 | 01-03-1995 |          5 |     2
+ (0,54) |    1 | 01-03-1995 |          5 |     3
+(12 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate < '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+                                                            QUERY PLAN                                                             
+-----------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..18.91 rows=1 width=22) (actual rows=12 loops=1)
+   Index Cond: ((sdate < '01-04-1995'::date) AND (item_class = ANY ('{1,3,5}'::integer[])) AND (store = ANY ('{2,3}'::integer[])))
+   Buffers: shared hit=2
+(3 rows)
+
+-- range on date has no upper bound (or upper bound is +inf):
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+  ctid  | dept |   sdate    | item_class | store 
+--------+------+------------+------------+-------
+ (0,11) |    1 | 01-05-1995 |          1 |     2
+ (0,12) |    1 | 01-05-1995 |          1 |     3
+ (0,35) |    1 | 01-05-1995 |          3 |     2
+ (0,36) |    1 | 01-05-1995 |          3 |     3
+ (0,59) |    1 | 01-05-1995 |          5 |     2
+ (0,60) |    1 | 01-05-1995 |          5 |     3
+(6 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+                                                            QUERY PLAN                                                             
+-----------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..18.91 rows=1 width=22) (actual rows=6 loops=1)
+   Index Cond: ((sdate > '01-04-1995'::date) AND (item_class = ANY ('{1,3,5}'::integer[])) AND (store = ANY ('{2,3}'::integer[])))
+   Buffers: shared hit=2
+(3 rows)
+
+-- Now don't omit dept key, without changing rows returned:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class = 3
+  and store = 2
+order by dept, sdate, item_class, store;
+  ctid  | dept |   sdate    | item_class | store 
+--------+------+------------+------------+-------
+ (0,32) |    1 | 01-04-1995 |          3 |     2
+ (0,35) |    1 | 01-05-1995 |          3 |     2
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class = 3
+  and store = 2
+order by dept, sdate, item_class, store;
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.26 rows=1 width=22) (actual rows=2 loops=1)
+   Index Cond: ((dept >= 0) AND (dept <= 100) AND (sdate >= '01-04-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = 3) AND (store = 2))
+   Buffers: shared hit=2
+(3 rows)
+
+-- Now don't omit dept key, without changing rows returned (matches original
+-- query by including conventional SAOPs to make it harder to get right):
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+  ctid  | dept |   sdate    | item_class | store 
+--------+------+------------+------------+-------
+ (0,8)  |    1 | 01-04-1995 |          1 |     2
+ (0,9)  |    1 | 01-04-1995 |          1 |     3
+ (0,32) |    1 | 01-04-1995 |          3 |     2
+ (0,33) |    1 | 01-04-1995 |          3 |     3
+ (0,56) |    1 | 01-04-1995 |          5 |     2
+ (0,57) |    1 | 01-04-1995 |          5 |     3
+ (0,11) |    1 | 01-05-1995 |          1 |     2
+ (0,12) |    1 | 01-05-1995 |          1 |     3
+ (0,35) |    1 | 01-05-1995 |          3 |     2
+ (0,36) |    1 | 01-05-1995 |          3 |     3
+ (0,59) |    1 | 01-05-1995 |          5 |     2
+ (0,60) |    1 | 01-05-1995 |          5 |     3
+(12 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+                                                                                               QUERY PLAN                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.26 rows=1 width=22) (actual rows=12 loops=1)
+   Index Cond: ((dept >= 0) AND (dept <= 100) AND (sdate >= '01-04-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,3,5}'::integer[])) AND (store = ANY ('{2,3}'::integer[])))
+   Buffers: shared hit=2
+(3 rows)
+
+-----------------------
+-- tenk1 test cases  --
+-----------------------
+set client_min_messages=error;
+drop table if exists tenk1_skipscan;
+reset client_min_messages;
+CREATE UNLOGGED TABLE tenk1_skipscan (
+	unique1		int4,
+	unique2		int4,
+	two			int4,
+	four		int4,
+	ten			int4,
+	twenty		int4,
+	hundred		int4,
+	thousand	int4,
+	twothousand	int4,
+	fivethous	int4,
+	tenthous	int4,
+	odd			int4,
+	even		int4,
+	stringu1	name,
+	stringu2	name,
+	string4		name
+);
+ALTER TABLE tenk1_skipscan SET (autovacuum_enabled=off);
+\getenv abs_srcdir PG_ABS_SRCDIR
+\set filename :abs_srcdir '/data/tenk.data'
+COPY tenk1_skipscan FROM :'filename';
+VACUUM ANALYZE tenk1_skipscan;
+CREATE INDEX tenk1_skipscan_four_unique1 ON tenk1_skipscan (four, unique1);
+prepare tenk1_four_skipscan as
+SELECT hundred, unique1 FROM tenk1_skipscan
+ WHERE unique1 = 444;
+execute tenk1_four_skipscan;
+ hundred | unique1 
+---------+---------
+      44 |     444
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 30 hits
+execute tenk1_four_skipscan;
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan using tenk1_skipscan_four_unique1 on tenk1_skipscan  (cost=0.29..137.29 rows=1 width=8) (actual rows=1 loops=1)
+   Index Cond: (unique1 = 444)
+   Buffers: shared hit=30
+(3 rows)
+
+deallocate tenk1_four_skipscan;
+prepare tenk1_four_skipscan_with_saop as
+select * from tenk1_skipscan where unique1 in (4444, 4445) limit 3;
+execute tenk1_four_skipscan_with_saop;
+ unique1 | unique2 | two | four | ten | twenty | hundred | thousand | twothousand | fivethous | tenthous | odd | even | stringu1 | stringu2 | string4 
+---------+---------+-----+------+-----+--------+---------+----------+-------------+-----------+----------+-----+------+----------+----------+---------
+    4444 |    6609 |   0 |    0 |   4 |      4 |      44 |      444 |         444 |      4444 |     4444 |  88 |   89 | YOAAAA   | FUJAAA   | HHHHxx
+    4445 |    5259 |   1 |    1 |   5 |      5 |      45 |      445 |         445 |      4445 |     4445 |  90 |   91 | ZOAAAA   | HUHAAA   | VVVVxx
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 31 hits
+execute tenk1_four_skipscan_with_saop;
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.29..139.24 rows=2 width=244) (actual rows=2 loops=1)
+   Buffers: shared hit=31
+   ->  Index Scan using tenk1_skipscan_four_unique1 on tenk1_skipscan  (cost=0.29..139.24 rows=2 width=244) (actual rows=2 loops=1)
+         Index Cond: (unique1 = ANY ('{4444,4445}'::integer[]))
+         Buffers: shared hit=31
+(5 rows)
+
+deallocate tenk1_four_skipscan_with_saop;
+-- Challenge here is to not do significantly worse than master branch's
+-- traditional full index scan, since skipping isn't going to work here:
+drop index tenk1_skipscan_four_unique1;
+CREATE INDEX tenk1_skipscan_hundred_unique1 ON tenk1_skipscan (hundred, unique1);
+prepare tenk1_fallback_to_regular_fullscan as
+SELECT hundred, unique1 FROM tenk1_skipscan
+ WHERE unique1 = 444;
+execute tenk1_fallback_to_regular_fullscan;
+ hundred | unique1 
+---------+---------
+      44 |     444
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 30 hits
+execute tenk1_fallback_to_regular_fullscan;
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using tenk1_skipscan_hundred_unique1 on tenk1_skipscan  (cost=0.29..135.29 rows=1 width=8) (actual rows=1 loops=1)
+   Index Cond: (unique1 = 444)
+   Heap Fetches: 0
+   Buffers: shared hit=30
+(4 rows)
+
+deallocate tenk1_fallback_to_regular_fullscan;
+drop index tenk1_skipscan_hundred_unique1;
+CREATE INDEX tenk1_skipscan_two_four_twenty ON tenk1_skipscan (two, four, twenty);
+-- This test case caught sloppiness in adding new "input" skip scan keys for
+-- index attributes that already had = strategy scan keys:
+set enable_indexonlyscan=off;
+select distinct four, twenty from tenk1_skipscan
+where four in (1, 2) and twenty in (1, 2);
+ four | twenty 
+------+--------
+    1 |      1
+    2 |      2
+(2 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select distinct four, twenty from tenk1_skipscan
+where four in (1, 2) and twenty in (1, 2);
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate  (cost=446.53..447.33 rows=80 width=8) (actual rows=2 loops=1)
+   Group Key: four, twenty
+   Batches: 1  Memory Usage: 24kB
+   Buffers: shared hit=331
+   ->  Bitmap Heap Scan on tenk1_skipscan  (cost=122.41..444.03 rows=500 width=8) (actual rows=1000 loops=1)
+         Recheck Cond: ((four = ANY ('{1,2}'::integer[])) AND (twenty = ANY ('{1,2}'::integer[])))
+         Heap Blocks: exact=321
+         Buffers: shared hit=331
+         ->  Bitmap Index Scan on tenk1_skipscan_two_four_twenty  (cost=0.00..122.28 rows=500 width=0) (actual rows=1000 loops=1)
+               Index Cond: ((four = ANY ('{1,2}'::integer[])) AND (twenty = ANY ('{1,2}'::integer[])))
+               Buffers: shared hit=10
+(11 rows)
+
+set enable_indexonlyscan=on;
+-- Redundant attributes test related to bug where equality input keys
+-- spuriously get their own skip input key:
+select distinct two, four, twenty, hundred
+from tenk1_skipscan
+where
+  four in (0, 1)
+  and four in (1, 2)
+  and twenty = 1
+order by two, four, twenty;
+ two | four | twenty | hundred 
+-----+------+--------+---------
+   1 |    1 |      1 |       1
+   1 |    1 |      1 |      21
+   1 |    1 |      1 |      41
+   1 |    1 |      1 |      61
+   1 |    1 |      1 |      81
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select distinct two, four, twenty, hundred
+from tenk1_skipscan
+where
+  four in (0, 1)
+  and four in (1, 2)
+  and twenty = 1
+order by two, four, twenty;
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Unique  (cost=307.10..308.35 rows=116 width=16) (actual rows=5 loops=1)
+   Buffers: shared hit=273
+   ->  Sort  (cost=307.10..307.41 rows=125 width=16) (actual rows=500 loops=1)
+         Sort Key: two, four, hundred
+         Sort Method: quicksort  Memory: 40kB
+         Buffers: shared hit=273
+         ->  Bitmap Heap Scan on tenk1_skipscan  (cost=147.32..302.75 rows=125 width=16) (actual rows=500 loops=1)
+               Recheck Cond: ((four = ANY ('{0,1}'::integer[])) AND (four = ANY ('{1,2}'::integer[])) AND (twenty = 1))
+               Heap Blocks: exact=263
+               Buffers: shared hit=273
+               ->  Bitmap Index Scan on tenk1_skipscan_two_four_twenty  (cost=0.00..147.28 rows=125 width=0) (actual rows=500 loops=1)
+                     Index Cond: ((four = ANY ('{0,1}'::integer[])) AND (four = ANY ('{1,2}'::integer[])) AND (twenty = 1))
+                     Buffers: shared hit=10
+(13 rows)
+
+drop index tenk1_skipscan_two_four_twenty;
+create index on tenk1_skipscan (two, four, twenty, hundred);
+prepare tenk1_two_four_twenty_hundred_inequal as
+select count(*), two, four, twenty, hundred
+from tenk1_skipscan
+where
+  four in (1, 2, 3)
+  and four = 1
+  and twenty in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+  and hundred < 50
+group by two, four, twenty, hundred
+order by two, four, twenty, hundred;
+execute tenk1_two_four_twenty_hundred_inequal;
+ count | two | four | twenty | hundred 
+-------+-----+------+--------+---------
+   100 |   1 |    1 |      1 |       1
+   100 |   1 |    1 |      1 |      21
+   100 |   1 |    1 |      1 |      41
+   100 |   1 |    1 |      5 |       5
+   100 |   1 |    1 |      5 |      25
+   100 |   1 |    1 |      5 |      45
+   100 |   1 |    1 |      9 |       9
+   100 |   1 |    1 |      9 |      29
+   100 |   1 |    1 |      9 |      49
+   100 |   1 |    1 |     13 |      13
+   100 |   1 |    1 |     13 |      33
+   100 |   1 |    1 |     17 |      17
+   100 |   1 |    1 |     17 |      37
+(13 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute tenk1_two_four_twenty_hundred_inequal;
+                                                                                QUERY PLAN                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.29..193.86 rows=564 width=24) (actual rows=13 loops=1)
+   Group Key: two, twenty, hundred
+   Buffers: shared hit=11
+   ->  Index Only Scan using tenk1_skipscan_two_four_twenty_hundred_idx on tenk1_skipscan  (cost=0.29..180.25 rows=797 width=16) (actual rows=1300 loops=1)
+         Index Cond: ((four = ANY ('{1,2,3}'::integer[])) AND (four = 1) AND (twenty = ANY ('{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17}'::integer[])) AND (hundred < 50))
+         Heap Fetches: 0
+         Buffers: shared hit=11
+(7 rows)
+
+deallocate tenk1_two_four_twenty_hundred_inequal;
+-------------------------------------------------------------------------------
+-- upper range tenk1 test case based on aggregates.out from regression tests --
+-------------------------------------------------------------------------------
+create index on tenk1_skipscan (unique1);
+-- Closest match for regression test:
+select unique1
+from tenk1_skipscan
+where unique1 > 2147483647
+limit 3;
+ unique1 
+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select unique1
+from tenk1_skipscan
+where unique1 > 2147483647
+limit 3;
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+   Buffers: shared hit=2
+   ->  Index Only Scan using tenk1_skipscan_unique1_idx on tenk1_skipscan  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+         Index Cond: (unique1 > 2147483647)
+         Heap Fetches: 0
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(8 rows)
+
+-- Variant:
+select unique1
+from tenk1_skipscan
+where unique1 >= 2147483647
+limit 3;
+ unique1 
+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select unique1
+from tenk1_skipscan
+where unique1 >= 2147483647
+limit 3;
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+   Buffers: shared hit=2
+   ->  Index Only Scan using tenk1_skipscan_unique1_idx on tenk1_skipscan  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+         Index Cond: (unique1 >= 2147483647)
+         Heap Fetches: 0
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(8 rows)
+
+-- Variant:
+select unique1
+from tenk1_skipscan
+where unique1 > 2147483648
+limit 3;
+ unique1 
+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select unique1
+from tenk1_skipscan
+where unique1 > 2147483648
+limit 3;
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+   Buffers: shared hit=2
+   ->  Index Only Scan using tenk1_skipscan_unique1_idx on tenk1_skipscan  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+         Index Cond: (unique1 > '2147483648'::bigint)
+         Heap Fetches: 0
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(8 rows)
+
+-- Variant:
+select unique1
+from tenk1_skipscan
+where unique1 < (-2147483649)
+limit 3;
+ unique1 
+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select unique1
+from tenk1_skipscan
+where unique1 < (-2147483649)
+limit 3;
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+   Buffers: shared hit=2
+   ->  Index Only Scan using tenk1_skipscan_unique1_idx on tenk1_skipscan  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+         Index Cond: (unique1 < '-2147483649'::bigint)
+         Heap Fetches: 0
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3
+(8 rows)
+
+-- SAOP project regression test that fails on 32-bit platforms including CI (or when you
+-- unset "#define USE_FLOAT8_BYVAL" locally):
+prepare floatbyref_preproc as
+select
+  unique1
+from
+  tenk1_skipscan
+where
+  unique1 < 3
+  and unique1 <(-1)::bigint;
+-- Note: This doesn't fail reliably when run on horse server (with "#define
+-- USE_FLOAT8_BYVAL" commented out), though using ../coredump-run.sh seems to
+-- help it to fail
+execute floatbyref_preproc;
+ unique1 
+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute floatbyref_preproc;
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using tenk1_skipscan_unique1_idx on tenk1_skipscan  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
+   Index Cond: ((unique1 < 3) AND (unique1 < '-1'::bigint))
+   Heap Fetches: 0
+   Buffers: shared hit=2
+(4 rows)
+
+deallocate floatbyref_preproc;
+---------------------------
+-- Wisconsin table tests --
+---------------------------
+set client_min_messages=error;
+drop table if exists wisconsin;
+reset client_min_messages;
+create unlogged table wisconsin
+(
+unique1 int4,
+unique2 int4,
+two int4,
+four int4,
+ten int4,
+twenty int4,
+onepercent int4,
+tenpercent int4,
+twentypercent int4,
+fiftypercent int4,
+unique3 int4,
+evenonepercent int4,
+oddonepercent int4,
+stringu1 text,
+stringu2 text,
+string4 text
+);
+\set filename :abs_srcdir '/data/wisconsin.csv'
+COPY wisconsin FROM :'filename' with (format csv, encoding 'win1252', header false, null $$$$, quote $$'$$); -- Fix the syntax highlighting: '
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+  2147483646,
+  2147483646,
+  2147483646,
+  2147483646,
+  2147483646;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+  2147483647,
+  2147483647,
+  2147483647,
+  2147483647,
+  2147483647;
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,
+(-2147483647),
+(-2147483647),
+(-2147483647),
+(-2147483647),
+(-2147483647);
+insert into wisconsin(unique1, unique2, two, four, ten, twenty, onepercent)
+select
+  5555,
+  5555,(-2147483648),
+(-2147483648),
+(-2147483648),
+(-2147483648),
+(-2147483648);
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Two:
+create index two_idx on wisconsin (two, unique1);
+select unique1 from wisconsin where unique1 = 5555;
+ unique1 
+---------
+    5555
+    5555
+    5555
+    5555
+    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3900.83..6138.80 rows=1500 width=4) (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=824
+   ->  Bitmap Index Scan on two_idx  (cost=0.00..3900.45 rows=1500 width=0) (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Buffers: shared hit=822
+(7 rows)
+
+drop index two_idx;
+-- Four:
+create index four_idx on wisconsin (four, unique1);
+-- Point lookup:
+select unique1 from wisconsin where unique1 = 5555;
+ unique1 
+---------
+    5555
+    5555
+    5555
+    5555
+    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3900.83..6138.80 rows=1500 width=4) (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=824
+   ->  Bitmap Index Scan on four_idx  (cost=0.00..3900.45 rows=1500 width=0) (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Buffers: shared hit=822
+(7 rows)
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+ unique1 
+---------
+  200000
+  100000
+       1
+    5555
+    5555
+    5555
+    5555
+    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3901.95..9765.06 rows=6000 width=4) (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=827
+   ->  Bitmap Index Scan on four_idx  (cost=0.00..3900.45 rows=6000 width=0) (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Buffers: shared hit=822
+(7 rows)
+
+drop index four_idx;
+-- Ten:
+create index ten_idx on wisconsin (ten, unique1);
+-- Point lookup:
+select ten, unique1 from wisconsin where unique1 = 5555;
+     ten     | unique1 
+-------------+---------
+           2 |    5555
+  2147483646 |    5555
+  2147483647 |    5555
+ -2147483647 |    5555
+ -2147483648 |    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select ten, unique1 from wisconsin where unique1 = 5555;
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3900.83..6138.80 rows=1500 width=8) (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=824
+   ->  Bitmap Index Scan on ten_idx  (cost=0.00..3900.45 rows=1500 width=0) (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Buffers: shared hit=822
+(7 rows)
+
+-- Range instead of skip attribute on "ten":
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+ ten | unique1 
+-----+---------
+   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 412 hits
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=29.17..45.07 rows=8 width=8) (actual rows=1 loops=1)
+   Recheck Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=413
+   ->  Bitmap Index Scan on ten_idx  (cost=0.00..29.17 rows=8 width=0) (actual rows=1 loops=1)
+         Index Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+         Buffers: shared hit=412
+(7 rows)
+
+-- Range instead of skip attribute on "ten", backwards scan:
+set enable_bitmapscan to off;
+set enable_indexscan to on;
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
+ ten | unique1 
+-----+---------
+   2 |    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 333 hits
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Index Scan Backward using ten_idx on wisconsin  (cost=0.42..45.25 rows=8 width=8) (actual rows=1 loops=1)
+   Index Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+   Buffers: shared hit=333
+(3 rows)
+
+set enable_bitmapscan to on;
+set enable_indexscan to off;
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+ unique1 
+---------
+  200000
+  100000
+       1
+    5555
+    5555
+    5555
+    5555
+    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3901.95..9765.06 rows=6000 width=4) (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=827
+   ->  Bitmap Index Scan on ten_idx  (cost=0.00..3900.45 rows=6000 width=0) (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Buffers: shared hit=822
+(7 rows)
+
+-- Contradictory qual:
+select * from wisconsin where unique1 between 101 and 100;
+ unique1 | unique2 | two | four | ten | twenty | onepercent | tenpercent | twentypercent | fiftypercent | unique3 | evenonepercent | oddonepercent | stringu1 | stringu2 | string4 
+---------+---------+-----+------+-----+--------+------------+------------+---------------+--------------+---------+----------------+---------------+----------+----------+---------
+(0 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits, patch 0 hits, since patch detects >= and <= related contradictoriness
+select * from wisconsin where unique1 between 101 and 100;
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=4650.84..6892.56 rows=1500 width=148) (actual rows=0 loops=1)
+   Recheck Cond: ((unique1 >= 101) AND (unique1 <= 100))
+   Buffers: shared hit=822
+   ->  Bitmap Index Scan on ten_idx  (cost=0.00..4650.46 rows=1500 width=0) (actual rows=0 loops=1)
+         Index Cond: ((unique1 >= 101) AND (unique1 <= 100))
+         Buffers: shared hit=822
+(6 rows)
+
+drop index ten_idx;
+-- Four, ten:
+create index four_ten_idx on wisconsin (four, ten, unique1);
+-- Point lookup, skips two cols (four and ten):
+select unique1 from wisconsin where unique1 = 5555;
+ unique1 
+---------
+    5555
+    5555
+    5555
+    5555
+    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
+select unique1 from wisconsin where unique1 = 5555;
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=4566.83..6804.80 rows=1500 width=4) (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=1154
+   ->  Bitmap Index Scan on four_ten_idx  (cost=0.00..4566.45 rows=1500 width=0) (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Buffers: shared hit=1152
+(7 rows)
+
+-- Point lookup, skips one col (four), range on other col after that (ten):
+select unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+ unique1 
+---------
+    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
+select unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=6066.47..6082.37 rows=8 width=4) (actual rows=1 loops=1)
+   Recheck Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=1153
+   ->  Bitmap Index Scan on four_ten_idx  (cost=0.00..6066.47 rows=8 width=0) (actual rows=1 loops=1)
+         Index Cond: ((ten >= '-10000'::integer) AND (ten <= 4) AND (unique1 = 5555))
+         Buffers: shared hit=1152
+(7 rows)
+
+-- Should be able to handle BETWEEN ranges with same value for >= and <=:
+select unique1 from wisconsin where four between 0 and 0 and unique1 = 5555;
+ unique1 
+---------
+    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
+select unique1 from wisconsin where four between 0 and 0 and unique1 = 5555;
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=31.17..47.07 rows=8 width=4) (actual rows=1 loops=1)
+   Recheck Cond: ((four >= 0) AND (four <= 0) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=291
+   ->  Bitmap Index Scan on four_ten_idx  (cost=0.00..31.17 rows=8 width=0) (actual rows=1 loops=1)
+         Index Cond: ((four >= 0) AND (four <= 0) AND (unique1 = 5555))
+         Buffers: shared hit=290
+(7 rows)
+
+-- Missing predicate is in "intermediate" column (ten) here:
+select unique1 from wisconsin where four = 0 and unique1 = 5555;
+ unique1 
+---------
+    5555
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
+select unique1 from wisconsin where four = 0 and unique1 = 5555;
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=27.42..43.30 rows=8 width=4) (actual rows=1 loops=1)
+   Recheck Cond: ((four = 0) AND (unique1 = 5555))
+   Heap Blocks: exact=1
+   Buffers: shared hit=291
+   ->  Bitmap Index Scan on four_ten_idx  (cost=0.00..27.42 rows=8 width=0) (actual rows=1 loops=1)
+         Index Cond: ((four = 0) AND (unique1 = 5555))
+         Buffers: shared hit=290
+(7 rows)
+
+-- Missing predicate is in "intermediate" column (ten) here, plus we use a
+-- SAOP for unique1 this time around:
+select unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
+ unique1 
+---------
+      41
+    5555
+  299118
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
+select unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=27.43..86.21 rows=30 width=4) (actual rows=3 loops=1)
+   Recheck Cond: ((four = 0) AND (unique1 = ANY ('{41,5555,299118,300000}'::integer[])))
+   Heap Blocks: exact=3
+   Buffers: shared hit=293
+   ->  Bitmap Index Scan on four_ten_idx  (cost=0.00..27.42 rows=30 width=0) (actual rows=3 loops=1)
+         Index Cond: ((four = 0) AND (unique1 = ANY ('{41,5555,299118,300000}'::integer[])))
+         Buffers: shared hit=290
+(7 rows)
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+ unique1 
+---------
+  200000
+  100000
+       1
+    5555
+    5555
+    5555
+    5555
+    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=4567.95..10431.06 rows=6000 width=4) (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=1157
+   ->  Bitmap Index Scan on four_ten_idx  (cost=0.00..4566.45 rows=6000 width=0) (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Buffers: shared hit=1152
+(7 rows)
+
+-- backwards scans:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+-- Simple backwards scan (failed once, simplified from next test case):
+select four, ten, twenty, unique1
+from wisconsin
+where unique1 = 1
+order by four desc, ten desc, unique1 desc;
+ four | ten | twenty | unique1 
+------+-----+--------+---------
+    1 |   9 |      9 |       1
+(1 row)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select four, ten, twenty, unique1
+from wisconsin
+where unique1 = 1
+order by four desc, ten desc, unique1 desc;
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using four_ten_idx on wisconsin  (cost=0.42..7347.45 rows=1500 width=16) (actual rows=1 loops=1)
+   Index Cond: (unique1 = 1)
+   Buffers: shared hit=1153
+(3 rows)
+
+-- SAOP backwards scan:
+select unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+ unique1 
+---------
+    5555
+    5555
+  100000
+  200000
+       1
+    5555
+    5555
+    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using four_ten_idx on wisconsin  (cost=0.42..13588.45 rows=6000 width=12) (actual rows=8 loops=1)
+   Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Buffers: shared hit=1158
+(3 rows)
+
+-- One omitted attribute (four) followed by two SAOPs
+select four, ten, unique1
+from wisconsin
+where
+  ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+  and unique1 in (41, 5555, 299118, 300000);
+ four | ten | unique1 
+------+-----+---------
+    0 |   0 |      41
+    0 |   2 |    5555
+    0 |   8 |  299118
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select four, ten, unique1
+from wisconsin
+where
+  ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+  and unique1 in (41, 5555, 299118, 300000);
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Index Scan using four_ten_idx on wisconsin  (cost=0.42..5909.46 rows=300 width=12) (actual rows=3 loops=1)
+   Index Cond: ((ten = ANY ('{0,1,2,3,4,5,6,7,8,9}'::integer[])) AND (unique1 = ANY ('{41,5555,299118,300000}'::integer[])))
+   Buffers: shared hit=1155
+(3 rows)
+
+drop index four_ten_idx;
+-- SAOP, DESC index, forward scan (forward relative to DESC direction):
+create index four_desc_ten_desc_idx on wisconsin (four desc, ten desc, unique1 desc);
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+    four     |     ten     | unique1 
+-------------+-------------+---------
+  2147483647 |  2147483647 |    5555
+  2147483646 |  2147483646 |    5555
+           3 |           3 |  100000
+           1 |           9 |  200000
+           1 |           9 |       1
+           0 |           2 |    5555
+ -2147483647 | -2147483647 |    5555
+ -2147483648 | -2147483648 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Index Scan using four_desc_ten_desc_idx on wisconsin  (cost=0.42..13588.45 rows=6000 width=12) (actual rows=8 loops=1)
+   Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Buffers: shared hit=1158
+(3 rows)
+
+-- SAOP, DESC index, backward scan (backward relative to DESC direction):
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four, ten, unique1;
+    four     |     ten     | unique1 
+-------------+-------------+---------
+ -2147483648 | -2147483648 |    5555
+ -2147483647 | -2147483647 |    5555
+           0 |           2 |    5555
+           1 |           9 |       1
+           1 |           9 |  200000
+           3 |           3 |  100000
+  2147483646 |  2147483646 |    5555
+  2147483647 |  2147483647 |    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four, ten, unique1;
+                                                           QUERY PLAN                                                            
+---------------------------------------------------------------------------------------------------------------------------------
+ Index Scan Backward using four_desc_ten_desc_idx on wisconsin  (cost=0.42..13588.45 rows=6000 width=12) (actual rows=8 loops=1)
+   Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Buffers: shared hit=1158
+(3 rows)
+
+drop index four_desc_ten_desc_idx;
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+-- Twenty:
+create index twenty_idx on wisconsin (twenty, unique1);
+-- Point lookup:
+select unique1 from wisconsin where unique1 = 5555;
+ unique1 
+---------
+    5555
+    5555
+    5555
+    5555
+    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3900.83..6138.80 rows=1500 width=4) (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=824
+   ->  Bitmap Index Scan on twenty_idx  (cost=0.00..3900.45 rows=1500 width=0) (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Buffers: shared hit=822
+(7 rows)
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+ unique1 
+---------
+  200000
+  100000
+       1
+    5555
+    5555
+    5555
+    5555
+    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3901.95..9765.06 rows=6000 width=4) (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=827
+   ->  Bitmap Index Scan on twenty_idx  (cost=0.00..3900.45 rows=6000 width=0) (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Buffers: shared hit=822
+(7 rows)
+
+drop index twenty_idx;
+-- Hundred/onepercent:
+create index onepercent_idx on wisconsin (onepercent, unique1);
+-- Point lookup:
+select unique1 from wisconsin where unique1 = 5555;
+ unique1 
+---------
+    5555
+    5555
+    5555
+    5555
+    5555
+(5 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3900.83..6138.80 rows=1500 width=4) (actual rows=5 loops=1)
+   Recheck Cond: (unique1 = 5555)
+   Heap Blocks: exact=2
+   Buffers: shared hit=824
+   ->  Bitmap Index Scan on onepercent_idx  (cost=0.00..3900.45 rows=1500 width=0) (actual rows=5 loops=1)
+         Index Cond: (unique1 = 5555)
+         Buffers: shared hit=822
+(7 rows)
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+ unique1 
+---------
+  200000
+  100000
+       1
+    5555
+    5555
+    5555
+    5555
+    5555
+(8 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=3901.95..9765.06 rows=6000 width=4) (actual rows=8 loops=1)
+   Recheck Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+   Heap Blocks: exact=5
+   Buffers: shared hit=827
+   ->  Bitmap Index Scan on onepercent_idx  (cost=0.00..3900.45 rows=6000 width=0) (actual rows=8 loops=1)
+         Index Cond: (unique1 = ANY ('{1,5555,100000,200000}'::integer[]))
+         Buffers: shared hit=822
+(7 rows)
+
+drop index onepercent_idx;
+-- Four, ten, twenty, unique1 (causes errors about attribute order from
+-- _by_preprocess_keys):
+create index on wisconsin (four, ten, twenty, unique1);
+select *
+from wisconsin
+where
+  ten between 1 and 10
+  and twenty in (1, 2, 3)
+  and unique1 in (84396, 217539, 60814);
+ unique1 | unique2 | two | four | ten | twenty | onepercent | tenpercent | twentypercent | fiftypercent | unique3 | evenonepercent | oddonepercent |                       stringu1                       |                       stringu2                       |                      string4                      
+---------+---------+-----+------+-----+--------+------------+------------+---------------+--------------+---------+----------------+---------------+------------------------------------------------------+------------------------------------------------------+---------------------------------------------------
+  217539 |     182 |   0 |    2 |   2 |      2 |         82 |          2 |             2 |            0 |  217539 |            164 |           165 | AAAMJUXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx | AAAAAHAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx | OOOOxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   84396 |     283 |   1 |    3 |   3 |      3 |         83 |          3 |             3 |            1 |   84396 |            166 |           167 | AAAEUWAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx | AAAAAKXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx | VVVVxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   60814 |     402 |   0 |    2 |   2 |      2 |          2 |          2 |             2 |            0 |   60814 |              4 |             5 | AAADLZAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx | AAAAAPMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx | OOOOxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+(3 rows)
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select *
+from wisconsin
+where
+  ten between 1 and 10
+  and twenty in (1, 2, 3)
+  and unique1 in (84396, 217539, 60814);
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on wisconsin  (cost=6816.48..6818.51 rows=1 width=148) (actual rows=3 loops=1)
+   Recheck Cond: ((ten >= 1) AND (ten <= 10) AND (twenty = ANY ('{1,2,3}'::integer[])) AND (unique1 = ANY ('{84396,217539,60814}'::integer[])))
+   Heap Blocks: exact=3
+   Buffers: shared hit=1155
+   ->  Bitmap Index Scan on wisconsin_four_ten_twenty_unique1_idx  (cost=0.00..6816.48 rows=1 width=0) (actual rows=3 loops=1)
+         Index Cond: ((ten >= 1) AND (ten <= 10) AND (twenty = ANY ('{1,2,3}'::integer[])) AND (unique1 = ANY ('{84396,217539,60814}'::integer[])))
+         Buffers: shared hit=1152
+(7 rows)
+
