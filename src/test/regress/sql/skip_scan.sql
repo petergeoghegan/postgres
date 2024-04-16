@@ -1,0 +1,676 @@
+set work_mem='100MB';
+set effective_cache_size='24GB';
+set random_page_cost=2.0;
+set track_io_timing to off;
+set enable_seqscan to off;
+set client_min_messages=error;
+set vacuum_freeze_min_age = 0;
+set cursor_tuple_fraction=1.000;
+create extension if not exists pageinspect; -- just to have it
+reset client_min_messages;
+
+-- Set log_btree_verbosity to 1 without depending on having that patch
+-- applied (HACK, just sets commit_siblings instead when we don't have that
+-- patch available):
+select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '1', false);
+
+-- Establish if this server is master or the patch -- want to skip stress
+-- tests if it's the latter
+--
+-- Reminder: Don't vary the database state between master and patch (just the
+-- tests run, which must be read-only)
+select (setting = '5432') as testing_patch from pg_settings where name = 'port'
+       \gset
+
+----------------------
+-- Misc multi tests --
+----------------------
+set client_min_messages=error;
+drop table if exists multi_test_skip;
+reset client_min_messages;
+
+create unlogged table multi_test_skip(
+  a int,
+  b int
+);
+
+create index multi_test_skip_idx on multi_test_skip(a, b);
+
+insert into multi_test_skip
+select
+  j,
+  case when i < 14 then
+    0
+  else
+    1
+  end
+from
+  generate_series(1, 14) i,
+  generate_series(1, 400) j
+order by
+  j,
+  i;
+vacuum analyze multi_test_skip;
+
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+
+-- Harder case
+select * from multi_test_skip where a in (123, 182, 183) and b in (1,2);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (123, 182, 183) and b in (1,2);
+
+-- Hard case
+select * from multi_test_skip where a in (182, 183, 184) and b in (1,2);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (182, 183, 184) and b in (1,2);
+
+select * from multi_test_skip where a in (3,4,5) and b > 0;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (3,4,5) and b > 0;
+
+set enable_indexscan to on;
+
+-- Backwards scan:
+select * from multi_test_skip where a in (3,4,5) and b > 0
+order by a desc, b desc;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select * from multi_test_skip where a in (3,4,5) and b > 0
+order by a desc, b desc;
+
+set enable_indexscan to off;
+
+-- Redundant test:
+select *
+from multi_test_skip
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 183;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from multi_test_skip
+where
+  a in (1, 99, 182, 183, 184)
+  and a > 183;
+-- Redundant test, flip order:
+select *
+from multi_test_skip
+where
+  a > 183
+  and a in (1, 99, 182, 183, 184);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_skip
+where
+  a > 183
+  and a in (1, 99, 182, 183, 184);
+
+select *
+from multi_test_skip
+where
+  a in (180, 345)
+  and a in (230, 300);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
+select *
+from multi_test_skip
+where
+  a in (180, 345)
+  and a in (230, 300);
+
+-- Reset
+set enable_indexonlyscan to on;
+set enable_indexscan to on;
+
+--------------------------------
+-- MDAM paper small test case --
+--------------------------------
+set client_min_messages=error;
+drop table if exists sales_mdam_paper_small;
+reset client_min_messages;
+
+create unlogged table sales_mdam_paper_small
+(
+  dept int4,
+  sdate date,
+  item_class serial,
+  store int4,
+  item int4,
+  total_sales numeric
+);
+create index mdam_small_idx on sales_mdam_paper_small(dept, sdate, item_class, store);
+
+-- Load data
+insert into sales_mdam_paper_small (dept, sdate, item_class, store, total_sales)
+select
+  dept,
+  '1995-01-01'::date + sdate,
+  item_class,
+  store,
+  (random() * 500.0) as total_sales
+from
+  generate_series(1, 1) dept,
+  generate_series(1, 4) sdate,
+  generate_series(1, 8) item_class,
+  generate_series(1, 3) store;
+
+-- Mixes range arrays with conventional SAOPs, leading to confusion about
+-- boundary conditions:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+
+-- Same again, but this time we use different operators/constants to get the
+-- same effective date range as original BETWEEN version:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate <= '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate <= '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+
+-- Ditto:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate < '1995-01-06'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-03' and sdate < '1995-01-06'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+
+-- range on date has no lower bound (or lower bound is -inf):
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate < '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate < '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+
+-- range on date has no upper bound (or upper bound is +inf):
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  sdate > '1995-01-04'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+
+-- Now don't omit dept key, without changing rows returned:
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class = 3
+  and store = 2
+order by dept, sdate, item_class, store;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class = 3
+  and store = 2
+order by dept, sdate, item_class, store;
+-- Now don't omit dept key, without changing rows returned (matches original
+-- query by including conventional SAOPs to make it harder to get right):
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select
+  ctid, dept, sdate, item_class, store
+from sales_mdam_paper_small
+where
+  dept between 0 and 100
+  and sdate between '1995-01-04' and '1995-01-05'
+  and item_class in (1, 3, 5)
+  and store in (2, 3)
+order by dept, sdate, item_class, store;
+
+-----------------------
+-- tenk1 test cases  --
+-----------------------
+set client_min_messages=error;
+drop table if exists tenk1_skipscan;
+reset client_min_messages;
+\getenv abs_srcdir PG_ABS_SRCDIR
+CREATE UNLOGGED TABLE tenk1_skipscan (
+	unique1		int4,
+	unique2		int4,
+	two			int4,
+	four		int4,
+	ten			int4,
+	twenty		int4,
+	hundred		int4,
+	thousand	int4,
+	twothousand	int4,
+	fivethous	int4,
+	tenthous	int4,
+	odd			int4,
+	even		int4,
+	stringu1	name,
+	stringu2	name,
+	string4		name
+);
+ALTER TABLE tenk1_skipscan SET (autovacuum_enabled=off);
+
+\set filename :abs_srcdir '/data/tenk.data'
+COPY tenk1_skipscan FROM :'filename';
+VACUUM ANALYZE tenk1_skipscan;
+
+CREATE INDEX tenk1_skipscan_four_unique1 ON tenk1_skipscan (four, unique1);
+
+prepare tenk1_four_skipscan as
+SELECT hundred, unique1 FROM tenk1_skipscan
+ WHERE unique1 = 444;
+
+execute tenk1_four_skipscan;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 30 hits
+execute tenk1_four_skipscan;
+deallocate tenk1_four_skipscan;
+
+prepare tenk1_four_skipscan_with_saop as
+select * from tenk1_skipscan where unique1 in (4444, 4445) limit 3;
+
+execute tenk1_four_skipscan_with_saop;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 31 hits
+execute tenk1_four_skipscan_with_saop;
+deallocate tenk1_four_skipscan_with_saop;
+
+-- Challenge here is to not do significantly worse than master branch's
+-- traditional full index scan, since skipping isn't going to work here:
+drop index tenk1_skipscan_four_unique1;
+CREATE INDEX tenk1_skipscan_hundred_unique1 ON tenk1_skipscan (hundred, unique1);
+prepare tenk1_fallback_to_regular_fullscan as
+SELECT hundred, unique1 FROM tenk1_skipscan
+ WHERE unique1 = 444;
+
+execute tenk1_fallback_to_regular_fullscan;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 30 hits
+execute tenk1_fallback_to_regular_fullscan;
+deallocate tenk1_fallback_to_regular_fullscan;
+
+drop index tenk1_skipscan_hundred_unique1;
+CREATE INDEX tenk1_skipscan_two_four_twenty ON tenk1_skipscan (two, four, twenty);
+
+-- This test case caught sloppiness in adding new "input" skip scan keys for
+-- index attributes that already had = strategy scan keys:
+set enable_indexonlyscan=off;
+select distinct four, twenty from tenk1_skipscan
+where four in (1, 2) and twenty in (1, 2);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select distinct four, twenty from tenk1_skipscan
+where four in (1, 2) and twenty in (1, 2);
+set enable_indexonlyscan=on;
+
+-- Redundant attributes test related to bug where equality input keys
+-- spuriously get their own skip input key:
+select distinct two, four, twenty, hundred
+from tenk1_skipscan
+where
+  four in (0, 1)
+  and four in (1, 2)
+  and twenty = 1
+order by two, four, twenty;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select distinct two, four, twenty, hundred
+from tenk1_skipscan
+where
+  four in (0, 1)
+  and four in (1, 2)
+  and twenty = 1
+order by two, four, twenty;
+
+drop index tenk1_skipscan_two_four_twenty;
+create index on tenk1_skipscan (two, four, twenty, hundred);
+
+select count(*), two, four, twenty, hundred
+from tenk1_skipscan
+where
+  four in (1, 2, 3)
+  and four = 1
+  and twenty in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+  and hundred < 50
+group by two, four, twenty, hundred
+order by two, four, twenty, hundred;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*), two, four, twenty, hundred
+from tenk1_skipscan
+where
+  four in (1, 2, 3)
+  and four = 1
+  and twenty in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+  and hundred < 50
+group by two, four, twenty, hundred
+order by two, four, twenty, hundred;
+
+select count(*), two, four, twenty, hundred
+	from tenk1_skipscan
+	where
+	  four in (1, 2, 3)
+	  and four = 1
+	  and twenty in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+	  and hundred < 50
+	group by two, four, twenty, hundred
+	order by two, four, twenty, hundred;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select count(*), two, four, twenty, hundred
+	from tenk1_skipscan
+	where
+	  four in (1, 2, 3)
+	  and four = 1
+	  and twenty in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+	  and hundred < 50
+	group by two, four, twenty, hundred
+	order by two, four, twenty, hundred;
+
+---------------------------
+-- Wisconsin table tests --
+---------------------------
+
+set client_min_messages=error;
+drop table if exists wisconsin;
+reset client_min_messages;
+
+create unlogged table wisconsin
+(
+unique1 int4,
+unique2 int4,
+two int4,
+four int4,
+ten int4,
+twenty int4,
+onepercent int4,
+tenpercent int4,
+twentypercent int4,
+fiftypercent int4,
+unique3 int4,
+evenonepercent int4,
+oddonepercent int4,
+stringu1 text,
+stringu2 text,
+string4 text
+);
+
+\set filename :abs_srcdir '/data/wisconsin.csv'
+COPY wisconsin FROM :'filename' with (format csv, encoding 'win1252', header false, null $$$$, quote $$'$$); -- Fix the syntax highlighting: '
+
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+
+-- Two:
+create index two_idx on wisconsin (two, unique1);
+
+select unique1 from wisconsin where unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+
+drop index two_idx;
+
+-- Four:
+create index four_idx on wisconsin (four, unique1);
+
+-- Point lookup:
+select unique1 from wisconsin where unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+
+drop index four_idx;
+
+-- Ten:
+create index ten_idx on wisconsin (ten, unique1);
+
+-- Point lookup:
+select ten, unique1 from wisconsin where unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select ten, unique1 from wisconsin where unique1 = 5555;
+
+-- Range instead of skip attribute on "ten":
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 412 hits
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+
+-- Range instead of skip attribute on "ten", backwards scan:
+set enable_bitmapscan to off;
+set enable_indexscan to on;
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 333 hits
+select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
+set enable_bitmapscan to on;
+set enable_indexscan to off;
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+
+-- Contradictory qual:
+select * from wisconsin where unique1 between 101 and 100;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master + patch 822 hits (parity), since we can't yet detect >= and <= related contradictoriness
+select * from wisconsin where unique1 between 101 and 100;
+
+drop index ten_idx;
+
+-- Four, ten:
+create index four_ten_idx on wisconsin (four, ten, unique1);
+
+-- Point lookup, skips two cols (four and ten):
+select unique1 from wisconsin where unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
+select unique1 from wisconsin where unique1 = 5555;
+
+-- Point lookup, skips one col (four), range on other col after that (ten):
+select unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
+select unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
+
+-- Should be able to handle BETWEEN ranges with same value for >= and <=:
+select unique1 from wisconsin where four between 0 and 0 and unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
+select unique1 from wisconsin where four between 0 and 0 and unique1 = 5555;
+
+-- Missing predicate is in "intermediate" column (ten) here:
+select unique1 from wisconsin where four = 0 and unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
+select unique1 from wisconsin where four = 0 and unique1 = 5555;
+
+-- Missing predicate is in "intermediate" column (ten) here, plus we use a
+-- SAOP for unique1 this time around:
+select unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
+select unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+
+-- backwards scans:
+set enable_bitmapscan to off;
+set enable_indexonlyscan to off;
+set enable_indexscan to on;
+
+-- Simple backwards scan (failed once, simplified from next test case):
+select four, ten, twenty, unique1
+from wisconsin
+where unique1 = 1
+order by four desc, ten desc, unique1 desc;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select four, ten, twenty, unique1
+from wisconsin
+where unique1 = 1
+order by four desc, ten desc, unique1 desc;
+
+-- SAOP backwards scan:
+select unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+
+-- One omitted attribute (four) followed by two SAOPs
+select four, ten, unique1
+from wisconsin
+where
+  ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+  and unique1 in (41, 5555, 299118, 300000);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select four, ten, unique1
+from wisconsin
+where
+  ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+  and unique1 in (41, 5555, 299118, 300000);
+
+drop index four_ten_idx;
+
+-- SAOP, DESC index, forward scan (forward relative to DESC direction):
+create index four_desc_ten_desc_idx on wisconsin (four desc, ten desc, unique1 desc);
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four desc, ten desc, unique1 desc;
+
+-- SAOP, DESC index, backward scan (backward relative to DESC direction):
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four, ten, unique1;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1156 hits
+select four, ten, unique1
+from wisconsin
+where unique1 in (1, 5555, 100000, 200000)
+order by four, ten, unique1;
+
+drop index four_desc_ten_desc_idx;
+
+set enable_bitmapscan to on;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+
+-- Twenty:
+create index twenty_idx on wisconsin (twenty, unique1);
+
+-- Point lookup:
+select unique1 from wisconsin where unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+
+drop index twenty_idx;
+
+-- Hundred/onepercent:
+create index onepercent_idx on wisconsin (onepercent, unique1);
+
+-- Point lookup:
+select unique1 from wisconsin where unique1 = 5555;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 = 5555;
+
+-- SAOP:
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
+
+drop index onepercent_idx;
+
+-- Four, ten, twenty, unique1 (causes errors about attribute order from
+-- _by_preprocess_keys):
+create index on wisconsin (four, ten, twenty, unique1);
+select *
+from wisconsin
+where
+  ten between 1 and 10
+  and twenty in (1, 2, 3)
+  and unique1 in (84396, 217539, 60814);
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
+select *
+from wisconsin
+where
+  ten between 1 and 10
+  and twenty in (1, 2, 3)
+  and unique1 in (84396, 217539, 60814);
