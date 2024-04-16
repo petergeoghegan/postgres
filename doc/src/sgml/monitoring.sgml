@@ -4283,7 +4283,10 @@ description | Waiting for a newly initialized WAL file to reach durable storage
      <replaceable>value1</replaceable> OR
      <replaceable>expression</replaceable> = <replaceable>value2</replaceable>
      ...</literal> constructs when the query planner transforms the constructs
-    into an equivalent multi-valued array representation.
+    into an equivalent multi-valued array representation.  Similarly, when
+    B-Tree index scans use the skip scan strategy, an index search is
+    performed each time the scan is repositioned to the next index leaf page
+    that might have matching tuples.
    </para>
   </note>
   <tip>

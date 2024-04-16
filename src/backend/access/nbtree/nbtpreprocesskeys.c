@@ -45,8 +45,15 @@ static bool _bt_compare_array_scankey_args(IndexScanDesc scan,
 										   ScanKey arraysk, ScanKey skey,
 										   FmgrInfo *orderproc, BTArrayKeyInfo *array,
 										   bool *qual_ok);
+static bool _bt_saoparray_shrink(IndexScanDesc scan, ScanKey arraysk,
+								 ScanKey skey, FmgrInfo *orderproc,
+								 BTArrayKeyInfo *array, bool *qual_ok);
+static bool _bt_skiparray_shrink(IndexScanDesc scan, ScanKey skey,
+								 BTArrayKeyInfo *array, bool *qual_ok);
 static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys);
 static void _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap);
+static int	_bt_num_array_keys(IndexScanDesc scan, Oid *skip_eq_ops,
+							   int *numSkipArrayKeys);
 static Datum _bt_find_extreme_element(IndexScanDesc scan, ScanKey skey,
 									  Oid elemtype, StrategyNumber strat,
 									  Datum *elems, int nelems);
@@ -89,6 +96,8 @@ static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
  * within each attribute may be done as a byproduct of the processing here.
  * That process must leave array scan keys (within an attribute) in the same
  * order as corresponding entries from the scan's BTArrayKeyInfo array info.
+ * We might also construct skip array scan keys that weren't present in the
+ * original input keys; these are also output in standard attribute order.
  *
  * The output keys are marked with flags SK_BT_REQFWD and/or SK_BT_REQBKWD
  * if they must be satisfied in order to continue the scan forward or backward
@@ -101,10 +110,16 @@ static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
  * attributes with "=" keys are marked both SK_BT_REQFWD and SK_BT_REQBKWD.
  * For the first attribute without an "=" key, any "<" and "<=" keys are
  * marked SK_BT_REQFWD while any ">" and ">=" keys are marked SK_BT_REQBKWD.
- * This can be seen to be correct by considering the above example.  Note
- * in particular that if there are no keys for a given attribute, the keys for
- * subsequent attributes can never be required; for instance "WHERE y = 4"
- * requires a full-index scan.
+ * This can be seen to be correct by considering the above example.
+ *
+ * If we never generated skip array scan keys, it would be possible for "gaps"
+ * to appear that make it unsafe to mark any subsequent input scan keys
+ * (copied from scan->keyData[]) as required to continue the scan.  Prior to
+ * Postgres 18, a qual like "WHERE y = 4" always required a full index scan.
+ * It'll now become "WHERE x = ANY('{every possible x value}') and y = 4" on
+ * output, due to the addition of a skip array on "x".  This has the potential
+ * to be much more efficient than a full index scan (though it'll behave like
+ * a full index scan when there are many distinct values for "x").
  *
  * If possible, redundant keys are eliminated: we keep only the tightest
  * >/>= bound and the tightest </<= bound, and if there's an = key then
@@ -141,7 +156,12 @@ static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
  * we just transfer them into the preprocessed array without any
  * editorialization.  We can treat them the same as an ordinary inequality
  * comparison on the row's first index column, for the purposes of the logic
- * about required keys.
+ * about required keys.  Note, however, that we are not able to replace a row
+ * comparison with a skip array due to the design of _bt_check_rowcompare.
+ * Row comparisons are treated like a comparison of the first/leftmost column
+ * from the row argument, but actually compare multiple columns internally.
+ * That isn't compatible with skip arrays, which work by making a value into
+ * the current element, anchoring later scan keys via the "=" constraint.
  *
  * Note: the reason we have to copy the preprocessed scan keys into private
  * storage is that we are modifying the array based on comparisons of the
@@ -200,6 +220,14 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		/* Also maintain keyDataMap for remapping so->orderProcs[] later */
 		keyDataMap = MemoryContextAlloc(so->arrayContext,
 										numberOfKeys * sizeof(int));
+
+		/*
+		 * Also enlarge output array when it might otherwise not have room for
+		 * a skip array's scan key
+		 */
+		if (numberOfKeys > scan->numberOfKeys)
+			so->keyData = repalloc(so->keyData,
+								   numberOfKeys * sizeof(ScanKeyData));
 	}
 	else
 		inkeys = scan->keyData;
@@ -231,6 +259,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				   (so->arrayKeys[0].scan_key == 0 &&
 					OidIsValid(so->orderProcs[0].fn_oid)));
 		}
+		Assert(!so->skipScan);
 
 		return;
 	}
@@ -288,7 +317,8 @@ _bt_preprocess_keys(IndexScanDesc scan)
 			 * redundant.  Note that this is no less true if the = key is
 			 * SEARCHARRAY; the only real difference is that the inequality
 			 * key _becomes_ redundant by making _bt_compare_scankey_args
-			 * eliminate the subset of elements that won't need to be matched.
+			 * eliminate the subset of elements that won't need to be matched
+			 * (with regular SAOP arrays and skip arrays alike).
 			 *
 			 * If we have a case like "key = 1 AND key > 2", we set qual_ok to
 			 * false and abandon further processing.  We'll do the same thing
@@ -345,7 +375,6 @@ _bt_preprocess_keys(IndexScanDesc scan)
 							return;
 						}
 						/* else discard the redundant non-equality key */
-						Assert(!array || array->num_elems > 0);
 						xform[j].inkey = NULL;
 						xform[j].inkeyi = -1;
 					}
@@ -393,6 +422,11 @@ _bt_preprocess_keys(IndexScanDesc scan)
 			 * Emit the cleaned-up keys into the so->keyData[] array, and then
 			 * mark them if they are required.  They are required (possibly
 			 * only in one direction) if all attrs before this one had "=".
+			 *
+			 * In practice we'll rarely output non-required scan keys here;
+			 * typically, _bt_preprocess_array_keys has already added "=" keys
+			 * sufficient to form an unbroken series of "=" constraints on all
+			 * attrs prior to the attr from the final scan->keyData[] key.
 			 */
 			for (j = BTMaxStrategyNumber; --j >= 0;)
 			{
@@ -481,6 +515,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 
 					Assert(array->scan_key == i);
 					Assert(OidIsValid(orderproc->fn_oid));
+					Assert(!(inkey->sk_flags & SK_BT_SKIP));
 				}
 				else if (xform[j].inkey->sk_flags & SK_SEARCHARRAY)
 				{
@@ -489,6 +524,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 
 					Assert(array->scan_key == xform[j].inkeyi);
 					Assert(OidIsValid(orderproc->fn_oid));
+					Assert(!(xform[j].inkey->sk_flags & SK_BT_SKIP));
 				}
 
 				/*
@@ -508,8 +544,6 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				/* Have all we need to determine redundancy */
 				if (test_result)
 				{
-					Assert(!array || array->num_elems > 0);
-
 					/*
 					 * New key is more restrictive, and so replaces old key...
 					 */
@@ -803,6 +837,9 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 				cmp_op;
 	StrategyNumber strat;
 
+	Assert(!((leftarg->sk_flags | rightarg->sk_flags) &
+			 (SK_ROW_HEADER | SK_ROW_MEMBER)));
+
 	/*
 	 * First, deal with cases where one or both args are NULL.  This should
 	 * only happen when the scankeys represent IS NULL/NOT NULL conditions.
@@ -811,6 +848,22 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 	{
 		bool		leftnull,
 					rightnull;
+
+		/* Handle skip array comparison with IS NOT NULL scan key */
+		if ((leftarg->sk_flags | rightarg->sk_flags) & SK_BT_SKIP)
+		{
+			/* Shouldn't generate skip array in presence of IS NULL key */
+			Assert(!((leftarg->sk_flags | rightarg->sk_flags) & SK_SEARCHNULL));
+			Assert((leftarg->sk_flags | rightarg->sk_flags) & SK_SEARCHNOTNULL);
+
+			/* Skip array will have no NULL element/IS NULL scan key */
+			Assert(array->num_elems == -1);
+			array->null_elem = false;
+
+			/* IS NOT NULL key (could be leftarg or rightarg) now redundant */
+			*result = true;
+			return true;
+		}
 
 		if (leftarg->sk_flags & SK_ISNULL)
 		{
@@ -885,6 +938,7 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 		{
 			/* Can't make the comparison */
 			*result = false;	/* suppress compiler warnings */
+			Assert(!((leftarg->sk_flags | rightarg->sk_flags) & SK_BT_SKIP));
 			return false;
 		}
 
@@ -978,24 +1032,55 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
  * Compare an array scan key to a scalar scan key, eliminating contradictory
  * array elements such that the scalar scan key becomes redundant.
  *
+ * If the opfamily is incomplete we may not be able to determine which
+ * elements are contradictory.  When we return true we'll have validly set
+ * *qual_ok, guaranteeing that at least the scalar scan key can be considered
+ * redundant.  We return false if the comparison could not be made (caller
+ * must keep both scan keys when this happens).
+ *
+ * Note: it's up to caller to deal with IS [NOT] NULL scan keys, as well as
+ * row comparison scan keys.  We only deal with scalar scan keys.
+ */
+static bool
+_bt_compare_array_scankey_args(IndexScanDesc scan, ScanKey arraysk, ScanKey skey,
+							   FmgrInfo *orderproc, BTArrayKeyInfo *array,
+							   bool *qual_ok)
+{
+	Assert(arraysk->sk_attno == skey->sk_attno);
+	Assert(!(arraysk->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_ROW_MEMBER)));
+	Assert((arraysk->sk_flags & SK_SEARCHARRAY) &&
+		   arraysk->sk_strategy == BTEqualStrategyNumber);
+	/* don't expect to have to deal with NULLs/row comparison scan keys */
+	Assert(!(skey->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_ROW_MEMBER)));
+	Assert(!(skey->sk_flags & SK_SEARCHARRAY) ||
+		   skey->sk_strategy != BTEqualStrategyNumber);
+
+	/*
+	 * Just call the appropriate helper function based on whether it's a SAOP
+	 * array or a skip array.  Both helpers will set *qual_ok in passing.
+	 */
+	if (array->num_elems != -1)
+		return _bt_saoparray_shrink(scan, arraysk, skey, orderproc, array,
+									qual_ok);
+	else
+		return _bt_skiparray_shrink(scan, skey, array, qual_ok);
+}
+
+/*
+ * Preprocessing of SAOP (non-skip) array scan key, used to determine which
+ * array elements are eliminated as contradictory by a non-array scalar key.
+ * _bt_compare_array_scankey_args helper function.
+ *
  * Array elements can be eliminated as contradictory when excluded by some
  * other operator on the same attribute.  For example, with an index scan qual
  * "WHERE a IN (1, 2, 3) AND a < 2", all array elements except the value "1"
  * are eliminated, and the < scan key is eliminated as redundant.  Cases where
  * every array element is eliminated by a redundant scalar scan key have an
  * unsatisfiable qual, which we handle by setting *qual_ok=false for caller.
- *
- * If the opfamily doesn't supply a complete set of cross-type ORDER procs we
- * may not be able to determine which elements are contradictory.  If we have
- * the required ORDER proc then we return true (and validly set *qual_ok),
- * guaranteeing that at least the scalar scan key can be considered redundant.
- * We return false if the comparison could not be made (caller must keep both
- * scan keys when this happens).
  */
 static bool
-_bt_compare_array_scankey_args(IndexScanDesc scan, ScanKey arraysk, ScanKey skey,
-							   FmgrInfo *orderproc, BTArrayKeyInfo *array,
-							   bool *qual_ok)
+_bt_saoparray_shrink(IndexScanDesc scan, ScanKey arraysk, ScanKey skey,
+					 FmgrInfo *orderproc, BTArrayKeyInfo *array, bool *qual_ok)
 {
 	Relation	rel = scan->indexRelation;
 	Oid			opcintype = rel->rd_opcintype[arraysk->sk_attno - 1];
@@ -1006,14 +1091,8 @@ _bt_compare_array_scankey_args(IndexScanDesc scan, ScanKey arraysk, ScanKey skey
 	FmgrInfo	crosstypeproc;
 	FmgrInfo   *orderprocp = orderproc;
 
-	Assert(arraysk->sk_attno == skey->sk_attno);
 	Assert(array->num_elems > 0);
-	Assert(!(arraysk->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_ROW_MEMBER)));
-	Assert((arraysk->sk_flags & SK_SEARCHARRAY) &&
-		   arraysk->sk_strategy == BTEqualStrategyNumber);
-	Assert(!(skey->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_ROW_MEMBER)));
-	Assert(!(skey->sk_flags & SK_SEARCHARRAY) ||
-		   skey->sk_strategy != BTEqualStrategyNumber);
+	Assert(!(arraysk->sk_flags & SK_BT_SKIP));
 
 	/*
 	 * _bt_binsrch_array_skey searches an array for the entry best matching a
@@ -1113,6 +1192,103 @@ _bt_compare_array_scankey_args(IndexScanDesc scan, ScanKey arraysk, ScanKey skey
 }
 
 /*
+ * Preprocessing of skip (non-SAOP) array scan key, used to determine
+ * redundancy against a non-array scalar scan key (must be an inequality).
+ * _bt_compare_array_scankey_args helper function.
+ *
+ * Unlike _bt_saoparray_shrink, we don't modify caller's array in-place.  Skip
+ * arrays work by procedurally generating their elements as needed, so we just
+ * store the inequality as the skip array's low_compare or high_compare.  The
+ * array's elements will be generated from the range of values that satisfies
+ * both low_compare and high_compare.
+ */
+static bool
+_bt_skiparray_shrink(IndexScanDesc scan, ScanKey skey, BTArrayKeyInfo *array,
+					 bool *qual_ok)
+{
+	bool		test_result;
+
+	Assert(array->num_elems == -1);
+
+	/*
+	 * Array's index attribute will be constrained by a strict operator/key.
+	 * Array must not "contain a NULL element" (i.e. the scan must not apply
+	 * "IS NULL" qual when it reaches the end of the index that stores NULLs).
+	 */
+	array->null_elem = false;
+	*qual_ok = true;
+
+	/*
+	 * Consider if we should treat caller's scalar scan key as the skip
+	 * array's high_compare or low_compare.
+	 *
+	 * In general the current array element must either be a copy of a value
+	 * taken from an index tuple, or a derivative value generated by opclass's
+	 * skip support function.  That way the scan can always safely assume that
+	 * it's okay to use the input-opclass-only-type proc from so->orderProcs[]
+	 * (they can be cross-type with SAOP arrays, but never with skip arrays).
+	 *
+	 * This approach is enabled by MINVAL/MAXVAL sentinel key markings, which
+	 * can be thought of as representing either the lowest or highest matching
+	 * array element (excluding the NULL element, where applicable, though as
+	 * just discussed it isn't applicable to this range skip array anyway).
+	 * Array keys marked MINVAL/MAXVAL never has a valid datum stored in its
+	 * sk_argument.  The scan must directly apply the array's low_compare when
+	 * it encounters MINVAL (or its high_compare when it encounters MAXVAL),
+	 * and must never use the array's so->orderProcs[] proc against
+	 * low_compare's/high_compare's sk_argument.
+	 */
+	switch (skey->sk_strategy)
+	{
+		case BTLessStrategyNumber:
+		case BTLessEqualStrategyNumber:
+			if (array->high_compare)
+			{
+				/* replace existing high_compare with caller's key? */
+				if (!_bt_compare_scankey_args(scan, array->high_compare, skey,
+											  array->high_compare, NULL, NULL,
+											  &test_result))
+					return false;	/* can't determine more restrictive key */
+
+				if (!test_result)
+					return true;	/* no, just discard caller's key */
+
+				/* yes, replace existing high_compare with caller's key */
+			}
+
+			/* caller's key becomes skip array's high_compare */
+			array->high_compare = skey;
+			break;
+		case BTGreaterEqualStrategyNumber:
+		case BTGreaterStrategyNumber:
+			if (array->low_compare)
+			{
+				/* replace existing low_compare with caller's key? */
+				if (!_bt_compare_scankey_args(scan, array->low_compare, skey,
+											  array->low_compare, NULL, NULL,
+											  &test_result))
+					return false;	/* can't determine more restrictive key */
+
+				if (!test_result)
+					return true;	/* no, just discard caller's key */
+
+				/* yes, replace existing low_compare with caller's key */
+			}
+
+			/* caller's key becomes skip array's low_compare */
+			array->low_compare = skey;
+			break;
+		case BTEqualStrategyNumber:
+		default:
+			elog(ERROR, "unrecognized StrategyNumber: %d",
+				 (int) skey->sk_strategy);
+			break;
+	}
+
+	return true;
+}
+
+/*
  *	_bt_preprocess_array_keys() -- Preprocess SK_SEARCHARRAY scan keys
  *
  * If there are any SK_SEARCHARRAY scan keys, deconstruct the array(s) and
@@ -1137,6 +1313,12 @@ _bt_compare_array_scankey_args(IndexScanDesc scan, ScanKey arraysk, ScanKey skey
  * one equality strategy array scan key per index attribute.  We'll always be
  * able to set things up that way when complete opfamilies are used.
  *
+ * We're also responsible for generating skip arrays (and their associated
+ * scan keys) here.  This enables skip scan.  We do this for index attributes
+ * that initially lacked an equality condition within scan->keyData[], iff
+ * doing so allows a later scan key (that was passed to us in scan->keyData[])
+ * to be marked required by our _bt_preprocess_keys caller.
+ *
  * We set the scan key references from the scan's BTArrayKeyInfo info array to
  * offsets into the temp modified input array returned to caller.  Scans that
  * have array keys should call _bt_preprocess_array_keys_final when standard
@@ -1152,40 +1334,35 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
-	int			numberOfKeys = scan->numberOfKeys;
 	int16	   *indoption = rel->rd_indoption;
+	Oid			skip_eq_ops[INDEX_MAX_KEYS];
 	int			numArrayKeys,
-				output_ikey = 0;
+				numSkipArrayKeys,
+				numArrayKeyData;
+	AttrNumber	attno_skip = 1;
 	int			origarrayatt = InvalidAttrNumber,
 				origarraykey = -1;
 	Oid			origelemtype = InvalidOid;
-	ScanKey		cur;
 	MemoryContext oldContext;
 	ScanKey		arrayKeyData;	/* modified copy of scan->keyData */
 
-	Assert(numberOfKeys);
-
-	/* Quick check to see if there are any array keys */
-	numArrayKeys = 0;
-	for (int i = 0; i < numberOfKeys; i++)
-	{
-		cur = &scan->keyData[i];
-		if (cur->sk_flags & SK_SEARCHARRAY)
-		{
-			numArrayKeys++;
-			Assert(!(cur->sk_flags & (SK_ROW_HEADER | SK_SEARCHNULL | SK_SEARCHNOTNULL)));
-			/* If any arrays are null as a whole, we can quit right now. */
-			if (cur->sk_flags & SK_ISNULL)
-			{
-				so->qual_ok = false;
-				return NULL;
-			}
-		}
-	}
+	/*
+	 * Check the number of input array keys within scan->keyData[] input keys
+	 * (also checks if we should add extra skip arrays based on input keys)
+	 */
+	numArrayKeys = _bt_num_array_keys(scan, skip_eq_ops, &numSkipArrayKeys);
+	so->skipScan = (numSkipArrayKeys > 0);
 
 	/* Quit if nothing to do. */
 	if (numArrayKeys == 0)
 		return NULL;
+
+	/*
+	 * Estimated final size of arrayKeyData[] array we'll return to our caller
+	 * is the size of the original scan->keyData[] input array, plus space for
+	 * any additional skip array scan keys we'll need to generate below
+	 */
+	numArrayKeyData = scan->numberOfKeys + numSkipArrayKeys;
 
 	/*
 	 * Make a scan-lifespan context to hold array-associated data, or reset it
@@ -1201,18 +1378,20 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 	oldContext = MemoryContextSwitchTo(so->arrayContext);
 
 	/* Create output scan keys in the workspace context */
-	arrayKeyData = (ScanKey) palloc(numberOfKeys * sizeof(ScanKeyData));
+	arrayKeyData = (ScanKey) palloc(numArrayKeyData * sizeof(ScanKeyData));
 
 	/* Allocate space for per-array data in the workspace context */
 	so->arrayKeys = (BTArrayKeyInfo *) palloc(numArrayKeys * sizeof(BTArrayKeyInfo));
 
 	/* Allocate space for ORDER procs used to help _bt_checkkeys */
-	so->orderProcs = (FmgrInfo *) palloc(numberOfKeys * sizeof(FmgrInfo));
+	so->orderProcs = (FmgrInfo *) palloc(numArrayKeyData * sizeof(FmgrInfo));
 
-	/* Now process each array key */
 	numArrayKeys = 0;
-	for (int input_ikey = 0; input_ikey < numberOfKeys; input_ikey++)
+	numArrayKeyData = 0;
+	for (int input_ikey = 0; input_ikey < scan->numberOfKeys; input_ikey++)
 	{
+		ScanKey		inkey = scan->keyData + input_ikey,
+					cur;
 		FmgrInfo	sortproc;
 		FmgrInfo   *sortprocp = &sortproc;
 		Oid			elemtype;
@@ -1225,19 +1404,112 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 		Datum	   *elem_values;
 		bool	   *elem_nulls;
 		int			num_nonnulls;
-		int			j;
+
+		/* set up next output scan key */
+		cur = &arrayKeyData[numArrayKeyData];
+
+		/* Backfill skip arrays for attrs < or <= input key's attr? */
+		while (numSkipArrayKeys && attno_skip <= inkey->sk_attno)
+		{
+			Oid			opfamily = rel->rd_opfamily[attno_skip - 1];
+			Oid			opcintype = rel->rd_opcintype[attno_skip - 1];
+			Oid			collation = rel->rd_indcollation[attno_skip - 1];
+			Oid			eq_op = skip_eq_ops[attno_skip - 1];
+			CompactAttribute *attr;
+			RegProcedure cmp_proc;
+
+			if (!OidIsValid(eq_op))
+			{
+				/*
+				 * Attribute already has an = input key, so don't output a
+				 * skip array for attno_skip.  Just copy attribute's = input
+				 * key into arrayKeyData[] once outside this inner loop.
+				 *
+				 * Note: When we get here there must be a later attribute that
+				 * lacks an equality input key, and still needs a skip array
+				 * (if there wasn't then numSkipArrayKeys would be 0 by now).
+				 */
+				Assert(attno_skip == inkey->sk_attno);
+				/* inkey can't be last input key to be marked required: */
+				Assert(input_ikey < scan->numberOfKeys - 1);
+#if 0
+				/* Could be a redundant input scan key, so can't do this: */
+				Assert(inkey->sk_strategy == BTEqualStrategyNumber ||
+					   (inkey->sk_flags & SK_SEARCHNULL));
+#endif
+
+				attno_skip++;
+				break;
+			}
+
+			cmp_proc = get_opcode(eq_op);
+			if (!RegProcedureIsValid(cmp_proc))
+				elog(ERROR, "missing oprcode for skipping equals operator %u", eq_op);
+
+			ScanKeyEntryInitialize(cur,
+								   SK_SEARCHARRAY | SK_BT_SKIP, /* flags */
+								   attno_skip,	/* skipped att number */
+								   BTEqualStrategyNumber,	/* equality strategy */
+								   InvalidOid,	/* opclass input subtype */
+								   collation,	/* index column's collation */
+								   cmp_proc,	/* equality operator's proc */
+								   (Datum) 0);	/* constant */
+
+			/* Initialize generic BTArrayKeyInfo fields */
+			so->arrayKeys[numArrayKeys].scan_key = numArrayKeyData;
+			so->arrayKeys[numArrayKeys].num_elems = -1;
+
+			/* Initialize skip array specific BTArrayKeyInfo fields */
+			attr = TupleDescCompactAttr(RelationGetDescr(rel), attno_skip - 1);
+			reverse = (indoption[attno_skip - 1] & INDOPTION_DESC) != 0;
+			so->arrayKeys[numArrayKeys].attlen = attr->attlen;
+			so->arrayKeys[numArrayKeys].attbyval = attr->attbyval;
+			so->arrayKeys[numArrayKeys].null_elem = true;	/* for now */
+			so->arrayKeys[numArrayKeys].sksup =
+				PrepareSkipSupportFromOpclass(opfamily, opcintype, reverse);
+			so->arrayKeys[numArrayKeys].low_compare = NULL; /* for now */
+			so->arrayKeys[numArrayKeys].high_compare = NULL;	/* for now */
+
+			/*
+			 * We'll need a 3-way ORDER proc to perform "binary searches" for
+			 * the next matching array element.  Set that up now.
+			 */
+			_bt_setup_array_cmp(scan, cur, opcintype,
+								&so->orderProcs[numArrayKeyData], NULL);
+
+			numArrayKeys++;
+			numArrayKeyData++;	/* keep this scan key/array */
+
+			/* set up next output scan key */
+			cur = &arrayKeyData[numArrayKeyData];
+
+			/* remember having output this skip array and scan key */
+			numSkipArrayKeys--;
+			attno_skip++;
+		}
 
 		/*
 		 * Provisionally copy scan key into arrayKeyData[] array we'll return
 		 * to _bt_preprocess_keys caller
 		 */
-		cur = &arrayKeyData[output_ikey];
-		*cur = scan->keyData[input_ikey];
+		*cur = *inkey;
 
 		if (!(cur->sk_flags & SK_SEARCHARRAY))
 		{
-			output_ikey++;		/* keep this non-array scan key */
+			numArrayKeyData++;	/* keep this non-array scan key */
 			continue;
+		}
+
+		/*
+		 * Process conventional/SAOP array scan key
+		 */
+		Assert(!(cur->sk_flags & (SK_ROW_HEADER | SK_SEARCHNULL | SK_SEARCHNOTNULL)));
+
+		/* If array is null as a whole, the scan qual is unsatisfiable */
+		if (cur->sk_flags & SK_ISNULL)
+		{
+			so->qual_ok = false;
+			break;
 		}
 
 		/*
@@ -1257,7 +1529,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 		 * all btree operators are strict.
 		 */
 		num_nonnulls = 0;
-		for (j = 0; j < num_elems; j++)
+		for (int j = 0; j < num_elems; j++)
 		{
 			if (!elem_nulls[j])
 				elem_values[num_nonnulls++] = elem_values[j];
@@ -1295,7 +1567,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 					_bt_find_extreme_element(scan, cur, elemtype,
 											 BTGreaterStrategyNumber,
 											 elem_values, num_nonnulls);
-				output_ikey++;	/* keep this transformed scan key */
+				numArrayKeyData++;	/* keep this transformed scan key */
 				continue;
 			case BTEqualStrategyNumber:
 				/* proceed with rest of loop */
@@ -1306,7 +1578,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 					_bt_find_extreme_element(scan, cur, elemtype,
 											 BTLessStrategyNumber,
 											 elem_values, num_nonnulls);
-				output_ikey++;	/* keep this transformed scan key */
+				numArrayKeyData++;	/* keep this transformed scan key */
 				continue;
 			default:
 				elog(ERROR, "unrecognized StrategyNumber: %d",
@@ -1323,7 +1595,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 		 * sortproc just points to the same proc used during binary searches.
 		 */
 		_bt_setup_array_cmp(scan, cur, elemtype,
-							&so->orderProcs[output_ikey], &sortprocp);
+							&so->orderProcs[numArrayKeyData], &sortprocp);
 
 		/*
 		 * Sort the non-null elements and eliminate any duplicates.  We must
@@ -1392,23 +1664,24 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 			origelemtype = elemtype;
 		}
 
-		/*
-		 * And set up the BTArrayKeyInfo data.
-		 *
-		 * Note: _bt_preprocess_array_keys_final will fix-up each array's
-		 * scan_key field later on, after so->keyData[] has been finalized.
-		 */
-		so->arrayKeys[numArrayKeys].scan_key = output_ikey;
+		/* Initialize generic BTArrayKeyInfo fields */
+		so->arrayKeys[numArrayKeys].scan_key = numArrayKeyData;
 		so->arrayKeys[numArrayKeys].num_elems = num_elems;
+
+		/* Initialize SAOP array specific BTArrayKeyInfo fields */
 		so->arrayKeys[numArrayKeys].elem_values = elem_values;
+		so->arrayKeys[numArrayKeys].cur_elem = -1;	/* i.e. invalid */
+
 		numArrayKeys++;
-		output_ikey++;			/* keep this scan key/array */
+		numArrayKeyData++;		/* keep this scan key/array */
 	}
+
+	Assert(numSkipArrayKeys == 0);
 
 	/* Set final number of equality-type array keys */
 	so->numArrayKeys = numArrayKeys;
-	/* Set number of scan keys remaining in arrayKeyData[] */
-	*new_numberOfKeys = output_ikey;
+	/* Set final number of scan keys in arrayKeyData[] */
+	*new_numberOfKeys = numArrayKeyData;
 
 	MemoryContextSwitchTo(oldContext);
 
@@ -1514,7 +1787,8 @@ _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap)
 		{
 			BTArrayKeyInfo *array = &so->arrayKeys[arrayidx];
 
-			Assert(array->num_elems > 0);
+			Assert(array->num_elems > 0 || array->num_elems == -1);
+			Assert(array->num_elems != -1 || outkey->sk_flags & SK_BT_REQFWD);
 
 			if (array->scan_key == input_ikey)
 			{
@@ -1565,7 +1839,7 @@ _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap)
 	 * Parallel index scans require space in shared memory to store the
 	 * current array elements (for arrays kept by preprocessing) to schedule
 	 * the next primitive index scan.  The underlying structure is protected
-	 * using a spinlock, so defensively limit its size.  In practice this can
+	 * using an LWLock, so defensively limit its size.  In practice this can
 	 * only affect parallel scans that use an incomplete opfamily.
 	 */
 	if (scan->parallel_scan && so->numArrayKeys > INDEX_MAX_KEYS)
@@ -1573,6 +1847,189 @@ _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap)
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg_internal("number of array scan keys left by preprocessing (%d) exceeds the maximum allowed by parallel btree index scans (%d)",
 								 so->numArrayKeys, INDEX_MAX_KEYS)));
+}
+
+/*
+ *	_bt_num_array_keys() -- determine # of BTArrayKeyInfo entries
+ *
+ * _bt_preprocess_array_keys helper function.  Returns the estimated size of
+ * the scan's BTArrayKeyInfo array, which is guaranteed to be large enough to
+ * fit every so->arrayKeys[] entry.
+ *
+ * Also sets *numSkipArrayKeys to # of skip arrays _bt_preprocess_array_keys
+ * caller must add to the scan keys it'll output.  Caller must add this many
+ * skip arrays to each of the most significant attributes lacking any keys
+ * that use the = strategy (IS NULL keys count as = keys here).  The specific
+ * attributes that need skip arrays are indicated by initializing caller's
+ * skip_eq_ops[] 0-based attribute offset to a valid = op strategy Oid.  We'll
+ * only ever set skip_eq_ops[] entries to InvalidOid for attributes that
+ * already have an equality key in scan->keyData[] input keys -- and only when
+ * there's some later "attribute gap" for us to "fill-in" with a skip array.
+ *
+ * We're optimistic about skipping working out: we always add exactly the skip
+ * arrays needed to maximize the number of input scan keys that can ultimately
+ * be marked as required to continue the scan (but no more).  For a composite
+ * index on (a, b, c, d), we'll instruct caller to add skip arrays as follows:
+ *
+ * Input keys						Output keys (after all preprocessing)
+ * ----------						-------------------------------------
+ * a = 1							a = 1 (no skip arrays)
+ * a = ANY('{0, 1}')				a = ANY('{0, 1}') (no skip arrays)
+ * b = 42							skip a AND b = 42
+ * b = ANY('{40, 42}')				skip a AND b = ANY('{40, 42}')
+ * a = 1 AND b = 42					a = 1 AND b = 42 (no skip arrays)
+ * a >= 1 AND b = 42				range skip a AND b = 42
+ * a = 1 AND b > 42					a = 1 AND b > 42 (no skip arrays)
+ * a >= 1 AND a <= 3 AND b = 42		range skip a AND b = 42
+ * a = 1 AND c <= 27				a = 1 AND skip b AND c <= 27
+ * a = 1 AND d >= 1					a = 1 AND skip b AND skip c AND d >= 1
+ * a = 1 AND b >= 42 AND d > 1		a = 1 AND range skip b AND skip c AND d > 1
+ */
+static int
+_bt_num_array_keys(IndexScanDesc scan, Oid *skip_eq_ops, int *numSkipArrayKeys)
+{
+	Relation	rel = scan->indexRelation;
+	AttrNumber	attno_skip = 1,
+				attno_inkey = 1;
+	bool		attno_has_equal = false,
+				attno_has_rowcompare = false;
+	int			numArrayKeys;
+	int			prev_numSkipArrayKeys = 0;
+
+	Assert(scan->numberOfKeys);
+
+	/*
+	 * Initial pass over input scan keys counts the number of conventional
+	 * (non-skip) arrays
+	 */
+	numArrayKeys = 0;
+	*numSkipArrayKeys = 0;
+	for (int i = 0; i < scan->numberOfKeys; i++)
+	{
+		ScanKey		inkey = scan->keyData + i;
+
+		if (inkey->sk_flags & SK_SEARCHARRAY)
+			numArrayKeys++;
+	}
+
+#ifdef DEBUG_DISABLE_SKIP_SCAN
+	/* don't attempt to add skip arrays */
+	return numArrayKeys;
+#endif
+
+	for (int i = 0;; i++)
+	{
+		ScanKey		inkey = scan->keyData + i;
+
+		/*
+		 * Backfill skip arrays for any wholly omitted attributes prior to
+		 * attno_inkey
+		 */
+		while (attno_skip < attno_inkey)
+		{
+			Oid			opfamily = rel->rd_opfamily[attno_skip - 1];
+			Oid			opcintype = rel->rd_opcintype[attno_skip - 1];
+
+			/* Look up input opclass's equality operator (might fail) */
+			skip_eq_ops[attno_skip - 1] =
+				get_opfamily_member(opfamily, opcintype, opcintype,
+									BTEqualStrategyNumber);
+			if (!OidIsValid(skip_eq_ops[attno_skip - 1]))
+			{
+				/*
+				 * Cannot generate a skip array for this or later attributes
+				 * (input opclass lacks an equality strategy operator)
+				 */
+				*numSkipArrayKeys = prev_numSkipArrayKeys;
+				return numArrayKeys + prev_numSkipArrayKeys;
+			}
+
+			/* plan on adding a backfill skip array for this attribute */
+			(*numSkipArrayKeys)++;
+			attno_skip++;
+		}
+
+		prev_numSkipArrayKeys = *numSkipArrayKeys;
+
+		/*
+		 * Stop once past the final input scan key.  We deliberately never add
+		 * a skip attribute for the attribute of the last input scan key
+		 * (doesn't matter whether that attribute has an equality key, or just
+		 * uses inequality keys).
+		 */
+		if (i == scan->numberOfKeys)
+			break;
+
+		/*
+		 * Cannot keep adding skip arrays after a RowCompare
+		 */
+		if (attno_has_rowcompare)
+			break;
+
+		/*
+		 * Now consider next attno_inkey (or keep going if this is an
+		 * additional scan key against the same attribute)
+		 */
+		if (attno_inkey < inkey->sk_attno)
+		{
+			/*
+			 * Now add skip array for previous scan key's attribute, though
+			 * only if the attribute has no equality strategy scan keys
+			 */
+			if (attno_has_equal)
+			{
+				/* Attributes with an = key must have InvalidOid eq_op set */
+				skip_eq_ops[attno_skip - 1] = InvalidOid;
+			}
+			else
+			{
+				Oid			opfamily = rel->rd_opfamily[attno_skip - 1];
+				Oid			opcintype = rel->rd_opcintype[attno_skip - 1];
+
+				/* Look up input opclass's equality operator (might fail) */
+				skip_eq_ops[attno_skip - 1] =
+					get_opfamily_member(opfamily, opcintype, opcintype,
+										BTEqualStrategyNumber);
+
+				if (!OidIsValid(skip_eq_ops[attno_skip - 1]))
+				{
+					/*
+					 * Input opclass lacks an equality strategy operator, so
+					 * don't generate a skip array that definitely won't work
+					 */
+					break;
+				}
+
+				/* plan on adding a backfill skip array for this attribute */
+				(*numSkipArrayKeys)++;
+			}
+
+			/* Set things up for this new attribute */
+			attno_skip++;
+			attno_inkey = inkey->sk_attno;
+			attno_has_equal = false;
+		}
+
+		/*
+		 * Track if this attribute's scan keys have any equality strategy scan
+		 * keys (while counting IS NULL scan keys as equality scan keys)
+		 */
+		if (inkey->sk_strategy == BTEqualStrategyNumber ||
+			(inkey->sk_flags & SK_SEARCHNULL))
+			attno_has_equal = true;
+
+		/*
+		 * We don't support RowCompare transformation.  Remember that we saw a
+		 * RowCompare, so that we don't keep adding skip attributes.  (We may
+		 * still backfill skip attributes before the RowCompare, so that it
+		 * will be marked required later on.)
+		 */
+		if (inkey->sk_flags & SK_ROW_HEADER)
+			attno_has_rowcompare = true;
+	}
+
+	/* numArrayKeys returned to caller includes any skip arrays */
+	return numArrayKeys + *numSkipArrayKeys;
 }
 
 /*
