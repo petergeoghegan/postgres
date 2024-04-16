@@ -1033,8 +1033,16 @@ typedef struct BTArrayKeyInfo
 {
 	int			scan_key;		/* index of associated key in keyData */
 	int			cur_elem;		/* index of current element in elem_values */
-	int			num_elems;		/* number of elems in current array value */
+	int			num_elems;		/* number of elems (-1 for skip array) */
 	Datum	   *elem_values;	/* array of num_elems Datums */
+	Datum		min_value;		/* min value (skip array only) */
+	Datum		max_value;		/* max value (skip array only) */
+	bool		min_value_null; /* Generate NULL value, NULLS FIRST index? */
+	bool		max_value_null; /* Generate NULL value, NULLS LAST index? */
+
+	/* Per-opclass/type callbacks to decrement/increment skip arrays */
+	void		(*decrement) (Relation rel, ScanKey arraysk);
+	void		(*increment) (Relation rel, ScanKey arraysk);
 } BTArrayKeyInfo;
 
 typedef struct BTScanOpaqueData
@@ -1123,6 +1131,7 @@ typedef struct BTReadPageState
  */
 #define SK_BT_REQFWD	0x00010000	/* required to continue forward scan */
 #define SK_BT_REQBKWD	0x00020000	/* required to continue backward scan */
+#define SK_BT_SKIP		0x00040000	/* SK_SEARCHARRAY skip scan key */
 #define SK_BT_INDOPTION_SHIFT  24	/* must clear the above bits */
 #define SK_BT_DESC			(INDOPTION_DESC << SK_BT_INDOPTION_SHIFT)
 #define SK_BT_NULLS_FIRST	(INDOPTION_NULLS_FIRST << SK_BT_INDOPTION_SHIFT)

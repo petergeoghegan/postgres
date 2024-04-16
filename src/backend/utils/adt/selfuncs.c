@@ -6833,12 +6833,19 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		IndexClause *iclause = lfirst_node(IndexClause, lc);
 		ListCell   *lc2;
 
+		/*
+		 * TODO Add sensible costing.  For now just make skip scans look cheap
+		 * to make testing convenient.
+		 *
+		 * XXX This will actually increase the cost of index paths whose
+		 * lower-order SAOPs can now be used to skip.  We don't actually skip
+		 * unless it makes sense to (that's the goal within nbtree, at least),
+		 * yet the costing still pessimistically assumes that lots of index
+		 * descents will be required due to affected lower-order SAOPs.
+		 */
 		if (indexcol != iclause->indexcol)
 		{
 			/* Beginning of a new column's quals */
-			if (!eqQualHere)
-				break;			/* done if no '=' qual for indexcol */
-			eqQualHere = false;
 			indexcol++;
 			if (indexcol != iclause->indexcol)
 				break;			/* no quals at all for indexcol */
