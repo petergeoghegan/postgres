@@ -883,7 +883,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	Buffer		buf;
 	BTStack		stack;
 	OffsetNumber offnum;
-	StrategyNumber strat;
 	BTScanInsertData inskey;
 	ScanKey		startKeys[INDEX_MAX_KEYS];
 	ScanKeyData notnullkeys[INDEX_MAX_KEYS];
@@ -972,7 +971,20 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * a > or < boundary or find an attribute with no boundary (which can be
 	 * thought of as the same as "> -infinity"), we can't use keys for any
 	 * attributes to its right, because it would break our simplistic notion
-	 * of what initial positioning strategy to use.
+	 * of what initial positioning strategy to use.  In practice skip scan
+	 * typically enables us to use all scan keys here, even with a set of
+	 * input keys that leave a "gap" between two index attributes (cases with
+	 * multiple gaps will even manage this without any special restrictions).
+	 *
+	 * Skip scan works by having _bt_preprocess_keys cons up = boundary keys
+	 * for any index columns that were missing a = key in scan->keyData[], the
+	 * input scan keys passed to us by the executor.  This happens for index
+	 * attributes prior to the attribute of our final input scan key.  The
+	 * underlying = keys use skip arrays.  The keys can be thought of as the
+	 * same as "col = ANY('{every possible col value}')".  Note that this
+	 * often includes the array element NULL, which the scan will treat as an
+	 * IS NULL qual (the skip array's scan key is already marked SK_SEARCHNULL
+	 * when we're called, so we need no special handling for this case here).
 	 *
 	 * When the scan keys include cross-type operators, _bt_preprocess_keys
 	 * may not be able to eliminate redundant keys; in such cases we will
@@ -1047,6 +1059,47 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		{
 			if (i >= so->numberOfKeys || cur->sk_attno != curattr)
 			{
+				if (chosen && (chosen->sk_flags & SK_BT_NEGPOSINF))
+				{
+					/* -inf/+inf element from a skip array's scan key */
+					ScanKey		origchosen = chosen;
+					BTArrayKeyInfo *array = NULL;
+
+					for (int arridx = 0; arridx < so->numArrayKeys; arridx++)
+					{
+						array = &so->arrayKeys[arridx];
+						if (array->scan_key == chosen - so->keyData)
+							break;
+					}
+
+					/* use array's inequality key in startKeys[] */
+					if (ScanDirectionIsForward(dir))
+						chosen = array->low_compare;
+					else
+						chosen = array->high_compare;
+
+					Assert(!chosen ||
+						   chosen->sk_attno == origchosen->sk_attno);
+
+					if (!array->null_elem)
+					{
+						/*
+						 * The array does not include a NULL element (meaning
+						 * array advancement never generates an IS NULL qual).
+						 * We'll deduce a NOT NULL key to skip over any NULLs
+						 * when there's no usable low_compare (or no usable
+						 * high_compare, during a backwards scan).
+						 *
+						 * Note: this also handles an explicit NOT NULL key
+						 * that preprocessing folded into the skip array (it
+						 * doesn't save them in low_compare/high_compare).
+						 */
+						impliesNN = origchosen;
+					}
+					else
+						Assert(chosen == NULL && impliesNN == NULL);
+				}
+
 				/*
 				 * Done looking at keys for curattr.  If we didn't find a
 				 * usable boundary key, see if we can deduce a NOT NULL key.
@@ -1080,16 +1133,42 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 					break;
 				startKeys[keysz++] = chosen;
 
+				if (chosen->sk_flags & SK_BT_NEXTPRIOR)
+				{
+					/*
+					 * Next/prior key element from a skip array's scan key.
+					 * 'chosen' could be SK_ISNULL, in which case startKeys[]
+					 * positions us at the first tuple > NULL (for backwards
+					 * scans it's the first tuple < NULL instead).
+					 *
+					 * Adjust strat_total, so that our = key gets treated like
+					 * a > key (or like a < key) within _bt_search.
+					 */
+					Assert(strat_total == BTEqualStrategyNumber);
+					if (ScanDirectionIsForward(dir))
+						strat_total = BTGreaterStrategyNumber;
+					else
+						strat_total = BTLessStrategyNumber;
+
+					/*
+					 * We'll never find an exact = match for a NEXTPRIOR
+					 * sentinel sk_argument value, so there's no reason to
+					 * save any later would-be boundary keys in startKeys[]
+					 * (besides, doing so would confuse _bt_search, since it
+					 * isn't directly aware of NEXTPRIOR sentinel values)
+					 */
+					break;
+				}
+
 				/*
 				 * Adjust strat_total, and quit if we have stored a > or <
 				 * key.
 				 */
-				strat = chosen->sk_strategy;
-				if (strat != BTEqualStrategyNumber)
+				if (chosen->sk_strategy != BTEqualStrategyNumber)
 				{
-					strat_total = strat;
-					if (strat == BTGreaterStrategyNumber ||
-						strat == BTLessStrategyNumber)
+					strat_total = chosen->sk_strategy;
+					if (chosen->sk_strategy == BTGreaterStrategyNumber ||
+						chosen->sk_strategy == BTLessStrategyNumber)
 						break;
 				}
 
