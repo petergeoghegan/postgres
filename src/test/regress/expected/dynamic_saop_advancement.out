@@ -6559,10 +6559,10 @@ execute nonrequired_array_nonrequired_inequality_confusion;
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..814.35 rows=824 width=24) (actual rows=23 loops=1)
    Group Key: two, four, twenty, hundred
-   Buffers: shared hit=1993
+   Buffers: shared hit=1995
    ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..786.19 rows=1594 width=16) (actual rows=2300 loops=1)
          Index Cond: ((four = ANY ('{1,2,3}'::integer[])) AND (four = ANY ('{-1,1,2,4}'::integer[])) AND (twenty = ANY ('{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17}'::integer[])) AND (hundred < 50))
-         Buffers: shared hit=1993
+         Buffers: shared hit=1995
 (6 rows)
 
 deallocate nonrequired_array_nonrequired_inequality_confusion;
