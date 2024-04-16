@@ -964,6 +964,15 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * attributes to its right, because it would break our simplistic notion
 	 * of what initial positioning strategy to use.
 	 *
+	 * In practice we rarely see any attributes with no boundary key here.
+	 * Preprocessing can usually backfill skip array keys for any attributes
+	 * that were omitted from the original scan->keyData[] input keys.  All
+	 * array keys are always considered = keys, but we'll sometimes need to
+	 * treat the current key value as if we were using an inequality strategy.
+	 * This happens whenever a skip array's scan key is found to have been set
+	 * to one of the special sentinel values representing an imaginary point
+	 * before/after some (or all) of the index's real indexable values.
+	 *
 	 * When the scan keys include cross-type operators, _bt_preprocess_keys
 	 * may not be able to eliminate redundant keys; in such cases we will
 	 * arbitrarily pick a usable one for each attribute.  This is correct
@@ -1039,8 +1048,56 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 			if (i >= so->numberOfKeys || cur->sk_attno != curattr)
 			{
 				/*
-				 * Done looking at keys for curattr.  If we didn't find a
-				 * usable boundary key, see if we can deduce a NOT NULL key.
+				 * Done looking at keys for curattr.
+				 *
+				 * If this is a scan key for a skip array whose current
+				 * element is MINVAL, choose low_compare (when scanning
+				 * backwards it'll be MAXVAL, and we'll choose high_compare).
+				 *
+				 * Note: if the array's low_compare key makes 'chosen' NULL,
+				 * then we behave as if the array's first element is -inf,
+				 * except when !array->null_elem, which implies a usable NOT
+				 * NULL constraint (or an explicit IS NOT NULL input key).
+				 */
+				if (chosen != NULL &&
+					(chosen->sk_flags & (SK_BT_MINVAL | SK_BT_MAXVAL)))
+				{
+					int			ikey = chosen - so->keyData;
+					ScanKey		skipequalitykey = chosen;
+					BTArrayKeyInfo *array = NULL;
+
+					Assert(so->skipScan);
+
+					for (int arridx = 0; arridx < so->numArrayKeys; arridx++)
+					{
+						array = &so->arrayKeys[arridx];
+						if (array->scan_key == ikey)
+							break;
+					}
+
+					if (ScanDirectionIsForward(dir))
+					{
+						Assert(!(skipequalitykey->sk_flags & SK_BT_MAXVAL));
+						chosen = array->low_compare;
+					}
+					else
+					{
+						Assert(!(skipequalitykey->sk_flags & SK_BT_MINVAL));
+						chosen = array->high_compare;
+					}
+
+					Assert(chosen == NULL ||
+						   chosen->sk_attno == skipequalitykey->sk_attno);
+
+					if (!array->null_elem)
+						impliesNN = skipequalitykey;
+					else
+						Assert(chosen == NULL && impliesNN == NULL);
+				}
+
+				/*
+				 * If we didn't find a usable boundary key, see if we can
+				 * deduce a NOT NULL key
 				 */
 				if (chosen == NULL && impliesNN != NULL &&
 					((impliesNN->sk_flags & SK_BT_NULLS_FIRST) ?
@@ -1083,9 +1140,46 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 					break;
 
 				/*
-				 * Done if that was the last attribute, or if next key is not
-				 * in sequence (implying no boundary key is available for the
-				 * next attribute).
+				 * If the key that we just added to startKeys[] is a skip
+				 * array = key whose current element is marked NEXT or PRIOR,
+				 * make strat_total > or < (and stop adding boundary keys).
+				 * This only happens when input opclass lacks skip support.
+				 */
+				if (chosen->sk_flags & (SK_BT_NEXT | SK_BT_PRIOR))
+				{
+					Assert(so->skipScan);
+					Assert(chosen->sk_flags & SK_BT_SKIP);
+					Assert(strat_total == BTEqualStrategyNumber);
+
+					if (ScanDirectionIsForward(dir))
+					{
+						Assert(!(chosen->sk_flags & SK_BT_PRIOR));
+						strat_total = BTGreaterStrategyNumber;
+					}
+					else
+					{
+						Assert(!(chosen->sk_flags & SK_BT_NEXT));
+						strat_total = BTLessStrategyNumber;
+					}
+
+					/*
+					 * We'll never find an exact = match for a NEXT or PRIOR
+					 * sentinel sk_argument value, so there's no sense in
+					 * trying to save later boundary keys in startKeys[].
+					 *
+					 * Note: 'chosen' could be marked SK_ISNULL, in which case
+					 * startKeys[] will position us at first tuple ">" NULL
+					 * (for backwards scans it'll position us at _last_ tuple
+					 * "<" NULL instead).
+					 */
+					break;
+				}
+
+				/*
+				 * Done if that was the last index attribute.  Also done if
+				 * there is a gap index attribute that lacks any usable keys
+				 * (only possible in edge cases where preprocessing could not
+				 * generate a skip array key that "fills the gap").
 				 */
 				if (i >= so->numberOfKeys ||
 					cur->sk_attno != curattr + 1)
@@ -1576,10 +1670,12 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	 * corresponding value from the last item on the page.  So checking with
 	 * the last item on the page would give a more precise answer.
 	 *
-	 * We skip this for the first page read by each (primitive) scan, to avoid
-	 * slowing down point queries.  They typically don't stand to gain much
-	 * when the optimization can be applied, and are more likely to notice the
-	 * overhead of the precheck.
+	 * We don't do this for the first page read by each (primitive) scan, to
+	 * avoid slowing down point queries.  They typically don't stand to gain
+	 * much when the optimization can be applied, and are more likely to
+	 * notice the overhead of the precheck.  Also avoid it during skip scans,
+	 * where individual primitive scans that don't just read one leaf page are
+	 * likely to advance their skip array(s) several times per leaf page read.
 	 *
 	 * The optimization is unsafe and must be avoided whenever _bt_checkkeys
 	 * just set a low-order required array's key to the best available match
@@ -1603,7 +1699,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	 * required < or <= strategy scan keys) during the precheck, we can safely
 	 * assume that this must also be true of all earlier tuples from the page.
 	 */
-	if (!firstPage && !so->scanBehind && minoff < maxoff)
+	if (!firstPage && !so->skipScan && !so->scanBehind && minoff < maxoff)
 	{
 		ItemId		iid;
 		IndexTuple	itup;
