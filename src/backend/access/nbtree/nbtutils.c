@@ -386,7 +386,6 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *numberOfKeys)
 #ifndef USE_FLOAT8_BYVAL
 			if (cur->sk_subtype == INT8OID)
 			{
-				/* Cannot skip at or after first attribute from RowCompare */
 				memset(attaddskip + i, 0, sizeof(bool) * (INDEX_MAX_KEYS - i));
 				break;
 			}
