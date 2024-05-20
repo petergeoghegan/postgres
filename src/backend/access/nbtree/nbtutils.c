@@ -373,6 +373,24 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *numberOfKeys)
 				memset(attaddskip + i, 0, sizeof(bool) * (INDEX_MAX_KEYS - i));
 				break;
 			}
+
+			/*
+			 * XXX Currently, skip arrays generate the next required value by
+			 * incrementing/decrementing a raw datum representation.  This
+			 * won't work with any pass-by-value representations.
+			 *
+			 * Temporarily work around that by treating int8 as unsupported on
+			 * 32-bit/USE_FLOAT8_BYVAL platforms.  This kludge is required to
+			 * get CI to pass.
+			 */
+#ifndef USE_FLOAT8_BYVAL
+			if (cur->sk_subtype == INT8OID)
+			{
+				/* Cannot skip at or after first attribute from RowCompare */
+				memset(attaddskip + i, 0, sizeof(bool) * (INDEX_MAX_KEYS - i));
+				break;
+			}
+#endif
 		}
 
 		for (int i = 0; i < IndexRelationGetNumberOfKeyAttributes(rel); i++)
