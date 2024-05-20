@@ -882,6 +882,17 @@ _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap)
 static bool
 _bt_opclass_supports_skipping(Oid opfamily, Oid opcintype)
 {
+	/*
+	 * XXX Currently, skip arrays just generate the next value by
+	 * incrementing/decrementing a raw datum representation.  This is
+	 * incompatible on pass-by-value types.  Temporarily work around that by
+	 * treating int8 as unsupported on 32-bit/USE_FLOAT8_BYVAL platforms.
+	 */
+#ifndef USE_FLOAT8_BYVAL
+	if (opcintype == INT8OID)
+		return false;
+#endif
+
 	if ((opfamily == OID_BTREE_FAM_OID && opcintype == OIDOID) ||
 		(opfamily == BOOL_BTREE_FAM_OID && opcintype == BOOLOID) ||
 		(opfamily == CHAR_BTREE_FAM_OID && opcintype == CHAROID) ||
