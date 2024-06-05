@@ -1039,6 +1039,9 @@ typedef struct BTArrayKeyInfo
 	Datum		max_value;		/* max value (skip array only) */
 	bool		min_value_null; /* Generate NULL value, NULLS FIRST index? */
 	bool		max_value_null; /* Generate NULL value, NULLS LAST index? */
+
+	void (*decrement)(Relation rel, ScanKey arraysk);
+	void (*increment)(Relation rel, ScanKey arraysk);
 } BTArrayKeyInfo;
 
 typedef struct BTScanOpaqueData

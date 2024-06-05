@@ -948,11 +948,72 @@ _bt_opclass_supports_skipping(Oid opfamily, Oid opcintype)
 }
 
 static void
+_bt_array_skey_generic_decrement(Relation rel, ScanKey arraysk)
+{
+	arraysk->sk_argument--;
+}
+
+static void
+_bt_array_skey_uuid_decrement(Relation rel, ScanKey arraysk)
+{
+	pg_uuid_t  *uuid;
+
+	Assert(rel->rd_opfamily[arraysk->sk_attno - 1] == UUID_BTREE_FAM_OID);
+	Assert(rel->rd_opcintype[arraysk->sk_attno - 1] == UUIDOID);
+
+	uuid = DatumGetUUIDP(arraysk->sk_argument);
+	for (int i = UUID_LEN - 1; i >= 0; i--)
+	{
+		if (uuid->data[i] > 0)
+		{
+			uuid->data[i]--;
+			return;
+		}
+		uuid->data[i] = UCHAR_MAX;
+	}
+
+	Assert(false);
+}
+
+static void
+_bt_array_skey_generic_increment(Relation rel, ScanKey arraysk)
+{
+	arraysk->sk_argument++;
+}
+
+static void
+_bt_array_skey_uuid_increment(Relation rel, ScanKey arraysk)
+{
+	pg_uuid_t  *uuid;
+
+	Assert(rel->rd_opfamily[arraysk->sk_attno - 1] == UUID_BTREE_FAM_OID);
+	Assert(rel->rd_opcintype[arraysk->sk_attno - 1] == UUIDOID);
+
+	uuid = DatumGetUUIDP(arraysk->sk_argument);
+	for (int i = UUID_LEN - 1; i >= 0; i--)
+	{
+		if (uuid->data[i] < UCHAR_MAX)
+		{
+			uuid->data[i]++;
+			return;
+		}
+		uuid->data[i] = 0;
+	}
+
+	Assert(false);
+}
+
+static void
 _bt_setup_skip_array_minmax(BTArrayKeyInfo *array, bool reverse,
 							bool nulls_first, Oid opcintype)
 {
 	Datum		low,
 				high;
+	void (*decrement)(Relation rel, ScanKey arraysk);
+	void (*increment)(Relation rel, ScanKey arraysk);
+
+	decrement = _bt_array_skey_generic_decrement;
+	increment = _bt_array_skey_generic_increment;
 
 	if (opcintype == OIDOID)
 	{
@@ -969,6 +1030,9 @@ _bt_setup_skip_array_minmax(BTArrayKeyInfo *array, bool reverse,
 
 		low = UUIDPGetDatum(uuid_min);
 		high = UUIDPGetDatum(uuid_max);
+
+		decrement = _bt_array_skey_uuid_decrement;
+		increment = _bt_array_skey_uuid_increment;
 	}
 	else if (opcintype == BOOLOID)
 	{
@@ -1017,72 +1081,12 @@ _bt_setup_skip_array_minmax(BTArrayKeyInfo *array, bool reverse,
 	 */
 	array->min_value_null = false;
 	array->max_value_null = false;
+	array->increment = increment;
+	array->decrement = decrement;
 	if (nulls_first)
 		array->min_value_null = true;
 	else
 		array->max_value_null = true;
-}
-
-static void
-_bt_array_skey_decrement(Relation rel, ScanKey arraysk, BTArrayKeyInfo *array)
-{
-	Form_pg_attribute attr;
-	pg_uuid_t  *uuid;
-
-	attr = TupleDescAttr(RelationGetDescr(rel), arraysk->sk_attno - 1);
-
-	if (attr->attbyval)
-	{
-		arraysk->sk_argument--;
-		return;
-	}
-
-	Assert(rel->rd_opfamily[arraysk->sk_attno - 1] == UUID_BTREE_FAM_OID);
-	Assert(rel->rd_opcintype[arraysk->sk_attno - 1] == UUIDOID);
-
-	uuid = DatumGetUUIDP(arraysk->sk_argument);
-	for (int i = UUID_LEN - 1; i >= 0; i--)
-	{
-		if (uuid->data[i] > 0)
-		{
-			uuid->data[i]--;
-			return;
-		}
-		uuid->data[i] = UCHAR_MAX;
-	}
-
-	Assert(false);
-}
-
-static void
-_bt_array_skey_increment(Relation rel, ScanKey arraysk, BTArrayKeyInfo *array)
-{
-	Form_pg_attribute attr;
-	pg_uuid_t  *uuid;
-
-	attr = TupleDescAttr(RelationGetDescr(rel), arraysk->sk_attno - 1);
-
-	if (attr->attbyval)
-	{
-		arraysk->sk_argument++;
-		return;
-	}
-
-	Assert(rel->rd_opfamily[arraysk->sk_attno - 1] == UUID_BTREE_FAM_OID);
-	Assert(rel->rd_opcintype[arraysk->sk_attno - 1] == UUIDOID);
-
-	uuid = DatumGetUUIDP(arraysk->sk_argument);
-	for (int i = UUID_LEN - 1; i >= 0; i--)
-	{
-		if (uuid->data[i] < UCHAR_MAX)
-		{
-			uuid->data[i]++;
-			return;
-		}
-		uuid->data[i] = 0;
-	}
-
-	Assert(false);
 }
 
 /*
@@ -1587,7 +1591,7 @@ _bt_skip_scankey_preprocess(Relation rel, ScanKey arraysk, ScanKey skey,
 			 */
 			arraysk->sk_argument = datumCopy(skey->sk_argument,
 											 attr->attbyval, attr->attlen);
-			_bt_array_skey_decrement(rel, arraysk, array);
+			array->decrement(rel, arraysk);
 			array->max_value = arraysk->sk_argument;
 			arraysk->sk_argument = 0;
 			break;
@@ -1627,7 +1631,7 @@ _bt_skip_scankey_preprocess(Relation rel, ScanKey arraysk, ScanKey skey,
 			 */
 			arraysk->sk_argument = datumCopy(skey->sk_argument,
 											 attr->attbyval, attr->attlen);
-			_bt_array_skey_increment(rel, arraysk, array);
+			array->increment(rel, arraysk);
 			array->min_value = arraysk->sk_argument;
 			arraysk->sk_argument = 0;
 			break;
@@ -2098,9 +2102,9 @@ _bt_advance_array_keys_increment(IndexScanDesc scan, ScanDirection dir)
 				if (!(skey->sk_flags & SK_ISNULL))
 				{
 					if (!(skey->sk_flags & SK_BT_DESC))
-						_bt_array_skey_increment(rel, skey, curArrayKey);
+						curArrayKey->increment(rel, skey);
 					else
-						_bt_array_skey_decrement(rel, skey, curArrayKey);
+						curArrayKey->decrement(rel, skey);
 				}
 				else
 					skey->sk_flags &= ~(SK_SEARCHNULL | SK_ISNULL);
@@ -2117,9 +2121,9 @@ _bt_advance_array_keys_increment(IndexScanDesc scan, ScanDirection dir)
 				if (!(skey->sk_flags & SK_ISNULL))
 				{
 					if (!(skey->sk_flags & SK_BT_DESC))
-						_bt_array_skey_decrement(rel, skey, curArrayKey);
+						curArrayKey->decrement(rel, skey);
 					else
-						_bt_array_skey_increment(rel, skey, curArrayKey);
+						curArrayKey->increment(rel, skey);
 				}
 				else
 					skey->sk_flags &= ~(SK_SEARCHNULL | SK_ISNULL);
