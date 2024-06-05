@@ -1589,6 +1589,7 @@ _bt_skip_scankey_preprocess(Relation rel, ScanKey arraysk, ScanKey skey,
 											 attr->attbyval, attr->attlen);
 			_bt_array_skey_decrement(rel, arraysk, array);
 			array->max_value = arraysk->sk_argument;
+			arraysk->sk_argument = 0;
 			break;
 		case BTLessEqualStrategyNumber:
 			array->max_value = datumCopy(skey->sk_argument,
@@ -1628,6 +1629,7 @@ _bt_skip_scankey_preprocess(Relation rel, ScanKey arraysk, ScanKey skey,
 											 attr->attbyval, attr->attlen);
 			_bt_array_skey_increment(rel, arraysk, array);
 			array->min_value = arraysk->sk_argument;
+			arraysk->sk_argument = 0;
 			break;
 		default:
 			elog(ERROR, "unrecognized StrategyNumber: %d",
@@ -1975,6 +1977,10 @@ _bt_array_set_min_or_max(Relation rel, ScanKey skey, BTArrayKeyInfo *array,
 	Assert(array->num_elems == -1);
 
 	attr = TupleDescAttr(RelationGetDescr(rel), skey->sk_attno - 1);
+
+	if (!attr->attbyval && skey->sk_argument)
+		pfree(DatumGetPointer(skey->sk_argument));
+
 	if (min_not_max)
 	{
 		skey->sk_argument = datumCopy(array->min_value, attr->attbyval, attr->attlen);
@@ -2911,6 +2917,8 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 
 					cur->sk_flags &= ~(SK_SEARCHNULL | SK_ISNULL);
 					attr = TupleDescAttr(RelationGetDescr(rel), cur->sk_attno - 1);
+					if (!attr->attbyval && cur->sk_argument)
+						pfree(DatumGetPointer(cur->sk_argument));
 					cur->sk_argument = datumCopy(tupdatum, attr->attbyval, attr->attlen);
 				}
 			}
