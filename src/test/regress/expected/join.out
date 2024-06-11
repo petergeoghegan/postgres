@@ -6052,12 +6052,12 @@ from t t1
   on true
   left join t t4 on true
 where s.a < s.c;
-                  QUERY PLAN                   
------------------------------------------------
+                    QUERY PLAN                     
+---------------------------------------------------
  Nested Loop Left Join
    ->  Nested Loop
          ->  Seq Scan on t t1
-         ->  Seq Scan on t t2
+         ->  Index Only Scan using t_a_key on t t2
                Filter: (a < COALESCE(t1.a, 1))
    ->  Materialize
          ->  Seq Scan on t t4
@@ -7428,19 +7428,23 @@ select * from fkest f1
   join fkest f2 on (f1.x = f2.x and f1.x10 = f2.x10b and f1.x100 = f2.x100)
   join fkest f3 on f1.x = f3.x
   where f1.x100 = 2;
-                        QUERY PLAN                         
------------------------------------------------------------
+                            QUERY PLAN                             
+-------------------------------------------------------------------
  Nested Loop
    ->  Hash Join
          Hash Cond: ((f2.x = f1.x) AND (f2.x10b = f1.x10))
-         ->  Seq Scan on fkest f2
-               Filter: (x100 = 2)
+         ->  Bitmap Heap Scan on fkest f2
+               Recheck Cond: (x100 = 2)
+               ->  Bitmap Index Scan on fkest_x_x10_x100_idx
+                     Index Cond: (x100 = 2)
          ->  Hash
-               ->  Seq Scan on fkest f1
-                     Filter: (x100 = 2)
+               ->  Bitmap Heap Scan on fkest f1
+                     Recheck Cond: (x100 = 2)
+                     ->  Bitmap Index Scan on fkest_x_x10_x100_idx
+                           Index Cond: (x100 = 2)
    ->  Index Scan using fkest_x_x10_x100_idx on fkest f3
          Index Cond: (x = f1.x)
-(10 rows)
+(14 rows)
 
 alter table fkest add constraint fk
   foreign key (x, x10b, x100) references fkest (x, x10, x100);
@@ -7449,20 +7453,24 @@ select * from fkest f1
   join fkest f2 on (f1.x = f2.x and f1.x10 = f2.x10b and f1.x100 = f2.x100)
   join fkest f3 on f1.x = f3.x
   where f1.x100 = 2;
-                     QUERY PLAN                      
------------------------------------------------------
+                            QUERY PLAN                             
+-------------------------------------------------------------------
  Hash Join
    Hash Cond: ((f2.x = f1.x) AND (f2.x10b = f1.x10))
    ->  Hash Join
          Hash Cond: (f3.x = f2.x)
          ->  Seq Scan on fkest f3
          ->  Hash
-               ->  Seq Scan on fkest f2
-                     Filter: (x100 = 2)
+               ->  Bitmap Heap Scan on fkest f2
+                     Recheck Cond: (x100 = 2)
+                     ->  Bitmap Index Scan on fkest_x_x10_x100_idx
+                           Index Cond: (x100 = 2)
    ->  Hash
-         ->  Seq Scan on fkest f1
-               Filter: (x100 = 2)
-(11 rows)
+         ->  Bitmap Heap Scan on fkest f1
+               Recheck Cond: (x100 = 2)
+               ->  Bitmap Index Scan on fkest_x_x10_x100_idx
+                     Index Cond: (x100 = 2)
+(15 rows)
 
 rollback;
 --
