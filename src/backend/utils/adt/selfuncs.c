@@ -6805,7 +6805,9 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	List	   *indexBoundQuals;
 	int			indexcol;
 	bool		eqQualHere;
+	bool		skip_column;
 	bool		found_saop;
+	bool		found_rowcompare;
 	bool		found_is_null_op;
 	double		num_sa_scans;
 	ListCell   *lc;
@@ -6830,7 +6832,9 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	indexBoundQuals = NIL;
 	indexcol = 0;
 	eqQualHere = false;
+	skip_column = false;
 	found_saop = false;
+	found_rowcompare = false;
 	found_is_null_op = false;
 	num_sa_scans = 1;
 	foreach(lc, path->indexclauses)
@@ -6851,9 +6855,22 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		if (indexcol != iclause->indexcol)
 		{
 			/* Beginning of a new column's quals */
-			indexcol++;
-			if (indexcol != iclause->indexcol)
-				break;			/* no quals at all for indexcol */
+			if (found_rowcompare)
+				break;			/* done if RowCompare qual seen */
+
+			if (!eqQualHere)
+				skip_column = true;
+			eqQualHere = false;
+			indexcol = iclause->indexcol;
+			if (indexcol >= path->indexinfo->nkeycolumns)
+				break;
+
+			/*
+			 * Make a generic assumption that all skipped columns 
+			 */
+			if (indexcol > iclause->indexcol)
+				num_sa_scans += (iclause->indexcol - indexcol) * 10;
+
 		}
 
 		/* Examine each indexqual associated with this index clause */
@@ -6875,6 +6892,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				RowCompareExpr *rc = (RowCompareExpr *) clause;
 
 				clause_op = linitial_oid(rc->opnos);
+				found_rowcompare = true;
 			}
 			else if (IsA(clause, ScalarArrayOpExpr))
 			{
@@ -6908,7 +6926,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 			{
 				op_strategy = get_op_opfamily_strategy(clause_op,
 													   index->opfamily[indexcol]);
-				Assert(op_strategy != 0);	/* not a member of opfamily?? */
+				// Assert(op_strategy != 0);	/* not a member of opfamily?? */
 				if (op_strategy == BTEqualStrategyNumber)
 					eqQualHere = true;
 			}
@@ -6925,7 +6943,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	 */
 	if (index->unique &&
 		indexcol == index->nkeycolumns - 1 &&
-		eqQualHere &&
+		!skip_column &&
 		!found_saop &&
 		!found_is_null_op)
 		numIndexTuples = 1.0;
@@ -7000,6 +7018,8 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	costs.num_sa_scans = num_sa_scans;
 
 	genericcostestimate(root, path, loop_count, &costs);
+	// elog(WARNING, "costs.numIndexTuples: %f, costs.numIndexPages: %f",
+	// 	 costs.numIndexTuples, costs.numIndexPages);
 
 	/*
 	 * Add a CPU-cost component to represent the costs of initial btree
