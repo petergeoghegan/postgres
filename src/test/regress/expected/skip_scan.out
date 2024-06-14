@@ -55,8 +55,6 @@ set enable_indexonlyscan to off;
 set enable_indexscan to off;
 -- Harder case
 select * from multi_test_skip where a in (123, 182, 183) and b in (1,2);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   a  | b 
 -----+---
  123 | 1
@@ -66,8 +64,6 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_skip where a in (123, 182, 183) and b in (1,2);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                 QUERY PLAN                                                
 ----------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on multi_test_skip  (cost=6.88..11.89 rows=3 width=8) (actual rows=3 loops=1)
@@ -81,8 +77,6 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 
 -- Hard case
 select * from multi_test_skip where a in (182, 183, 184) and b in (1,2);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   a  | b 
 -----+---
  182 | 1
@@ -92,8 +86,6 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_skip where a in (182, 183, 184) and b in (1,2);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                 QUERY PLAN                                                
 ----------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on multi_test_skip  (cost=6.88..11.89 rows=3 width=8) (actual rows=3 loops=1)
@@ -106,8 +98,6 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 (7 rows)
 
 select * from multi_test_skip where a in (3,4,5) and b > 0;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  a | b 
 ---+---
  3 | 1
@@ -117,8 +107,6 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_skip where a in (3,4,5) and b > 0;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                 QUERY PLAN                                                
 ----------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on multi_test_skip  (cost=6.88..11.89 rows=3 width=8) (actual rows=3 loops=1)
@@ -134,10 +122,6 @@ set enable_indexscan to on;
 -- Backwards scan:
 select * from multi_test_skip where a in (3,4,5) and b > 0
 order by a desc, b desc;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  a | b 
 ---+---
  5 | 1
@@ -148,10 +132,6 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_skip where a in (3,4,5) and b > 0
 order by a desc, b desc;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                          QUERY PLAN                                                          
 -----------------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using multi_test_skip_idx on multi_test_skip  (cost=0.28..10.66 rows=3 width=8) (actual rows=3 loops=1)
@@ -166,8 +146,6 @@ from multi_test_skip
 where
   a in (1, 99, 182, 183, 184)
   and a > 183;
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
   a  | b 
 -----+---
  184 | 0
@@ -192,8 +170,6 @@ from multi_test_skip
 where
   a in (1, 99, 182, 183, 184)
   and a > 183;
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
                                                  QUERY PLAN                                                 
 ------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on multi_test_skip  (cost=7.25..31.32 rows=38 width=8) (actual rows=14 loops=1)
@@ -211,8 +187,6 @@ from multi_test_skip
 where
   a > 183
   and a in (1, 99, 182, 183, 184);
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
   a  | b 
 -----+---
  184 | 0
@@ -237,8 +211,6 @@ from multi_test_skip
 where
   a > 183
   and a in (1, 99, 182, 183, 184);
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
                                                  QUERY PLAN                                                 
 ------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on multi_test_skip  (cost=7.25..31.32 rows=38 width=8) (actual rows=14 loops=1)
@@ -255,8 +227,6 @@ from multi_test_skip
 where
   a in (180, 345)
   and a in (230, 300);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  a | b 
 ---+---
 (0 rows)
@@ -267,8 +237,6 @@ from multi_test_skip
 where
   a in (180, 345)
   and a in (230, 300);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                 QUERY PLAN                                                
 ----------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on multi_test_skip  (cost=6.88..8.89 rows=1 width=8) (actual rows=0 loops=1)
@@ -288,8 +256,6 @@ vacuum analyze multi_test_skip;
 select *
 from multi_test_skip
 where b = 1;
-WARNING:  costs.numIndexTuples: 401.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 401.000000, costs.numIndexPages: 1.000000
   a  | b 
 -----+---
    1 | 1
@@ -699,8 +665,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from multi_test_skip
 where b = 1;
-WARNING:  costs.numIndexTuples: 401.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 401.000000, costs.numIndexPages: 1.000000
                                                   QUERY PLAN                                                  
 --------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on multi_test_skip  (cost=5.39..35.40 rows=401 width=8) (actual rows=401 loops=1)
@@ -723,10 +687,6 @@ set enable_indexscan to on;
 -- skip array logic):
 select * from multi_test_skip where a in (3,4,5) and b < 1
 order by a desc, b desc;
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
  a | b 
 ---+---
  5 | 0
@@ -773,10 +733,6 @@ WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_skip where a in (3,4,5) and b < 1
 order by a desc, b desc;
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 13.000000, costs.numIndexPages: 1.000000
                                                             QUERY PLAN                                                             
 -----------------------------------------------------------------------------------------------------------------------------------
  Index Only Scan Backward using multi_test_skip_idx on multi_test_skip  (cost=0.28..7.63 rows=39 width=8) (actual rows=39 loops=1)
@@ -800,8 +756,6 @@ select *
 from multi_test_skip
 where b = 1
 order by a nulls first, b limit 5;
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
       a      | b 
 -------------+---
              | 1
@@ -816,8 +770,6 @@ select *
 from multi_test_skip
 where b = 1
 order by a nulls first, b limit 5;
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.28..0.39 rows=5 width=8) (actual rows=5 loops=1)
@@ -836,8 +788,6 @@ select *
 from multi_test_skip
 where b = 1
 order by a desc nulls last, b limit 5;
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
   a  | b 
 -----+---
  400 | 1
@@ -852,8 +802,6 @@ select *
 from multi_test_skip
 where b = 1
 order by a desc nulls last, b limit 5;
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
                                                                    QUERY PLAN                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.28..0.39 rows=5 width=8) (actual rows=5 loops=1)
@@ -868,8 +816,6 @@ select *
 from multi_test_skip
 where b = 1
 order by a desc nulls last, b limit 5 offset 397;
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
       a      | b 
 -------------+---
            3 | 1
@@ -884,8 +830,6 @@ select *
 from multi_test_skip
 where b = 1
 order by a desc nulls last, b limit 5 offset 397;
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 402.000000, costs.numIndexPages: 1.000000
                                                                     QUERY PLAN                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=9.21..9.32 rows=5 width=8) (actual rows=5 loops=1)
@@ -1140,8 +1084,6 @@ vacuum analyze uuid_tests;
 select skippy, predval
 from uuid_tests
 where predval = 777 order by skippy, predval;
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
                 skippy                | predval 
 --------------------------------------+---------
  00000000-0000-0000-0000-000000000001 |     777
@@ -1172,8 +1114,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select skippy, predval
 from uuid_tests
 where predval = 777 order by skippy, predval;
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
                                                    QUERY PLAN                                                    
 -----------------------------------------------------------------------------------------------------------------
  Index Only Scan using uuid_tests_idx on uuid_tests  (cost=0.42..2.73 rows=18 width=20) (actual rows=18 loops=1)
@@ -1186,10 +1126,6 @@ WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
 select skippy, predval
 from uuid_tests
 where predval = 777 order by skippy desc, predval desc;
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
                 skippy                | predval 
 --------------------------------------+---------
                                       |     777
@@ -1216,10 +1152,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select skippy, predval
 from uuid_tests
 where predval = 777 order by skippy desc, predval desc;
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
                                                         QUERY PLAN                                                        
 --------------------------------------------------------------------------------------------------------------------------
  Index Only Scan Backward using uuid_tests_idx on uuid_tests  (cost=0.42..2.73 rows=18 width=20) (actual rows=18 loops=1)
@@ -1232,8 +1164,6 @@ WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
 select count(*)
 from uuid_tests
 where predval in (333, 4000, 4500, 5000);
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
  count 
 -------
     72
@@ -1243,8 +1173,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*)
 from uuid_tests
 where predval in (333, 4000, 4500, 5000);
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 18.000000, costs.numIndexPages: 1.000000
                                                       QUERY PLAN                                                       
 -----------------------------------------------------------------------------------------------------------------------
  Aggregate  (cost=11.11..11.12 rows=1 width=8) (actual rows=1 loops=1)
@@ -1262,8 +1190,6 @@ from uuid_tests
 where skippy between '00000000-0000-0000-0000-000000000000' and 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
 and
 predval in (333, 4000, 4500, 5000);
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
  count 
 -------
     68
@@ -1275,8 +1201,6 @@ from uuid_tests
 where skippy between '00000000-0000-0000-0000-000000000000' and 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
 and
 predval in (333, 4000, 4500, 5000);
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
                                                                                              QUERY PLAN                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
@@ -1294,8 +1218,6 @@ from uuid_tests
 where skippy > '00000000-0000-0000-0000-000000000000' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
 and
 predval in (333, 4000, 4500, 5000);
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
  count 
 -------
     68
@@ -1307,8 +1229,6 @@ from uuid_tests
 where skippy > '00000000-0000-0000-0000-000000000000' and skippy < 'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'
 and
 predval in (333, 4000, 4500, 5000);
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 17.000000, costs.numIndexPages: 1.000000
                                                                                             QUERY PLAN                                                                                             
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
@@ -1328,8 +1248,6 @@ where skippy > '0FFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF' and skippy < 'FFFFFFFF-FFF
 and
 predval in (333, 4000, 4500, 5000);
 execute uuid_good_luck;
-WARNING:  costs.numIndexTuples: 15.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 15.000000, costs.numIndexPages: 1.000000
  count 
 -------
     60
@@ -1383,48 +1301,36 @@ CREATE UNIQUE INDEX onek_with_null_unique2_unique1 ON onek_with_null (unique2,un
 SET enable_indexscan = ON;
 SET enable_bitmapscan = ON;
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      2
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
  count 
 -------
   1000
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
  count 
 -------
    499
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
  count 
 -------
      0
@@ -1433,56 +1339,42 @@ WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
 DROP INDEX onek_with_null_unique2_unique1;
 CREATE UNIQUE INDEX onek_with_null_unique2desc_unique1 ON onek_with_null (unique2 desc,unique1);
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      2
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
  count 
 -------
   1000
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
  count 
 -------
    499
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
  count 
 -------
      0
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IN (-1, 0, 1);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
@@ -1491,48 +1383,36 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 DROP INDEX onek_with_null_unique2desc_unique1;
 CREATE UNIQUE INDEX onek_with_null_unique2descnullslast_unique1 ON onek_with_null (unique2 desc nulls last,unique1);
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      2
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
  count 
 -------
   1000
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
  count 
 -------
    499
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
  count 
 -------
      0
@@ -1541,48 +1421,36 @@ WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
 DROP INDEX onek_with_null_unique2descnullslast_unique1;
 CREATE UNIQUE INDEX onek_with_null_unique2ascnullsfirst_unique1 ON onek_with_null (unique2  nulls first,unique1);
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      2
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NULL;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 997.000000, costs.numIndexPages: 5.000000
  count 
 -------
   1000
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique2 IS NOT NULL;
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 5.000000, costs.numIndexPages: 1.000000
  count 
 -------
      1
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NOT NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 332.000000, costs.numIndexPages: 2.000000
  count 
 -------
    499
 (1 row)
 
 SELECT count(*) FROM onek_with_null WHERE unique1 IS NULL AND unique1 > 500;
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 2.000000, costs.numIndexPages: 1.000000
  count 
 -------
      0
@@ -1595,8 +1463,6 @@ SET enable_indexscan = ON;
 SET enable_bitmapscan = OFF;
 SELECT unique1, unique2 FROM onek_with_null
   ORDER BY unique2 LIMIT 2;
-WARNING:  costs.numIndexTuples: 1002.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1002.000000, costs.numIndexPages: 5.000000
  unique1 | unique2 
 ---------+---------
          |      -1
@@ -1605,8 +1471,6 @@ WARNING:  costs.numIndexTuples: 1002.000000, costs.numIndexPages: 5.000000
 
 SELECT unique1, unique2 FROM onek_with_null WHERE unique2 >= 0
   ORDER BY unique2 LIMIT 2;
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
  unique1 | unique2 
 ---------+---------
      147 |       0
@@ -1615,8 +1479,6 @@ WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
 
 SELECT unique1, unique2 FROM onek_with_null
   ORDER BY unique2 DESC LIMIT 2;
-WARNING:  costs.numIndexTuples: 1002.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1002.000000, costs.numIndexPages: 5.000000
  unique1 | unique2 
 ---------+---------
          |        
@@ -1625,10 +1487,6 @@ WARNING:  costs.numIndexTuples: 1002.000000, costs.numIndexPages: 5.000000
 
 SELECT unique1, unique2 FROM onek_with_null WHERE unique2 >= -1
   ORDER BY unique2 DESC LIMIT 2;
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
  unique1 | unique2 
 ---------+---------
      278 |     999
@@ -1637,10 +1495,6 @@ WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
 
 SELECT unique1, unique2 FROM onek_with_null WHERE unique2 < 999
   ORDER BY unique2 DESC LIMIT 2;
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
-WARNING:  costs.numIndexTuples: 334.000000, costs.numIndexPages: 2.000000
  unique1 | unique2 
 ---------+---------
        0 |     998
@@ -1688,8 +1542,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   ctid  | dept |   sdate    | item_class | store 
 --------+------+------------+------------+-------
  (0,8)  |    1 | 01-04-1995 |          1 |     2
@@ -1715,8 +1567,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                                               QUERY PLAN                                                                              
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.18 rows=1 width=22) (actual rows=12 loops=1)
@@ -1734,8 +1584,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   ctid  | dept |   sdate    | item_class | store 
 --------+------+------------+------------+-------
  (0,8)  |    1 | 01-04-1995 |          1 |     2
@@ -1761,8 +1609,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                                              QUERY PLAN                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.18 rows=1 width=22) (actual rows=12 loops=1)
@@ -1779,8 +1625,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   ctid  | dept |   sdate    | item_class | store 
 --------+------+------------+------------+-------
  (0,8)  |    1 | 01-04-1995 |          1 |     2
@@ -1806,8 +1650,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                                              QUERY PLAN                                                                             
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.18 rows=1 width=22) (actual rows=12 loops=1)
@@ -1824,8 +1666,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   ctid  | dept |   sdate    | item_class | store 
 --------+------+------------+------------+-------
  (0,2)  |    1 | 01-02-1995 |          1 |     2
@@ -1851,8 +1691,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                             QUERY PLAN                                                             
 -----------------------------------------------------------------------------------------------------------------------------------
  Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.17 rows=1 width=22) (actual rows=12 loops=1)
@@ -1869,8 +1707,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   ctid  | dept |   sdate    | item_class | store 
 --------+------+------------+------------+-------
  (0,11) |    1 | 01-05-1995 |          1 |     2
@@ -1890,8 +1726,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                             QUERY PLAN                                                             
 -----------------------------------------------------------------------------------------------------------------------------------
  Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.17 rows=1 width=22) (actual rows=6 loops=1)
@@ -1909,8 +1743,6 @@ where
   and item_class = 3
   and store = 2
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   ctid  | dept |   sdate    | item_class | store 
 --------+------+------------+------------+-------
  (0,32) |    1 | 01-04-1995 |          3 |     2
@@ -1927,8 +1759,6 @@ where
   and item_class = 3
   and store = 2
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                                        QUERY PLAN                                                                       
 --------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.18 rows=1 width=22) (actual rows=2 loops=1)
@@ -1947,8 +1777,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
   ctid  | dept |   sdate    | item_class | store 
 --------+------+------------+------------+-------
  (0,8)  |    1 | 01-04-1995 |          1 |     2
@@ -1975,8 +1803,6 @@ where
   and item_class in (1, 3, 5)
   and store in (2, 3)
 order by dept, sdate, item_class, store;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                                                                QUERY PLAN                                                                                               
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using mdam_small_idx on sales_mdam_paper_small  (cost=0.15..4.18 rows=1 width=22) (actual rows=12 loops=1)
@@ -2018,8 +1844,6 @@ prepare tenk1_four_skipscan as
 SELECT four, unique1 FROM tenk1_skipscan
  WHERE unique1 = 444;
 execute tenk1_four_skipscan;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  four | unique1 
 ------+---------
     0 |     444
@@ -2039,8 +1863,6 @@ deallocate tenk1_four_skipscan;
 prepare tenk1_four_skipscan_with_saop as
 select four, unique1 from tenk1_skipscan where unique1 in (4444, 4445) limit 3;
 execute tenk1_four_skipscan_with_saop;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  four | unique1 
 ------+---------
     0 |    4444
@@ -2068,8 +1890,6 @@ prepare tenk1_fallback_to_regular_fullscan as
 SELECT hundred, unique1 FROM tenk1_skipscan
  WHERE unique1 = 444;
 execute tenk1_fallback_to_regular_fullscan;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  hundred | unique1 
 ---------+---------
       44 |     444
@@ -2093,8 +1913,6 @@ CREATE INDEX tenk1_skipscan_two_four_twenty ON tenk1_skipscan (two, four, twenty
 set enable_indexonlyscan=off;
 select distinct four, twenty from tenk1_skipscan
 where four in (1, 2) and twenty in (1, 2);
-WARNING:  costs.numIndexTuples: 125.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 125.000000, costs.numIndexPages: 1.000000
  four | twenty 
 ------+--------
     1 |      1
@@ -2104,8 +1922,6 @@ WARNING:  costs.numIndexTuples: 125.000000, costs.numIndexPages: 1.000000
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select distinct four, twenty from tenk1_skipscan
 where four in (1, 2) and twenty in (1, 2);
-WARNING:  costs.numIndexTuples: 125.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 125.000000, costs.numIndexPages: 1.000000
                                                            QUERY PLAN                                                            
 ---------------------------------------------------------------------------------------------------------------------------------
  HashAggregate  (cost=338.38..339.18 rows=80 width=8) (actual rows=2 loops=1)
@@ -2131,8 +1947,6 @@ where
   and four in (1, 2)
   and twenty = 1
 order by two, four, twenty;
-WARNING:  costs.numIndexTuples: 31.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 31.000000, costs.numIndexPages: 1.000000
  two | four | twenty | hundred 
 -----+------+--------+---------
    1 |    1 |      1 |       1
@@ -2150,8 +1964,6 @@ where
   and four in (1, 2)
   and twenty = 1
 order by two, four, twenty;
-WARNING:  costs.numIndexTuples: 31.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 31.000000, costs.numIndexPages: 1.000000
                                                               QUERY PLAN                                                              
 --------------------------------------------------------------------------------------------------------------------------------------
  Unique  (cost=170.51..171.76 rows=116 width=16) (actual rows=5 loops=1)
@@ -2182,8 +1994,6 @@ where
 group by two, four, twenty, hundred
 order by two, four, twenty, hundred;
 execute tenk1_two_four_twenty_hundred_inequal;
-WARNING:  costs.numIndexTuples: 199.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 199.000000, costs.numIndexPages: 1.000000
  count | two | four | twenty | hundred 
 -------+-----+------+--------+---------
    100 |   1 |    1 |      1 |       1
@@ -2224,8 +2034,6 @@ select unique1
 from tenk1_skipscan
 where unique1 > 2147483647
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  unique1 
 ---------
 (0 rows)
@@ -2235,8 +2043,6 @@ select unique1
 from tenk1_skipscan
 where unique1 > 2147483647
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                              QUERY PLAN                                                             
 ------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
@@ -2252,8 +2058,6 @@ select unique1
 from tenk1_skipscan
 where unique1 >= 2147483647
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  unique1 
 ---------
 (0 rows)
@@ -2263,8 +2067,6 @@ select unique1
 from tenk1_skipscan
 where unique1 >= 2147483647
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                              QUERY PLAN                                                             
 ------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
@@ -2282,8 +2084,6 @@ select unique1
 from tenk1_skipscan
 where unique1 > 2147483648
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  unique1 
 ---------
 (0 rows)
@@ -2293,8 +2093,6 @@ select unique1
 from tenk1_skipscan
 where unique1 > 2147483648
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                              QUERY PLAN                                                             
 ------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
@@ -2310,8 +2108,6 @@ select unique1
 from tenk1_skipscan
 where unique1 < (-2147483649)
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  unique1 
 ---------
 (0 rows)
@@ -2321,8 +2117,6 @@ select unique1
 from tenk1_skipscan
 where unique1 < (-2147483649)
 limit 3;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                              QUERY PLAN                                                             
 ------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..2.30 rows=1 width=4) (actual rows=0 loops=1)
@@ -2347,8 +2141,6 @@ where
 -- USE_FLOAT8_BYVAL" commented out), though using ../coredump-run.sh seems to
 -- help it to fail
 execute floatbyref_preproc;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  unique1 
 ---------
 (0 rows)
@@ -2432,8 +2224,6 @@ set enable_indexscan to off;
 -- Two:
 create index two_idx on wisconsin (two, unique1);
 select two, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
      two     | unique1 
 -------------+---------
            0 |    5555
@@ -2445,8 +2235,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select two, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=22.05..2260.02 rows=1500 width=8) (actual rows=5 loops=1)
@@ -2463,8 +2251,6 @@ drop index two_idx;
 create index four_idx on wisconsin (four, unique1);
 -- Point lookup:
 select four, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
     four     | unique1 
 -------------+---------
            0 |    5555
@@ -2476,8 +2262,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select four, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                             
 ---------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=22.05..2260.02 rows=1500 width=8) (actual rows=5 loops=1)
@@ -2491,8 +2275,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- SAOP:
 select four, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
     four     | unique1 
 -------------+---------
            1 |  200000
@@ -2507,8 +2289,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select four, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                             
 ---------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=88.19..5951.30 rows=6000 width=8) (actual rows=8 loops=1)
@@ -2525,8 +2305,6 @@ drop index four_idx;
 create index ten_idx on wisconsin (ten, unique1);
 -- Point lookup:
 select ten, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
      ten     | unique1 
 -------------+---------
            2 |    5555
@@ -2538,8 +2316,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select ten, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=22.05..2260.02 rows=1500 width=8) (actual rows=5 loops=1)
@@ -2553,8 +2329,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- Range instead of skip attribute on "ten":
 select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
  ten | unique1 
 -----+---------
    2 |    5555
@@ -2562,8 +2336,6 @@ WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 412 hits
 select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
                                           QUERY PLAN                                          
 ----------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=2.52..18.42 rows=8 width=8) (actual rows=1 loops=1)
@@ -2579,10 +2351,6 @@ WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
 set enable_bitmapscan to off;
 set enable_indexscan to on;
 select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
  ten | unique1 
 -----+---------
    2 |    5555
@@ -2590,10 +2358,6 @@ WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 333 hits
 select ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555 order by ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
                                                 QUERY PLAN                                                 
 -----------------------------------------------------------------------------------------------------------
  Index Scan Backward using ten_idx on wisconsin  (cost=0.42..18.60 rows=8 width=8) (actual rows=1 loops=1)
@@ -2605,8 +2369,6 @@ set enable_bitmapscan to on;
 set enable_indexscan to off;
 -- SAOP:
 select ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
      ten     | unique1 
 -------------+---------
            9 |  200000
@@ -2621,8 +2383,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=88.19..5951.30 rows=6000 width=8) (actual rows=8 loops=1)
@@ -2636,16 +2396,12 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- Contradictory qual:
 select ten, unique1 from wisconsin where unique1 between 101 and 100;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  ten | unique1 
 -----+---------
 (0 rows)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits, patch 0 hits, since patch detects >= and <= related contradictoriness
 select ten, unique1 from wisconsin where unique1 between 101 and 100;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=25.80..2267.52 rows=1500 width=8) (actual rows=0 loops=1)
@@ -2656,16 +2412,12 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- Contradictory qual, > and < strategies:
 select ten, unique1 from wisconsin where unique1 > 100 and unique1 < 100;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  ten | unique1 
 -----+---------
 (0 rows)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select ten, unique1 from wisconsin where unique1 > 100 and unique1 < 100;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=25.80..2267.52 rows=1500 width=8) (actual rows=0 loops=1)
@@ -2683,8 +2435,6 @@ unique1 > 90 and
 unique1 > 100 and
 unique1 < 100
 ;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  ten | unique1 
 -----+---------
 (0 rows)
@@ -2698,8 +2448,6 @@ unique1 > 90 and
 unique1 > 100 and
 unique1 < 100
 ;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                                      QUERY PLAN                                                     
 --------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=37.05..2290.02 rows=1500 width=8) (actual rows=0 loops=1)
@@ -2710,8 +2458,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- Just one constant generate by skip array (100):
 select ten, unique1 from wisconsin where unique1 between 100 and 100;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  ten | unique1 
 -----+---------
    9 |     100
@@ -2719,8 +2465,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select ten, unique1 from wisconsin where unique1 between 100 and 100;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=25.80..2267.52 rows=1500 width=8) (actual rows=1 loops=1)
@@ -2734,8 +2478,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- Just one constant generate by skip array (100), > and < strategies:
 select unique1 from wisconsin where unique1 > 99 and unique1 < 101;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  unique1 
 ---------
      100
@@ -2743,8 +2485,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select unique1 from wisconsin where unique1 > 99 and unique1 < 101;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=25.80..2267.52 rows=1500 width=4) (actual rows=1 loops=1)
@@ -2765,8 +2505,6 @@ unique1 > 90 and
 unique1 > 99 and
 unique1 < 101
 ;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  unique1 
 ---------
      100
@@ -2781,8 +2519,6 @@ unique1 > 90 and
 unique1 > 99 and
 unique1 < 101
 ;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                                     QUERY PLAN                                                     
 -------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=37.05..2290.02 rows=1500 width=4) (actual rows=1 loops=1)
@@ -2799,8 +2535,6 @@ drop index ten_idx;
 create index four_ten_idx on wisconsin (four, ten, unique1);
 -- Point lookup, skips two cols (four and ten):
 select four, ten, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
     four     |     ten     | unique1 
 -------------+-------------+---------
            0 |           2 |    5555
@@ -2812,8 +2546,6 @@ WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
 select four, ten, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
                                                QUERY PLAN                                                
 ---------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=4566.83..6804.80 rows=1500 width=12) (actual rows=5 loops=1)
@@ -2827,8 +2559,6 @@ WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
 
 -- Point lookup, skips one col (four), range on other col after that (ten):
 select four, ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
  four | ten | unique1 
 ------+-----+---------
     0 |   2 |    5555
@@ -2836,8 +2566,6 @@ WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
 select four, ten, unique1 from wisconsin where ten between -10000 and 4 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
                                             QUERY PLAN                                             
 ---------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=2.52..18.42 rows=8 width=12) (actual rows=1 loops=1)
@@ -2851,8 +2579,6 @@ WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
 
 -- Should be able to handle BETWEEN ranges with same value for >= and <=:
 select four, ten, unique1 from wisconsin where four between 0 and 0 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
  four | ten | unique1 
 ------+-----+---------
     0 |   2 |    5555
@@ -2860,8 +2586,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
 select four, ten, unique1 from wisconsin where four between 0 and 0 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
                                              QUERY PLAN                                             
 ----------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=31.17..47.07 rows=8 width=12) (actual rows=1 loops=1)
@@ -2875,8 +2599,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
 
 -- Missing predicate is in "intermediate" column (ten) here:
 select four, ten, unique1 from wisconsin where four = 0 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
  four | ten | unique1 
 ------+-----+---------
     0 |   2 |    5555
@@ -2884,8 +2606,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
 select four, ten, unique1 from wisconsin where four = 0 and unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
                                              QUERY PLAN                                             
 ----------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=27.42..43.30 rows=8 width=12) (actual rows=1 loops=1)
@@ -2900,8 +2620,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
 -- Missing predicate is in "intermediate" column (ten) here, plus we use a
 -- SAOP for unique1 this time around:
 select four, ten, unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
  four | ten | unique1 
 ------+-----+---------
     0 |   0 |      41
@@ -2911,8 +2629,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 290 hits, patch 33 hits
 select four, ten, unique1 from wisconsin where four = 0 and unique1 in (41, 5555, 299118, 300000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
                                              QUERY PLAN                                              
 -----------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=27.43..86.21 rows=30 width=12) (actual rows=3 loops=1)
@@ -2926,8 +2642,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 6.000000
 
 -- SAOP:
 select four, ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
     four     |     ten     | unique1 
 -------------+-------------+---------
            1 |           9 |  200000
@@ -2942,8 +2656,6 @@ WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 1152 hits
 select four, ten, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
                                                QUERY PLAN                                                
 ---------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=4567.95..10431.06 rows=6000 width=12) (actual rows=8 loops=1)
@@ -2964,10 +2676,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 = 1
 order by four desc, ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
  four | ten | unique1 
 ------+-----+---------
     1 |   9 |       1
@@ -2978,10 +2686,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 = 1
 order by four desc, ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
                                                       QUERY PLAN                                                      
 ----------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using four_ten_idx on wisconsin  (cost=0.42..7347.45 rows=1500 width=12) (actual rows=1 loops=1)
@@ -2994,10 +2698,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 in (1, 5555, 100000, 200000)
 order by four desc, ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
     four     |     ten     | unique1 
 -------------+-------------+---------
   2147483647 |  2147483647 |    5555
@@ -3015,10 +2715,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 in (1, 5555, 100000, 200000)
 order by four desc, ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
                                                       QUERY PLAN                                                       
 -----------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using four_ten_idx on wisconsin  (cost=0.42..13588.45 rows=6000 width=12) (actual rows=8 loops=1)
@@ -3032,8 +2728,6 @@ from wisconsin
 where
   ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
   and unique1 in (41, 5555, 299118, 300000);
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
  four | ten | unique1 
 ------+-----+---------
     0 |   0 |      41
@@ -3047,8 +2741,6 @@ from wisconsin
 where
   ten in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
   and unique1 in (41, 5555, 299118, 300000);
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 8.000000, costs.numIndexPages: 1.000000
                                                          QUERY PLAN                                                          
 -----------------------------------------------------------------------------------------------------------------------------
  Index Scan using four_ten_idx on wisconsin  (cost=0.42..693.10 rows=300 width=12) (actual rows=3 loops=1)
@@ -3063,8 +2755,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 in (1, 5555, 100000, 200000)
 order by four desc, ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
     four     |     ten     | unique1 
 -------------+-------------+---------
   2147483647 |  2147483647 |    5555
@@ -3082,8 +2772,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 in (1, 5555, 100000, 200000)
 order by four desc, ten desc, unique1 desc;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
                                                        QUERY PLAN                                                       
 ------------------------------------------------------------------------------------------------------------------------
  Index Scan using four_desc_ten_desc_idx on wisconsin  (cost=0.42..13588.45 rows=6000 width=12) (actual rows=8 loops=1)
@@ -3096,10 +2784,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 in (1, 5555, 100000, 200000)
 order by four, ten, unique1;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
     four     |     ten     | unique1 
 -------------+-------------+---------
  -2147483648 | -2147483648 |    5555
@@ -3117,10 +2801,6 @@ select four, ten, unique1
 from wisconsin
 where unique1 in (1, 5555, 100000, 200000)
 order by four, ten, unique1;
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
-WARNING:  costs.numIndexTuples: 300004.000000, costs.numIndexPages: 1158.000000
                                                            QUERY PLAN                                                            
 ---------------------------------------------------------------------------------------------------------------------------------
  Index Scan Backward using four_desc_ten_desc_idx on wisconsin  (cost=0.42..13588.45 rows=6000 width=12) (actual rows=8 loops=1)
@@ -3136,8 +2816,6 @@ set enable_indexscan to off;
 create index twenty_idx on wisconsin (twenty, unique1);
 -- Point lookup:
 select twenty, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
    twenty    | unique1 
 -------------+---------
           12 |    5555
@@ -3149,8 +2827,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select twenty, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                              QUERY PLAN                                              
 -----------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=22.05..2260.02 rows=1500 width=8) (actual rows=5 loops=1)
@@ -3164,8 +2840,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- SAOP:
 select twenty, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
    twenty    | unique1 
 -------------+---------
            9 |  200000
@@ -3180,8 +2854,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select twenty, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                              QUERY PLAN                                              
 -----------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=88.19..5951.30 rows=6000 width=8) (actual rows=8 loops=1)
@@ -3198,8 +2870,6 @@ drop index twenty_idx;
 create index onepercent_idx on wisconsin (onepercent, unique1);
 -- Point lookup:
 select onepercent, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  onepercent  | unique1 
 -------------+---------
           32 |    5555
@@ -3211,8 +2881,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select onepercent, unique1 from wisconsin where unique1 = 5555;
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                                QUERY PLAN                                                
 ---------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=22.05..2260.02 rows=1500 width=8) (actual rows=5 loops=1)
@@ -3226,8 +2894,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 -- SAOP:
 select onepercent, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
  onepercent  | unique1 
 -------------+---------
           89 |  200000
@@ -3242,8 +2908,6 @@ WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- master 822 hits
 select onepercent, unique1 from wisconsin where unique1 in (1, 5555, 100000, 200000);
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
-WARNING:  costs.numIndexTuples: 1500.000000, costs.numIndexPages: 5.000000
                                                QUERY PLAN                                                
 ---------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=88.19..5951.30 rows=6000 width=8) (actual rows=8 loops=1)
@@ -3374,8 +3038,6 @@ where
   ten between 1 and 10
   and twenty in (1, 2, 3)
   and unique1 in (84396, 217539, 60814);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  four | ten | twenty | unique1 
 ------+-----+--------+---------
     2 |   2 |      2 |  217539
@@ -3390,8 +3052,6 @@ where
   ten between 1 and 10
   and twenty in (1, 2, 3)
   and unique1 in (84396, 217539, 60814);
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                                      QUERY PLAN                                                                     
 ----------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin  (cost=21.94..23.96 rows=1 width=16) (actual rows=3 loops=1)
@@ -3527,8 +3187,6 @@ set enable_indexonlyscan to off;
 set enable_indexscan to on;
 -- Test how gracefully we handle having a missing = operator for opfamily:
 select * from opfamily_skipscan_test_table where bar = 366::bigint;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
  foo | bar 
 -----+-----
  366 | 366
@@ -3536,8 +3194,6 @@ WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from opfamily_skipscan_test_table where bar = 366::bigint;
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
-WARNING:  costs.numIndexTuples: 1.000000, costs.numIndexPages: 1.000000
                                                                       QUERY PLAN                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Scan using opfamily_skipscan_test_table_foo_bar_idx on opfamily_skipscan_test_table  (cost=0.13..4.15 rows=1 width=16) (actual rows=1 loops=1)
