@@ -98,8 +98,8 @@ static bool _bt_compare_array_scankey_args(IndexScanDesc scan,
 										   bool *qual_ok);
 static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan, int *numberOfKeys);
 static void _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap);
-static bool _bt_skip_array_lookup(Relation rel, int add_skip_attno,
-								  BTSkipPreproc *attaddskip);
+static bool _bt_skip_support(Relation rel, int add_skip_attno,
+							 BTSkipPreproc *attaddskip);
 static int	_bt_determine_skip_attributes(IndexScanDesc scan,
 										  BTSkipPreproc *attaddskip);
 static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
@@ -873,14 +873,13 @@ _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap)
 }
 
 /*
- *	_bt_skip_array_lookup() -- set up skip support function in *attaddskip
+ *	_bt_skip_support() -- set up skip support function in *attaddskip
  *
  * Returns true on success, indicating that we set *attaddskip with input
  * opclass's skip support routine for caller.  Otherwise returns false.
  */
 static bool
-_bt_skip_array_lookup(Relation rel, int add_skip_attno,
-					  BTSkipPreproc *attaddskip)
+_bt_skip_support(Relation rel, int add_skip_attno, BTSkipPreproc *attaddskip)
 {
 	int16	   *indoption = rel->rd_indoption;
 	Oid			opfamily = rel->rd_opfamily[add_skip_attno - 1];
@@ -1003,8 +1002,8 @@ _bt_determine_skip_attributes(IndexScanDesc scan, BTSkipPreproc *attaddskip)
 		{
 			Assert(i > 0);		/* only do this after considering attno */
 
-			if (!_bt_skip_array_lookup(rel, attno_skip_it,
-									   &attaddskip[attno_skip_it - 1]))
+			if (!_bt_skip_support(rel, attno_skip_it,
+								  &attaddskip[attno_skip_it - 1]))
 			{
 				/*
 				 * Opclass lacks a suitable skip support routine.
@@ -1065,8 +1064,8 @@ _bt_determine_skip_attributes(IndexScanDesc scan, BTSkipPreproc *attaddskip)
 			 */
 			if (!attno_has_equal)
 			{
-				if (_bt_skip_array_lookup(rel, attno_skip_it,
-										  &attaddskip[attno_skip_it - 1]))
+				if (_bt_skip_support(rel, attno_skip_it,
+									 &attaddskip[attno_skip_it - 1]))
 					numberOfSkipKeys++;
 				else
 					break;
