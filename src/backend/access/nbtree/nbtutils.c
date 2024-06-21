@@ -990,7 +990,7 @@ _bt_determine_skip_attributes(IndexScanDesc scan, BTSkipPreproc *attaddskip)
 		 * see its FIXME item), we won't need to do this anymore.
 		 */
 #ifndef USE_FLOAT8_BYVAL
-		if (i < scan->numberOfKeys && cur->sk_subtype == INT8OID)
+		if (i < scan->numberOfKeys && inputsk->sk_subtype == INT8OID)
 			break;
 #endif
 
