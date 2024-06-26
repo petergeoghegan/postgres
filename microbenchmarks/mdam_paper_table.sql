@@ -1,6 +1,3 @@
--- See also: refined regression test with MDAM test table + various queries:
--- src/test/regress/sql/mdam_paper_table.sql
-
 drop table if exists sales_mdam_paper;
 create unlogged table sales_mdam_paper
 (
@@ -11,7 +8,6 @@ create unlogged table sales_mdam_paper
   item int4,
   total_sales numeric
 );
-create index mdam_idx on sales_mdam_paper(dept, sdate, item_class, store);
 
 -- Duration of INSERT with 900,000,000 rows:
 --
@@ -37,21 +33,29 @@ from
   -- Highest store in paper is 250, so arbitrarily assume 300 total:
   generate_series(1, 300) store;
 
-/*
-:ea select
-  sdate,
-  item_class,
-  store,
-  sum(total_sales)
-from
-  sales_mdam_paper
-where
+-- Index is per the paper:
+create index mdam_idx on sales_mdam_paper(dept, sdate, item_class, store);
 
-  sdate between '1995-06-01' and '1995-06-30'
-  and item_class in (20, 35, 50)
-  and store in (200, 250)
+select
+  dept,
+  sdate,
+  item_class,
+  store,
+  sum(total_sales)
+from
+  sales_mdam_paper
+where
+  /* omitted: most significant column from our composite index, for the "dept" column */
+  sdate between '1995-06-01' and '1995-06-30'
+  and item_class in (20, 35, 50)
+  and store in (200, 250)
 group by
-  sdate,
-  item_class,
-  store;
-*/
+  dept,
+  sdate,
+  item_class,
+  store
+order by
+  dept,
+  sdate,
+  item_class,
+  store;
