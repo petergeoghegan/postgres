@@ -20,7 +20,7 @@ select
 from
   -- "So let us assume that the values for the column dept in the table range from 1 through 100":
   generate_series(1, 100) dept,
-  -- 400 days, starting on Jan 2 of 95:
+  -- 400 days, starting on Jan 2 of 95 (arbitrary):
   generate_series(1, 400) sdate,
   -- Highest item_class in paper is 50, so arbitrarily assume 75 total:
   generate_series(1, 75) item_class,
