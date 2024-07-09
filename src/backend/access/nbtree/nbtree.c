@@ -399,6 +399,7 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	else
 		so->keyData = NULL;
 
+	so->bmsPages = NULL;
 	so->skipScan = false;
 	so->needPrimScan = false;
 	so->scanBehind = false;
@@ -461,6 +462,8 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			_bt_killitems(scan);
 		BTScanPosUnpinIfPinned(so->currPos);
 		BTScanPosInvalidate(so->currPos);
+		bms_free(so->bmsPages);
+		so->bmsPages = NULL;
 		if (so->log_btree_verbosity)
 			appendStringInfo(&so->debugstr, "btrescan: BTScanPosInvalidate() called for currPos\n");
 	}
@@ -676,6 +679,8 @@ btrestrpos(IndexScanDesc scan)
 			{
 				_bt_start_array_keys(scan, so->currPos.dir);
 				so->needPrimScan = false;
+				bms_free(so->bmsPages);
+				so->bmsPages = NULL;
 			}
 		}
 		else
