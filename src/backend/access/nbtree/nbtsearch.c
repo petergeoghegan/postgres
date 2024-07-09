@@ -1209,6 +1209,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	Assert(!BTScanPosIsValid(so->currPos));
 
+	CHECK_FOR_INTERRUPTS();
+
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
 	 * keys that must be matched to continue the scan.
@@ -2202,6 +2204,17 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	 * good.
 	 */
 	Assert(BTScanPosIsPinned(so->currPos));
+
+	if (so->arrayKeys)
+	{
+		int			pageNum = (int) BufferGetBlockNumber(so->currPos.buf);
+
+		if ((ScanDirectionIsForward(dir) || offnum >= minoff) &&
+			bms_is_member(pageNum, so->bmsPages))
+			elog(ERROR, "pageNum %d already visited\n\n%s", pageNum,
+				 so->debugstr.data);
+		so->bmsPages = bms_add_member(so->bmsPages, pageNum);
+	}
 
 	/*
 	 * Prechecking the value of the continuescan flag for the last item on the
