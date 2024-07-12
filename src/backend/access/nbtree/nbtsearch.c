@@ -1206,8 +1206,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	pgstat_count_index_scan(rel);
 
-	CHECK_FOR_INTERRUPTS();
-
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
 	 * keys that must be matched to continue the scan.
