@@ -1206,8 +1206,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	pgstat_count_index_scan(rel);
 
-	CHECK_FOR_INTERRUPTS();
-
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
 	 * keys that must be matched to continue the scan.
@@ -2709,16 +2707,6 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		so->currPos.firstItem = itemIndex;
 		so->currPos.lastItem = MaxTIDsPerBTreePage - 1;
 		so->currPos.itemIndex = MaxTIDsPerBTreePage - 1;
-	}
-
-	if (so->arrayKeys)
-	{
-		int pageNum = (int) BufferGetBlockNumber(so->currPos.buf);
-		if ((ScanDirectionIsForward(dir) || offnum >= minoff) &&
-			bms_is_member(pageNum, so->bmsPages))
-			elog(ERROR, "pageNum %d already visited\n\n%s", pageNum,
-				 so->debugstr.data);
-		so->bmsPages = bms_add_member(so->bmsPages, pageNum);
 	}
 
 	if (so->log_btree_verbosity >= 2)
