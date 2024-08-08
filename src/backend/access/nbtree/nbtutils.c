@@ -62,7 +62,7 @@ static bool _bt_compare_array_scankey_args(IndexScanDesc scan,
 										   ScanKey arraysk, ScanKey skey,
 										   FmgrInfo *orderproc, BTArrayKeyInfo *array,
 										   bool *qual_ok);
-static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan);
+static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan, int *numberOfKeys);
 static void _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap);
 static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
 static inline int32 _bt_compare_array_skey(FmgrInfo *orderproc,
@@ -251,9 +251,6 @@ _bt_freestack(BTStack stack)
  * It is convenient for _bt_preprocess_keys caller to have to deal with no
  * more than one equality strategy array scan key per index attribute.  We'll
  * always be able to set things up that way when complete opfamilies are used.
- * Eliminated array scan keys can be recognized as those that have had their
- * sk_strategy field set to InvalidStrategy here by us.  Caller should avoid
- * including these in the scan's so->keyData[] output array.
  *
  * We set the scan key references from the scan's BTArrayKeyInfo info array to
  * offsets into the temp modified input array returned to caller.  Scans that
@@ -261,18 +258,25 @@ _bt_freestack(BTStack stack)
  * preprocessing steps are complete.  This will convert the scan key offset
  * references into references to the scan's so->keyData[] output scan keys.
  *
+ * Caller must pass *numberOfKeys to give us a way to change the number of
+ * input scan keys (our output is caller's input).  The returned array can be
+ * smaller than scan->keyData[] when we eliminated a redundant array scan key
+ * (redundant with some other array scan key, for the same attribute).  Caller
+ * uses this to allocate so->keyData[] for the current btrescan.
+ *
  * Note: the reason we need to return a temp scan key array, rather than just
  * scribbling on scan->keyData, is that callers are permitted to call btrescan
  * without supplying a new set of scankey data.
  */
 static ScanKey
-_bt_preprocess_array_keys(IndexScanDesc scan)
+_bt_preprocess_array_keys(IndexScanDesc scan, int *numberOfKeys)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
-	int			numberOfKeys = scan->numberOfKeys;
+	int			numArrayKeyData = scan->numberOfKeys;
 	int16	   *indoption = rel->rd_indoption;
-	int			numArrayKeys;
+	int			numArrayKeys,
+				output_ikey = 0;
 	int			origarrayatt = InvalidAttrNumber,
 				origarraykey = -1;
 	Oid			origelemtype = InvalidOid;
@@ -280,11 +284,11 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 	MemoryContext oldContext;
 	ScanKey		arrayKeyData;	/* modified copy of scan->keyData */
 
-	Assert(numberOfKeys);
+	Assert(scan->numberOfKeys);
 
 	/* Quick check to see if there are any array keys */
 	numArrayKeys = 0;
-	for (int i = 0; i < numberOfKeys; i++)
+	for (int i = 0; i < scan->numberOfKeys; i++)
 	{
 		cur = &scan->keyData[i];
 		if (cur->sk_flags & SK_SEARCHARRAY)
@@ -317,19 +321,18 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 
 	oldContext = MemoryContextSwitchTo(so->arrayContext);
 
-	/* Create modifiable copy of scan->keyData in the workspace context */
-	arrayKeyData = (ScanKey) palloc(numberOfKeys * sizeof(ScanKeyData));
-	memcpy(arrayKeyData, scan->keyData, numberOfKeys * sizeof(ScanKeyData));
+	/* Create output scan keys in the workspace context */
+	arrayKeyData = (ScanKey) palloc(numArrayKeyData * sizeof(ScanKeyData));
 
 	/* Allocate space for per-array data in the workspace context */
 	so->arrayKeys = (BTArrayKeyInfo *) palloc(numArrayKeys * sizeof(BTArrayKeyInfo));
 
 	/* Allocate space for ORDER procs used to help _bt_checkkeys */
-	so->orderProcs = (FmgrInfo *) palloc(numberOfKeys * sizeof(FmgrInfo));
+	so->orderProcs = (FmgrInfo *) palloc(numArrayKeyData * sizeof(FmgrInfo));
 
 	/* Now process each array key */
 	numArrayKeys = 0;
-	for (int i = 0; i < numberOfKeys; i++)
+	for (int input_ikey = 0; input_ikey < scan->numberOfKeys; input_ikey++)
 	{
 		FmgrInfo	sortproc;
 		FmgrInfo   *sortprocp = &sortproc;
@@ -345,14 +348,21 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		int			num_nonnulls;
 		int			j;
 
-		cur = &arrayKeyData[i];
+		/*
+		 * Copy input scan key into temp arrayKeyData scan key array.  (From
+		 * here on, cur points at our copy of the input scan key.)
+		 */
+		cur = &arrayKeyData[output_ikey];
+		*cur = scan->keyData[input_ikey];
+
 		if (!(cur->sk_flags & SK_SEARCHARRAY))
+		{
+			output_ikey++;		/* keep this non-array scan key */
 			continue;
+		}
 
 		/*
-		 * First, deconstruct the array into elements.  Anything allocated
-		 * here (including a possibly detoasted array value) is in the
-		 * workspace context.
+		 * Deconstruct the array into elements
 		 */
 		arrayval = DatumGetArrayTypeP(cur->sk_argument);
 		/* We could cache this data, but not clear it's worth it */
@@ -406,6 +416,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 					_bt_find_extreme_element(scan, cur, elemtype,
 											 BTGreaterStrategyNumber,
 											 elem_values, num_nonnulls);
+				output_ikey++;	/* keep this transformed scan key */
 				continue;
 			case BTEqualStrategyNumber:
 				/* proceed with rest of loop */
@@ -416,6 +427,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 					_bt_find_extreme_element(scan, cur, elemtype,
 											 BTLessStrategyNumber,
 											 elem_values, num_nonnulls);
+				output_ikey++;	/* keep this transformed scan key */
 				continue;
 			default:
 				elog(ERROR, "unrecognized StrategyNumber: %d",
@@ -432,7 +444,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		 * sortproc just points to the same proc used during binary searches.
 		 */
 		_bt_setup_array_cmp(scan, cur, elemtype,
-							&so->orderProcs[i], &sortprocp);
+							&so->orderProcs[output_ikey], &sortprocp);
 
 		/*
 		 * Sort the non-null elements and eliminate any duplicates.  We must
@@ -476,11 +488,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 					break;
 				}
 
-				/*
-				 * Indicate to _bt_preprocess_keys caller that it must ignore
-				 * this scan key
-				 */
-				cur->sk_strategy = InvalidStrategy;
+				/* Throw away this scan key/array */
 				continue;
 			}
 
@@ -511,12 +519,15 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		 * Note: _bt_preprocess_array_keys_final will fix-up each array's
 		 * scan_key field later on, after so->keyData[] has been finalized.
 		 */
-		so->arrayKeys[numArrayKeys].scan_key = i;
+		so->arrayKeys[numArrayKeys].scan_key = output_ikey;
 		so->arrayKeys[numArrayKeys].num_elems = num_elems;
 		so->arrayKeys[numArrayKeys].elem_values = elem_values;
 		numArrayKeys++;
+		output_ikey++;			/* keep this scan key/array */
 	}
 
+	/* Set final number of arrayKeyData[] keys, array keys */
+	*numberOfKeys = output_ikey;
 	so->numArrayKeys = numArrayKeys;
 
 	MemoryContextSwitchTo(oldContext);
@@ -2429,10 +2440,12 @@ end_toplevel_scan:
 /*
  *	_bt_preprocess_keys() -- Preprocess scan keys
  *
+ * The first call here (per btrescan) allocates so->keyData[].
  * The given search-type keys (taken from scan->keyData[])
  * are copied to so->keyData[] with possible transformation.
  * scan->numberOfKeys is the number of input keys, so->numberOfKeys gets
- * the number of output keys (possibly less, never greater).
+ * the number of output keys.  Calling here a second or subsequent time
+ * (during the same btrescan) is a no-op.
  *
  * The output keys are marked with additional sk_flags bits beyond the
  * system-standard bits supplied by the caller.  The DESC and NULLS_FIRST
@@ -2519,9 +2532,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	int16	   *indoption = scan->indexRelation->rd_indoption;
 	int			new_numberOfKeys;
 	int			numberOfEqualCols;
-	ScanKey		inkeys;
-	ScanKey		outkeys;
-	ScanKey		cur;
+	ScanKey		inputsk;
 	BTScanKeyPreproc xform[BTMaxStrategyNumber];
 	bool		test_result;
 	int			i,
@@ -2553,7 +2564,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		return;					/* done if qual-less scan */
 
 	/* If any keys are SK_SEARCHARRAY type, set up array-key info */
-	arrayKeyData = _bt_preprocess_array_keys(scan);
+	arrayKeyData = _bt_preprocess_array_keys(scan, &numberOfKeys);
 	if (!so->qual_ok)
 	{
 		/* unmatchable array, so give up */
@@ -2567,32 +2578,36 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	 */
 	if (arrayKeyData)
 	{
-		inkeys = arrayKeyData;
+		inputsk = arrayKeyData;
 
 		/* Also maintain keyDataMap for remapping so->orderProc[] later */
 		keyDataMap = MemoryContextAlloc(so->arrayContext,
 										numberOfKeys * sizeof(int));
 	}
 	else
-		inkeys = scan->keyData;
+		inputsk = scan->keyData;
 
-	outkeys = so->keyData;
-	cur = &inkeys[0];
+	/*
+	 * Now that we have an estimate of the number of output scan keys,
+	 * allocate space for them
+	 */
+	so->keyData = palloc(sizeof(ScanKeyData) * numberOfKeys);
+
 	/* we check that input keys are correctly ordered */
-	if (cur->sk_attno < 1)
+	if (inputsk[0].sk_attno < 1)
 		elog(ERROR, "btree index keys must be ordered by attribute");
 
 	/* We can short-circuit most of the work if there's just one key */
 	if (numberOfKeys == 1)
 	{
 		/* Apply indoption to scankey (might change sk_strategy!) */
-		if (!_bt_fix_scankey_strategy(cur, indoption))
+		if (!_bt_fix_scankey_strategy(inputsk, indoption))
 			so->qual_ok = false;
-		memcpy(outkeys, cur, sizeof(ScanKeyData));
+		memcpy(&so->keyData[0], &inputsk[0], sizeof(ScanKeyData));
 		so->numberOfKeys = 1;
 		/* We can mark the qual as required if it's for first index col */
-		if (cur->sk_attno == 1)
-			_bt_mark_scankey_required(outkeys);
+		if (inputsk[0].sk_attno == 1)
+			_bt_mark_scankey_required(&so->keyData[0]);
 		if (arrayKeyData)
 		{
 			/*
@@ -2600,8 +2615,8 @@ _bt_preprocess_keys(IndexScanDesc scan)
 			 * (we'll miss out on the single value array transformation, but
 			 * that's not nearly as important when there's only one scan key)
 			 */
-			Assert(cur->sk_flags & SK_SEARCHARRAY);
-			Assert(cur->sk_strategy != BTEqualStrategyNumber ||
+			Assert(so->keyData[0].sk_flags & SK_SEARCHARRAY);
+			Assert(so->keyData[0].sk_strategy != BTEqualStrategyNumber ||
 				   (so->arrayKeys[0].scan_key == 0 &&
 					OidIsValid(so->orderProcs[0].fn_oid)));
 		}
@@ -2629,12 +2644,12 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	 * handle after-last-key processing.  Actual exit from the loop is at the
 	 * "break" statement below.
 	 */
-	for (i = 0;; cur++, i++)
+	for (i = 0;; inputsk++, i++)
 	{
 		if (i < numberOfKeys)
 		{
 			/* Apply indoption to scankey (might change sk_strategy!) */
-			if (!_bt_fix_scankey_strategy(cur, indoption))
+			if (!_bt_fix_scankey_strategy(inputsk, indoption))
 			{
 				/* NULL can't be matched, so give up */
 				so->qual_ok = false;
@@ -2646,12 +2661,12 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		 * If we are at the end of the keys for a particular attr, finish up
 		 * processing and emit the cleaned-up keys.
 		 */
-		if (i == numberOfKeys || cur->sk_attno != attno)
+		if (i == numberOfKeys || inputsk->sk_attno != attno)
 		{
 			int			priorNumberOfEqualCols = numberOfEqualCols;
 
 			/* check input keys are correctly ordered */
-			if (i < numberOfKeys && cur->sk_attno < attno)
+			if (i < numberOfKeys && inputsk->sk_attno < attno)
 				elog(ERROR, "btree index keys must be ordered by attribute");
 
 			/*
@@ -2755,7 +2770,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 			}
 
 			/*
-			 * Emit the cleaned-up keys into the outkeys[] array, and then
+			 * Emit the cleaned-up keys into the so->keyData[] array, and then
 			 * mark them if they are required.  They are required (possibly
 			 * only in one direction) if all attrs before this one had "=".
 			 */
@@ -2763,7 +2778,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 			{
 				if (xform[j].skey)
 				{
-					ScanKey		outkey = &outkeys[new_numberOfKeys++];
+					ScanKey		outkey = &so->keyData[new_numberOfKeys++];
 
 					memcpy(outkey, xform[j].skey, sizeof(ScanKeyData));
 					if (arrayKeyData)
@@ -2780,19 +2795,19 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				break;
 
 			/* Re-initialize for new attno */
-			attno = cur->sk_attno;
+			attno = inputsk->sk_attno;
 			memset(xform, 0, sizeof(xform));
 		}
 
 		/* check strategy this key's operator corresponds to */
-		j = cur->sk_strategy - 1;
+		j = inputsk->sk_strategy - 1;
 
 		/* if row comparison, push it directly to the output array */
-		if (cur->sk_flags & SK_ROW_HEADER)
+		if (inputsk->sk_flags & SK_ROW_HEADER)
 		{
-			ScanKey		outkey = &outkeys[new_numberOfKeys++];
+			ScanKey		outkey = &so->keyData[new_numberOfKeys++];
 
-			memcpy(outkey, cur, sizeof(ScanKeyData));
+			memcpy(outkey, inputsk, sizeof(ScanKeyData));
 			if (arrayKeyData)
 				keyDataMap[new_numberOfKeys - 1] = i;
 			if (numberOfEqualCols == attno - 1)
@@ -2806,21 +2821,10 @@ _bt_preprocess_keys(IndexScanDesc scan)
 			continue;
 		}
 
-		/*
-		 * Does this input scan key require further processing as an array?
-		 */
-		if (cur->sk_strategy == InvalidStrategy)
+		if (inputsk->sk_strategy == BTEqualStrategyNumber &&
+			(inputsk->sk_flags & SK_SEARCHARRAY))
 		{
-			/* _bt_preprocess_array_keys marked this array key redundant */
-			Assert(arrayKeyData);
-			Assert(cur->sk_flags & SK_SEARCHARRAY);
-			continue;
-		}
-
-		if (cur->sk_strategy == BTEqualStrategyNumber &&
-			(cur->sk_flags & SK_SEARCHARRAY))
-		{
-			/* _bt_preprocess_array_keys kept this array key */
+			/* maintain arrayidx for xform[] array */
 			Assert(arrayKeyData);
 			arrayidx++;
 		}
@@ -2832,7 +2836,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 		if (xform[j].skey == NULL)
 		{
 			/* nope, so this scan key wins by default (at least for now) */
-			xform[j].skey = cur;
+			xform[j].skey = inputsk;
 			xform[j].ikey = i;
 			xform[j].arrayidx = arrayidx;
 		}
@@ -2850,7 +2854,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				/*
 				 * Have to set up array keys
 				 */
-				if ((cur->sk_flags & SK_SEARCHARRAY))
+				if (inputsk->sk_flags & SK_SEARCHARRAY)
 				{
 					array = &so->arrayKeys[arrayidx - 1];
 					orderproc = so->orderProcs + i;
@@ -2878,7 +2882,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				 */
 			}
 
-			if (_bt_compare_scankey_args(scan, cur, cur, xform[j].skey,
+			if (_bt_compare_scankey_args(scan, inputsk, inputsk, xform[j].skey,
 										 array, orderproc, &test_result))
 			{
 				/* Have all we need to determine redundancy */
@@ -2892,7 +2896,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 					if (j != (BTEqualStrategyNumber - 1) ||
 						!(xform[j].skey->sk_flags & SK_SEARCHARRAY))
 					{
-						xform[j].skey = cur;
+						xform[j].skey = inputsk;
 						xform[j].ikey = i;
 						xform[j].arrayidx = arrayidx;
 					}
@@ -2905,7 +2909,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 						 * scan key.  _bt_compare_scankey_args expects us to
 						 * always keep arrays (and discard non-arrays).
 						 */
-						Assert(!(cur->sk_flags & SK_SEARCHARRAY));
+						Assert(!(inputsk->sk_flags & SK_SEARCHARRAY));
 					}
 				}
 				else if (j == (BTEqualStrategyNumber - 1))
@@ -2928,14 +2932,14 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				 * even with incomplete opfamilies.  _bt_advance_array_keys
 				 * depends on this.
 				 */
-				ScanKey		outkey = &outkeys[new_numberOfKeys++];
+				ScanKey		outkey = &so->keyData[new_numberOfKeys++];
 
 				memcpy(outkey, xform[j].skey, sizeof(ScanKeyData));
 				if (arrayKeyData)
 					keyDataMap[new_numberOfKeys - 1] = xform[j].ikey;
 				if (numberOfEqualCols == attno - 1)
 					_bt_mark_scankey_required(outkey);
-				xform[j].skey = cur;
+				xform[j].skey = inputsk;
 				xform[j].ikey = i;
 				xform[j].arrayidx = arrayidx;
 			}
@@ -3346,13 +3350,6 @@ _bt_fix_scankey_strategy(ScanKey skey, int16 *indoption)
 		}
 
 		/* Needn't do the rest */
-		return true;
-	}
-
-	if (skey->sk_strategy == InvalidStrategy)
-	{
-		/* Already-eliminated array scan key; don't need to fix anything */
-		Assert(skey->sk_flags & SK_SEARCHARRAY);
 		return true;
 	}
 
