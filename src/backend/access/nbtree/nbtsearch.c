@@ -1679,6 +1679,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		ItemId		iid;
 		IndexTuple	itup;
 
+		Assert(!so->oppoDirCheck);
+
 		iid = PageGetItemId(page, ScanDirectionIsForward(dir) ? maxoff : minoff);
 		itup = (IndexTuple) PageGetItem(page, iid);
 
@@ -1696,6 +1698,28 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			ItemId		iid = PageGetItemId(page, P_HIKEY);
 
 			pstate.finaltup = (IndexTuple) PageGetItem(page, iid);
+
+			if (unlikely(so->oppoDirCheck))
+			{
+				/*
+				 * Last _bt_readpage call scheduled precheck of finaltup for
+				 * required scan keys up to and including a > or >= scan key
+				 * (necessary because > and >= are only generally considered
+				 * required when scanning backwards)
+				 */
+				Assert(so->scanBehind);
+				so->oppoDirCheck = false;
+				if (!_bt_oppodir_checkkeys(scan, dir, pstate.finaltup))
+				{
+					/*
+					 * Back out of continuing with this leaf page -- schedule
+					 * another primitive index scan after all
+					 */
+					so->currPos.moreRight = false;
+					so->needPrimScan = true;
+					return false;
+				}
+			}
 		}
 
 		/* load items[] in ascending order */

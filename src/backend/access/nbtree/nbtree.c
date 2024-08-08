@@ -331,6 +331,7 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 
 	so->needPrimScan = false;
 	so->scanBehind = false;
+	so->oppoDirCheck = false;
 	so->arrayKeys = NULL;
 	so->orderProcs = NULL;
 	so->arrayContext = NULL;
@@ -374,6 +375,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	so->markItemIndex = -1;
 	so->needPrimScan = false;
 	so->scanBehind = false;
+	so->oppoDirCheck = false;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
 
@@ -626,6 +628,7 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 		 */
 		so->needPrimScan = false;
 		so->scanBehind = false;
+		so->oppoDirCheck = false;
 	}
 	else
 	{
@@ -670,6 +673,7 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 				}
 				so->needPrimScan = true;
 				so->scanBehind = false;
+				so->oppoDirCheck = false;
 				*pageno = InvalidBlockNumber;
 				exit_loop = true;
 			}
