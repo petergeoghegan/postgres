@@ -4269,16 +4269,31 @@ description | Waiting for a newly initialized WAL file to reach durable storage
 
   <note>
    <para>
-    Queries that use certain <acronym>SQL</acronym> constructs to search for
-    rows matching any value out of a list or array of multiple scalar values
-    (see <xref linkend="functions-comparisons"/>) perform multiple
-    <quote>primitive</quote> index scans (up to one primitive scan per scalar
-    value) during query execution.  Each internal primitive index scan
-    increments <structname>pg_stat_all_indexes</structname>.<structfield>idx_scan</structfield>,
+    Index scans may sometimes perform multiple index searches per execution.
+    Each index search increments <structname>pg_stat_all_indexes</structname>.<structfield>idx_scan</structfield>,
     so it's possible for the count of index scans to significantly exceed the
     total number of index scan executor node executions.
    </para>
+   <para>
+    This can happen with queries that use certain <acronym>SQL</acronym>
+    constructs to search for rows matching any value out of a list or array of
+    multiple scalar values (see <xref linkend="functions-comparisons"/>).  It
+    can also happen with queries that have
+    <literal><replaceable>expression</replaceable> =
+     <replaceable>value1</replaceable> OR
+     <replaceable>expression</replaceable> = <replaceable>value2</replaceable>
+     ...</literal> constructs when the query planner transforms the constructs
+    into an equivalent multi-valued array representation.
+   </para>
   </note>
+  <tip>
+   <para>
+    <command>EXPLAIN ANALYZE</command> outputs the total number of index
+    searches performed by each index scan node.  <literal>Index Searches: N</literal>
+    indicates the total number of searches across <emphasis>all</emphasis>
+    executor node executions/loops.
+   </para>
+  </tip>
 
  </sect2>
 
