@@ -2545,8 +2545,8 @@ show_indexscan_nprimscans(PlanState *planstate, ExplainState *es)
 	}
 
 	if (scanDesc && scanDesc->nprimscans > 0)
-		ExplainPropertyFloat("Primitive Index Scans", NULL,
-							 scanDesc->nprimscans, 0, es);
+		ExplainPropertyUInteger("Primitive Index Scans", NULL,
+								scanDesc->nprimscans, es);
 }
 
 /*

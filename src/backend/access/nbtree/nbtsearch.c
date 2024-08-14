@@ -913,7 +913,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	/* Count each descent of the index as another primitive index scan */
 	pgstat_count_index_scan(rel);
-	scan->nprimscans += 1;
+	scan->nprimscans++;
 
 	/*
 	 * For parallel scans, get the starting page from shared state. If the
