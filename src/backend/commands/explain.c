@@ -87,10 +87,10 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
 						ExplainState *es);
 static void show_plan_tlist(PlanState *planstate, List *ancestors,
 							ExplainState *es);
-static void show_primscans(PlanState *planstate, ExplainState *es);
 static void show_expression(Node *node, const char *qlabel,
 							PlanState *planstate, List *ancestors,
 							bool useprefix, ExplainState *es);
+static void show_indexscan_nprimscans(PlanState *planstate, ExplainState *es);
 static void show_qual(List *qual, const char *qlabel,
 					  PlanState *planstate, List *ancestors,
 					  bool useprefix, ExplainState *es);
@@ -1983,7 +1983,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			if (es->analyze)
-				show_primscans(planstate, es);
+				show_indexscan_nprimscans(planstate, es);
 			break;
 		case T_IndexOnlyScan:
 			show_scan_qual(((IndexOnlyScan *) plan)->indexqual,
@@ -1998,16 +1998,17 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			if (es->analyze)
+			{
 				ExplainPropertyFloat("Heap Fetches", NULL,
 									 planstate->instrument->ntuples2, 0, es);
-			if (es->analyze)
-				show_primscans(planstate, es);
+				show_indexscan_nprimscans(planstate, es);
+			}
 			break;
 		case T_BitmapIndexScan:
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
 						   "Index Cond", planstate, ancestors, es);
 			if (es->analyze)
-				show_primscans(planstate, es);
+				show_indexscan_nprimscans(planstate, es);
 			break;
 		case T_BitmapHeapScan:
 			show_scan_qual(((BitmapHeapScan *) plan)->bitmapqualorig,
@@ -2494,8 +2495,35 @@ show_plan_tlist(PlanState *planstate, List *ancestors, ExplainState *es)
 	ExplainPropertyList("Output", result, es);
 }
 
+/*
+ * Show a generic expression
+ */
 static void
-show_primscans(PlanState *planstate, ExplainState *es)
+show_expression(Node *node, const char *qlabel,
+				PlanState *planstate, List *ancestors,
+				bool useprefix, ExplainState *es)
+{
+	List	   *context;
+	char	   *exprstr;
+
+	/* Set up deparsing context */
+	context = set_deparse_context_plan(es->deparse_cxt,
+									   planstate->plan,
+									   ancestors);
+
+	/* Deparse the expression */
+	exprstr = deparse_expression(node, context, useprefix, false);
+
+	/* And add to es->str */
+	ExplainPropertyText(qlabel, exprstr, es);
+}
+
+/*
+ * Show the number of primitive index scans within an IndexScan node,
+ * IndexOnlyScan node, or BitmapIndexScan node
+ */
+static void
+show_indexscan_nprimscans(PlanState *planstate, ExplainState *es)
 {
 	Plan	   *plan = planstate->plan;
 	struct IndexScanDescData *scanDesc = NULL;
@@ -2519,29 +2547,6 @@ show_primscans(PlanState *planstate, ExplainState *es)
 	if (scanDesc && scanDesc->nprimscans > 0)
 		ExplainPropertyFloat("Primitive Index Scans", NULL,
 							 scanDesc->nprimscans, 0, es);
-}
-
-/*
- * Show a generic expression
- */
-static void
-show_expression(Node *node, const char *qlabel,
-				PlanState *planstate, List *ancestors,
-				bool useprefix, ExplainState *es)
-{
-	List	   *context;
-	char	   *exprstr;
-
-	/* Set up deparsing context */
-	context = set_deparse_context_plan(es->deparse_cxt,
-									   planstate->plan,
-									   ancestors);
-
-	/* Deparse the expression */
-	exprstr = deparse_expression(node, context, useprefix, false);
-
-	/* And add to es->str */
-	ExplainPropertyText(qlabel, exprstr, es);
 }
 
 /*
