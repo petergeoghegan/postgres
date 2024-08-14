@@ -573,6 +573,7 @@ begin
         ln := regexp_replace(ln, 'Workers Launched: \d+', 'Workers Launched: N');
         ln := regexp_replace(ln, 'actual rows=\d+ loops=\d+', 'actual rows=N loops=N');
         ln := regexp_replace(ln, 'Rows Removed by Filter: \d+', 'Rows Removed by Filter: N');
+        ln := regexp_replace(ln, 'Primitive Index Scans: \d+', 'Primitive Index Scans: N');
         return next ln;
     end loop;
 end;
