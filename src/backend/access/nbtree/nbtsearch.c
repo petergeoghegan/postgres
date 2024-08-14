@@ -896,8 +896,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	Assert(!BTScanPosIsValid(so->currPos));
 
-	pgstat_count_index_scan(rel);
-
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
 	 * keys that must be matched to continue the scan.
@@ -913,6 +911,10 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		_bt_parallel_done(scan);
 		return false;
 	}
+
+	/* Count each descent of the index as another primitive index scan */
+	pgstat_count_index_scan(rel);
+	scan->nprimscans += 1;
 
 	/*
 	 * For parallel scans, get the starting page from shared state. If the

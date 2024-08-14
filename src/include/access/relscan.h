@@ -130,6 +130,9 @@ typedef struct IndexScanDescData
 	bool		xactStartedInRecovery;	/* prevents killing/seeing killed
 										 * tuples */
 
+	/* index access method instrumentation output state */
+	double		nprimscans;		/* # of primitive index scans */
+
 	/* index access method's private state */
 	void	   *opaque;			/* access-method-specific info */
 

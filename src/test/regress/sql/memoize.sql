@@ -23,8 +23,10 @@ begin
         ln := regexp_replace(ln, 'Evictions: 0', 'Evictions: Zero');
         ln := regexp_replace(ln, 'Evictions: \d+', 'Evictions: N');
         ln := regexp_replace(ln, 'Memory Usage: \d+', 'Memory Usage: N');
-	ln := regexp_replace(ln, 'Heap Fetches: \d+', 'Heap Fetches: N');
-	ln := regexp_replace(ln, 'loops=\d+', 'loops=N');
+        ln := regexp_replace(ln, 'Heap Fetches: \d+', 'Heap Fetches: N');
+        ln := regexp_replace(ln, 'loops=\d+', 'loops=N');
+        ln := regexp_replace(ln, 'Primitive Index Scans: 0', 'Primitive Index Scans: Zero');
+        ln := regexp_replace(ln, 'Primitive Index Scans: \d+', 'Primitive Index Scans: N');
         return next ln;
     end loop;
 end;
