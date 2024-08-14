@@ -13,6 +13,7 @@
  */
 #include "postgres.h"
 
+#include "access/relscan.h"
 #include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "commands/createas.h"
@@ -89,6 +90,7 @@ static void show_plan_tlist(PlanState *planstate, List *ancestors,
 static void show_expression(Node *node, const char *qlabel,
 							PlanState *planstate, List *ancestors,
 							bool useprefix, ExplainState *es);
+static void show_indexscan_nprimscans(PlanState *planstate, ExplainState *es);
 static void show_qual(List *qual, const char *qlabel,
 					  PlanState *planstate, List *ancestors,
 					  bool useprefix, ExplainState *es);
@@ -1980,6 +1982,8 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (plan->qual)
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
+			if (es->analyze)
+				show_indexscan_nprimscans(planstate, es);
 			break;
 		case T_IndexOnlyScan:
 			show_scan_qual(((IndexOnlyScan *) plan)->indexqual,
@@ -1994,12 +1998,17 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			if (es->analyze)
+			{
 				ExplainPropertyFloat("Heap Fetches", NULL,
 									 planstate->instrument->ntuples2, 0, es);
+				show_indexscan_nprimscans(planstate, es);
+			}
 			break;
 		case T_BitmapIndexScan:
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
 						   "Index Cond", planstate, ancestors, es);
+			if (es->analyze)
+				show_indexscan_nprimscans(planstate, es);
 			break;
 		case T_BitmapHeapScan:
 			show_scan_qual(((BitmapHeapScan *) plan)->bitmapqualorig,
@@ -2507,6 +2516,36 @@ show_expression(Node *node, const char *qlabel,
 
 	/* And add to es->str */
 	ExplainPropertyText(qlabel, exprstr, es);
+}
+
+/*
+ * Show the number of primitive index scans within an IndexScan node,
+ * IndexOnlyScan node, or BitmapIndexScan node
+ */
+static void
+show_indexscan_nprimscans(PlanState *planstate, ExplainState *es)
+{
+	Plan	   *plan = planstate->plan;
+	struct IndexScanDescData *scanDesc = NULL;
+
+	switch (nodeTag(plan))
+	{
+		case T_IndexScan:
+			scanDesc = ((IndexScanState *) planstate)->iss_ScanDesc;
+			break;
+		case T_IndexOnlyScan:
+			scanDesc = ((IndexOnlyScanState *) planstate)->ioss_ScanDesc;
+			break;
+		case T_BitmapIndexScan:
+			scanDesc = ((BitmapIndexScanState *) planstate)->biss_ScanDesc;
+			break;
+		default:
+			break;
+	}
+
+	if (scanDesc && scanDesc->nprimscans > 0)
+		ExplainPropertyUInteger("Primitive Index Scans", NULL,
+								scanDesc->nprimscans, es);
 }
 
 /*
