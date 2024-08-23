@@ -7307,6 +7307,12 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
 	*indexPages = costs.numIndexPages;
+
+	elog(DEBUG1,
+		 "\nindexStartupCost: %f, \nindexTotalCost: %f, \nindexSelectivity: %f, \nindexCorrelation: %f, \nnumIndexPages: %f, \nnumIndexTuples: %f, \nspc_random_page_cost: %f, \nnum_sa_scans: %f",
+		 costs.indexStartupCost, costs.indexTotalCost, costs.indexSelectivity,
+		 costs.indexCorrelation, costs.numIndexPages, costs.numIndexTuples,
+		 costs.spc_random_page_cost, costs.num_sa_scans);
 }
 
 void
