@@ -585,7 +585,8 @@ btparallelrescan(IndexScanDesc scan)
  *		or _bt_parallel_done().
  *
  * The return value is true if we successfully seized the scan and false
- * if we did not.  The latter case occurs if no pages remain.
+ * if we did not.  The latter case occurs if no pages remain in this primitive
+ * index scan.
  *
  * If the return value is true, *pageno returns the next or current page
  * of the scan (depending on the scan direction).  An invalid block number
@@ -654,8 +655,10 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 			Assert(so->numArrayKeys);
 
 			/*
-			 * If we can start another primitive scan right away, do so.
-			 * Otherwise just wait.
+			 * If we're called from _bt_first and thus are set up to start a
+			 * primitive scan, do so.  If not, we stop this current primitive
+			 * scan by returning false, which sets us up for the call to
+			 * _bt_first which can then try to seize this scan again.
 			 */
 			if (first)
 			{
@@ -668,11 +671,16 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 					array->cur_elem = btscan->btps_arrElems[i];
 					skey->sk_argument = array->elem_values[array->cur_elem];
 				}
-				so->needPrimScan = true;
-				so->scanBehind = false;
 				*pageno = InvalidBlockNumber;
 				exit_loop = true;
 			}
+			else
+			{
+				*pageno = InvalidBlockNumber;
+				status = false;
+			}
+			so->needPrimScan = true;
+			so->scanBehind = false;
 		}
 		else if (btscan->btps_pageStatus != BTPARALLEL_ADVANCING)
 		{
@@ -731,12 +739,20 @@ _bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page)
 void
 _bt_parallel_done(IndexScanDesc scan)
 {
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
 	bool		status_changed = false;
 
 	/* Do nothing, for non-parallel scans */
 	if (parallel_scan == NULL)
+		return;
+
+	/*
+	 * Disallow marking parallel scan done when this backend has a pending
+	 * primitive index scan
+	 */
+	if (so->needPrimScan)
 		return;
 
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
