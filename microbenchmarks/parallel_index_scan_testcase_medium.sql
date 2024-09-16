@@ -79,13 +79,13 @@ set work_mem='1GB';
 
 set log_btree_verbosity=1;
 set parallel_leader_participation=on;
-set max_parallel_workers_per_gather=10;
+set max_parallel_workers_per_gather=4;
 
 -- EXPLAIN (ANALYZE, BUFFERS)
 select count(*) as zebra_count,
 c3
--- ,c4
--- ,c5
+,c4
+,c5
 from parallel_index_scan_medium
 where c3 in (
   '2000-01-01',
@@ -105,12 +105,12 @@ where c3 in (
   '2000-01-29',
   '2000-01-31'
 )
--- and c4 in ('xyz0', 'xyz2', 'xyz4')
--- and c5 in (1,2,3,4,5)
+and c4 in ('xyz0', 'xyz2', 'xyz4')
+and c5 in (1,2,3,4,5)
 group by
 c3
--- , c4
--- , c5
+, c4
+, c5
 ;
 show max_parallel_workers_per_gather;
 
