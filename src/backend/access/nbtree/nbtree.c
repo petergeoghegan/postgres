@@ -253,14 +253,6 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 	/* btree indexes are never lossy */
 	scan->xs_recheck = false;
 
-	/* reset bmsPages so that we don't give false positives with cursors */
-	if (so->bmsPagesDir != dir)
-	{
-		bms_free(so->bmsPages);
-		so->bmsPages = NULL;
-		so->bmsPagesDir = dir;
-	}
-
 	/* Each loop iteration performs another primitive index scan */
 	do
 	{
@@ -393,8 +385,6 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	BTScanPosInvalidate(so->markPos);
 
 	so->keyData = NULL;
-	so->bmsPages = NULL;
-	so->bmsPagesDir = NoMovementScanDirection;
 	so->needPrimScan = false;
 	so->scanBehind = false;
 	so->oppoDirCheck = false;
@@ -506,10 +496,6 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	if (so->keyData != NULL)
 		pfree(so->keyData);
 	so->keyData = NULL;
-
-	bms_free(so->bmsPages);
-	so->bmsPages = NULL;
-	so->bmsPagesDir = NoMovementScanDirection;
 }
 
 /*
@@ -648,9 +634,6 @@ btrestrpos(IndexScanDesc scan)
 			{
 				_bt_start_array_keys(scan, so->currPos.dir);
 				so->needPrimScan = false;
-				bms_free(so->bmsPages);
-				so->bmsPages = NULL;
-				so->bmsPagesDir = NoMovementScanDirection;
 			}
 		}
 		else
