@@ -146,7 +146,6 @@
 /* Hooks for plugins to get control when we ask for stats */
 get_relation_stats_hook_type get_relation_stats_hook = NULL;
 get_index_stats_hook_type get_index_stats_hook = NULL;
-bool		suppress_get_actual_variable_range_hack = false;
 
 static double eqsel_internal(PG_FUNCTION_ARGS, bool negate);
 static double eqjoinsel_inner(Oid opfuncoid, Oid collation,
@@ -6295,8 +6294,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 								   InvalidOid,	/* no reg proc for this */
 								   (Datum) 0);	/* constant */
 
-			suppress_get_actual_variable_range_hack = true;
-
 			/* If min is requested ... */
 			if (min)
 			{
@@ -6330,8 +6327,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 														 oldcontext,
 														 max);
 			}
-
-			suppress_get_actual_variable_range_hack = false;
 
 			/* Clean everything up */
 			ExecDropSingleTupleTableSlot(slot);
