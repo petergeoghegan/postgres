@@ -1267,6 +1267,10 @@ IndexOrderByDistance
 IndexPath
 IndexRuntimeKeyInfo
 IndexScan
+IndexScanBatchData
+IndexScanBatchPos
+IndexScanBatchPosItem
+IndexScanBatches
 IndexScanDesc
 IndexScanInstrumentation
 IndexScanState
@@ -3405,6 +3409,7 @@ amestimateparallelscan_function
 amgetbitmap_function
 amgettreeheight_function
 amgettuple_function
+amgetbatch_function
 aminitparallelscan_function
 aminsert_function
 aminsertcleanup_function
