@@ -3253,24 +3253,25 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
  * and just give up on it.
  */
 void
-_bt_killitems(IndexScanDesc scan)
+_bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 {
 	Relation	rel = scan->indexRelation;
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber minoff;
 	OffsetNumber maxoff;
-	int			numKilled = so->numKilled;
+	int			numKilled = batch->numKilled;
 	bool		killedsomething = false;
 	Buffer		buf;
 
 	Assert(numKilled > 0);
-	Assert(BTScanPosIsValid(so->currPos));
+	Assert(BTScanPosIsValid(*pos));
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
 
 	/* Always invalidate so->killedItems[] before leaving so->currPos */
-	so->numKilled = 0;
+	batch->numKilled = 0;
 
 	if (!so->dropPin)
 	{
@@ -3279,8 +3280,8 @@ _bt_killitems(IndexScanDesc scan)
 		 * so all we need to do is lock it.  The pin will have prevented
 		 * concurrent VACUUMs from recycling any of the TIDs on the page.
 		 */
-		Assert(BTScanPosIsPinned(so->currPos));
-		buf = so->currPos.buf;
+		Assert(BTScanPosIsPinned(*pos));
+		buf = pos->buf;
 		_bt_lockbuf(rel, buf, BT_READ);
 	}
 	else
@@ -3311,12 +3312,12 @@ _bt_killitems(IndexScanDesc scan)
 
 	for (int i = 0; i < numKilled; i++)
 	{
-		int			itemIndex = so->killedItems[i];
-		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
+		int			itemIndex = batch->killedItems[i];
+		IndexScanBatchPosItem *kitem = &batch->items[itemIndex];
 		OffsetNumber offnum = kitem->indexOffset;
 
-		Assert(itemIndex >= so->currPos.firstItem &&
-			   itemIndex <= so->currPos.lastItem);
+		Assert(itemIndex >= batch->firstItem &&
+			   itemIndex <= batch->lastItem);
 		if (offnum < minoff)
 			continue;			/* pure paranoia */
 		while (offnum <= maxoff)
@@ -3374,7 +3375,7 @@ _bt_killitems(IndexScanDesc scan)
 					 * correctly -- posting tuple still gets killed).
 					 */
 					if (pi < numKilled)
-						kitem = &so->currPos.items[so->killedItems[pi++]];
+						kitem = &batch->items[batch->killedItems[pi++]];
 				}
 
 				/*
