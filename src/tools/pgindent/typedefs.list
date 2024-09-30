@@ -195,6 +195,8 @@ BOOL
 BOOLEAN
 BOX
 BTArrayKeyInfo
+BTBatchInfo
+BTBatchScanPosData
 BTBuildState
 BTCallbackState
 BTCycleId
@@ -3420,7 +3422,6 @@ amgetbatch_function
 aminitparallelscan_function
 aminsert_function
 aminsertcleanup_function
-ammarkpos_function
 amoptions_function
 amparallelrescan_function
 amproperty_function

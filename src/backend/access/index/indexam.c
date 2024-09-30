@@ -507,47 +507,37 @@ index_endscan(IndexScanDesc scan)
 void
 index_markpos(IndexScanDesc scan)
 {
+	IndexScanBatches *batches = scan->xs_batches;
+	IndexScanBatchPos *pos = &batches->markPos;
+	IndexScanBatchData *batch = batches->markBatch;
+
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(ammarkpos);
 
 	/*
-	 * Without batching, just use the ammarkpos() callback. With batching
-	 * everything is handled at this layer, without calling the AM.
+	 * Free the previous mark batch (if any), but only if the batch is no
+	 * longer valid (in the current first/next range). This means that if
+	 * we're marking the same batch (different item), we don't really do
+	 * anything.
+	 *
+	 * XXX Should have some macro for this check, I guess.
 	 */
-	scan->indexRelation->rd_indam->ammarkpos(scan);
-
-	if (scan->xs_batches != NULL)
+	if (batch != NULL && (pos->batch < batches->firstBatch ||
+						  pos->batch >= batches->nextBatch))
 	{
-		IndexScanBatches *batches = scan->xs_batches;
-		IndexScanBatchPos *pos = &batches->markPos;
-		IndexScanBatchData *batch = batches->markBatch;
-
-		/*
-		 * Free the previous mark batch (if any), but only if the batch is no
-		 * longer valid (in the current first/next range). This means that if
-		 * we're marking the same batch (different item), we don't really do
-		 * anything.
-		 *
-		 * XXX Should have some macro for this check, I guess.
-		 */
-		if ((batch != NULL) &&
-			(pos->batch < batches->firstBatch || pos->batch >= batches->nextBatch))
-		{
-			batches->markBatch = NULL;
-			index_batch_free(scan, batch);
-		}
-
-		/* just copy the read position (which has to be valid) */
-		batches->markPos = batches->readPos;
-		batches->markBatch = INDEX_SCAN_BATCH(scan, batches->markPos.batch);
-
-		/*
-		 * FIXME we need to make sure the batch does not get freed during the
-		 * regular advances.
-		 */
-
-		AssertCheckBatchPosValid(scan, &batches->markPos);
+		batches->markBatch = NULL;
+		index_batch_free(scan, batch);
 	}
+
+	/* just copy the read position (which has to be valid) */
+	batches->markPos = batches->readPos;
+	batches->markBatch = INDEX_SCAN_BATCH(scan, batches->markPos.batch);
+
+	/*
+	 * FIXME we need to make sure the batch does not get freed during the
+	 * regular advances.
+	 */
+
+	AssertCheckBatchPosValid(scan, &batches->markPos);
 }
 
 /* ----------------
