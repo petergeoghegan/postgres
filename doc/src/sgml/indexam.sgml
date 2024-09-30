@@ -163,7 +163,6 @@ typedef struct IndexAmRoutine
     amgettuple_function amgettuple;     /* can be NULL */
     amgetbitmap_function amgetbitmap;   /* can be NULL */
     amendscan_function amendscan;
-    ammarkpos_function ammarkpos;       /* can be NULL */
     amrestrpos_function amrestrpos;     /* can be NULL */
 
     /* interface functions to support parallel index scans */
@@ -789,25 +788,9 @@ amendscan (IndexScanDesc scan);
   <para>
 <programlisting>
 void
-ammarkpos (IndexScanDesc scan);
-</programlisting>
-   Mark current scan position.  The access method need only support one
-   remembered scan position per scan.
-  </para>
-
-  <para>
-   The <function>ammarkpos</function> function need only be provided if the access
-   method supports ordered scans.  If it doesn't,
-   the <structfield>ammarkpos</structfield> field in its <structname>IndexAmRoutine</structname>
-   struct may be set to NULL.
-  </para>
-
-  <para>
-<programlisting>
-void
 amrestrpos (IndexScanDesc scan);
 </programlisting>
-   Restore the scan to the most recently marked position.
+   Notify index AM that core code restored the scan using a mark.
   </para>
 
   <para>
