@@ -1395,7 +1395,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
-	ScanDirection dir = so->currPos.dir;
+	ScanDirection dir = so->pos->dir;
 	int			arrayidx = 0;
 	bool		beyond_end_advance = false,
 				skip_array_advanced = false,
@@ -2040,7 +2040,7 @@ new_prim_scan:
 	so->needPrimScan = true;	/* ...but call _bt_first again */
 
 	if (scan->parallel_scan)
-		_bt_parallel_primscan_schedule(scan, so->currPos.currPage);
+		_bt_parallel_primscan_schedule(scan, so->pos->currPage);
 
 	/* Caller's tuple doesn't match the new qual */
 	return false;
@@ -2153,7 +2153,7 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 {
 	TupleDesc	tupdesc = RelationGetDescr(scan->indexRelation);
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	ScanDirection dir = so->currPos.dir;
+	ScanDirection dir = so->pos->dir;
 	int			ikey = pstate->startikey;
 	bool		res;
 
@@ -3160,7 +3160,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 						 int tupnatts, TupleDesc tupdesc)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	ScanDirection dir = so->currPos.dir;
+	ScanDirection dir = so->pos->dir;
 	OffsetNumber aheadoffnum;
 	IndexTuple	ahead;
 
@@ -3256,48 +3256,46 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
  * and just give up on it.
  */
 void
-_bt_killitems(IndexScanDesc scan)
+_bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 {
 	Relation	rel = scan->indexRelation;
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	BTScanPos	pos = (BTScanPos) batch->pos;
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber minoff;
 	OffsetNumber maxoff;
-	int			numKilled = so->numKilled;
+	int			numKilled = batch->numKilled;
 	bool		killedsomething = false;
 	Buffer		buf;
 
 	Assert(numKilled > 0);
-	Assert(BTScanPosIsValid(so->currPos));
+	Assert(BTScanPosIsValid(*pos));
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
 
-	/* Always invalidate so->killedItems[] before leaving so->currPos */
-	so->numKilled = 0;
+	/* Always invalidate batch->killedItems[] before freeing batch */
+	batch->numKilled = 0;
 
-	if (!so->dropPin)
+	if (!scan->batchState->dropPin)
 	{
 		/*
 		 * We have held the pin on this page since we read the index tuples,
 		 * so all we need to do is lock it.  The pin will have prevented
 		 * concurrent VACUUMs from recycling any of the TIDs on the page.
 		 */
-		Assert(BTScanPosIsPinned(so->currPos));
-		buf = so->currPos.buf;
+		buf = batch->buf;
 		_bt_lockbuf(rel, buf, BT_READ);
 	}
 	else
 	{
 		XLogRecPtr	latestlsn;
 
-		Assert(!BTScanPosIsPinned(so->currPos));
 		Assert(RelationNeedsWAL(rel));
-		buf = _bt_getbuf(rel, so->currPos.currPage, BT_READ);
+		buf = _bt_getbuf(rel, pos->currPage, BT_READ);
 
 		latestlsn = BufferGetLSNAtomic(buf);
-		Assert(!XLogRecPtrIsInvalid(so->currPos.lsn));
-		Assert(so->currPos.lsn <= latestlsn);
-		if (so->currPos.lsn != latestlsn)
+		Assert(!XLogRecPtrIsInvalid(batch->lsn));
+		Assert(batch->lsn <= latestlsn);
+		if (batch->lsn != latestlsn)
 		{
 			/* Modified, give up on hinting */
 			_bt_relbuf(rel, buf);
@@ -3314,12 +3312,12 @@ _bt_killitems(IndexScanDesc scan)
 
 	for (int i = 0; i < numKilled; i++)
 	{
-		int			itemIndex = so->killedItems[i];
-		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
+		int			itemIndex = batch->killedItems[i];
+		IndexScanBatchPosItem *kitem = &batch->items[itemIndex];
 		OffsetNumber offnum = kitem->indexOffset;
 
-		Assert(itemIndex >= so->currPos.firstItem &&
-			   itemIndex <= so->currPos.lastItem);
+		Assert(itemIndex >= batch->firstItem &&
+			   itemIndex <= batch->lastItem);
 		if (offnum < minoff)
 			continue;			/* pure paranoia */
 		while (offnum <= maxoff)
@@ -3360,7 +3358,8 @@ _bt_killitems(IndexScanDesc scan)
 					 * though only in the common case where the page can't
 					 * have been concurrently modified
 					 */
-					Assert(kitem->indexOffset == offnum || !so->dropPin);
+					Assert(kitem->indexOffset == offnum ||
+						   !scan->batchState->dropPin);
 
 					/*
 					 * Read-ahead to later kitems here.
@@ -3377,7 +3376,7 @@ _bt_killitems(IndexScanDesc scan)
 					 * correctly -- posting tuple still gets killed).
 					 */
 					if (pi < numKilled)
-						kitem = &so->currPos.items[so->killedItems[pi++]];
+						kitem = &batch->items[batch->killedItems[pi++]];
 				}
 
 				/*
@@ -3427,7 +3426,7 @@ _bt_killitems(IndexScanDesc scan)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	if (!so->dropPin)
+	if (!scan->batchState->dropPin)
 		_bt_unlockbuf(rel, buf);
 	else
 		_bt_relbuf(rel, buf);
