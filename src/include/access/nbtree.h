@@ -1001,6 +1001,38 @@ typedef struct BTScanPosData
 
 typedef BTScanPosData *BTScanPos;
 
+/*
+ * Minimal AM-specific concept of "position" for batching.
+ */
+typedef struct BTBatchScanPosData
+{
+	Buffer		buf;			/* currPage buf (invalid means unpinned) */
+
+	/* page details as of the saved position's call to _bt_readpage */
+	BlockNumber currPage;		/* page referenced by items array */
+	BlockNumber prevPage;		/* currPage's left link */
+	BlockNumber nextPage;		/* currPage's right link */
+	XLogRecPtr	lsn;			/* currPage's LSN */
+
+	/* scan direction for the saved position's call to _bt_readpage */
+	ScanDirection dir;
+
+	/*
+	 * If we are doing an index-only scan, nextTupleOffset is the first free
+	 * location in the associated tuple storage workspace.
+	 */
+	int			nextTupleOffset;
+
+	/*
+	 * moreLeft and moreRight track whether we think there may be matching
+	 * index entries to the left and right of the current page, respectively.
+	 */
+	bool		moreLeft;
+	bool		moreRight;
+} BTBatchScanPosData;
+
+typedef BTBatchScanPosData *BTBatchScanPos;
+
 #define BTScanPosIsPinned(scanpos) \
 ( \
 	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
@@ -1017,7 +1049,6 @@ typedef BTScanPosData *BTScanPos;
 		if (BTScanPosIsPinned(scanpos)) \
 			BTScanPosUnpin(scanpos); \
 	} while (0)
-
 #define BTScanPosIsValid(scanpos) \
 ( \
 	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
@@ -1029,6 +1060,35 @@ typedef BTScanPosData *BTScanPos;
 		(scanpos).buf = InvalidBuffer; \
 		(scanpos).currPage = InvalidBlockNumber; \
 	} while (0)
+
+#define BTBatchScanPosIsPinned(scanpos) \
+( \
+	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
+				!BufferIsValid((scanpos).buf)), \
+	BufferIsValid((scanpos).buf) \
+)
+#define BTBatchScanPosUnpin(scanpos) \
+	do { \
+		ReleaseBuffer((scanpos).buf); \
+		(scanpos).buf = InvalidBuffer; \
+	} while (0)
+#define BTBatchScanPosUnpinIfPinned(scanpos) \
+	do { \
+		if (BTBatchScanPosIsPinned(scanpos)) \
+			BTBatchScanPosUnpin(scanpos); \
+	} while (0)
+#define BTBatchScanPosIsValid(scanpos) \
+( \
+	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
+				!BufferIsValid((scanpos).buf)), \
+	BlockNumberIsValid((scanpos).currPage) \
+)
+#define BTBatchScanPosInvalidate(scanpos) \
+	do { \
+		(scanpos).buf = InvalidBuffer; \
+		(scanpos).currPage = InvalidBlockNumber; \
+	} while (0)
+
 
 /* We need one of these for each equality-type SK_SEARCHARRAY scan key */
 typedef struct BTArrayKeyInfo
@@ -1191,6 +1251,8 @@ extern IndexScanDesc btbeginscan(Relation rel, int nkeys, int norderbys);
 extern Size btestimateparallelscan(Relation rel, int nkeys, int norderbys);
 extern void btinitparallelscan(void *target);
 extern bool btgettuple(IndexScanDesc scan, ScanDirection dir);
+extern IndexScanBatch btgetbatch(IndexScanDesc scan, ScanDirection dir);
+extern void btfreebatch(IndexScanDesc scan, IndexScanBatch batch);
 extern int64 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 extern void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 					 ScanKey orderbys, int norderbys);
@@ -1215,6 +1277,9 @@ extern StrategyNumber bttranslatecmptype(CompareType cmptype, Oid opfamily);
  */
 extern bool _bt_parallel_seize(IndexScanDesc scan, BlockNumber *next_scan_page,
 							   BlockNumber *last_curr_page, bool first);
+extern bool _bt_parallel_seize_batch(IndexScanDesc scan, BTBatchScanPos pos,
+									 BlockNumber *next_scan_page,
+									 BlockNumber *last_curr_page, bool first);
 extern void _bt_parallel_release(IndexScanDesc scan,
 								 BlockNumber next_scan_page,
 								 BlockNumber curr_page);
@@ -1308,6 +1373,10 @@ extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_next(IndexScanDesc scan, ScanDirection dir);
 extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
 
+extern IndexScanBatch _bt_first_batch(IndexScanDesc scan, ScanDirection dir);
+extern IndexScanBatch _bt_next_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir);
+extern void _bt_kill_batch(IndexScanDesc scan, IndexScanBatch batch);
+
 /*
  * prototypes for functions in nbtutils.c
  */
@@ -1326,6 +1395,7 @@ extern bool _bt_scanbehind_checkkeys(IndexScanDesc scan, ScanDirection dir,
 									 IndexTuple finaltup);
 extern void _bt_set_startikey(IndexScanDesc scan, BTReadPageState *pstate);
 extern void _bt_killitems(IndexScanDesc scan);
+extern void _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);
 extern void _bt_end_vacuum(Relation rel);
