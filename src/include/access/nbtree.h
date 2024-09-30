@@ -984,19 +984,6 @@ typedef struct BTScanPosData
 	 */
 	bool		moreLeft;
 	bool		moreRight;
-
-	/*
-	 * The items array is always ordered in index order (ie, increasing
-	 * indexoffset).  When scanning backwards it is convenient to fill the
-	 * array back-to-front, so we start at the last slot and fill downwards.
-	 * Hence we need both a first-valid-entry and a last-valid-entry counter.
-	 * itemIndex is a cursor showing which entry was last returned to caller.
-	 */
-	int			firstItem;		/* first valid index in items[] */
-	int			lastItem;		/* last valid index in items[] */
-	int			itemIndex;		/* current index in items[] */
-
-	BTScanPosItem items[MaxTIDsPerBTreePage];	/* MUST BE LAST */
 } BTScanPosData;
 
 typedef BTScanPosData *BTScanPos;
@@ -1007,23 +994,18 @@ typedef BTScanPosData *BTScanPos;
 				!BufferIsValid((scanpos).buf)), \
 	BufferIsValid((scanpos).buf) \
 )
-#define BTScanPosUnpin(scanpos) \
-	do { \
-		ReleaseBuffer((scanpos).buf); \
-		(scanpos).buf = InvalidBuffer; \
-	} while (0)
-#define BTScanPosUnpinIfPinned(scanpos) \
-	do { \
-		if (BTScanPosIsPinned(scanpos)) \
-			BTScanPosUnpin(scanpos); \
-	} while (0)
-
 #define BTScanPosIsValid(scanpos) \
 ( \
 	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
 				!BufferIsValid((scanpos).buf)), \
 	BlockNumberIsValid((scanpos).currPage) \
 )
+
+#define BTScanPosUnpin(scanpos) \
+	do { \
+		ReleaseBuffer((scanpos).buf); \
+		(scanpos).buf = InvalidBuffer; \
+	} while (0)
 #define BTScanPosInvalidate(scanpos) \
 	do { \
 		(scanpos).buf = InvalidBuffer; \
@@ -1066,32 +1048,8 @@ typedef struct BTScanOpaqueData
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
 	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
-
-	/* info about killed items if any (killedItems is NULL if never used) */
-	int		   *killedItems;	/* currPos.items indexes of killed items */
-	int			numKilled;		/* number of currently stored items */
 	bool		dropPin;		/* drop leaf pin before btgettuple returns? */
-
-	/*
-	 * If we are doing an index-only scan, these are the tuple storage
-	 * workspaces for the currPos and markPos respectively.  Each is of size
-	 * BLCKSZ, so it can hold as much as a full page's worth of tuples.
-	 */
-	char	   *currTuples;		/* tuple storage for currPos */
-	char	   *markTuples;		/* tuple storage for markPos */
-
-	/*
-	 * If the marked position is on the same page as current position, we
-	 * don't use markPos, but just keep the marked itemIndex in markItemIndex
-	 * (all the rest of currPos is valid for the mark position). Hence, to
-	 * determine if there is a mark, first look at markItemIndex, then at
-	 * markPos.
-	 */
-	int			markItemIndex;	/* itemIndex, or -1 if not valid */
-
-	/* keep these last in struct for efficiency */
-	BTScanPosData currPos;		/* current position data */
-	BTScanPosData markPos;		/* marked position, if any */
+	BTScanPos	pos;
 } BTScanOpaqueData;
 
 typedef BTScanOpaqueData *BTScanOpaque;
@@ -1191,14 +1149,15 @@ extern bool btinsert(Relation rel, Datum *values, bool *isnull,
 extern IndexScanDesc btbeginscan(Relation rel, int nkeys, int norderbys);
 extern Size btestimateparallelscan(Relation rel, int nkeys, int norderbys);
 extern void btinitparallelscan(void *target);
-extern bool btgettuple(IndexScanDesc scan, ScanDirection dir);
+extern IndexScanBatch btgetbatch(IndexScanDesc scan, IndexScanBatch batch,
+								 ScanDirection dir);
 extern int64 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 extern void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 					 ScanKey orderbys, int norderbys);
+extern void btfreebatch(IndexScanDesc scan, IndexScanBatch batch);
 extern void btparallelrescan(IndexScanDesc scan);
 extern void btendscan(IndexScanDesc scan);
-extern void btmarkpos(IndexScanDesc scan);
-extern void btrestrpos(IndexScanDesc scan);
+extern void btrestrpos(IndexScanDesc scan, IndexScanBatch batch);
 extern IndexBulkDeleteResult *btbulkdelete(IndexVacuumInfo *info,
 										   IndexBulkDeleteResult *stats,
 										   IndexBulkDeleteCallback callback,
@@ -1214,7 +1173,8 @@ extern StrategyNumber bttranslatecmptype(CompareType cmptype, Oid opfamily);
 /*
  * prototypes for internal functions in nbtree.c
  */
-extern bool _bt_parallel_seize(IndexScanDesc scan, BlockNumber *next_scan_page,
+extern bool _bt_parallel_seize(IndexScanDesc scan, BTScanPos pos,
+							   BlockNumber *next_scan_page,
 							   BlockNumber *last_curr_page, bool first);
 extern void _bt_parallel_release(IndexScanDesc scan,
 								 BlockNumber next_scan_page,
@@ -1305,8 +1265,9 @@ extern BTStack _bt_search(Relation rel, Relation heaprel, BTScanInsert key,
 						  Buffer *bufP, int access);
 extern OffsetNumber _bt_binsrch_insert(Relation rel, BTInsertState insertstate);
 extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum);
-extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
-extern bool _bt_next(IndexScanDesc scan, ScanDirection dir);
+extern IndexScanBatch _bt_first(IndexScanDesc scan, ScanDirection dir);
+extern IndexScanBatch _bt_next(IndexScanDesc scan, ScanDirection dir,
+							   IndexScanBatch batch);
 extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
 
 /*
@@ -1326,7 +1287,7 @@ extern bool _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arra
 extern bool _bt_scanbehind_checkkeys(IndexScanDesc scan, ScanDirection dir,
 									 IndexTuple finaltup);
 extern void _bt_set_startikey(IndexScanDesc scan, BTReadPageState *pstate);
-extern void _bt_killitems(IndexScanDesc scan);
+extern void _bt_killitems(IndexScanDesc scan, IndexScanBatch batch);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);
 extern void _bt_end_vacuum(Relation rel);

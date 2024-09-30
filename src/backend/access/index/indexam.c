@@ -503,47 +503,37 @@ index_endscan(IndexScanDesc scan)
 void
 index_markpos(IndexScanDesc scan)
 {
+	IndexScanBatches *batches = scan->xs_batches;
+	IndexScanBatchPos *pos = &batches->markPos;
+	IndexScanBatchData *batch = batches->markBatch;
+
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(ammarkpos);
 
 	/*
-	 * Without batching, just use the ammarkpos() callback. With batching
-	 * everything is handled at this layer, without calling the AM.
+	 * Free the previous mark batch (if any), but only if the batch is no
+	 * longer valid (in the current first/next range). This means that if
+	 * we're marking the same batch (different item), we don't really do
+	 * anything.
+	 *
+	 * XXX Should have some macro for this check, I guess.
 	 */
-	scan->indexRelation->rd_indam->ammarkpos(scan);
-
-	if (scan->xs_batches != NULL)
+	if (batch != NULL && (pos->batch < batches->firstBatch ||
+						  pos->batch >= batches->nextBatch))
 	{
-		IndexScanBatches *batches = scan->xs_batches;
-		IndexScanBatchPos *pos = &batches->markPos;
-		IndexScanBatchData *batch = batches->markBatch;
-
-		/*
-		 * Free the previous mark batch (if any), but only if the batch is no
-		 * longer valid (in the current first/next range). This means that if
-		 * we're marking the same batch (different item), we don't really do
-		 * anything.
-		 *
-		 * XXX Should have some macro for this check, I guess.
-		 */
-		if ((batch != NULL) &&
-			(pos->batch < batches->firstBatch || pos->batch >= batches->nextBatch))
-		{
-			batches->markBatch = NULL;
-			index_batch_free(scan, batch);
-		}
-
-		/* just copy the read position (which has to be valid) */
-		batches->markPos = batches->readPos;
-		batches->markBatch = INDEX_SCAN_BATCH(scan, batches->markPos.batch);
-
-		/*
-		 * FIXME we need to make sure the batch does not get freed during the
-		 * regular advances.
-		 */
-
-		AssertCheckBatchPosValid(scan, &batches->markPos);
+		batches->markBatch = NULL;
+		index_batch_free(scan, batch);
 	}
+
+	/* just copy the read position (which has to be valid) */
+	batches->markPos = batches->readPos;
+	batches->markBatch = INDEX_SCAN_BATCH(scan, batches->markPos.batch);
+
+	/*
+	 * FIXME we need to make sure the batch does not get freed during the
+	 * regular advances.
+	 */
+
+	AssertCheckBatchPosValid(scan, &batches->markPos);
 }
 
 /* ----------------
@@ -564,9 +554,14 @@ index_markpos(IndexScanDesc scan)
 void
 index_restrpos(IndexScanDesc scan)
 {
+	IndexScanBatches *batches;
+	IndexScanBatchPos *pos;
+	IndexScanBatchData *batch;
+
 	Assert(IsMVCCSnapshot(scan->xs_snapshot));
 
 	SCAN_CHECKS;
+	CHECK_SCAN_PROCEDURE(amgetbatch);
 	CHECK_SCAN_PROCEDURE(amrestrpos);
 
 	/* release resources (like buffer pins) from table accesses */
@@ -576,51 +571,46 @@ index_restrpos(IndexScanDesc scan)
 	scan->kill_prior_tuple = false; /* for safety */
 	scan->xs_heap_continue = false;
 
+	batches = scan->xs_batches;
+	pos = &batches->markPos;
+	batch = scan->xs_batches->markBatch;
+
 	/*
-	 * Without batching, just use the amrestrpos() callback. With batching
-	 * everything is handled at this layer, without calling the AM.
+	 * Call amrestrpos to let index AM know that we're doing this (just resets
+	 * scan's array keys currently)
 	 */
-	scan->indexRelation->rd_indam->amrestrpos(scan);
+	scan->indexRelation->rd_indam->amrestrpos(scan, batch);
 
-	if (scan->xs_batches != NULL)
-	{
-		IndexScanBatches *batches = scan->xs_batches;
-		IndexScanBatchPos *pos = &batches->markPos;
-		IndexScanBatchData *batch = scan->xs_batches->markBatch;
+	/*
+	 * XXX The pos can be invalid, if we already advanced past the the
+	 * marked batch (and stashed it in markBatch instead of freeing). So
+	 * this assert would be incorrect.
+	 */
+	/* AssertCheckBatchPosValid(scan, &pos); */
 
-		Assert(batch != NULL);
+	/* FIXME we should still check the batch was not freed yet */
 
-		/*
-		 * XXX The pos can be invalid, if we already advanced past the the
-		 * marked batch (and stashed it in markBatch instead of freeing). So
-		 * this assert would be incorrect.
-		 */
-		/* AssertCheckBatchPosValid(scan, &pos); */
+	/*
+	 * Reset the batching state, except for the marked batch, and make it
+	 * look like we have a single batch - the marked one.
+	 *
+	 * XXX This seems a bit ugly / hacky, maybe there's a more elegant way
+	 * to do this?
+	 */
+	index_batch_reset(scan, false);
 
-		/* FIXME we should still check the batch was not freed yet */
+	batches->markPos = *pos;
+	batches->readPos = *pos;
+	batches->firstBatch = pos->batch;
+	batches->nextBatch = (batches->firstBatch + 1);
 
-		/*
-		 * Reset the batching state, except for the marked batch, and make it
-		 * look like we have a single batch - the marked one.
-		 *
-		 * XXX This seems a bit ugly / hacky, maybe there's a more elegant way
-		 * to do this?
-		 */
-		index_batch_reset(scan, false);
+	INDEX_SCAN_BATCH(scan, batches->markPos.batch) = batch;
 
-		batches->markPos = *pos;
-		batches->readPos = *pos;
-		batches->firstBatch = pos->batch;
-		batches->nextBatch = (batches->firstBatch + 1);
-
-		INDEX_SCAN_BATCH(scan, batches->markPos.batch) = batch;
-
-		/*
-		 * XXX I really dislike that we have so many definitions of "current"
-		 * batch. We have readPos, streamPos, ... seems very ad hoc
-		 */
-		batches->markBatch = batch; /* also remember this */
-	}
+	/*
+	 * XXX I really dislike that we have so many definitions of "current"
+	 * batch. We have readPos, streamPos, ... seems very ad hoc
+	 */
+	batches->markBatch = batch; /* also remember this */
 }
 
 /*
@@ -1937,7 +1927,7 @@ index_scan_stream_read_next(ReadStream *stream,
 static bool
 index_batch_getnext(IndexScanDesc scan)
 {
-	IndexScanBatchData *batch;
+	IndexScanBatch batch = NULL;
 	ScanDirection direction = scan->xs_batches->direction;
 
 	SCAN_CHECKS;
@@ -1991,7 +1981,10 @@ index_batch_getnext(IndexScanDesc scan)
 
 	index_batch_print("index_batch_getnext / start", scan);
 
-	batch = scan->indexRelation->rd_indam->amgetbatch(scan, direction);
+	if (scan->xs_batches->firstBatch < scan->xs_batches->nextBatch)
+		batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->nextBatch - 1);
+
+	batch = scan->indexRelation->rd_indam->amgetbatch(scan, batch, direction);
 	if (batch != NULL)
 	{
 		/*

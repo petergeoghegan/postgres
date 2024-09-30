@@ -198,6 +198,7 @@ typedef bool (*amgettuple_function) (IndexScanDesc scan,
 
 /* next batch of valid tuples */
 typedef IndexScanBatch(*amgetbatch_function) (IndexScanDesc scan,
+											  IndexScanBatch batch,
 											  ScanDirection direction);
 
 /* release batch of valid tuples */
@@ -211,11 +212,9 @@ typedef int64 (*amgetbitmap_function) (IndexScanDesc scan,
 /* end index scan */
 typedef void (*amendscan_function) (IndexScanDesc scan);
 
-/* mark current scan position */
-typedef void (*ammarkpos_function) (IndexScanDesc scan);
-
 /* restore marked scan position */
-typedef void (*amrestrpos_function) (IndexScanDesc scan);
+typedef void (*amrestrpos_function) (IndexScanDesc scan,
+									 IndexScanBatch batch);
 
 /*
  * Callback function signatures - for parallel index scans.
@@ -319,7 +318,6 @@ typedef struct IndexAmRoutine
 	amfreebatch_function amfreebatch;	/* can be NULL */
 	amgetbitmap_function amgetbitmap;	/* can be NULL */
 	amendscan_function amendscan;
-	ammarkpos_function ammarkpos;	/* can be NULL */
 	amrestrpos_function amrestrpos; /* can be NULL */
 
 	/* interface functions to support parallel index scans */
