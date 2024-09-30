@@ -810,6 +810,16 @@ struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_indexscan_prefetch", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables prefetching for index-scans."),
+			NULL,
+			GUC_EXPLAIN
+		},
+		&enable_indexscan_prefetch,
+		true,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_indexonlyscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-only-scan plans."),
 			NULL,

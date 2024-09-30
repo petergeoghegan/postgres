@@ -105,7 +105,6 @@ gisthandler(PG_FUNCTION_ARGS)
 	amroutine->amgettuple = gistgettuple;
 	amroutine->amgetbitmap = gistgetbitmap;
 	amroutine->amendscan = gistendscan;
-	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
