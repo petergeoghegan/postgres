@@ -319,7 +319,6 @@ dihandler(PG_FUNCTION_ARGS)
 	amroutine->amgettuple = NULL;
 	amroutine->amgetbitmap = NULL;
 	amroutine->amendscan = diendscan;
-	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
