@@ -954,6 +954,7 @@ typedef struct BTScanPosData
 
 	XLogRecPtr	lsn;			/* pos in the WAL stream when page was read */
 	BlockNumber currPage;		/* page referenced by items array */
+	BlockNumber prevPage;		/* page's left link when we scanned it */
 	BlockNumber nextPage;		/* page's right link when we scanned it */
 
 	/*
@@ -964,15 +965,6 @@ typedef struct BTScanPosData
 	 */
 	bool		moreLeft;
 	bool		moreRight;
-
-	/*
-	 * Direction of the scan at the time that _bt_readpage was called.
-	 *
-	 * Used by btrestrpos to "restore" the scan's array keys by resetting each
-	 * array to its first element's value (first in this scan direction). This
-	 * avoids the need to directly track the array keys in btmarkpos.
-	 */
-	ScanDirection dir;
 
 	/*
 	 * If we are doing an index-only scan, nextTupleOffset is the first free
@@ -1022,6 +1014,7 @@ typedef BTScanPosData *BTScanPos;
 #define BTScanPosInvalidate(scanpos) \
 	do { \
 		(scanpos).currPage = InvalidBlockNumber; \
+		(scanpos).prevPage = InvalidBlockNumber; \
 		(scanpos).nextPage = InvalidBlockNumber; \
 		(scanpos).buf = InvalidBuffer; \
 		(scanpos).lsn = InvalidXLogRecPtr; \
@@ -1071,6 +1064,7 @@ typedef struct BTScanOpaqueData
 	 * determine if there is a mark, first look at markItemIndex, then at
 	 * markPos.
 	 */
+	ScanDirection markDir;		/* direction of scan with mark */
 	int			markItemIndex;	/* itemIndex, or -1 if not valid */
 
 	/* keep these last in struct for efficiency */
@@ -1090,7 +1084,6 @@ typedef struct BTReadPageState
 	OffsetNumber minoff;		/* Lowest non-pivot tuple's offset */
 	OffsetNumber maxoff;		/* Highest non-pivot tuple's offset */
 	IndexTuple	finaltup;		/* Needed by scans with array keys */
-	BlockNumber prev_scan_page; /* previous _bt_parallel_release block */
 	Page		page;			/* Page being read */
 
 	/* Per-tuple input parameters, set by _bt_readpage for _bt_checkkeys */
@@ -1192,11 +1185,13 @@ extern int	btgettreeheight(Relation rel);
  * prototypes for internal functions in nbtree.c
  */
 extern bool _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno,
-							   bool first);
-extern void _bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page);
+							   BlockNumber *currblkno, bool first);
+extern void _bt_parallel_release(IndexScanDesc scan,
+								 BlockNumber next_scan_page,
+								 BlockNumber curr_page);
 extern void _bt_parallel_done(IndexScanDesc scan);
 extern void _bt_parallel_primscan_schedule(IndexScanDesc scan,
-										   BlockNumber prev_scan_page);
+										   BlockNumber curr_page);
 
 /*
  * prototypes for functions in nbtdedup.c
