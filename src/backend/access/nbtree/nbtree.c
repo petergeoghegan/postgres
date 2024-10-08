@@ -66,7 +66,9 @@ typedef enum
  */
 typedef struct BTParallelScanDescData
 {
-	BlockNumber btps_scanPage;	/* latest or next page to be scanned */
+	BlockNumber btps_nextScanPage;	/* next page to be scanned */
+	BlockNumber btps_lastCurrPage;	/* page whose sibling link was copied into
+									 * btps_scanPage */
 	BTPS_State	btps_pageStatus;	/* indicates whether next page is
 									 * available for scan. see above for
 									 * possible states of parallel scan. */
@@ -548,7 +550,8 @@ btinitparallelscan(void *target)
 	BTParallelScanDesc bt_target = (BTParallelScanDesc) target;
 
 	SpinLockInit(&bt_target->btps_mutex);
-	bt_target->btps_scanPage = InvalidBlockNumber;
+	bt_target->btps_nextScanPage = InvalidBlockNumber;
+	bt_target->btps_lastCurrPage = InvalidBlockNumber;
 	bt_target->btps_pageStatus = BTPARALLEL_NOT_INITIALIZED;
 	ConditionVariableInit(&bt_target->btps_cv);
 }
@@ -573,7 +576,8 @@ btparallelrescan(IndexScanDesc scan)
 	 * consistency.
 	 */
 	SpinLockAcquire(&btscan->btps_mutex);
-	btscan->btps_scanPage = InvalidBlockNumber;
+	btscan->btps_nextScanPage = InvalidBlockNumber;
+	btscan->btps_lastCurrPage = InvalidBlockNumber;
 	btscan->btps_pageStatus = BTPARALLEL_NOT_INITIALIZED;
 	SpinLockRelease(&btscan->btps_mutex);
 }
@@ -600,7 +604,8 @@ btparallelrescan(IndexScanDesc scan)
  * Callers should ignore the value of pageno if the return value is false.
  */
 bool
-_bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
+_bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno,
+				   BlockNumber *currblkno, bool first)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		exit_loop = false;
@@ -609,6 +614,7 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 	BTParallelScanDesc btscan;
 
 	*pageno = P_NONE;
+	*currblkno = P_NONE;
 
 	if (first)
 	{
@@ -658,6 +664,7 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 					skey->sk_argument = array->elem_values[array->cur_elem];
 				}
 				*pageno = InvalidBlockNumber;
+				*currblkno = P_NONE;
 				exit_loop = true;
 			}
 			else
@@ -684,7 +691,8 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
 			 * of advancing it to a new page!
 			 */
 			btscan->btps_pageStatus = BTPARALLEL_ADVANCING;
-			*pageno = btscan->btps_scanPage;
+			*pageno = btscan->btps_nextScanPage;
+			*currblkno = btscan->btps_lastCurrPage;
 			exit_loop = true;
 		}
 		SpinLockRelease(&btscan->btps_mutex);
@@ -709,7 +717,8 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno, bool first)
  * scan lands on scan_page).
  */
 void
-_bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page)
+_bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page,
+					 BlockNumber curr_page)
 {
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
@@ -718,7 +727,8 @@ _bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page)
 												  parallel_scan->ps_offset);
 
 	SpinLockAcquire(&btscan->btps_mutex);
-	btscan->btps_scanPage = scan_page;
+	btscan->btps_nextScanPage = scan_page;
+	btscan->btps_lastCurrPage = curr_page;
 	btscan->btps_pageStatus = BTPARALLEL_IDLE;
 	SpinLockRelease(&btscan->btps_mutex);
 	ConditionVariableSignal(&btscan->btps_cv);
@@ -780,7 +790,7 @@ _bt_parallel_done(IndexScanDesc scan)
  * advanced the scan.
  */
 void
-_bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber prev_scan_page)
+_bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber curr_page)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
@@ -792,10 +802,11 @@ _bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber prev_scan_page)
 												  parallel_scan->ps_offset);
 
 	SpinLockAcquire(&btscan->btps_mutex);
-	if (btscan->btps_scanPage == prev_scan_page &&
+	if (btscan->btps_lastCurrPage == curr_page &&
 		btscan->btps_pageStatus == BTPARALLEL_IDLE)
 	{
-		btscan->btps_scanPage = InvalidBlockNumber;
+		btscan->btps_nextScanPage = InvalidBlockNumber;
+		btscan->btps_lastCurrPage = InvalidBlockNumber;
 		btscan->btps_pageStatus = BTPARALLEL_NEED_PRIMSCAN;
 
 		/* Serialize scan's current array keys */

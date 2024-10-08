@@ -2442,7 +2442,7 @@ new_prim_scan:
 	so->needPrimScan = true;	/* ...but call _bt_first again */
 
 	if (scan->parallel_scan)
-		_bt_parallel_primscan_schedule(scan, pstate->prev_scan_page);
+		_bt_parallel_primscan_schedule(scan, pstate->curr_scan_page);
 
 	/* Caller's tuple doesn't match the new qual */
 	return false;
