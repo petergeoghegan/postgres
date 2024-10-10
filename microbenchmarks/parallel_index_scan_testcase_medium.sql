@@ -105,13 +105,14 @@ where c3 in (
   '2000-01-29',
   '2000-01-31'
 )
--- and c4 in ('xyz0', 'xyz2', 'xyz4')
--- and c5 in (1,2,3,4,5)
+and c4 in ('xyz0', 'xyz2', 'xyz4')
+and c5 in (1,2,3,4,5)
 group by
 c3
 , c4
 , c5
-order by c3 desc, c4 desc, c5 desc;
+-- order by c3 desc, c4 desc, c5 desc;
+;
 show max_parallel_workers_per_gather;
 
 --order by c3 desc, c4 desc, c5 desc;
