@@ -23,7 +23,6 @@
 #include "access/xloginsert.h"
 #include "commands/progress.h"
 #include "commands/vacuum.h"
-#include "common/pg_prng.h"
 #include "miscadmin.h"
 #include "nodes/execnodes.h"
 #include "pgstat.h"
@@ -736,8 +735,6 @@ _bt_parallel_release(IndexScanDesc scan, BlockNumber next_scan_page,
 	btscan->btps_pageStatus = BTPARALLEL_IDLE;
 	SpinLockRelease(&btscan->btps_mutex);
 	ConditionVariableSignal(&btscan->btps_cv);
-	// if (pg_prng_uint32(&pg_global_prng_state) <= (PG_UINT32_MAX / 500))
-	// 	pg_usleep(100000);
 }
 
 /*

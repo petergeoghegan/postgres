@@ -18,7 +18,6 @@
 #include "access/nbtree.h"
 #include "access/relscan.h"
 #include "access/xact.h"
-#include "common/pg_prng.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/predicate.h"
@@ -2134,9 +2133,7 @@ _bt_steppage(IndexScanDesc scan, ScanDirection dir)
 			return false;
 		}
 
-		// /* no point in remembering we left a page with data here */
-		// if (pg_prng_uint32(&pg_global_prng_state) <= (PG_UINT32_MAX / 50))
-		// 	pg_usleep(1000);
+		/* no point in remembering we left a page with data here */
 	}
 
 	if (!_bt_readnextpage(scan, blkno, lastcurrblkno, dir))
@@ -2372,9 +2369,6 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 
 	/* We have at least one item to return as scan's next item */
 	_bt_drop_lock_and_maybe_pin(scan, &so->currPos);
-
-	// if (pg_prng_uint32(&pg_global_prng_state) <= (PG_UINT32_MAX / 500))
-	// 	pg_usleep(100000);
 
 	return true;
 }
