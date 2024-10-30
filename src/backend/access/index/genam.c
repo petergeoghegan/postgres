@@ -453,7 +453,7 @@ systable_beginscan(Relation heapRelation,
 		 * XXX Maybe we could do that, the prefetching only ramps up over
 		 * time. But then we need to be careful about infinite recursion when
 		 * looking up effective_io_concurrency for a tablespace in the
-		 * catalog.
+		 * catalog (does an indexscan, so if it tries a lookup too ...)
 		 */
 		sysscan->iscan = index_beginscan(heapRelation, irel,
 										 snapshot, nkeys, 0, false);
@@ -727,7 +727,8 @@ systable_beginscan_ordered(Relation heapRelation,
 	 *
 	 * XXX Maybe we could do that, the prefetching only ramps up over time.
 	 * But then we need to be careful about infinite recursion when looking up
-	 * effective_io_concurrency for a tablespace in the catalog.
+	 * effective_io_concurrency for a tablespace in the catalog (does an
+	 * indexscan, so if it tries a lookup too ...)
 	 */
 	sysscan->iscan = index_beginscan(heapRelation, indexRelation,
 									 snapshot, nkeys, 0, false);

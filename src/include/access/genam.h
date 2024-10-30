@@ -189,11 +189,6 @@ extern bool index_fetch_heap(IndexScanDesc scan, struct TupleTableSlot *slot);
 extern bool index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 							   struct TupleTableSlot *slot);
 extern int64 index_getbitmap(IndexScanDesc scan, TIDBitmap *bitmap);
-
-/* index batching/prefetching */
-extern bool index_batch_add(IndexScanDesc scan, ItemPointerData tid, bool recheck,
-							IndexTuple itup, HeapTuple htup);
-
 extern IndexBulkDeleteResult *index_bulk_delete(IndexVacuumInfo *info,
 												IndexBulkDeleteResult *istat,
 												IndexBulkDeleteCallback callback,
@@ -211,7 +206,7 @@ extern void index_store_float8_orderby_distances(IndexScanDesc scan,
 												 bool recheckOrderBy);
 extern bytea *index_opclass_options(Relation indrel, AttrNumber attnum,
 									Datum attoptions, bool validate);
-
+extern IndexScanBatch index_batch_alloc(int maxitems);
 
 /*
  * index access method support routines (in genam.c)

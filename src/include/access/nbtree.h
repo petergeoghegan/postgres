@@ -990,6 +990,35 @@ typedef struct BTScanPosData
 
 typedef BTScanPosData *BTScanPos;
 
+typedef struct BTScanBatchData
+{
+	Buffer		buf;			/* currPage buf (invalid means unpinned) */
+
+	/* page details as of the saved position's call to _bt_readpage */
+	BlockNumber currPage;		/* page referenced by items array */
+	BlockNumber prevPage;		/* currPage's left link */
+	BlockNumber nextPage;		/* currPage's right link */
+	XLogRecPtr	lsn;			/* currPage's LSN */
+
+	/* scan direction for the saved position's call to _bt_readpage */
+	ScanDirection dir;
+
+	/*
+	 * If we are doing an index-only scan, nextTupleOffset is the first free
+	 * location in the associated tuple storage workspace.
+	 */
+	int			nextTupleOffset;
+
+	/*
+	 * moreLeft and moreRight track whether we think there may be matching
+	 * index entries to the left and right of the current page, respectively.
+	 */
+	bool		moreLeft;
+	bool		moreRight;
+} BTScanBatchData;
+
+typedef BTScanBatchData *BTScanBatch;
+
 #define BTScanPosIsPinned(scanpos) \
 ( \
 	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
@@ -1028,14 +1057,6 @@ typedef struct BTArrayKeyInfo
 	Datum	   *elem_values;	/* array of num_elems Datums */
 } BTArrayKeyInfo;
 
-/* Information about the current batch (in batched index scans) */
-typedef struct BTBatchInfo
-{
-	/* Current range of items in a batch (if used). */
-	int			firstIndex;
-	int			lastIndex;
-} BTBatchInfo;
-
 typedef struct BTScanOpaqueData
 {
 	/* these fields are set by _bt_preprocess_keys(): */
@@ -1055,9 +1076,6 @@ typedef struct BTScanOpaqueData
 	/* info about killed items if any (killedItems is NULL if never used) */
 	int		   *killedItems;	/* currPos.items indexes of killed items */
 	int			numKilled;		/* number of currently stored items */
-
-	/* info about current batch */
-	BTBatchInfo batch;
 
 	/*
 	 * If we are doing an index-only scan, these are the tuple storage
@@ -1173,7 +1191,8 @@ extern IndexScanDesc btbeginscan(Relation rel, int nkeys, int norderbys);
 extern Size btestimateparallelscan(int nkeys, int norderbys);
 extern void btinitparallelscan(void *target);
 extern bool btgettuple(IndexScanDesc scan, ScanDirection dir);
-extern bool btgetbatch(IndexScanDesc scan, ScanDirection dir);
+extern IndexScanBatch btgetbatch(IndexScanDesc scan, ScanDirection dir);
+extern void btfreebatch(IndexScanDesc scan, IndexScanBatch batch);
 extern int64 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 extern void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 					 ScanKey orderbys, int norderbys);
@@ -1281,12 +1300,11 @@ extern OffsetNumber _bt_binsrch_insert(Relation rel, BTInsertState insertstate);
 extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum);
 extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_next(IndexScanDesc scan, ScanDirection dir);
-extern bool _bt_first_batch(IndexScanDesc scan, ScanDirection dir);
-extern bool _bt_next_batch(IndexScanDesc scan, ScanDirection dir);
-extern void _bt_kill_batch(IndexScanDesc scan);
 extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
-extern void _bt_copy_batch(IndexScanDesc scan, ScanDirection dir, BTScanOpaque so,
-						   int start, int end);
+
+extern IndexScanBatch _bt_first_batch(IndexScanDesc scan, ScanDirection dir);
+extern IndexScanBatch _bt_next_batch(IndexScanDesc scan, ScanDirection dir);
+extern void _bt_kill_batch(IndexScanDesc scan, IndexScanBatch batch);
 
 /*
  * prototypes for functions in nbtutils.c

@@ -108,11 +108,11 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		node->ioss_VMBuffer = InvalidBuffer;
 
 		/* Also set the prefetch callback info, if baching enabled. */
-		if (scandesc->xs_batch != NULL)
-		{
-			scandesc->xs_batch->prefetchCallback = ios_prefetch_block;
-			scandesc->xs_batch->prefetchArgument = (void *) node;
-		}
+		// if (scandesc->xs_batch != NULL)
+		// {
+		// 	scandesc->xs_batch->prefetchCallback = ios_prefetch_block;
+		// 	scandesc->xs_batch->prefetchArgument = (void *) node;
+		// }
 
 		/*
 		 * If no run-time keys to calculate or they are ready, go ahead and
@@ -137,7 +137,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		CHECK_FOR_INTERRUPTS();
 
 		/* */
-		if (scandesc->xs_batch == NULL)
+		if (scandesc->xs_batches == NULL)
 		{
 			all_visible = VM_ALL_VISIBLE(scandesc->heapRelation,
 						  ItemPointerGetBlockNumber(tid),
@@ -145,9 +145,10 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		}
 		else
 		{
+			int	lastIndex = scandesc->xs_batches->readPos.index;
+
 			/* Is the index of the current item valid for the batch? */
-			Assert((scandesc->xs_batch->currIndex >= 0) &&
-				   (scandesc->xs_batch->currIndex < scandesc->xs_batch->nheaptids));
+			// Assert((lastIndex >= 0) && (lastIndex < scandesc->xs_batch->nheaptids));
 
 			/*
 			 * Reuse the previously determined page visibility info, or
@@ -159,8 +160,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 			 * visibility from that. Maybe we could/should have a more direct
 			 * way?
 			 */
-			all_visible = !ios_prefetch_block(scandesc, node,
-											  scandesc->xs_batch->currIndex);
+			all_visible = !ios_prefetch_block(scandesc, node, lastIndex);
 		}
 
 		/*
@@ -868,21 +868,22 @@ ExecIndexOnlyScanInitializeWorker(IndexOnlyScanState *node,
 static bool
 ios_prefetch_block(IndexScanDesc scan, void *arg, int index)
 {
-	IndexOnlyScanState *node = (IndexOnlyScanState *) arg;
-
-	if (scan->xs_batch->privateData[index] == IOS_UNKNOWN_VISIBILITY)
-	{
-		bool		all_visible;
-		ItemPointer tid = &scan->xs_batch->heaptids[index];
-
-		all_visible = VM_ALL_VISIBLE(scan->heapRelation,
-									 ItemPointerGetBlockNumber(tid),
-									 &node->ioss_VMBuffer);
-
-		scan->xs_batch->privateData[index]
-			= all_visible ? IOS_ALL_VISIBLE : IOS_NOT_ALL_VISIBLE;
-	}
-
-	/* prefetch only blocks that are not all-visible */
-	return (scan->xs_batch->privateData[index] == IOS_NOT_ALL_VISIBLE);
+//	IndexOnlyScanState *node = (IndexOnlyScanState *) arg;
+//
+//	if (scan->xs_batch->privateData[index] == IOS_UNKNOWN_VISIBILITY)
+//	{
+//		bool		all_visible;
+//		ItemPointer tid = &scan->xs_batch->heaptids[index];
+//
+//		all_visible = VM_ALL_VISIBLE(scan->heapRelation,
+//									 ItemPointerGetBlockNumber(tid),
+//									 &node->ioss_VMBuffer);
+//
+//		scan->xs_batch->privateData[index]
+//			= all_visible ? IOS_ALL_VISIBLE : IOS_NOT_ALL_VISIBLE;
+//	}
+//
+//	/* prefetch only blocks that are not all-visible */
+//	return (scan->xs_batch->privateData[index] == IOS_NOT_ALL_VISIBLE);
+	return true;
 }
