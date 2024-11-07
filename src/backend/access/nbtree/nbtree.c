@@ -596,9 +596,7 @@ btparallelrescan(IndexScanDesc scan)
  * scan, and *last_curr_page returns the page that *next_scan_page came from.
  * An invalid *next_scan_page means the scan hasn't yet started, or that
  * caller needs to start the next primitive index scan (if it's the latter
- * case we'll set so.needPrimScan).  The first time a participating process
- * reaches the last page, it will return true and set *next_scan_page to
- * P_NONE; after that, further attempts to seize the scan will return false.
+ * case we'll set so.needPrimScan).
  *
  * Callers should ignore the value of *next_scan_page and *last_curr_page if
  * the return value is false.
@@ -724,6 +722,9 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *next_scan_page,
  * that it can be passed to _bt_parallel_primscan_schedule, should caller
  * determine that another primitive index scan is required.
  *
+ * If caller's next_scan_page is P_NONE, the scan has reached the index's
+ * rightmost/leftmost page.  We'll end the parallel scan right away.
+ *
  * Note: unlike the serial case, parallel scans don't need to remember both
  * sibling links.  next_scan_page is whichever link is next given the scan's
  * direction.  That's all we'll ever need, since the direction of a parallel
@@ -735,16 +736,30 @@ _bt_parallel_release(IndexScanDesc scan, BlockNumber next_scan_page,
 {
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
+	bool		ended_scan = false;
+
+	Assert(BlockNumberIsValid(next_scan_page));
 
 	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
 												  parallel_scan->ps_offset);
 
 	SpinLockAcquire(&btscan->btps_mutex);
-	btscan->btps_nextScanPage = next_scan_page;
-	btscan->btps_lastCurrPage = curr_page;
-	btscan->btps_pageStatus = BTPARALLEL_IDLE;
+	if (next_scan_page == P_NONE)
+	{
+		btscan->btps_pageStatus = BTPARALLEL_DONE;
+		ended_scan = true;
+	}
+	else
+	{
+		btscan->btps_nextScanPage = next_scan_page;
+		btscan->btps_lastCurrPage = curr_page;
+		btscan->btps_pageStatus = BTPARALLEL_IDLE;
+	}
 	SpinLockRelease(&btscan->btps_mutex);
-	ConditionVariableSignal(&btscan->btps_cv);
+	if (ended_scan)
+		ConditionVariableBroadcast(&btscan->btps_cv);
+	else
+		ConditionVariableSignal(&btscan->btps_cv);
 }
 
 /*
