@@ -1112,11 +1112,12 @@ typedef struct BTReadPageState
 	bool		firstmatch;		/* at least one match so far?  */
 
 	/*
-	 * Private _bt_checkkeys state used to manage "look ahead" optimization
-	 * (only used during scans with array keys)
+	 * Private _bt_checkkeys state used to manage "look ahead" and skip array
+	 * optimizations (only used during scans with array keys)
 	 */
 	int16		rechecks;
 	int16		targetdistance;
+	bool		beyondskip;
 
 } BTReadPageState;
 

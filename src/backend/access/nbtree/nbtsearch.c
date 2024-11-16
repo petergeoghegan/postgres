@@ -1646,6 +1646,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.firstmatch = false;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
+	pstate.beyondskip = false;
 
 	/*
 	 * Prechecking the value of the continuescan flag for the last item on the
@@ -1837,6 +1838,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
+			pstate.beyondskip = false; /* reset for finaltup */
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
@@ -1892,6 +1894,9 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			}
 			else
 				tuple_alive = true;
+
+			if (offnum == minoff)
+				pstate.beyondskip = false; /* reset for finaltup */
 
 			itup = (IndexTuple) PageGetItem(page, iid);
 			Assert(!BTreeTupleIsPivot(itup));
