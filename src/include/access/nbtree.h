@@ -1112,6 +1112,13 @@ typedef struct BTReadPageState
 	bool		firstmatch;		/* at least one match so far?  */
 
 	/*
+	 * Input and output parameters, set and unset by both _bt_readpage and
+	 * _bt_checkkeys to manage "skipskip" optimization during skip scans
+	 */
+	bool		skipskip;
+	bool		noskipskip;
+
+	/*
 	 * Private _bt_checkkeys state used to manage "look ahead" optimization
 	 * (only used during scans with array keys)
 	 */

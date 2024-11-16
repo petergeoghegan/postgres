@@ -1644,6 +1644,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.continuescan = true; /* default assumption */
 	pstate.prechecked = false;
 	pstate.firstmatch = false;
+	pstate.skipskip = false;
+	pstate.noskipskip = false;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
 
@@ -1686,6 +1688,10 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	 * if the final tuple is == those same keys (and also satisfies any
 	 * required < or <= strategy scan keys) during the precheck, we can safely
 	 * assume that this must also be true of all earlier tuples from the page.
+	 *
+	 * XXX Maybe we should opt out of this optimization during any skip scan?
+	 * Arguably, it is superseded by the "skipskip" skip scan optimization.
+	 * (In any case this isn't very effective during most skip scans.)
 	 */
 	if (!firstPage && !so->scanBehind && minoff < maxoff)
 	{
@@ -1837,6 +1843,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
+			if (pstate.skipskip)
+			{
+				Assert(itup == pstate.finaltup);
+
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;	/* reset for finaltup */
+			}
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
@@ -1897,6 +1910,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			Assert(!BTreeTupleIsPivot(itup));
 
 			pstate.offnum = offnum;
+			if (offnum == minoff && pstate.skipskip)
+			{
+				Assert(itup == pstate.finaltup);
+
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;	/* reset for finaltup */
+			}
 			passes_quals = _bt_checkkeys(scan, &pstate, arrayKeys,
 										 itup, indnatts);
 
