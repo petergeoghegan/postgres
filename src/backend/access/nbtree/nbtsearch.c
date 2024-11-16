@@ -1652,8 +1652,11 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.offnum = InvalidOffsetNumber;
 	pstate.skip = InvalidOffsetNumber;
 	pstate.continuescan = true; /* default assumption */
+	pstate.force = false;
 	pstate.prechecked = false;
 	pstate.firstmatch = false;
+	pstate.skipskip = false;
+	pstate.ikey = 0;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
 
@@ -1713,6 +1716,14 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		pstate.continuescan = true; /* reset */
 	}
 
+	/*
+	 * Skip maintenance of skip arrays (if any) during primitive index scans
+	 * that read leaf pages after the first
+	 */
+	else if (!firstPage && so->skipScan && !so->noSkipskipNext &&
+			 minoff < maxoff)
+		_bt_checkkeys_skipskip(scan, &pstate);
+
 	if (ScanDirectionIsForward(dir))
 	{
 		/* SK_SEARCHARRAY forward scans must provide high key up front */
@@ -1722,10 +1733,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			pstate.finaltup = (IndexTuple) PageGetItem(page, iid);
 
-			if (unlikely(so->oppositeDirCheck))
+			if (unlikely(so->scanBehind))
 			{
-				Assert(so->scanBehind);
-
 				/*
 				 * Last _bt_readpage call scheduled a recheck of finaltup for
 				 * required scan keys up to and including a > or >= scan key.
@@ -1736,7 +1745,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				 * all tuples on this page are still before the _bt_first-wise
 				 * start of matches for the current set of array keys.
 				 */
-				if (!_bt_oppodir_checkkeys(scan, dir, pstate.finaltup))
+				if (!_bt_scanbehind_checkkeys(scan, dir, pstate.finaltup))
 				{
 					/* Schedule another primitive index scan after all */
 					so->currPos.moreRight = false;
@@ -1745,7 +1754,10 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				}
 
 				/* Deliberately don't unset scanBehind flag just yet */
+				if (so->forceNext)
+					pstate.force = true;
 			}
+			so->forceNext = false;
 		}
 
 		/* load items[] in ascending order */
@@ -1784,6 +1796,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum < pstate.skip);
+				Assert(!pstate.skipskip);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
@@ -1849,6 +1862,17 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
+			if (pstate.skipskip)
+			{
+				/*
+				 * reset array keys for finaltup call, since skipskip
+				 * optimization prevented ordinary array maintenance
+				 */
+				Assert(so->skipScan);
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;
+				pstate.ikey = 0;
+			}
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
@@ -1859,6 +1883,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		so->currPos.firstItem = 0;
 		so->currPos.lastItem = itemIndex - 1;
 		so->currPos.itemIndex = 0;
+		so->lastNextPage = so->currPos.nextPage;
 	}
 	else
 	{
@@ -1868,6 +1893,22 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			ItemId		iid = PageGetItemId(page, minoff);
 
 			pstate.finaltup = (IndexTuple) PageGetItem(page, iid);
+
+			if (unlikely(so->scanBehind))
+			{
+				if (!_bt_scanbehind_checkkeys(scan, dir, pstate.finaltup))
+				{
+					/* Schedule another primitive index scan after all */
+					so->currPos.moreLeft = false;
+					so->needPrimScan = true;
+					return false;
+				}
+
+				/* Deliberately don't unset scanBehind flag just yet */
+				if (so->forceNext)
+					pstate.force = true;
+			}
+			so->forceNext = false;
 		}
 
 		/* load items[] in descending order */
@@ -1909,6 +1950,17 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			Assert(!BTreeTupleIsPivot(itup));
 
 			pstate.offnum = offnum;
+			if (offnum == minoff && pstate.skipskip)
+			{
+				/*
+				 * reset array keys for finaltup call, since skipskip
+				 * optimization prevented ordinary array maintenance
+				 */
+				Assert(so->skipScan);
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;
+				pstate.ikey = 0;
+			}
 			passes_quals = _bt_checkkeys(scan, &pstate, arrayKeys,
 										 itup, indnatts);
 
@@ -1920,6 +1972,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum > pstate.skip);
+				Assert(!pstate.skipskip);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
@@ -1983,6 +2036,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		so->currPos.firstItem = itemIndex;
 		so->currPos.lastItem = MaxTIDsPerBTreePage - 1;
 		so->currPos.itemIndex = MaxTIDsPerBTreePage - 1;
+		so->lastNextPage = so->currPos.prevPage;
 	}
 
 	return (so->currPos.firstItem <= so->currPos.lastItem);
