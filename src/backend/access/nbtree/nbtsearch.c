@@ -1651,6 +1651,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.firstpage = firstpage;
 	pstate.prechecked = false;
 	pstate.firstmatch = false;
+	pstate.forcenonrequired = false;
+	pstate.ikey = 0;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
 
@@ -1733,6 +1735,14 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 													   so->currPos.currPage);
 					return false;
 				}
+
+				/*
+				 * Use pstate.ikey optimization during primitive index scans
+				 * with skip arrays when reading a second or subsequent page
+				 * (unless we've reached the rightmost page)
+				 */
+				if (!pstate.firstpage && so->skipScan && minoff < maxoff)
+					_bt_skip_ikeyprefix(scan, &pstate);
 			}
 
 			so->scanBehind = so->oppositeDirCheck = false;	/* reset */
@@ -1774,6 +1784,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum < pstate.skip);
+				Assert(!pstate.forcenonrequired);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
@@ -1837,6 +1848,15 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			IndexTuple	itup = (IndexTuple) PageGetItem(page, iid);
 			int			truncatt;
 
+			if (pstate.forcenonrequired)
+			{
+				Assert(so->skipScan);
+
+				/* recover from treating the scan's keys as nonrequired */
+				_bt_start_array_keys(scan, dir);
+				pstate.forcenonrequired = false;
+				pstate.ikey = 0;
+			}
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
@@ -1873,6 +1893,14 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 													   so->currPos.currPage);
 					return false;
 				}
+
+				/*
+				 * Use pstate.ikey optimization during primitive index scans
+				 * with skip arrays when reading a second or subsequent page
+				 * (unless we've reached the leftmost page)
+				 */
+				if (!pstate.firstpage && so->skipScan && minoff < maxoff)
+					_bt_skip_ikeyprefix(scan, &pstate);
 			}
 
 			so->scanBehind = so->oppositeDirCheck = false;	/* reset */
@@ -1917,6 +1945,15 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			Assert(!BTreeTupleIsPivot(itup));
 
 			pstate.offnum = offnum;
+			if (offnum == minoff && pstate.forcenonrequired)
+			{
+				Assert(so->skipScan);
+
+				/* recover from treating the scan's keys as nonrequired */
+				_bt_start_array_keys(scan, dir);
+				pstate.forcenonrequired = false;
+				pstate.ikey = 0;
+			}
 			passes_quals = _bt_checkkeys(scan, &pstate, arrayKeys,
 										 itup, indnatts);
 
@@ -1928,6 +1965,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum > pstate.skip);
+				Assert(!pstate.forcenonrequired);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
@@ -1992,6 +2030,16 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		so->currPos.lastItem = MaxTIDsPerBTreePage - 1;
 		so->currPos.itemIndex = MaxTIDsPerBTreePage - 1;
 	}
+
+	/*
+	 * As far as our caller is concerned, the scan's arrays always track its
+	 * progress through the index's key space.
+	 *
+	 * If _bt_skip_ikeyprefix told us to temporarily treat all scan keys as
+	 * nonrequired (during a skip scan), then we must recover afterwards by
+	 * advancing our arrays using finaltup (with !pstate.forcenonrequired).
+	 */
+	Assert(pstate.ikey == 0 && !pstate.forcenonrequired);
 
 	return (so->currPos.firstItem <= so->currPos.lastItem);
 }
