@@ -1119,6 +1119,8 @@ typedef struct BTReadPageState
 	 */
 	bool		prechecked;		/* precheck set continuescan to 'true'? */
 	bool		firstmatch;		/* at least one match so far?  */
+	bool		skipskip;		/* skip maintenance of skip arrays? */
+	int			ikey;			/* Start comparisons from ikey'th scan key */
 
 	/*
 	 * Private _bt_checkkeys state used to manage "look ahead" optimization
@@ -1319,6 +1321,7 @@ extern bool _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arra
 						  IndexTuple tuple, int tupnatts);
 extern bool _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
 								  IndexTuple finaltup);
+extern void _bt_checkkeys_skipskip(IndexScanDesc scan, BTReadPageState *pstate);
 extern void _bt_killitems(IndexScanDesc scan);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);
