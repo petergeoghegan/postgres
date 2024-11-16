@@ -1115,11 +1115,13 @@ typedef struct BTReadPageState
 
 	/*
 	 * Input and output parameters, set and unset by both _bt_readpage and
-	 * _bt_checkkeys to manage precheck optimizations
+	 * _bt_checkkeys to manage precheck and forcenonrequired optimizations
 	 */
 	bool		firstpage;		/* on first page of current primitive scan? */
 	bool		prechecked;		/* precheck set continuescan to 'true'? */
 	bool		firstmatch;		/* at least one match so far?  */
+	bool		forcenonrequired;	/* treat all scan keys as nonrequired? */
+	int			ikey;			/* start comparisons from ikey'th scan key */
 
 	/*
 	 * Private _bt_checkkeys state used to manage "look ahead" optimization
@@ -1328,6 +1330,7 @@ extern bool _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arra
 						  IndexTuple tuple, int tupnatts);
 extern bool _bt_scanbehind_checkkeys(IndexScanDesc scan, ScanDirection dir,
 									 IndexTuple finaltup);
+extern void _bt_skip_ikeyprefix(IndexScanDesc scan, BTReadPageState *pstate);
 extern void _bt_killitems(IndexScanDesc scan);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);
