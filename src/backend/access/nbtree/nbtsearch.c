@@ -1644,6 +1644,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.continuescan = true; /* default assumption */
 	pstate.prechecked = false;
 	pstate.firstmatch = false;
+	pstate.skipskip = false;
+	pstate.noskipskip = false;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
 
@@ -1837,6 +1839,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
+			if (pstate.skipskip)
+			{
+				Assert(itup == pstate.finaltup);
+
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;	/* reset for finaltup */
+			}
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
@@ -1897,6 +1906,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			Assert(!BTreeTupleIsPivot(itup));
 
 			pstate.offnum = offnum;
+			if (offnum == minoff && pstate.skipskip)
+			{
+				Assert(itup == pstate.finaltup);
+
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;	/* reset for finaltup */
+			}
 			passes_quals = _bt_checkkeys(scan, &pstate, arrayKeys,
 										 itup, indnatts);
 
