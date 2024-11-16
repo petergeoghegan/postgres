@@ -1654,6 +1654,9 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.continuescan = true; /* default assumption */
 	pstate.prechecked = false;
 	pstate.firstmatch = false;
+	pstate.skipskip = false;
+	pstate.firstpage = firstPage;
+	pstate.ikey = 0;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
 
@@ -1713,6 +1716,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 		pstate.continuescan = true; /* reset */
 	}
 
+	/*
+	 * Skip maintenance of skip arrays (if any) during primitive index scans
+	 * that read leaf pages after the first
+	 */
+	else if (!firstPage && so->skipScan && !so->noSkipskip && minoff < maxoff)
+		_bt_checkkeys_skipskip(scan, &pstate);
+
 	if (ScanDirectionIsForward(dir))
 	{
 		/* SK_SEARCHARRAY forward scans must provide high key up front */
@@ -1722,29 +1732,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			pstate.finaltup = (IndexTuple) PageGetItem(page, iid);
 
-			if (unlikely(so->oppositeDirCheck))
+			if (unlikely(so->scanBehind) &&
+				!_bt_scanbehind_checkkeys(scan, dir, pstate.finaltup))
 			{
-				Assert(so->scanBehind);
-
-				/*
-				 * Last _bt_readpage call scheduled a recheck of finaltup for
-				 * required scan keys up to and including a > or >= scan key.
-				 *
-				 * _bt_checkkeys won't consider the scanBehind flag unless the
-				 * scan is stopped by a scan key required in the current scan
-				 * direction.  We need this recheck so that we'll notice when
-				 * all tuples on this page are still before the _bt_first-wise
-				 * start of matches for the current set of array keys.
-				 */
-				if (!_bt_oppodir_checkkeys(scan, dir, pstate.finaltup))
-				{
-					/* Schedule another primitive index scan after all */
-					so->currPos.moreRight = false;
-					so->needPrimScan = true;
-					return false;
-				}
-
-				/* Deliberately don't unset scanBehind flag just yet */
+				/* Schedule another primitive index scan after all */
+				so->currPos.moreRight = false;
+				so->needPrimScan = true;
+				return false;
 			}
 		}
 
@@ -1784,6 +1778,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum < pstate.skip);
+				Assert(!pstate.skipskip);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
@@ -1849,6 +1844,16 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
+			if (pstate.skipskip)
+			{
+				/*
+				 * reset array keys for finaltup call, since skipskip
+				 * optimization prevented ordinary array maintenance
+				 */
+				Assert(so->skipScan);
+				pstate.skipskip = false;
+				pstate.ikey = 0;
+			}
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
@@ -1868,6 +1873,15 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			ItemId		iid = PageGetItemId(page, minoff);
 
 			pstate.finaltup = (IndexTuple) PageGetItem(page, iid);
+
+			if (unlikely(so->scanBehind) &&
+				!_bt_scanbehind_checkkeys(scan, dir, pstate.finaltup))
+			{
+				/* Schedule another primitive index scan after all */
+				so->currPos.moreLeft = false;
+				so->needPrimScan = true;
+				return false;
+			}
 		}
 
 		/* load items[] in descending order */
@@ -1909,6 +1923,16 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			Assert(!BTreeTupleIsPivot(itup));
 
 			pstate.offnum = offnum;
+			if (offnum == minoff && pstate.skipskip)
+			{
+				/*
+				 * reset array keys for finaltup call, since skipskip
+				 * optimization prevented ordinary array maintenance
+				 */
+				Assert(so->skipScan);
+				pstate.skipskip = false;
+				pstate.ikey = 0;
+			}
 			passes_quals = _bt_checkkeys(scan, &pstate, arrayKeys,
 										 itup, indnatts);
 
@@ -1920,6 +1944,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum > pstate.skip);
+				Assert(!pstate.skipskip);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
