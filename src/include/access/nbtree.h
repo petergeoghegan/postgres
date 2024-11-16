@@ -1051,6 +1051,7 @@ typedef struct BTScanOpaqueData
 
 	/* workspace for SK_SEARCHARRAY support */
 	int			numArrayKeys;	/* number of equality-type array keys */
+	bool		skipScan;		/* At least one skip array in arrayKeys[]? */
 	bool		needPrimScan;	/* New prim scan to continue in current dir? */
 	bool		scanBehind;		/* Last array advancement matched -inf attr? */
 	bool		oppositeDirCheck;	/* explicit scanBehind recheck needed? */
@@ -1110,6 +1111,14 @@ typedef struct BTReadPageState
 	 */
 	bool		prechecked;		/* precheck set continuescan to 'true'? */
 	bool		firstmatch;		/* at least one match so far?  */
+
+	/*
+	 * Input and output parameters, set and unset by both _bt_readpage and
+	 * _bt_checkkeys to manage "skipskip" optimization during skip scans
+	 */
+	bool		skipskip;
+	bool		noskipskip;
+	bool		advanced;
 
 	/*
 	 * Private _bt_checkkeys state used to manage "look ahead" optimization

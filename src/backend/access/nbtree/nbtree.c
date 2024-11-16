@@ -423,6 +423,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 		memcpy(scan->keyData, scankey, scan->numberOfKeys * sizeof(ScanKeyData));
 	so->numberOfKeys = 0;		/* until _bt_preprocess_keys sets it */
 	so->numArrayKeys = 0;		/* ditto */
+	so->skipScan = false;		/* ditto */
 }
 
 /*

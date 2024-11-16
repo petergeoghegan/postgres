@@ -151,13 +151,16 @@ static bool _bt_fix_scankey_strategy(ScanKey skey, int16 *indoption);
 static void _bt_mark_scankey_required(ScanKey skey);
 static bool _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 							  IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
-							  bool advancenonrequired, bool prechecked, bool firstmatch,
+							  bool advancenonrequired, bool skipskip,
+							  bool prechecked, bool firstmatch,
 							  bool *continuescan, int *ikey);
 static bool _bt_check_rowcompare(ScanKey skey,
 								 IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 								 ScanDirection dir, bool *continuescan);
 static void _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
-									 int tupnatts, TupleDesc tupdesc);
+									 IndexTuple tuple, int tupnatts, TupleDesc tupdesc);
+static bool _bt_checkkeys_skipskip(IndexScanDesc scan, BTReadPageState *pstate,
+								   IndexTuple tuple, TupleDesc tupdesc);
 static int	_bt_keep_natts(Relation rel, IndexTuple lastleft,
 						   IndexTuple firstright, BTScanInsert itup_key);
 
@@ -354,6 +357,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 	 */
 	numArrayKeys = _bt_preprocess_num_array_keys(scan, skipatts,
 												 &numSkipArrayKeys);
+	so->skipScan = (numSkipArrayKeys > 0);
 
 	/* Quit if nothing to do. */
 	if (numArrayKeys == 0)
@@ -3205,8 +3209,6 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 
 		if (cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD))
 		{
-			Assert(sktrig_required);
-
 			required = true;
 
 			if (cur->sk_attno > tupnatts)
@@ -3353,7 +3355,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		}
 		else
 		{
-			Assert(sktrig_required && required);
+			Assert(required);
 
 			/*
 			 * This is a required non-array equality strategy scan key, which
@@ -3395,7 +3397,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		 * be eliminated by _bt_preprocess_keys.  It won't matter if some of
 		 * our "true" array scan keys (or even all of them) are non-required.
 		 */
-		if (required &&
+		if (sktrig_required && required &&
 			((ScanDirectionIsForward(dir) && result > 0) ||
 			 (ScanDirectionIsBackward(dir) && result < 0)))
 			beyond_end_advance = true;
@@ -3410,7 +3412,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 			 * array scan keys are considered interesting.)
 			 */
 			all_satisfied = false;
-			if (required)
+			if (sktrig_required && required)
 				all_required_satisfied = false;
 			else
 			{
@@ -3522,7 +3524,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 
 		/* Recheck _bt_check_compare on behalf of caller */
 		if (_bt_check_compare(scan, dir, tuple, tupnatts, tupdesc,
-							  false, false, false,
+							  false, !sktrig_required, false, false,
 							  &continuescan, &nsktrig) &&
 			!so->scanBehind)
 		{
@@ -3590,6 +3592,9 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		/* Caller's tuple doesn't match any qual */
 		return false;
 	}
+
+	/* _bt_readpage must have unset skipskip flag (for finaltup call) */
+	Assert(!pstate->skipskip);
 
 	/*
 	 * Postcondition array state assertion (for still-unsatisfied tuples).
@@ -3760,6 +3765,23 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		pstate->skip = pstate->maxoff + 1;
 	}
 
+	/*
+	 * Optimization: if a scan with a skip array doesn't satisfy every
+	 * required key (in practice this is almost always all the scan's keys),
+	 * we assume that this page isn't likely to skip "within" a page using
+	 * _bt_checkkeys_look_ahead.  We'll apply the 'skipskip' optimization.
+	 *
+	 * The 'skipskip' optimization allows _bt_checkkeys/_bt_check_compare to
+	 * stop maintaining the scan's skip arrays until we've reached finaltup.
+	 */
+	else if (so->skipScan && !pstate->noskipskip && pstate->advanced &&
+			 _bt_checkkeys_skipskip(scan, pstate, tuple, tupdesc))
+	{
+		pstate->skipskip = true;
+	}
+
+	pstate->advanced = true;	/* remember arrays advanced on page */
+
 	/* Caller's tuple doesn't match the new qual */
 	return false;
 
@@ -3861,7 +3883,8 @@ end_toplevel_scan:
  * make the scan much more efficient: if there are few distinct values in "x",
  * we'll be able to skip over many irrelevant leaf pages.  (If on the other
  * hand there are many distinct values in "x" then the scan will degenerate
- * into a full index scan at run time.)
+ * into a full index scan at run time, but we'll be no worse off overall.
+ * _bt_checkkeys's 'skipskip' optimization keeps the runtime overhead low.)
  *
  * If possible, redundant keys are eliminated: we keep only the tightest
  * >/>= bound and the tightest </<= bound, and if there's an = key then
@@ -4903,7 +4926,8 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 	Assert(BTreeTupleGetNAtts(tuple, scan->indexRelation) == tupnatts);
 
 	res = _bt_check_compare(scan, dir, tuple, tupnatts, tupdesc,
-							arrayKeys, pstate->prechecked, pstate->firstmatch,
+							arrayKeys, pstate->skipskip,
+							pstate->prechecked, pstate->firstmatch,
 							&pstate->continuescan, &ikey);
 
 #ifdef USE_ASSERT_CHECKING
@@ -4915,7 +4939,8 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 		 * Assert that the scan isn't in danger of becoming confused.
 		 */
 		Assert(!so->scanBehind && !so->oppositeDirCheck);
-		Assert(!pstate->prechecked && !pstate->firstmatch);
+		Assert(!pstate->skipskip && !pstate->prechecked &&
+			   !pstate->firstmatch);
 		Assert(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
 											 tupnatts, false, 0, NULL));
 	}
@@ -4929,7 +4954,7 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 		 * get the same answer without those optimizations
 		 */
 		Assert(res == _bt_check_compare(scan, dir, tuple, tupnatts, tupdesc,
-										false, false, false,
+										false, pstate->skipskip, false, false,
 										&dcontinuescan, &dikey));
 		Assert(pstate->continuescan == dcontinuescan);
 	}
@@ -5002,7 +5027,8 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 			if (pstate->rechecks >= LOOK_AHEAD_REQUIRED_RECHECKS)
 			{
 				/* See if we should skip ahead within the current leaf page */
-				_bt_checkkeys_look_ahead(scan, pstate, tupnatts, tupdesc);
+				_bt_checkkeys_look_ahead(scan, pstate, tuple, tupnatts,
+										 tupdesc);
 
 				/*
 				 * Might have set pstate.skip to a later page offset.  When
@@ -5060,7 +5086,7 @@ _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
 	Assert(so->numArrayKeys);
 
 	_bt_check_compare(scan, flipped, finaltup, nfinaltupatts, tupdesc,
-					  false, false, false, &continuescan, &ikey);
+					  false, false, false, false, &continuescan, &ikey);
 
 	if (!continuescan && so->keyData[ikey].sk_strategy != BTEqualStrategyNumber)
 		return false;
@@ -5099,17 +5125,24 @@ _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
  *
  * Though we advance non-required array keys on our own, that shouldn't have
  * any lasting consequences for the scan.  By definition, non-required arrays
- * have no fixed relationship with the scan's progress.  (There are delicate
- * considerations for non-required arrays when the arrays need to be advanced
- * following our setting continuescan to false, but that doesn't concern us.)
+ * have no fixed relationship with the scan's progress.  (skipskip=true makes
+ * us treat required scan keys as non-required, though.  That's safe because
+ * _bt_readpage will account for our failure to fully maintain the scan's
+ * arrays later on, right before its finaltup call to _bt_checkkeys.)
  *
  * Pass advancenonrequired=false to avoid all array related side effects.
  * This allows _bt_advance_array_keys caller to avoid infinite recursion.
+ *
+ * Pass skipskip=true to instruct us to skip all of the scan's skip arrays.
+ * This provides the scan with a way of keeping the cost of maintaining its
+ * skip arrays under control, given skip arrays on high cardinality columns
+ * (i.e. given a skip array on a column which isn't a good fit for skip scan).
  */
 static bool
 _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 				  IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
-				  bool advancenonrequired, bool prechecked, bool firstmatch,
+				  bool advancenonrequired, bool skipskip,
+				  bool prechecked, bool firstmatch,
 				  bool *continuescan, int *ikey)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
@@ -5126,10 +5159,18 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 
 		/*
 		 * Check if the key is required in the current scan direction, in the
-		 * opposite scan direction _only_, or in neither direction
+		 * opposite scan direction _only_, or in neither direction (except
+		 * when reading a page that's now using the "skipskip" optimization)
 		 */
-		if (((key->sk_flags & SK_BT_REQFWD) && ScanDirectionIsForward(dir)) ||
-			((key->sk_flags & SK_BT_REQBKWD) && ScanDirectionIsBackward(dir)))
+		if (skipskip)
+		{
+			Assert(!prechecked);
+
+			if (key->sk_flags & SK_BT_SKIP)
+				continue;
+		}
+		else if (((key->sk_flags & SK_BT_REQFWD) && ScanDirectionIsForward(dir)) ||
+				 ((key->sk_flags & SK_BT_REQBKWD) && ScanDirectionIsBackward(dir)))
 			requiredSameDir = true;
 		else if (((key->sk_flags & SK_BT_REQFWD) && ScanDirectionIsBackward(dir)) ||
 				 ((key->sk_flags & SK_BT_REQBKWD) && ScanDirectionIsForward(dir)))
@@ -5241,7 +5282,7 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 				 * (_bt_advance_array_keys also relies on this behavior during
 				 * forward scans.)
 				 */
-				if ((key->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) &&
+				if ((requiredSameDir || requiredOppositeDirOnly) &&
 					ScanDirectionIsBackward(dir))
 					*continuescan = false;
 			}
@@ -5259,7 +5300,7 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 				 * (_bt_advance_array_keys also relies on this behavior during
 				 * backward scans.)
 				 */
-				if ((key->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) &&
+				if ((requiredSameDir || requiredOppositeDirOnly) &&
 					ScanDirectionIsForward(dir))
 					*continuescan = false;
 			}
@@ -5511,12 +5552,18 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
  */
 static void
 _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
-						 int tupnatts, TupleDesc tupdesc)
+						 IndexTuple tuple, int tupnatts, TupleDesc tupdesc)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	ScanDirection dir = so->currPos.dir;
 	OffsetNumber aheadoffnum;
 	IndexTuple	ahead;
+
+	/*
+	 * The "look ahead" skipping mechanism cannot be used at the same time as
+	 * skip scan's similar "skipskip" mechanism
+	 */
+	Assert(!pstate->skipskip);
 
 	/* Avoid looking ahead when comparing the page high key */
 	if (pstate->offnum < pstate->minoff)
@@ -5563,6 +5610,9 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 			pstate->skip = aheadoffnum + 1;
 		else
 			pstate->skip = aheadoffnum - 1;
+
+		/* Don't attempt skipskip optimization on this page from here on */
+		pstate->noskipskip = true;
 	}
 	else
 	{
@@ -5575,7 +5625,115 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 		 */
 		pstate->rechecks = 0;
 		pstate->targetdistance = Max(pstate->targetdistance / 8, 1);
+
+		/*
+		 * During skip scan (when skip arrays are in use), pages containing
+		 * tuple where an omitted prefix column (a column corresponding to a
+		 * skip array) has many distinct values are a challenge.
+		 *
+		 * The 'skipskip' optimization allows _bt_checkkeys/_bt_check_compare
+		 * to stop maintaining the scan's skip arrays until we've reached
+		 * finaltup.
+		 */
+		if (so->skipScan && !pstate->noskipskip)
+		{
+			if (_bt_checkkeys_skipskip(scan, pstate, tuple, tupdesc))
+				pstate->skipskip = true;
+		}
 	}
+}
+
+/*
+ * Can _bt_checkkeys/_bt_check_compare apply the 'skipskip' optimization?
+ *
+ * Return value indicates if the optimization is safe for the tuples on the
+ * page after caller's tuple, but before its page's finaltup.
+ */
+static bool
+_bt_checkkeys_skipskip(IndexScanDesc scan, BTReadPageState *pstate,
+					   IndexTuple tuple, TupleDesc tupdesc)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	ScanDirection dir = so->currPos.dir;
+	IndexTuple	finaltup = pstate->finaltup;
+	int			arrayidx = 0,
+				nfinaltupatts = 0;
+	bool		rangearrayseen = false;
+
+	Assert(!BTreeTupleIsPivot(tuple));
+	Assert(tuple != finaltup);
+
+	if (finaltup)
+		nfinaltupatts = BTreeTupleGetNAtts(finaltup, rel);
+	for (int ikey = 0; ikey < so->numberOfKeys; ikey++)
+	{
+		ScanKey		cur = so->keyData + ikey;
+		BTArrayKeyInfo *array = NULL;
+		Datum		tupdatum;
+		bool		tupnull;
+		int32		result;
+
+		/*
+		 * Only need to check range skip arrays within this loop.
+		 *
+		 * A SAOP array can always be treated as a non-required array within
+		 * _bt_check_compare.  A skip array without a lower or upper bound is
+		 * always safe to skip within _bt_check_compare, since it is satisfied
+		 * by every possible value.
+		 */
+		if (cur->sk_strategy != BTEqualStrategyNumber)
+			continue;
+		if (!(cur->sk_flags & SK_SEARCHARRAY))
+			continue;
+		array = &so->arrayKeys[arrayidx++];
+		Assert(array->scan_key == ikey);
+		if (array->num_elems != -1 || array->null_elem)
+			continue;
+
+		/*
+		 * Found a range skip array to test.
+		 *
+		 * Scans with more than one range skip array are not eligible to use
+		 * the optimization.  Note that we support the skipskip optimization
+		 * for a qual like "WHERE a BETWEEN 1 AND 10 AND b BETWEEN 1 AND 3",
+		 * since there the qual actually requires only a single skip array.
+		 * However, if such a qual ended with "... AND C > 42", then it will
+		 * prevent use of the skipskip optimization.
+		 */
+		if (rangearrayseen)
+			return false;
+
+		/*
+		 * Don't attempt the optimization when we have a skip array and are
+		 * reading the rightmost leaf page (or the leftmost leaf page, when
+		 * scanning backwards)
+		 */
+		if (!finaltup)
+			return false;
+		rangearrayseen = true;
+
+		/* test the tuple that just advanced arrays within our caller */
+		Assert(cur->sk_flags & SK_BT_SKIP);
+		Assert(cur->sk_flags & SK_BT_REQFWD);
+		tupdatum = index_getattr(tuple, cur->sk_attno, tupdesc, &tupnull);
+		_bt_binsrch_skiparray_skey(&so->orderProcs[ikey], false, dir,
+								   tupdatum, tupnull, array, cur, &result);
+		if (result != 0)
+			return false;
+
+		/* test the page's finaltup iff relevant attribute isn't truncated */
+		if (cur->sk_attno > nfinaltupatts)
+			continue;
+
+		tupdatum = index_getattr(finaltup, cur->sk_attno, tupdesc, &tupnull);
+		_bt_binsrch_skiparray_skey(&so->orderProcs[ikey], false, dir,
+								   tupdatum, tupnull, array, cur, &result);
+		if (result != 0)
+			return false;
+	}
+
+	return true;
 }
 
 /*

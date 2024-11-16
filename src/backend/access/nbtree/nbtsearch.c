@@ -1644,6 +1644,27 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.continuescan = true; /* default assumption */
 	pstate.prechecked = false;
 	pstate.firstmatch = false;
+
+	/*
+	 * Initialize "skipskip" optimization state (used only during scans with
+	 * skip arrays).
+	 *
+	 * Skip scans use this to manage the overhead of maintaining skip arrays
+	 * on columns with many distinct values.  It also works as a substitute
+	 * for the pstate.prechecked optimization, which skip scan never uses.
+	 *
+	 * We never do this for the first page read by each primitive scan.  This
+	 * avoids slowing down queries with skip arrays that have relatively few
+	 * distinct values -- the "look ahead" optimization is preferred there.
+	 */
+	pstate.skipskip = false;
+	pstate.noskipskip = firstPage;
+	pstate.advanced = false;
+
+	/*
+	 * Initialize "look ahead" optimization state (used only during scans with
+	 * arrays, including those that just use skip arrays)
+	 */
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
 
@@ -1660,10 +1681,10 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	 * corresponding value from the last item on the page.  So checking with
 	 * the last item on the page would give a more precise answer.
 	 *
-	 * We skip this for the first page read by each (primitive) scan, to avoid
-	 * slowing down point queries.  They typically don't stand to gain much
-	 * when the optimization can be applied, and are more likely to notice the
-	 * overhead of the precheck.
+	 * We don't do this for the first page read by each (primitive) scan, to
+	 * avoid slowing down point queries.  They typically don't stand to gain
+	 * much when the optimization can be applied, and are more likely to
+	 * notice the overhead of the precheck.  Also avoid it during skip scans.
 	 *
 	 * The optimization is unsafe and must be avoided whenever _bt_checkkeys
 	 * just set a low-order required array's key to the best available match
@@ -1687,7 +1708,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	 * required < or <= strategy scan keys) during the precheck, we can safely
 	 * assume that this must also be true of all earlier tuples from the page.
 	 */
-	if (!firstPage && !so->scanBehind && minoff < maxoff)
+	if (!firstPage && !so->skipScan && !so->scanBehind && minoff < maxoff)
 	{
 		ItemId		iid;
 		IndexTuple	itup;
@@ -1837,6 +1858,16 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
+			if (pstate.skipskip)
+			{
+				/*
+				 * reset array keys for finaltup call, since skipskip
+				 * optimization prevented ordinary array maintenance
+				 */
+				Assert(so->skipScan);
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;
+			}
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
@@ -1897,6 +1928,16 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			Assert(!BTreeTupleIsPivot(itup));
 
 			pstate.offnum = offnum;
+			if (offnum == minoff && pstate.skipskip)
+			{
+				/*
+				 * reset array keys for finaltup call, since skipskip
+				 * optimization prevented ordinary array maintenance
+				 */
+				Assert(so->skipScan);
+				_bt_start_array_keys(scan, dir);
+				pstate.skipskip = false;
+			}
 			passes_quals = _bt_checkkeys(scan, &pstate, arrayKeys,
 										 itup, indnatts);
 
