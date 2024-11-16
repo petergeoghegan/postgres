@@ -1650,6 +1650,8 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	pstate.firstpage = firstPage;
 	pstate.prechecked = false;
 	pstate.firstmatch = false;
+	pstate.forcenonrequired = false;
+	pstate.ikey = 0;
 	pstate.rechecks = 0;
 	pstate.targetdistance = 0;
 
@@ -1730,6 +1732,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				}
 			}
 			so->scanBehind = so->oppositeDirCheck = false;	/* reset */
+
+			/*
+			 * Skip maintenance of skip arrays (if any) during primitive index
+			 * scans that read leaf pages after the first
+			 */
+			if (!pstate.firstpage && so->skipScan && minoff < maxoff)
+				_bt_skip_ikeyprefix(scan, &pstate);
 		}
 
 		/* load items[] in ascending order */
@@ -1768,6 +1777,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum < pstate.skip);
+				Assert(!pstate.forcenonrequired);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
@@ -1833,6 +1843,15 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 			truncatt = BTreeTupleGetNAtts(itup, rel);
 			pstate.prechecked = false;	/* precheck didn't cover HIKEY */
+			if (pstate.forcenonrequired)
+			{
+				Assert(so->skipScan);
+
+				/* recover from treating the scan's keys as nonrequired */
+				_bt_start_array_keys(scan, dir);
+				pstate.forcenonrequired = false;
+				pstate.ikey = 0;
+			}
 			_bt_checkkeys(scan, &pstate, arrayKeys, itup, truncatt);
 		}
 
@@ -1865,6 +1884,13 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				}
 			}
 			so->scanBehind = so->oppositeDirCheck = false;	/* reset */
+
+			/*
+			 * Skip maintenance of skip arrays (if any) during primitive index
+			 * scans that read leaf pages after the first
+			 */
+			if (!pstate.firstpage && so->skipScan && minoff < maxoff)
+				_bt_skip_ikeyprefix(scan, &pstate);
 		}
 
 		/* load items[] in descending order */
@@ -1906,6 +1932,15 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			Assert(!BTreeTupleIsPivot(itup));
 
 			pstate.offnum = offnum;
+			if (offnum == minoff && pstate.forcenonrequired)
+			{
+				Assert(so->skipScan);
+
+				/* recover from treating the scan's keys as nonrequired */
+				_bt_start_array_keys(scan, dir);
+				pstate.forcenonrequired = false;
+				pstate.ikey = 0;
+			}
 			passes_quals = _bt_checkkeys(scan, &pstate, arrayKeys,
 										 itup, indnatts);
 
@@ -1917,6 +1952,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 			{
 				Assert(!passes_quals && pstate.continuescan);
 				Assert(offnum > pstate.skip);
+				Assert(!pstate.forcenonrequired);
 
 				offnum = pstate.skip;
 				pstate.skip = InvalidOffsetNumber;
