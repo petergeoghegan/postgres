@@ -3206,19 +3206,8 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		/*
 		 * Precondition array state assertion
 		 */
-		if (!(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
-											tupnatts, false, 0, NULL)))
-		{
-			char	   *pitup;
-
-			pitup = _nbtree_print_itup(tuple, rel);
-
-			elog(ERROR, "pitup: %s\n\n %s", pitup, so->debugstr.data);
-
-			if (pitup)
-				pfree(pitup);
-
-		}
+		Assert(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
+											 tupnatts, false, 0, NULL));
 
 		so->scanBehind = so->oppositeDirCheck = false;	/* reset */
 
@@ -3751,20 +3740,9 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 	 * for _bt_check_compare to behave as if they are required in the current
 	 * scan direction to deal with NULLs.  We'll account for that separately.)
 	 */
-	if (!(_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc, tupnatts,
-									   false, 0,
-									   NULL) == !all_required_satisfied ||
-		  pstate->beyondskip))
-	{
-		char	   *pitup;
-
-		pitup = _nbtree_print_itup(tuple, rel);
-
-		elog(ERROR, "later pitup: %s\n\n %s", pitup, so->debugstr.data);
-
-		if (pitup)
-			pfree(pitup);
-	}
+	Assert((_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc, tupnatts,
+										 false, 0, NULL) ==
+			!all_required_satisfied) || pstate->beyondskip);
 
 	/*
 	 * Optimization: if a scan with a skip array required "beyond end of array
@@ -5207,19 +5185,8 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 		Assert(!so->scanBehind && !so->oppositeDirCheck);
 		Assert(!pstate->beyondskip && !pstate->prechecked &&
 			   !pstate->firstmatch);
-		if (!(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
-											tupnatts, false, 0, NULL)))
-		{
-			char	   *pitup;
-
-			pitup = _nbtree_print_itup(tuple, scan->indexRelation);
-
-			elog(ERROR, "_bt_checkkeys precheck call: %s\n\n %s", pitup, so->debugstr.data);
-
-			if (pitup)
-				pfree(pitup);
-
-		}
+		Assert(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
+											 tupnatts, false, 0, NULL));
 	}
 	if (pstate->prechecked || pstate->firstmatch)
 	{
