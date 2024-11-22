@@ -1651,6 +1651,7 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 				index_batch_free(scan, batch);
 
 				scan->xs_batches->firstBatch++;
+				scan->xs_batches->numBatches--;
 
 				/* we can't skip any batches */
 				Assert(scan->xs_batches->firstBatch == pos->batch);
@@ -1726,6 +1727,7 @@ index_batch_init(IndexScanDesc scan)
 static void
 index_batch_reset(IndexScanDesc scan)
 {
+	int lastBatch;
 	IndexScanBatches *batches = scan->xs_batches;
 
 	/* bail out if batching not enabled */
@@ -1737,7 +1739,8 @@ index_batch_reset(IndexScanDesc scan)
 	read_stream_reset(scan->xs_heapfetch->rs);
 
 	/* release all currently loaded batches */
-	for (int i = batches->firstBatch; i < batches->firstBatch + batches->numBatches; i++)
+	lastBatch = batches->firstBatch + batches->numBatches;
+	for (int i = batches->firstBatch; i < lastBatch; i++)
 	{
 		IndexScanBatch	batch = INDEX_SCAN_BATCH(scan, i);
 		index_batch_free(scan, batch);

@@ -1501,7 +1501,7 @@ _bt_copy_batch(IndexScanDesc scan, ScanDirection dir)
 	BTScanBatch		btbatch = NULL;
 
 	/* we should only get here for pages with at least some items */
-	Assert(so->currPos.firstItem != so->currPos.lastItem);
+	Assert(so->currPos.firstItem <= so->currPos.lastItem);
 
 	batch = index_batch_alloc(MaxTIDsPerBTreePage);
 
