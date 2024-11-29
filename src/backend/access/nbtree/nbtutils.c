@@ -29,6 +29,8 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
+// #define DEBUG_SKIPSKIP
+
 /*
  * GUC parameters (temporary convenience for reviewers).
  *
@@ -5613,6 +5615,10 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 
 		/* Don't attempt skipskip optimization on this page from here on */
 		pstate->noskipskip = true;
+#ifdef DEBUG_SKIPSKIP
+		elog(WARNING, "success with look ahead at %u on page %u, skipping to %u",
+			 pstate->offnum, so->currPos.currPage, pstate->skip);
+#endif
 	}
 	else
 	{
@@ -5637,9 +5643,19 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 		 */
 		if (so->skipScan && !pstate->noskipskip)
 		{
+#ifdef DEBUG_SKIPSKIP
+			elog(WARNING, "failures in _bt_checkkeys_look_ahead at %u on page %u, calling skip skip",
+				 pstate->offnum, so->currPos.currPage);
+#endif
+
 			if (_bt_checkkeys_skipskip(scan, pstate, tuple, tupdesc))
 				pstate->skipskip = true;
 		}
+#ifdef DEBUG_SKIPSKIP
+		else
+			elog(WARNING, "failures in _bt_checkkeys_look_ahead at %u on page %u, but not calling skip skip",
+				 pstate->offnum, so->currPos.currPage);
+#endif
 	}
 }
 
@@ -5733,6 +5749,10 @@ _bt_checkkeys_skipskip(IndexScanDesc scan, BTReadPageState *pstate,
 			return false;
 	}
 
+#ifdef DEBUG_SKIPSKIP
+	elog(WARNING, "success with skip skip at %u on page %u", pstate->offnum,
+		 so->currPos.currPage);
+#endif
 	return true;
 }
 
