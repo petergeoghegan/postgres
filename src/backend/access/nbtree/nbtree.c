@@ -343,7 +343,6 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 		pfree(batch->orderbynulls);
 
 	/* and finally free the batch itself */
-	pfree(batch);
 
 	return;
 }

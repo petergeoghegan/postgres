@@ -1551,7 +1551,8 @@ index_batch_getnext(IndexScanDesc scan, ScanDirection direction)
 	 * FIXME don't overflow the array, should resize the array instead
 	 * or release batches that are no longer needed.
 	 */
-	Assert(scan->xs_batches->numBatches < scan->xs_batches->maxBatches);
+	if (scan->xs_batches->numBatches >= scan->xs_batches->maxBatches)
+		elog(ERROR, "xxx");
 
 	/*
 	 * Did we already read the last batch for this scan? We may read the
@@ -1570,6 +1571,9 @@ index_batch_getnext(IndexScanDesc scan, ScanDirection direction)
 	 * loading the next batch.
 	 */
 	tid = scan->xs_heaptid;
+
+	if (ScanDirectionIsBackward(direction))
+		elog(ERROR, "fff");
 
 	batch = scan->indexRelation->rd_indam->amgetbatch(scan, direction);
 	if (batch != NULL)
@@ -1743,6 +1747,8 @@ index_batch_reset(IndexScanDesc scan)
 	for (int i = batches->firstBatch; i < lastBatch; i++)
 	{
 		IndexScanBatch	batch = INDEX_SCAN_BATCH(scan, i);
+		if (batch == (void*) 0x7f7f7f7f7f7f7f7f)
+			continue;
 		index_batch_free(scan, batch);
 	}
 
@@ -1782,6 +1788,15 @@ index_batch_free(IndexScanDesc scan, IndexScanBatch batch)
 static void
 index_batch_end(IndexScanDesc scan)
 {
+	IndexScanBatches *batches = scan->xs_batches;
+
+	if (!batches)
+		return;
+	if (batches == (void*) 0x7f7f7f7f7f7f7f7f)
+		return;
+	if (batches->numBatches == 0)
+		return;
+
 	index_batch_reset(scan);
 }
 
