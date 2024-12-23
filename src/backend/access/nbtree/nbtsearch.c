@@ -1178,21 +1178,17 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		{
 			/*
 			 * Row comparison header: look to the first row member instead.
-			 *
 			 * The member scankeys are already in insertion format (ie, they
-			 * have sk_func = 3-way-comparison function), but we have to watch
-			 * out for nulls, which _bt_preprocess_keys didn't check. A null
-			 * in the first row member makes the condition unmatchable, just
-			 * like qual_ok = false.
+			 * have sk_func = 3-way-comparison function).
 			 */
 			ScanKey		subkey = (ScanKey) DatumGetPointer(cur->sk_argument);
 
+			/*
+			 * Cannot be a NULL in the leading key (that would make the qual
+			 * unsatisfiable, which should prevent it from ever get this far)
+			 */
 			Assert(subkey->sk_flags & SK_ROW_MEMBER);
-			if (subkey->sk_flags & SK_ISNULL)
-			{
-				_bt_parallel_done(scan);
-				return false;
-			}
+			Assert(!(subkey->sk_flags & SK_ISNULL));
 			memcpy(inskey.scankeys + i, subkey, sizeof(ScanKeyData));
 
 			/*

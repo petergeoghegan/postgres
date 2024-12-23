@@ -3371,6 +3371,13 @@ _bt_fix_scankey_strategy(ScanKey skey, int16 *indoption)
 	{
 		ScanKey		subkey = (ScanKey) DatumGetPointer(skey->sk_argument);
 
+		if (subkey->sk_flags & SK_ISNULL)
+		{
+			/* leading key is NULL, so qual cannot be satisfied */
+			Assert(subkey->sk_flags & SK_ROW_MEMBER);
+			return false;
+		}
+
 		for (;;)
 		{
 			Assert(subkey->sk_flags & SK_ROW_MEMBER);
