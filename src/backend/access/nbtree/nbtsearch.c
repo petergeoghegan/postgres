@@ -1239,9 +1239,11 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 					switch (strat_total)
 					{
 						case BTLessStrategyNumber:
+							elog(WARNING, "BTLessStrategyNumber");
 							strat_total = BTLessEqualStrategyNumber;
 							break;
 						case BTGreaterStrategyNumber:
+							elog(WARNING, "BTGreaterStrategyNumber");
 							strat_total = BTGreaterEqualStrategyNumber;
 							break;
 					}
@@ -1652,8 +1654,10 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				 * all tuples on this page are still before the _bt_first-wise
 				 * start of matches for the current set of array keys.
 				 */
+				elog(WARNING, "retreat 1");
 				if (!_bt_oppodir_checkkeys(scan, dir, pstate.finaltup))
 				{
+					elog(WARNING, "retreat 2");
 					/* Schedule another primitive index scan after all */
 					so->currPos.moreRight = false;
 					so->needPrimScan = true;

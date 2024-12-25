@@ -3375,6 +3375,7 @@ _bt_fix_scankey_strategy(ScanKey skey, int16 *indoption)
 		{
 			/* First row member is NULL, so RowCompare is unsatisfiable */
 			Assert(subkey->sk_flags & SK_ROW_MEMBER);
+			elog(WARNING, "NULL first member means unsatisfiable qual");
 			return false;
 		}
 
@@ -3999,10 +4000,16 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			subkey--;
 			if ((subkey->sk_flags & SK_BT_REQFWD) &&
 				ScanDirectionIsForward(dir))
+			{
+				elog(WARNING, "ScanDirectionIsForward");
 				*continuescan = false;
+			}
 			else if ((subkey->sk_flags & SK_BT_REQBKWD) &&
 					 ScanDirectionIsBackward(dir))
+			{
+				elog(WARNING, "ScanDirectionIsBackward");
 				*continuescan = false;
+			}
 			return false;
 		}
 
