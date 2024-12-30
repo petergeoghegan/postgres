@@ -1059,7 +1059,6 @@ typedef struct BTScanOpaqueData
 	bool		qual_ok;		/* false if qual can never be satisfied */
 	int			numberOfKeys;	/* number of preprocessed scan keys */
 	ScanKey		keyData;		/* array of preprocessed scan keys */
-	Bitmapset  *bmsPages;
 
 	/* workspace for SK_SEARCHARRAY support */
 	int			numArrayKeys;	/* number of equality-type array keys */
