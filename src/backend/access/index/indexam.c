@@ -1908,6 +1908,15 @@ index_scan_stream_read_next(ReadStream *stream,
 				continue;
 			}
 
+			/* same block as before, don't need to read it */
+			if (scan->xs_batches->lastBlock == ItemPointerGetBlockNumber(tid))
+			{
+				DEBUG_LOG("index_scan_stream_read_next: skip block (lastBlock)");
+				continue;
+			}
+
+			scan->xs_batches->lastBlock = ItemPointerGetBlockNumber(tid);
+
 			return ItemPointerGetBlockNumber(tid);
 		}
 
@@ -2268,6 +2277,7 @@ index_batch_init(IndexScanDesc scan)
 	index_batch_pos_reset(scan, &scan->xs_batches->markPos);
 
 	// scan->xs_batches->currentBatch = NULL;
+	scan->xs_batches->lastBlock = InvalidBlockNumber;
 }
 
 /*
@@ -2350,6 +2360,7 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batches->finished = false;
 	batches->reset = false;
 	// batches->currentBatch = NULL;
+	batches->lastBlock = InvalidBlockNumber;
 
 	AssertCheckBatches(scan);
 }
