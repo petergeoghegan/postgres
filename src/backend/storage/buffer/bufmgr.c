@@ -3046,6 +3046,46 @@ ReleaseAndReadBuffer(Buffer buffer,
 }
 
 /*
+ * BufferMatches
+ *		Check if the buffer (still) contains the expected page.
+ *
+ * Check if the buffer contains the expected page. The buffer may be invalid,
+ * or valid and pinned.
+ */
+bool
+BufferMatches(Buffer buffer,
+			  Relation relation,
+			  BlockNumber blockNum)
+{
+	ForkNumber	forkNum = MAIN_FORKNUM;
+	BufferDesc *bufHdr;
+
+	if (BufferIsValid(buffer))
+	{
+		Assert(BufferIsPinned(buffer));
+		if (BufferIsLocal(buffer))
+		{
+			bufHdr = GetLocalBufferDescriptor(-buffer - 1);
+			if (bufHdr->tag.blockNum == blockNum &&
+				BufTagMatchesRelFileLocator(&bufHdr->tag, &relation->rd_locator) &&
+				BufTagGetForkNum(&bufHdr->tag) == forkNum)
+				return true;
+		}
+		else
+		{
+			bufHdr = GetBufferDescriptor(buffer - 1);
+			/* we have pin, so it's ok to examine tag without spinlock */
+			if (bufHdr->tag.blockNum == blockNum &&
+				BufTagMatchesRelFileLocator(&bufHdr->tag, &relation->rd_locator) &&
+				BufTagGetForkNum(&bufHdr->tag) == forkNum)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+/*
  * PinBuffer -- make buffer unavailable for replacement.
  *
  * For the default access strategy, the buffer's usage_count is incremented

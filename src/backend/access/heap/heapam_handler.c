@@ -136,6 +136,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	{
 		/* Switch to correct buffer if we don't have it already */
 		Buffer		prev_buf = hscan->xs_cbuf;
+		bool		release_prev = true;
 
 		/*
 		 * Read the block for the requested TID. With a read stream, simply
@@ -157,7 +158,56 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		 * API.
 		 */
 		if (scan->rs)
-			hscan->xs_cbuf = read_stream_next_buffer(scan->rs, NULL);
+		{
+			/*
+			 * If we're trying to read the same block as the last time, don't
+			 * try reading it from the stream again, but just return the last
+			 * buffer. We need to check if the previous buffer is still pinned
+			 * and contains the correct block (it might have been unpinned,
+			 * used for a different block, so we need to be careful).
+			 *
+			 * The place scheduling the blocks (index_scan_stream_read_next)
+			 * needs to do the same thing and not schedule the blocks if it
+			 * matches the previous one. Otherwise the stream will get out of
+			 * sync, causing confusion.
+			 *
+			 * This is what ReleaseAndReadBuffer does too, but it does not
+			 * have a queue of requests scheduled from somewhere else, so it
+			 * does not need to worry about that.
+			 *
+			 * XXX Maybe we should remember the block in IndexFetchTableData,
+			 * so that we can make the check even cheaper, without looking at
+			 * the buffer descriptor? But that assumes the buffer was not
+			 * unpinned (or repinned) elsewhere, before we got back here. But
+			 * can that even happen? If yes, I guess we shouldn't be releasing
+			 * the prev buffer anyway.
+			 *
+			 * XXX This has undesired impact on prefetch distance. The read
+			 * stream schedules reads for a certain number of future blocks,
+			 * but if we skip duplicate blocks, the prefetch distance may get
+			 * unexpectedly large (e.g. for correlated indexes, with long runs
+			 * of TIDs from the same heap page). This may spend a lot of CPU
+			 * time in the index_scan_stream_read_next callback, but more
+			 * importantly it may require reading (and keeping) a lot of leaf
+			 * pages from the index.
+			 *
+			 * XXX What if we pinned the buffer twice (increase the refcount),
+			 * so that if the caller unpins the buffer, we still keep the
+			 * second pin. Wouldn't that mean we don't need to worry about the
+			 * possibility someone loaded another page into the buffer?
+			 *
+			 * XXX We might also keep a longer history of recent blocks, not
+			 * just the immediately preceding one. But that makes it harder,
+			 * because the two places (read_next callback and here) need to
+			 * have a slightly different view.
+			 */
+			if (BufferMatches(hscan->xs_cbuf,
+							  hscan->xs_base.rel,
+							  ItemPointerGetBlockNumber(tid)))
+				release_prev = false;
+			else
+				hscan->xs_cbuf = read_stream_next_buffer(scan->rs, NULL);
+		}
 		else
 			hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
 												  hscan->xs_base.rel,
@@ -181,7 +231,8 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 			heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
 
 		/*
-		 * When using the read stream, release the old buffer.
+		 * When using the read stream, release the old buffer - but only if
+		 * we're reading a different block.
 		 *
 		 * XXX Not sure this is really needed, or maybe this is not the right
 		 * place to do this, and buffers should be released elsewhere. The
@@ -199,7 +250,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		 * XXX Does this do the right thing when reading the same page? That
 		 * should return the same buffer, so won't we release it prematurely?
 		 */
-		if (scan->rs && (prev_buf != InvalidBuffer))
+		if (scan->rs && (prev_buf != InvalidBuffer) && release_prev)
 		{
 			ReleaseBuffer(prev_buf);
 		}

@@ -1915,6 +1915,15 @@ index_scan_stream_read_next(ReadStream *stream,
 				continue;
 			}
 
+			/* same block as before, don't need to read it */
+			if (scan->xs_batches->lastBlock == ItemPointerGetBlockNumber(tid))
+			{
+				DEBUG_LOG("index_scan_stream_read_next: skip block (lastBlock)");
+				continue;
+			}
+
+			scan->xs_batches->lastBlock = ItemPointerGetBlockNumber(tid);
+
 			return ItemPointerGetBlockNumber(tid);
 		}
 
@@ -2118,6 +2127,7 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		 */
 		scan->xs_batches->direction = direction;
 		scan->xs_batches->finished = false;
+		scan->xs_batches->lastBlock = InvalidBlockNumber;
 
 		index_batch_pos_reset(scan, &scan->xs_batches->streamPos);
 		read_stream_reset(scan->xs_heapfetch->rs);
@@ -2232,6 +2242,7 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 					  scan->xs_batches->readPos.batch, scan->xs_batches->readPos.index);
 
 			scan->xs_batches->reset = false;
+			scan->xs_batches->lastBlock = InvalidBlockNumber;
 
 			/*
 			 * Need to reset the stream position, it might be too far behind.
@@ -2311,6 +2322,7 @@ index_batch_init(IndexScanDesc scan)
 	index_batch_pos_reset(scan, &scan->xs_batches->markPos);
 
 	// scan->xs_batches->currentBatch = NULL;
+	scan->xs_batches->lastBlock = InvalidBlockNumber;
 }
 
 /*
@@ -2393,6 +2405,7 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batches->finished = false;
 	batches->reset = false;
 	// batches->currentBatch = NULL;
+	batches->lastBlock = InvalidBlockNumber;
 
 	AssertCheckBatches(scan);
 }
