@@ -79,6 +79,12 @@ static void _bt_array_shrink(ScanKey arraysk, ScanKey skey,
 static bool _bt_skip_shrink(IndexScanDesc scan, ScanKey arraysk, ScanKey skey,
 							FmgrInfo *orderprocp, BTArrayKeyInfo *array,
 							bool *qual_ok);
+static void _bt_skip_strat_adjust(IndexScanDesc scan, ScanKey arraysk,
+								  BTArrayKeyInfo *array);
+static void _bt_skip_strat_decrement(IndexScanDesc scan, ScanKey arraysk,
+									 BTArrayKeyInfo *array);
+static void _bt_skip_strat_increment(IndexScanDesc scan, ScanKey arraysk,
+									 BTArrayKeyInfo *array);
 static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys);
 static void _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap);
 static int	_bt_num_array_keys(IndexScanDesc scan, BTSkipPreproc *skipatts,
@@ -1370,6 +1376,166 @@ _bt_skip_shrink(IndexScanDesc scan, ScanKey arraysk, ScanKey skey,
 }
 
 /*
+ * Applies the opfamily's skip support routine to convert the skip array's >
+ * low_compare key (if any) into a >= key, and to convert its < high_compare
+ * key (if any) into a <= key.  Decrements the high_compare key's sk_argument,
+ * and/or increments the low_compare key's sk_argument (also adjusts the
+ * operator strategies).
+ *
+ * This optional optimization reduces the number of descents required within
+ * _bt_first.  Whenever _bt_first is called with a skip array whose current
+ * array element is the sentinel value MINMAXVAL, using >= instead of using >
+ * (or using <= instead of < during backwards scans) makes it safe to include
+ * lower-order scan keys in the insertion scan key (there must be lower-order
+ * scan keys after the skip array).  We will avoid an extra _bt_first to find
+ * the first value in the index > sk_argument, at least when the first real
+ * matching value in the index happens to be an exact match for the newly
+ * transformed (newly incremented/decremented) sk_argument value.
+ *
+ * Note: The transformation is only correct when it cannot allow the scan to
+ * overlook matching tuples, but we don't have enough semantic information to
+ * safely make sure that can't happen during scans with cross-type operators.
+ * That's why we'll never apply the transformation in cross-type scenarios.
+ * For example, if we attempted to convert "sales_ts > '2024-01-01'::date"
+ * into "sales_ts >= '2024-01-02'::date" given a "sales_ts" attribute whose
+ * input opclass is timestamp_ops, the scan would overlook _all_ tuples for
+ * sales that fell on '2024-01-01' -- which would be wrong.
+ */
+static void
+_bt_skip_strat_adjust(IndexScanDesc scan, ScanKey arraysk,
+					  BTArrayKeyInfo *array)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	MemoryContext oldContext;
+
+	/*
+	 * Called last among all preprocessing steps, when the skip array's final
+	 * low_compare and high_compare have both been chosen
+	 */
+	Assert(so->skipScan);
+	Assert(arraysk->sk_flags & SK_BT_SKIP);
+	Assert(array->num_elems == -1 && !array->null_elem && array->use_sksup);
+
+	oldContext = MemoryContextSwitchTo(so->arrayContext);
+
+	if (array->high_compare &&
+		array->high_compare->sk_strategy == BTLessStrategyNumber)
+		_bt_skip_strat_decrement(scan, arraysk, array);
+
+	if (array->low_compare &&
+		array->low_compare->sk_strategy == BTGreaterStrategyNumber)
+		_bt_skip_strat_increment(scan, arraysk, array);
+
+	MemoryContextSwitchTo(oldContext);
+}
+
+/*
+ * Convert skip array's > low_compare key into a >= key
+ */
+static void
+_bt_skip_strat_decrement(IndexScanDesc scan, ScanKey arraysk,
+						 BTArrayKeyInfo *array)
+{
+	Relation	rel = scan->indexRelation;
+	Oid			opfamily = rel->rd_opfamily[arraysk->sk_attno - 1],
+				opcintype = rel->rd_opcintype[arraysk->sk_attno - 1],
+				leop;
+	RegProcedure cmp_proc;
+	ScanKey		high_compare = array->high_compare;
+	Datum		orig_sk_argument = high_compare->sk_argument,
+				new_sk_argument;
+	bool		uflow;
+
+	Assert(high_compare->sk_strategy == BTLessStrategyNumber);
+	Assert(array->use_sksup);
+
+	/*
+	 * Only perform the transformation when the operator type matches the
+	 * index attribute's input opclass type
+	 */
+	if (high_compare->sk_subtype != opcintype &&
+		high_compare->sk_subtype != InvalidOid)
+		return;
+
+	/* Decrement, handling underflow by marking the qual unsatisfiable */
+	new_sk_argument = array->sksup.decrement(rel, orig_sk_argument, &uflow);
+	if (uflow)
+	{
+		BTScanOpaque so = (BTScanOpaque) scan->opaque;
+
+		so->qual_ok = false;
+		return;
+	}
+
+	/* Look up <= operator (might fail) */
+	leop = get_opfamily_member(opfamily, opcintype, opcintype,
+							   BTLessEqualStrategyNumber);
+	if (!OidIsValid(leop))
+		return;
+	cmp_proc = get_opcode(leop);
+	if (RegProcedureIsValid(cmp_proc))
+	{
+		/* Transform < high_compare key into <= key */
+		fmgr_info(cmp_proc, &high_compare->sk_func);
+		high_compare->sk_argument = new_sk_argument;
+		high_compare->sk_strategy = BTLessEqualStrategyNumber;
+	}
+}
+
+/*
+ * Convert skip array's < low_compare key into a <= key
+ */
+static void
+_bt_skip_strat_increment(IndexScanDesc scan, ScanKey arraysk,
+						 BTArrayKeyInfo *array)
+{
+	Relation	rel = scan->indexRelation;
+	Oid			opfamily = rel->rd_opfamily[arraysk->sk_attno - 1],
+				opcintype = rel->rd_opcintype[arraysk->sk_attno - 1],
+				geop;
+	RegProcedure cmp_proc;
+	ScanKey		low_compare = array->low_compare;
+	Datum		orig_sk_argument = low_compare->sk_argument,
+				new_sk_argument;
+	bool		oflow;
+
+	Assert(low_compare->sk_strategy == BTGreaterStrategyNumber);
+	Assert(array->use_sksup);
+
+	/*
+	 * Only perform the transformation when the operator type matches the
+	 * index attribute's input opclass type
+	 */
+	if (low_compare->sk_subtype != opcintype &&
+		low_compare->sk_subtype != InvalidOid)
+		return;
+
+	/* Increment, handling overflow by marking the qual unsatisfiable */
+	new_sk_argument = array->sksup.increment(rel, orig_sk_argument, &oflow);
+	if (oflow)
+	{
+		BTScanOpaque so = (BTScanOpaque) scan->opaque;
+
+		so->qual_ok = false;
+		return;
+	}
+
+	/* Look up >= operator (might fail) */
+	geop = get_opfamily_member(opfamily, opcintype, opcintype,
+							   BTGreaterEqualStrategyNumber);
+	if (!OidIsValid(geop))
+		return;
+	cmp_proc = get_opcode(geop);
+	if (RegProcedureIsValid(cmp_proc))
+	{
+		/* Transform > low_compare key into >= key */
+		fmgr_info(cmp_proc, &low_compare->sk_func);
+		low_compare->sk_argument = new_sk_argument;
+		low_compare->sk_strategy = BTGreaterEqualStrategyNumber;
+	}
+}
+
+/*
  *	_bt_preprocess_array_keys() -- Preprocess SK_SEARCHARRAY scan keys
  *
  * If there are any SK_SEARCHARRAY scan keys, deconstruct the array(s) and
@@ -1901,6 +2067,15 @@ _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap)
 				}
 				else
 				{
+					/*
+					 * Any skip array low_compare and high_compare scan keys
+					 * are now final.  Transform the array's > low_compare key
+					 * into a >= key (and < high_compare keys into a <= key).
+					 */
+					if (array->num_elems == -1 && !array->null_elem &&
+						array->use_sksup)
+						_bt_skip_strat_adjust(scan, outkey, array);
+
 					/* Match found, so done with this array */
 					arrayidx++;
 				}
