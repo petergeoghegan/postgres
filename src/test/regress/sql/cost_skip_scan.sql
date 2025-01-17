@@ -666,6 +666,29 @@ vacuum analyze cost_multirange_medcard;
 -- Note: When I discovered this problematic costing, master costed it at ~7,
 -- whereas the patch costed it at ~1037 -- this wild disparity in cost is the
 -- bug here
-select * from cost_multirange_medcard where a = 42 and c = 99609;
+select *
+from cost_multirange_medcard
+where
+  a = 42
+  and c = 99609;
 EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
-select * from cost_multirange_medcard where a = 42 and c = 99609;
+select *
+from cost_multirange_medcard
+where
+  a = 42
+  and c = 99609;
+
+-- Same again, though this time it's a very non-selective range skip array on "b" instead:
+select *
+from cost_multirange_medcard
+where
+  a = 42
+  and b between 0 and 1_000_000
+  and c = 99609;
+EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+select *
+from cost_multirange_medcard
+where
+  a = 42
+  and b between 0 and 1_000_000
+  and c = 99609;
