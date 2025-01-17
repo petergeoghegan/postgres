@@ -7165,7 +7165,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				if (nt->nulltesttype == IS_NULL)
 				{
 					found_is_null_op = true;
-					/* IS NULL is like = for selectivity/skipping purposes */
+					/* IS NULL is like = for selectivity/skip scan purposes */
 					eqQualHere = true;
 				}
 			}
