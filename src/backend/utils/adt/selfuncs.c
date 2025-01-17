@@ -6971,8 +6971,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	bool		upperInequalHere;
 	bool		lowerInequalHere;
 	bool		have_correlation = false;
-	bool		found_skip;
-	bool		found_saop;
+	bool		found_array;
 	bool		found_rowcompare;
 	bool		found_is_null_op;
 	double		inequalselectivity = 1.0;
@@ -7003,8 +7002,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	eqQualHere = false;
 	upperInequalHere = false;
 	lowerInequalHere = false;
-	found_skip = false;
-	found_saop = false;
+	found_array = false;
 	found_rowcompare = false;
 	found_is_null_op = false;
 	num_sa_scans = 1;
@@ -7089,7 +7087,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				 * often wrong, but it seems best to err on the side of not
 				 * relying on skipping.
 				 */
-				found_skip = true;
+				found_array = true;
 				new_num_sa_scans = num_sa_scans * ndistinct;
 
 				/*
@@ -7153,7 +7151,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				double		alength = estimate_array_length(root, other_operand);
 
 				clause_op = saop->opno;
-				found_saop = true;
+				found_array = true;
 				/* estimate SA descents by indexBoundQuals only */
 				if (alength > 1)
 					num_sa_scans *= alength;
@@ -7228,8 +7226,7 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	if (index->unique &&
 		indexcol == index->nkeycolumns - 1 &&
 		eqQualHere &&
-		!found_skip &&
-		!found_saop &&
+		!found_array &&
 		!found_is_null_op)
 		numIndexTuples = 1.0;
 	else
