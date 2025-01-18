@@ -1186,6 +1186,10 @@ typedef struct BTOptions
 #define PROGRESS_BTREE_PHASE_PERFORMSORT_2				4
 #define PROGRESS_BTREE_PHASE_LEAF_LOAD					5
 
+/* GUC parameters (just a temporary convenience for reviewers) */
+extern PGDLLIMPORT int skipscan_prefix_cols;
+extern PGDLLIMPORT bool skipscan_skipsupport_enabled;
+
 /*
  * external entry points for btree, in nbtree.c
  */
