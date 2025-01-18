@@ -2472,6 +2472,9 @@ _bt_skip_ikeyprefix(IndexScanDesc scan, BTReadPageState *pstate)
 				arrayidx = 0,
 				firstchangingattnum;
 
+	if (!skipscan_iprefix_enabled)
+		return;
+
 	Assert(so->skipScan && pstate->minoff < pstate->maxoff);
 
 	/* minoff is an offset to the lowest non-pivot tuple on the page */
