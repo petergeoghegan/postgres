@@ -2508,6 +2508,9 @@ _bt_set_startikey(IndexScanDesc scan, BTReadPageState *pstate)
 	if (so->numberOfKeys == 0)
 		return;
 
+	if (!skipscan_iprefix_enabled)
+		return;
+
 	/* minoff is an offset to the lowest non-pivot tuple on the page */
 	iid = PageGetItemId(pstate->page, pstate->minoff);
 	firsttup = (IndexTuple) PageGetItem(pstate->page, iid);
