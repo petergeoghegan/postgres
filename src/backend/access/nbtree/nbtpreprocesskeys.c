@@ -21,6 +21,27 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
+/*
+ * GUC parameters (temporary convenience for reviewers).
+ *
+ * To disable all skipping, set skipscan_prefix_cols=0.  Otherwise set it to
+ * the attribute number that you wish to make the last attribute number that
+ * we can add a skip scan key for.  For example, skipscan_prefix_cols=1 makes
+ * an index scan with qual "WHERE b = 1 AND d = 42" generate a skip scan key
+ * on the column 'a' (which is attnum 1) only, preventing us from adding one
+ * for the column 'c'.  And so only the scan key on 'b' (not the one on 'd')
+ * gets marked required within _bt_preprocess_keys -- there is no 'c' skip
+ * array to "anchor the required-ness" of 'b' through 'c' into 'd'.
+ */
+int			skipscan_prefix_cols = INDEX_MAX_KEYS;
+
+/*
+ * skipscan_skipsupport_enabled can be used to avoid using skip support.  Used
+ * to quantify the performance benefit that comes from having dedicated skip
+ * support, with a given opclass and test query.
+ */
+bool		skipscan_skipsupport_enabled = true;
+
 typedef struct BTScanKeyPreproc
 {
 	ScanKey		inkey;
@@ -1630,6 +1651,10 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 			so->arrayKeys[numArrayKeys].low_compare = NULL; /* for now */
 			so->arrayKeys[numArrayKeys].high_compare = NULL;	/* for now */
 
+			/* Temporary testing GUC can disable the use of skip support */
+			if (!skipscan_skipsupport_enabled)
+				so->arrayKeys[numArrayKeys].sksup = NULL;
+
 			/*
 			 * We'll need a 3-way ORDER proc to perform "binary searches" for
 			 * the next matching array element.  Set that up now.
@@ -2133,6 +2158,12 @@ _bt_num_array_keys(IndexScanDesc scan, Oid *skip_eq_ops, int *numSkipArrayKeys)
 		 * Cannot keep adding skip arrays after a RowCompare
 		 */
 		if (attno_has_rowcompare)
+			break;
+
+		/*
+		 * Apply temporary testing GUC that can be used to disable skipping
+		 */
+		if (attno_inkey > skipscan_prefix_cols)
 			break;
 
 		/*
