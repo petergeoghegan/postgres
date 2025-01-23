@@ -1065,7 +1065,6 @@ typedef struct BTScanOpaqueData
 	bool		oppositeDirCheck;	/* explicit scanBehind recheck needed? */
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
 	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
-	int			npages;
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
 
 	/* info about killed items if any (killedItems is NULL if never used) */
@@ -1088,10 +1087,6 @@ typedef struct BTScanOpaqueData
 	 * markPos.
 	 */
 	int			markItemIndex;	/* itemIndex, or -1 if not valid */
-
-	StringInfoData debugstr;
-	int			log_btree_verbosity;
-	bool		log_array_advance;
 
 	/* keep these last in struct for efficiency */
 	BTScanPosData currPos;		/* current position data */
@@ -1250,7 +1245,7 @@ extern IndexTuple _bt_swap_posting(IndexTuple newitem, IndexTuple oposting,
  */
 extern bool _bt_doinsert(Relation rel, IndexTuple itup,
 						 IndexUniqueCheck checkUnique, bool indexUnchanged,
-						 Relation heapRel, StringInfo debugstr);
+						 Relation heapRel);
 extern void _bt_finish_split(Relation rel, Relation heaprel, Buffer lbuf,
 							 BTStack stack);
 extern Buffer _bt_getstackbuf(Relation rel, Relation heaprel, BTStack stack,
@@ -1259,7 +1254,7 @@ extern Buffer _bt_getstackbuf(Relation rel, Relation heaprel, BTStack stack,
 /*
  * prototypes for functions in nbtsplitloc.c
  */
-extern OffsetNumber _bt_findsplitloc(Relation rel, StringInfo debugstr, Page origpage,
+extern OffsetNumber _bt_findsplitloc(Relation rel, Page origpage,
 									 OffsetNumber newitemoff, Size newitemsz, IndexTuple newitem,
 									 bool *newitemonleft);
 
@@ -1290,7 +1285,7 @@ extern void _bt_pageinit(Page page, Size size);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
 								OffsetNumber *deletable, int ndeletable,
 								BTVacuumPosting *updatable, int nupdatable);
-extern int	_bt_delitems_delete_check(Relation rel, Buffer buf,
+extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
 									  Relation heapRel,
 									  TM_IndexDeleteOp *delstate);
 extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
@@ -1306,14 +1301,8 @@ extern void _bt_preprocess_keys(IndexScanDesc scan);
 /*
  * prototypes for functions in nbtsearch.c
  */
-void		print_blk_between_itups(StringInfo debugstr, IndexTuple left,
-									IndexTuple right, Relation rel, char *prefix,
-									char *extra);
-extern char *_nbtree_print_itup(IndexTuple itup, Relation rel);
-extern char *dump_scankey_flags(ScanKey cur);
-extern char *dump_scankey_strategy(ScanKey cur);
 extern BTStack _bt_search(Relation rel, Relation heaprel, BTScanInsert key,
-						  Buffer *bufP, int access, StringInfo debugstr);
+						  Buffer *bufP, int access);
 extern OffsetNumber _bt_binsrch_insert(Relation rel, BTInsertState insertstate);
 extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum);
 extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
