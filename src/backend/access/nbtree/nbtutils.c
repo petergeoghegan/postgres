@@ -3046,7 +3046,8 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 				 * Must also make sure that = key is actually satisfied by the
 				 * value that is stored within every tuple on the page
 				 */
-				tupdatum = index_getattr(firsttup, cur->sk_attno, tupdesc, &tupnull);
+				tupdatum = index_getattr(firsttup, cur->sk_attno, tupdesc,
+										 &tupnull);
 				result = _bt_compare_array_skey(&so->orderProcs[ikey],
 												tupdatum, tupnull,
 												cur->sk_argument, cur);
@@ -3071,7 +3072,8 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 				 * Must also make sure that SAOP array is actually satisfied
 				 * by the value that is stored within every tuple on the page
 				 */
-				tupdatum = index_getattr(firsttup, cur->sk_attno, tupdesc, &tupnull);
+				tupdatum = index_getattr(firsttup, cur->sk_attno, tupdesc,
+										 &tupnull);
 				_bt_binsrch_array_skey(&so->orderProcs[ikey], false,
 									   NoMovementScanDirection,
 									   tupdatum, tupnull, array, cur, &result);
