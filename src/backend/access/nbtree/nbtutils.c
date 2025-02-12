@@ -3039,7 +3039,7 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 												tupdatum, tupnull,
 												cur->sk_argument, cur);
 				if (result == 0)
-					continue;	/* Okay, SAOP array key always satisfied */
+					continue;	/* Okay, = key always satisfied */
 			}
 			break;
 		}
