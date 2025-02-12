@@ -3035,13 +3035,17 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 			cur->sk_strategy != BTEqualStrategyNumber)
 		{
 			/*
-			 * It is unsafe to set pstate.ikey to an ikey beyond this
-			 * conventional (non-array) scan key, unless it is against a
-			 * column with only one distinct value on the page
+			 * It is unsafe to set pstate.ikey to an ikey beyond this = key,
+			 * unless it is against a column with only one distinct value on
+			 * the page
 			 */
 			if (cur->sk_attno < firstunequalattnum &&
 				cur->sk_strategy == BTEqualStrategyNumber)
 			{
+				/*
+				 * Must also make sure that = key is actually satisfied by the
+				 * value that is stored within every tuple on the page
+				 */
 				tupdatum = index_getattr(firsttup, cur->sk_attno, tupdesc, &tupnull);
 				result = _bt_compare_array_skey(&so->orderProcs[ikey],
 												tupdatum, tupnull,
