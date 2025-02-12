@@ -3002,10 +3002,18 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 
 	Assert(so->skipScan && pstate->minoff < pstate->maxoff);
 
+	/* minoff is an offset to the lowest non-pivot tuple on the page */
 	iid = PageGetItemId(pstate->page, pstate->minoff);
 	firsttup = (IndexTuple) PageGetItem(pstate->page, iid);
+
+	/* maxoff is an offset to the highest non-pivot tuple on the page */
 	iid = PageGetItemId(pstate->page, pstate->maxoff);
 	lasttup = (IndexTuple) PageGetItem(pstate->page, iid);
+
+	/*
+	 * Determine the first non-equal attribute, which helps us to determine a
+	 * prefix of attribute values on the page must be satisfied by scan's keys
+	 */
 	firstunequalattnum = _bt_keep_natts_fast(rel, firsttup, lasttup);
 
 	for (ikey = 0; ikey < so->numberOfKeys; ikey++)
