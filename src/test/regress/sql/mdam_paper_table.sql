@@ -508,3 +508,63 @@ execute dont_repeat_leaf_readpage;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- Master branch gets only 100 index page hits
 execute dont_repeat_leaf_readpage;
 deallocate dont_repeat_leaf_readpage;
+
+-- (February 12 2025)
+--
+-- Backwards scan query that proves that skipskip/forcenonrequired needs to
+-- check that an = key is satisfied before allowing pstate.ikey to be set to
+-- later value (it might be unchanging on the page, but that's not the same
+-- thing as satisfying the scan keys):
+set enable_indexscan = on;
+set enable_bitmapscan to off;
+
+prepare nonrequired_equality_check as
+select dept, sdate, item_class, store, sum(total_sales)
+from small_sales_mdam_paper
+where
+  dept = 7
+  and sdate in ( '1995-01-01' , '1995-02-15')
+  and item_class between 15 and 16 and store = 15
+group by dept, sdate, item_class, store
+order by dept desc, sdate desc, item_class desc, store desc;
+
+/*
+***SNIP ***
+➕     ➕     ➕
+_bt_first: sk_attno 1. val: 7, func: btint4cmp, flags: [SK_BT_REQFWD, SK_BT_REQBKWD]
+           sk_attno 2. val: 1995-01-01, func: date_cmp, flags: [SK_SEARCHARRAY, SK_BT_REQFWD, SK_BT_REQBKWD]
+           sk_attno 3. val: 16, func: btint4cmp, flags: []
+           sk_attno 4. val: 15, func: btint4cmp, flags: [SK_BT_REQFWD, SK_BT_REQBKWD]
+           with strat_total='= ', inskey.keys=4, inskey.nextkey=1, inskey.backward=1
+🔽  ==================== _bt_search begin at root 343 level 2 ====================
+_bt_moveright: blk 343 is rightmost
+_bt_search: sk > (dept, sdate, item_class, store)=(6, 1995-01-11), sk <= (dept, sdate, item_class, store)=(7, 1995-01-05)
+🔽  -------------------- descended to child blk 877 level 1 --------------------
+_bt_moveright: (dept, sdate, item_class, store)=(7, 1995-01-05), high key no move right
+_bt_search: sk > (dept, sdate, item_class, store)=(7), sk <= (dept, sdate, item_class, store)=(7, 1995-01-02, 4, 20)
+🔽  -------------------- descended to child blk 10 level 0 --------------------
+_bt_moveright: (dept, sdate, item_class, store)=(7, 1995-01-02, 4, 20), high key no move right
+⏹️ ==================== _bt_search end ==================== ⬅️
+_bt_readpage: 🍀  10 with 170 offsets/tuples (rightsib 1811, leftsib 1392) ⬅️
+ _bt_readpage first: none, offnum 1 is < minoff of 2
+ _bt_readpage stats: currPos.firstItem: 1358, currPos.lastItem: 1357, nmatching: 0 ❌
+_bt_readpage: 🍀  1392 with 251 offsets/tuples (rightsib 10, leftsib 697) ⬅️          <--- page that spuriously has one tuple returned
+ _bt_readpage first: (dept, sdate, item_class, store)=(6, 1995-02-15, 20, 50), TID='(3308,32)', 0x7f6516309870, from non-pivot non-pivot offnum 251 started page
+ _bt_readpage final: (dept, sdate, item_class, store)=(6, 1995-02-15, 16, 1), TID='(65,76)', 0x7f651630afc8, from non-pivot offnum 2 set so->currPos.moreLeft=false 🛑  ⬅️
+ _bt_readpage stats: currPos.firstItem: 1357, currPos.lastItem: 1357, nmatching: 1 ✅
+btendscan for index "small_mdam_idx", ParallelWorkerNumber: -1, npages: 3, nforcenonrequiredpages: 1, nwrongprecheckpages: 0, nsearches: 2
+
+┌──────┬────────────┬────────────┬───────┬──────────────────┐
+│ dept │   sdate    │ item_class │ store │       sum        │
+├──────┼────────────┼────────────┼───────┼──────────────────┤
+│    7 │ 1995-02-15 │         16 │    15 │ 197.700733222176 │
+│    7 │ 1995-02-15 │         15 │    15 │ 398.690643508161 │
+│    6 │ 1995-02-15 │         16 │    15 │ 165.041654207348 │  <-- wrong because qual says "dept=7"
+└──────┴────────────┴────────────┴───────┴──────────────────┘
+(3 rows)
+
+*/
+execute nonrequired_equality_check;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+execute nonrequired_equality_check;
+deallocate nonrequired_equality_check;
