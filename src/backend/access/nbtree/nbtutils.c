@@ -3023,6 +3023,14 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 		 * Now determine if it's safe to set pstate.ikey to an ikey _beyond_
 		 * the ikey for the current scan key.
 		 */
+		if ((cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) == 0)
+		{
+			/*
+			 * pstate.ikey can never be set to a nonrequired ikey (unless it's
+			 * the least significant one)
+			 */
+			break;
+		}
 		if (!(cur->sk_flags & SK_SEARCHARRAY) ||
 			cur->sk_strategy != BTEqualStrategyNumber)
 		{
