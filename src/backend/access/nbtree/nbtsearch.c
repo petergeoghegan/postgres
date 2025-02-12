@@ -3347,7 +3347,7 @@ _bt_steppage_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 	 * In _bt_steppage this also handled primitive scans for array keys, but
 	 * that probably would be handled at indexam.c level too.
 	 */
-	
+
 	/* Don't unpin the buffer here, keep the batch pinned until amfreebatch. */
 
 	/* Walk to the next page with data */
@@ -3718,7 +3718,8 @@ _bt_readnextpage_batch(IndexScanDesc scan, BTBatchScanPos pos, BlockNumber blkno
 			return NULL;
 		}
 
-		Assert(!so->needPrimScan);
+		if (so->needPrimScan)
+			elog(ERROR, "so->needPrimScan within _bt_readnextpage_batch");
 
 		/* parallel scan must never actually visit so->currPos blkno */
 		if (!seized && scan->parallel_scan != NULL &&

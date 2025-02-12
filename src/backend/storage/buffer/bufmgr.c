@@ -3765,7 +3765,8 @@ BufferGetBlockNumber(Buffer buffer)
 {
 	BufferDesc *bufHdr;
 
-	Assert(BufferIsPinned(buffer));
+	if (!(BufferIsPinned(buffer)))
+		elog(ERROR, "BufferGetBlockNumber");
 
 	if (BufferIsLocal(buffer))
 		bufHdr = GetLocalBufferDescriptor(-buffer - 1);

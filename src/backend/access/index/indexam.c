@@ -1419,8 +1419,9 @@ AssertCheckBatchPosValid(IndexScanDesc scan, IndexScanBatchPos *pos)
 	IndexScanBatches *batch = scan->xs_batches;
 
 	/* make sure the position is valid for currently loaded batches */
-	Assert((pos->batch >= batch->firstBatch) &&
-		   (pos->batch < batch->nextBatch));
+	if (!((pos->batch >= batch->firstBatch) &&
+		   (pos->batch < batch->nextBatch)))
+		elog(ERROR, "AssertCheckBatchPosValid");
 #endif
 }
 
@@ -1750,7 +1751,8 @@ index_batch_getnext(IndexScanDesc scan)
 	 * FIXME don't overflow the array, should resize the array instead
 	 * or release batches that are no longer needed.
 	 */
-	Assert((scan->xs_batches->nextBatch - scan->xs_batches->firstBatch) < scan->xs_batches->maxBatches);
+	if (!((scan->xs_batches->nextBatch - scan->xs_batches->firstBatch) < scan->xs_batches->maxBatches))
+		elog(ERROR, "index_batch_getnext");
 
 	/*
 	 * Did we already read the last batch for this scan? We may read the

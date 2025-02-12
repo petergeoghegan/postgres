@@ -205,7 +205,8 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		 * elsewhere (e.g. if the callback scheduling tthe reads and the place
 		 * reading the data disagree).
 		 */
-		Assert(BufferIsValid(hscan->xs_cbuf));
+		if (!(BufferIsValid(hscan->xs_cbuf)))
+			elog(WARNING, "heapam_index_fetch_tuple");
 		Assert(BufferGetBlockNumber(hscan->xs_cbuf) == ItemPointerGetBlockNumber(tid));
 
 		/*
