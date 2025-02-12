@@ -3026,8 +3026,8 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 		if ((cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) == 0)
 		{
 			/*
-			 * pstate.ikey can never be set to a nonrequired ikey (unless it's
-			 * the least significant one)
+			 * pstate.ikey can never be set to a nonrequired ikey (beyond the
+			 * first one)
 			 */
 			break;
 		}
