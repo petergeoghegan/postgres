@@ -3032,8 +3032,15 @@ _bt_forcenonrequired(IndexScanDesc scan, BTReadPageState *pstate)
 			 * column with only one distinct value on the page
 			 */
 			if (cur->sk_attno < firstunequalattnum &&
-				!(cur->sk_flags & SK_ROW_HEADER))
-				continue;
+				cur->sk_strategy == BTEqualStrategyNumber)
+			{
+				tupdatum = index_getattr(firsttup, cur->sk_attno, tupdesc, &tupnull);
+				result = _bt_compare_array_skey(&so->orderProcs[ikey],
+												tupdatum, tupnull,
+												cur->sk_argument, cur);
+				if (result == 0)
+					continue;	/* Okay, SAOP array key always satisfied */
+			}
 			break;
 		}
 
