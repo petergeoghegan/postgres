@@ -527,28 +527,6 @@ int			log_min_duration_statement = -1;
 int			log_parameter_max_length = -1;
 int			log_parameter_max_length_on_error = 0;
 int			log_temp_files = -1;
-
-/*
- * log_btree_verbosity settings:
- *
- * 0 means silent
- *
- * 1 means just show preprocessing + index descents
- *
- * 2 means just show _bt_advance_array_keys advancement, and page-level stuff,
- * and some details of high key
- *
- * 3 (the default) means show a line of output (with tuple) for each and every
- * _bt_check_compare call
- *
- * 4 means show further details about _bt_check_compare calls, which can be
- * very verbose but also often isn't
- *
- * 5 shows everything, including details of which TIDs were returned to the
- * executor (very verbose)
- */
-int			log_btree_verbosity = 3;
-bool		log_array_advance = true;
 double		log_statement_sample_rate = 1.0;
 double		log_xact_sample_rate = 0;
 char	   *backtrace_functions;
@@ -1265,15 +1243,6 @@ struct config_bool ConfigureNamesBool[] =
 		},
 		&log_replication_commands,
 		false,
-		NULL, NULL, NULL
-	},
-	{
-		{"log_array_advance", PGC_SUSET, DEVELOPER_OPTIONS,
-			NULL, NULL,
-			GUC_NOT_IN_SAMPLE
-		},
-		&log_array_advance,
-		true,
 		NULL, NULL, NULL
 	},
 	{
@@ -3711,16 +3680,6 @@ struct config_int ConfigureNamesInt[] =
 		},
 		&log_temp_files,
 		-1, -1, INT_MAX,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"log_btree_verbosity", PGC_USERSET, DEVELOPER_OPTIONS,
-			NULL, NULL,
-			GUC_NOT_IN_SAMPLE
-		},
-		&log_btree_verbosity,
-		3, 0, 5,
 		NULL, NULL, NULL
 	},
 
