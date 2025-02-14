@@ -1043,8 +1043,8 @@ typedef struct BTScanOpaqueData
 	/* workspace for SK_SEARCHARRAY support */
 	int			numArrayKeys;	/* number of equality-type array keys */
 	bool		needPrimScan;	/* New prim scan to continue in current dir? */
-	bool		scanBehind;		/* Last array advancement matched -inf attr? */
-	bool		oppositeDirCheck;	/* explicit scanBehind recheck needed? */
+	bool		scanBehind;		/* arrays might be ahead of scan's key space? */
+	bool		oppositeDirCheck;	/* scanBehind opposite-scan-dir check? */
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
 	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
@@ -1099,6 +1099,7 @@ typedef struct BTReadPageState
 	 * Input and output parameters, set and unset by both _bt_readpage and
 	 * _bt_checkkeys to manage precheck optimizations
 	 */
+	bool		firstpage;		/* on first page of current primitive scan? */
 	bool		prechecked;		/* precheck set continuescan to 'true'? */
 	bool		firstmatch;		/* at least one match so far?  */
 
@@ -1298,8 +1299,8 @@ extern int	_bt_binsrch_array_skey(FmgrInfo *orderproc,
 extern void _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 						  IndexTuple tuple, int tupnatts);
-extern bool _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
-								  IndexTuple finaltup);
+extern bool _bt_scanbehind_checkkeys(IndexScanDesc scan, ScanDirection dir,
+									 IndexTuple finaltup);
 extern void _bt_killitems(IndexScanDesc scan);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);
