@@ -3274,20 +3274,19 @@ from generate_series(0, 100) i;
 vacuum analyze timestamp_date_crosstype_test;
 -- This had better not increment "t > 1995-01-01" into "t >= 1995-01-02",
 -- given that the underlying column is actually a timestamp, not a date:
+prepare crosstype_test_qry as
 select *
 from timestamp_date_crosstype_test
 where
   t > '1995-01-01'::date and i = 0;
+execute crosstype_test_qry;
             t             | i 
 --------------------------+---
  Sun Jan 01 00:00:01 1995 | 0
 (1 row)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
-select *
-from timestamp_date_crosstype_test
-where
-  t > '1995-01-01'::date and i = 0;
+execute crosstype_test_qry;
                                                        QUERY PLAN                                                       
 ------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on timestamp_date_crosstype_test  (cost=5.15..7.17 rows=1 width=12) (actual rows=1 loops=1)
@@ -3298,10 +3297,9 @@ where
          Index Cond: ((t > '01-01-1995'::date) AND (i = 0))
          Index Searches: 1
          Buffers: shared hit=1
- Planning:
-   Buffers: shared hit=2
-(10 rows)
+(8 rows)
 
+deallocate crosstype_test_qry;
 -- Same again, but timestamptz this time (just for good luck):
 set client_min_messages=error;
 drop table if exists timestamptz_date_crosstype_test;
@@ -3315,20 +3313,19 @@ insert into timestamptz_date_crosstype_test
 select ('1995-01-01'::date + i)::timestamptz + interval '1 second', i
 from generate_series(0, 100) i;
 vacuum analyze timestamptz_date_crosstype_test;
+prepare crosstype_test_qry as
 select *
 from timestamptz_date_crosstype_test
 where
   t > '1995-01-01'::date and i = 0;
+execute crosstype_test_qry;
               t               | i 
 ------------------------------+---
  Sun Jan 01 00:00:01 1995 PST | 0
 (1 row)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
-select *
-from timestamptz_date_crosstype_test
-where
-  t > '1995-01-01'::date and i = 0;
+execute crosstype_test_qry;
                                                         QUERY PLAN                                                        
 --------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on timestamptz_date_crosstype_test  (cost=5.15..7.17 rows=1 width=12) (actual rows=1 loops=1)
@@ -3339,10 +3336,9 @@ where
          Index Cond: ((t > '01-01-1995'::date) AND (i = 0))
          Index Searches: 1
          Buffers: shared hit=1
- Planning:
-   Buffers: shared hit=2
-(10 rows)
+(8 rows)
 
+deallocate crosstype_test_qry;
 --------------------------------------------------------------------------
 -- (July 9) Terminate scan promptly when name column lacks skip support --
 --------------------------------------------------------------------------
@@ -4834,23 +4830,20 @@ where
 -- errors such as:
 -- ERROR:  missing oprcode for skipping equals operator 2437166984
 -- Contradictory
+prepare contradictory_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
   four = -1 and four between 0 and 3
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
  four | ten | unique1 
 ------+-----+---------
 (0 rows)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
-select four, ten, unique1
-from wisconsin
-where
-  four = -1 and four between 0 and 3
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
                                                                           QUERY PLAN                                                                          
 --------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin (actual rows=0 loops=1)
@@ -4860,24 +4853,22 @@ where
          Index Searches: 0
 (5 rows)
 
+deallocate contradictory_wisconsin;
 -- Contradictory
+prepare contradictory_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
   four between 0 and 3 and four = -1
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
  four | ten | unique1 
 ------+-----+---------
 (0 rows)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
-select four, ten, unique1
-from wisconsin
-where
-  four between 0 and 3 and four = -1
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
                                                                           QUERY PLAN                                                                          
 --------------------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin (actual rows=0 loops=1)
@@ -4887,49 +4878,45 @@ where
          Index Searches: 0
 (5 rows)
 
+deallocate contradictory_wisconsin;
 -- Contradictory
+prepare contradictory_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
   four = 4 and four between 0 and 3 and four = -1
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
  four | ten | unique1 
 ------+-----+---------
 (0 rows)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
-select four, ten, unique1
-from wisconsin
-where
-  four = 4 and four between 0 and 3 and four = -1
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
            QUERY PLAN           
 --------------------------------
  Result (actual rows=0 loops=1)
    One-Time Filter: false
 (2 rows)
 
+deallocate contradictory_wisconsin;
 -- Partially redundant
+prepare redundant_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
   four = 1 and four between 0 and 3
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
+execute redundant_wisconsin;
  four | ten | unique1 
 ------+-----+---------
     1 |   9 |       1
 (1 row)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
-select four, ten, unique1
-from wisconsin
-where
-  four = 1 and four between 0 and 3
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute redundant_wisconsin;
                                                                     QUERY PLAN                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
@@ -4942,25 +4929,23 @@ where
          Buffers: shared hit=33
 (8 rows)
 
+deallocate redundant_wisconsin;
 -- Partially redundant
+prepare redundant_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
   four between 0 and 3 and four = 1
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
+execute redundant_wisconsin;
  four | ten | unique1 
 ------+-----+---------
     1 |   9 |       1
 (1 row)
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
-select four, ten, unique1
-from wisconsin
-where
-  four between 0 and 3 and four = 1
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute redundant_wisconsin;
                                                                     QUERY PLAN                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------
  Bitmap Heap Scan on wisconsin (actual rows=1 loops=1)
@@ -4973,6 +4958,7 @@ where
          Buffers: shared hit=33
 (8 rows)
 
+deallocate redundant_wisconsin;
 -------------------------------------------------------------------------------
 -- (July 12) Day after going for drinks with jkatz + company in East Village --
 -------------------------------------------------------------------------------

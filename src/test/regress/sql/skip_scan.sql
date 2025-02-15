@@ -1350,15 +1350,18 @@ vacuum analyze timestamp_date_crosstype_test;
 
 -- This had better not increment "t > 1995-01-01" into "t >= 1995-01-02",
 -- given that the underlying column is actually a timestamp, not a date:
+prepare crosstype_test_qry as
 select *
 from timestamp_date_crosstype_test
 where
   t > '1995-01-01'::date and i = 0;
+
+execute crosstype_test_qry;
+
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
-select *
-from timestamp_date_crosstype_test
-where
-  t > '1995-01-01'::date and i = 0;
+execute crosstype_test_qry;
+
+deallocate crosstype_test_qry;
 
 -- Same again, but timestamptz this time (just for good luck):
 set client_min_messages=error;
@@ -1376,15 +1379,17 @@ select ('1995-01-01'::date + i)::timestamptz + interval '1 second', i
 from generate_series(0, 100) i;
 vacuum analyze timestamptz_date_crosstype_test;
 
+prepare crosstype_test_qry as
 select *
 from timestamptz_date_crosstype_test
 where
   t > '1995-01-01'::date and i = 0;
+
+execute crosstype_test_qry;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
-select *
-from timestamptz_date_crosstype_test
-where
-  t > '1995-01-01'::date and i = 0;
+execute crosstype_test_qry;
+
+deallocate crosstype_test_qry;
 
 --------------------------------------------------------------------------
 -- (July 9) Terminate scan promptly when name column lacks skip support --
@@ -2061,13 +2066,7 @@ where
 -- ERROR:  missing oprcode for skipping equals operator 2437166984
 
 -- Contradictory
-select four, ten, unique1
-from wisconsin
-where
-  four = -1 and four between 0 and 3
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
-EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+prepare contradictory_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
@@ -2075,14 +2074,15 @@ where
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
 
--- Contradictory
-select four, ten, unique1
-from wisconsin
-where
-  four between 0 and 3 and four = -1
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
+
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute contradictory_wisconsin;
+
+deallocate contradictory_wisconsin;
+
+-- Contradictory
+prepare contradictory_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
@@ -2090,14 +2090,15 @@ where
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
 
+execute contradictory_wisconsin;
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute contradictory_wisconsin;
+
+deallocate contradictory_wisconsin;
+
 -- Contradictory
-select four, ten, unique1
-from wisconsin
-where
-  four = 4 and four between 0 and 3 and four = -1
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
-EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+prepare contradictory_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
@@ -2105,14 +2106,15 @@ where
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
 
--- Partially redundant
-select four, ten, unique1
-from wisconsin
-where
-  four = 1 and four between 0 and 3
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute contradictory_wisconsin;
+
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute contradictory_wisconsin;
+
+deallocate contradictory_wisconsin;
+
+-- Partially redundant
+prepare redundant_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
@@ -2120,20 +2122,28 @@ where
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
 
--- Partially redundant
-select four, ten, unique1
-from wisconsin
-where
-  four between 0 and 3 and four = 1
-  and ten between 2 and 15
-  and unique1 in (1, 2490, 7777);
+execute redundant_wisconsin;
+
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute redundant_wisconsin;
+
+deallocate redundant_wisconsin;
+
+-- Partially redundant
+prepare redundant_wisconsin as
 select four, ten, unique1
 from wisconsin
 where
   four between 0 and 3 and four = 1
   and ten between 2 and 15
   and unique1 in (1, 2490, 7777);
+
+execute redundant_wisconsin;
+
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF, SUMMARY OFF)
+execute redundant_wisconsin;
+
+deallocate redundant_wisconsin;
 
 -------------------------------------------------------------------------------
 -- (July 12) Day after going for drinks with jkatz + company in East Village --
