@@ -297,7 +297,7 @@ _bt_binsrch_array_skey(FmgrInfo *orderproc,
 
 	Assert(cur->sk_flags & SK_SEARCHARRAY);
 	Assert(!(cur->sk_flags & SK_BT_SKIP));
-	Assert(!(cur->sk_flags & SK_ISNULL));	/* plain arrays can't do this */
+	Assert(!(cur->sk_flags & SK_ISNULL));	/* SAOP arrays can't do this */
 	Assert(cur->sk_strategy == BTEqualStrategyNumber);
 
 	if (cur_elem_trig)
