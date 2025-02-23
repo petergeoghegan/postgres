@@ -1199,8 +1199,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	Assert(!BTScanPosIsValid(so->currPos));
 
-	CHECK_FOR_INTERRUPTS();
-
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
 	 * keys that must be matched to continue the scan.
@@ -2043,17 +2041,6 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 
 	so->npages++;
 
-	if (so->arrayKeys)
-	{
-		int			pageNum = (int) so->currPos.currPage;
-
-		if ((ScanDirectionIsForward(dir) || offnum >= minoff) &&
-			bms_is_member(pageNum, so->bmsPages))
-			elog(ERROR, "pageNum %d already visited\n\n%s", pageNum,
-				 so->debugstr.data);
-		so->bmsPages = bms_add_member(so->bmsPages, pageNum);
-	}
-
 	/*
 	 * Prechecking the value of the continuescan flag for the last item on the
 	 * page (for backwards scan it will be the first item on a page).  If we
@@ -2886,18 +2873,7 @@ _bt_steppage(IndexScanDesc scan, ScanDirection dir)
 	 * keys as-is, since the next _bt_readpage will advance them.)
 	 */
 	if (so->currPos.dir != dir)
-	{
 		so->needPrimScan = false;
-
-		/*
-		 * Have to forget every block we've read so far when scan direction
-		 * changes.  Cannot just delete previously read block (that we're
-		 * about to read once more), since there might also be blocks beyond
-		 * that one that were read way earlier on.
-		 */
-		bms_free(so->bmsPages);
-		so->bmsPages = NULL;
-	}
 
 	return _bt_readnextpage(scan, blkno, lastcurrblkno, dir, false);
 }
@@ -3045,8 +3021,6 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 			/* most recent _bt_readpage call (for lastcurrblkno) ended scan */
 			Assert(so->currPos.currPage == lastcurrblkno && !seized);
 			BTScanPosInvalidate(so->currPos);
-			bms_free(so->bmsPages);
-			so->bmsPages = NULL;
 			_bt_parallel_done(scan);	/* iff !so->needPrimScan */
 			return false;
 		}
@@ -3059,8 +3033,6 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 		{
 			/* whole scan is now done (or another primitive scan required) */
 			BTScanPosInvalidate(so->currPos);
-			bms_free(so->bmsPages);
-			so->bmsPages = NULL;
 			return false;
 		}
 
@@ -3079,8 +3051,6 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 			{
 				/* must have been a concurrent deletion of leftmost page */
 				BTScanPosInvalidate(so->currPos);
-				bms_free(so->bmsPages);
-				so->bmsPages = NULL;
 				_bt_parallel_done(scan);
 				return false;
 			}
