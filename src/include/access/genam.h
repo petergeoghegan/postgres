@@ -85,6 +85,11 @@ typedef struct IndexBulkDeleteResult
 	BlockNumber pages_free;		/* # pages available for reuse */
 } IndexBulkDeleteResult;
 
+typedef struct IndexScanInstrumentation
+{
+	uint64		nsearches;
+} IndexScanInstrumentation;
+
 /* Typedef for callback function to determine if a tuple is bulk-deletable */
 typedef bool (*IndexBulkDeleteCallback) (ItemPointer itemptr, void *state);
 
@@ -157,9 +162,11 @@ extern void index_insert_cleanup(Relation indexRelation,
 extern IndexScanDesc index_beginscan(Relation heapRelation,
 									 Relation indexRelation,
 									 Snapshot snapshot,
+									 IndexScanInstrumentation *instrument,
 									 int nkeys, int norderbys);
 extern IndexScanDesc index_beginscan_bitmap(Relation indexRelation,
 											Snapshot snapshot,
+											IndexScanInstrumentation *instrument,
 											int nkeys);
 extern void index_rescan(IndexScanDesc scan,
 						 ScanKey keys, int nkeys,
@@ -175,7 +182,8 @@ extern void index_parallelscan_initialize(Relation heapRelation,
 extern void index_parallelrescan(IndexScanDesc scan);
 extern IndexScanDesc index_beginscan_parallel(Relation heaprel,
 											  Relation indexrel, int nkeys, int norderbys,
-											  ParallelIndexScanDesc pscan);
+											  ParallelIndexScanDesc pscan,
+											  IndexScanInstrumentation *instrument);
 extern ItemPointer index_getnext_tid(IndexScanDesc scan,
 									 ScanDirection direction);
 struct TupleTableSlot;

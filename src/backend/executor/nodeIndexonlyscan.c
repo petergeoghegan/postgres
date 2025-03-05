@@ -92,6 +92,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->ioss_RelationDesc,
 								   estate->es_snapshot,
+								   &node->ioss_Instrument,
 								   node->ioss_NumScanKeys,
 								   node->ioss_NumOrderByKeys);
 
@@ -414,6 +415,20 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 	}
 
 	/*
+	 * When ending a parallel worker, copy the statistics gathered by the
+	 * worker back into shared memory so that it can be picked up by the main
+	 * process to report in EXPLAIN ANALYZE.
+	 */
+	if (node->shared_info != NULL && IsParallelWorker())
+	{
+		IndexScanInstrumentation *si;
+
+		Assert(ParallelWorkerNumber <= node->shared_info->num_workers);
+		si = &node->shared_info->instrument[ParallelWorkerNumber];
+		memcpy(si, &node->ioss_Instrument, sizeof(IndexScanInstrumentation));
+	}
+
+	/*
 	 * close the index relation (no-op if we didn't open it)
 	 */
 	if (indexScanDesc)
@@ -593,6 +608,8 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	indexstate->ioss_RuntimeKeysReady = false;
 	indexstate->ioss_RuntimeKeys = NULL;
 	indexstate->ioss_NumRuntimeKeys = 0;
+	indexstate->ioss_ParallelScanDesc = NULL;
+	indexstate->shared_info = NULL;
 
 	/*
 	 * build the index scan keys from the index qualification
@@ -707,6 +724,7 @@ ExecIndexOnlyScanEstimate(IndexOnlyScanState *node,
 						  ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
+	Size		size;
 
 	node->ioss_PscanLen = index_parallelscan_estimate(node->ioss_RelationDesc,
 													  node->ioss_NumScanKeys,
@@ -714,6 +732,15 @@ ExecIndexOnlyScanEstimate(IndexOnlyScanState *node,
 													  estate->es_snapshot);
 	shm_toc_estimate_chunk(&pcxt->estimator, node->ioss_PscanLen);
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = mul_size(pcxt->nworkers, sizeof(IndexScanInstrumentation));
+	size = add_size(size, offsetof(SharedIndexScanInstrumentation, instrument));
+	shm_toc_estimate_chunk(&pcxt->estimator, size);
+	shm_toc_estimate_keys(&pcxt->estimator, 2);
 }
 
 /* ----------------------------------------------------------------
@@ -727,31 +754,54 @@ ExecIndexOnlyScanInitializeDSM(IndexOnlyScanState *node,
 							   ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
+	Size		size;
 	ParallelIndexScanDesc piscan;
 
 	piscan = shm_toc_allocate(pcxt->toc, node->ioss_PscanLen);
-	index_parallelscan_initialize(node->ss.ss_currentRelation,
-								  node->ioss_RelationDesc,
-								  estate->es_snapshot,
-								  piscan);
+	node->ioss_ParallelScanDesc = piscan;
+	if (node->ss.ps.plan->parallel_aware)
+	{
+		index_parallelscan_initialize(node->ss.ss_currentRelation,
+									  node->ioss_RelationDesc,
+									  estate->es_snapshot,
+									  piscan);
+	}
 	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, piscan);
-	node->ioss_ScanDesc =
-		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->ioss_RelationDesc,
-								 node->ioss_NumScanKeys,
-								 node->ioss_NumOrderByKeys,
-								 piscan);
-	node->ioss_ScanDesc->xs_want_itup = true;
-	node->ioss_VMBuffer = InvalidBuffer;
+	if (node->ss.ps.plan->parallel_aware)
+	{
+		node->ioss_ScanDesc =
+			index_beginscan_parallel(node->ss.ss_currentRelation,
+									 node->ioss_RelationDesc,
+									 node->ioss_NumScanKeys,
+									 node->ioss_NumOrderByKeys,
+									 piscan,
+									 &node->ioss_Instrument);
+		node->ioss_ScanDesc->xs_want_itup = true;
+		node->ioss_VMBuffer = InvalidBuffer;
 
-	/*
-	 * If no run-time keys to calculate or they are ready, go ahead and pass
-	 * the scankeys to the index AM.
-	 */
-	if (node->ioss_NumRuntimeKeys == 0 || node->ioss_RuntimeKeysReady)
-		index_rescan(node->ioss_ScanDesc,
-					 node->ioss_ScanKeys, node->ioss_NumScanKeys,
-					 node->ioss_OrderByKeys, node->ioss_NumOrderByKeys);
+		/*
+		 * If no run-time keys to calculate or they are ready, go ahead and
+		 * pass the scankeys to the index AM.
+		 */
+		if (node->ioss_NumRuntimeKeys == 0 || node->ioss_RuntimeKeysReady)
+			index_rescan(node->ioss_ScanDesc,
+						 node->ioss_ScanKeys, node->ioss_NumScanKeys,
+						 node->ioss_OrderByKeys, node->ioss_NumOrderByKeys);
+	}
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = offsetof(SharedIndexScanInstrumentation, instrument) +
+		pcxt->nworkers * sizeof(IndexScanInstrumentation);
+	node->shared_info = (SharedIndexScanInstrumentation *) shm_toc_allocate(pcxt->toc, size);
+
+	/* Each per-worker area must start out as zeroes. */
+	memset(node->shared_info, 0, size);
+
+	node->shared_info->num_workers = pcxt->nworkers;
+	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id + 3000, node->shared_info);
 }
 
 /* ----------------------------------------------------------------
@@ -780,20 +830,56 @@ ExecIndexOnlyScanInitializeWorker(IndexOnlyScanState *node,
 	ParallelIndexScanDesc piscan;
 
 	piscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
-	node->ioss_ScanDesc =
-		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->ioss_RelationDesc,
-								 node->ioss_NumScanKeys,
-								 node->ioss_NumOrderByKeys,
-								 piscan);
-	node->ioss_ScanDesc->xs_want_itup = true;
+	if (node->ss.ps.plan->parallel_aware)
+	{
+		node->ioss_ScanDesc =
+			index_beginscan_parallel(node->ss.ss_currentRelation,
+									 node->ioss_RelationDesc,
+									 node->ioss_NumScanKeys,
+									 node->ioss_NumOrderByKeys,
+									 piscan,
+									 &node->ioss_Instrument);
+		node->ioss_ScanDesc->xs_want_itup = true;
+
+		/*
+		 * If no run-time keys to calculate or they are ready, go ahead and
+		 * pass the scankeys to the index AM.
+		 */
+		if (node->ioss_NumRuntimeKeys == 0 || node->ioss_RuntimeKeysReady)
+			index_rescan(node->ioss_ScanDesc,
+						 node->ioss_ScanKeys, node->ioss_NumScanKeys,
+						 node->ioss_OrderByKeys, node->ioss_NumOrderByKeys);
+	}
+
+	/* don't need this if not instrumenting */
+	if (!node->ss.ps.instrument)
+		return;
 
 	/*
-	 * If no run-time keys to calculate or they are ready, go ahead and pass
-	 * the scankeys to the index AM.
+	 * Find our entry in the shared area, and set up a pointer to it
 	 */
-	if (node->ioss_NumRuntimeKeys == 0 || node->ioss_RuntimeKeysReady)
-		index_rescan(node->ioss_ScanDesc,
-					 node->ioss_ScanKeys, node->ioss_NumScanKeys,
-					 node->ioss_OrderByKeys, node->ioss_NumOrderByKeys);
+	node->shared_info = (SharedIndexScanInstrumentation *)
+		shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id + 3000, false);
+}
+
+/* ----------------------------------------------------------------
+ *		ExecIndexOnlyScanRetrieveInstrumentation
+ *
+ *		Transfer index-only statistics from DSM to private memory.
+ * ----------------------------------------------------------------
+ */
+void
+ExecIndexOnlyScanRetrieveInstrumentation(IndexOnlyScanState *node)
+{
+	SharedIndexScanInstrumentation *shared_info = node->shared_info;
+	size_t		size;
+
+	if (shared_info == NULL)
+		return;
+
+	/* Replace node->shared_info with a copy in backend-local memory. */
+	size = offsetof(SharedIndexScanInstrumentation, instrument) +
+		shared_info->num_workers * sizeof(IndexScanInstrumentation);
+	node->shared_info = palloc(size);
+	memcpy(node->shared_info, shared_info, size);
 }

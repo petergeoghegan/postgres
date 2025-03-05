@@ -28,6 +28,7 @@
 #include "executor/nodeAgg.h"
 #include "executor/nodeAppend.h"
 #include "executor/nodeBitmapHeapscan.h"
+#include "executor/nodeBitmapIndexscan.h"
 #include "executor/nodeCustom.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeHash.h"
@@ -244,14 +245,19 @@ ExecParallelEstimate(PlanState *planstate, ExecParallelEstimateContext *e)
 									e->pcxt);
 			break;
 		case T_IndexScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexScanEstimate((IndexScanState *) planstate,
-									  e->pcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexScanEstimate((IndexScanState *) planstate,
+								  e->pcxt);
+			break;
+		case T_BitmapIndexScanState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecBitmapIndexScanEstimate((BitmapIndexScanState *) planstate,
+										e->pcxt);
 			break;
 		case T_IndexOnlyScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexOnlyScanEstimate((IndexOnlyScanState *) planstate,
-										  e->pcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexOnlyScanEstimate((IndexOnlyScanState *) planstate,
+									  e->pcxt);
 			break;
 		case T_ForeignScanState:
 			if (planstate->plan->parallel_aware)
@@ -468,14 +474,17 @@ ExecParallelInitializeDSM(PlanState *planstate,
 										 d->pcxt);
 			break;
 		case T_IndexScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexScanInitializeDSM((IndexScanState *) planstate,
-										   d->pcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexScanInitializeDSM((IndexScanState *) planstate, d->pcxt);
+			break;
+		case T_BitmapIndexScanState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecBitmapIndexScanInitializeDSM((BitmapIndexScanState *) planstate, d->pcxt);
 			break;
 		case T_IndexOnlyScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexOnlyScanInitializeDSM((IndexOnlyScanState *) planstate,
-											   d->pcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexOnlyScanInitializeDSM((IndexOnlyScanState *) planstate,
+										   d->pcxt);
 			break;
 		case T_ForeignScanState:
 			if (planstate->plan->parallel_aware)
@@ -969,14 +978,13 @@ ExecParallelReInitializeDSM(PlanState *planstate,
 										   pcxt);
 			break;
 		case T_IndexScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexScanReInitializeDSM((IndexScanState *) planstate,
-											 pcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexScanReInitializeDSM((IndexScanState *) planstate, pcxt);
 			break;
 		case T_IndexOnlyScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexOnlyScanReInitializeDSM((IndexOnlyScanState *) planstate,
-												 pcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexOnlyScanReInitializeDSM((IndexOnlyScanState *) planstate,
+											 pcxt);
 			break;
 		case T_ForeignScanState:
 			if (planstate->plan->parallel_aware)
@@ -1063,6 +1071,15 @@ ExecParallelRetrieveInstrumentation(PlanState *planstate,
 	/* Perform any node-type-specific work that needs to be done. */
 	switch (nodeTag(planstate))
 	{
+		case T_IndexScanState:
+			ExecIndexScanRetrieveInstrumentation((IndexScanState *) planstate);
+			break;
+		case T_BitmapIndexScanState:
+			ExecBitmapIndexScanRetrieveInstrumentation((BitmapIndexScanState *) planstate);
+			break;
+		case T_IndexOnlyScanState:
+			ExecIndexOnlyScanRetrieveInstrumentation((IndexOnlyScanState *) planstate);
+			break;
 		case T_SortState:
 			ExecSortRetrieveInstrumentation((SortState *) planstate);
 			break;
@@ -1330,14 +1347,18 @@ ExecParallelInitializeWorker(PlanState *planstate, ParallelWorkerContext *pwcxt)
 				ExecSeqScanInitializeWorker((SeqScanState *) planstate, pwcxt);
 			break;
 		case T_IndexScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexScanInitializeWorker((IndexScanState *) planstate,
-											  pwcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexScanInitializeWorker((IndexScanState *) planstate, pwcxt);
+			break;
+		case T_BitmapIndexScanState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecBitmapIndexScanInitializeWorker((BitmapIndexScanState *) planstate,
+												pwcxt);
 			break;
 		case T_IndexOnlyScanState:
-			if (planstate->plan->parallel_aware)
-				ExecIndexOnlyScanInitializeWorker((IndexOnlyScanState *) planstate,
-												  pwcxt);
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIndexOnlyScanInitializeWorker((IndexOnlyScanState *) planstate,
+											  pwcxt);
 			break;
 		case T_ForeignScanState:
 			if (planstate->plan->parallel_aware)

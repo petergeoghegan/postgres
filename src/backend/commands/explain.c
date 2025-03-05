@@ -13,6 +13,7 @@
  */
 #include "postgres.h"
 
+#include "access/relscan.h"
 #include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "commands/createas.h"
@@ -2096,6 +2097,26 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (plan->qual)
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
+			if (es->analyze)
+			{
+				IndexScanState *isplanstate = ((IndexScanState *) planstate);
+				uint64		nsearches = 0;
+
+				nsearches = isplanstate->iss_Instrument.nsearches;
+
+				if (isplanstate->shared_info)
+				{
+					SharedIndexScanInstrumentation *shared_info = isplanstate->shared_info;
+
+					for (int i = 0; i < shared_info->num_workers; ++i)
+					{
+						IndexScanInstrumentation *worker = &shared_info->instrument[i];
+
+						nsearches += worker->nsearches;
+					}
+				}
+				ExplainPropertyUInteger("Index Searches", NULL, nsearches, es);
+			}
 			break;
 		case T_IndexOnlyScan:
 			show_scan_qual(((IndexOnlyScan *) plan)->indexqual,
@@ -2112,10 +2133,50 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (es->analyze)
 				ExplainPropertyFloat("Heap Fetches", NULL,
 									 planstate->instrument->ntuples2, 0, es);
+			if (es->analyze)
+			{
+				IndexOnlyScanState *isplanstate = ((IndexOnlyScanState *) planstate);
+				uint64		nsearches = 0;
+
+				nsearches = isplanstate->ioss_Instrument.nsearches;
+
+				if (isplanstate->shared_info)
+				{
+					SharedIndexScanInstrumentation *shared_info = isplanstate->shared_info;
+
+					for (int i = 0; i < shared_info->num_workers; ++i)
+					{
+						IndexScanInstrumentation *worker = &shared_info->instrument[i];
+
+						nsearches += worker->nsearches;
+					}
+				}
+				ExplainPropertyUInteger("Index Searches", NULL, nsearches, es);
+			}
 			break;
 		case T_BitmapIndexScan:
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
 						   "Index Cond", planstate, ancestors, es);
+			if (es->analyze)
+			{
+				BitmapIndexScanState *isplanstate = ((BitmapIndexScanState *) planstate);
+				uint64		nsearches = 0;
+
+				nsearches = isplanstate->biss_Instrument.nsearches;
+
+				if (isplanstate->shared_info)
+				{
+					SharedIndexScanInstrumentation *shared_info = isplanstate->shared_info;
+
+					for (int i = 0; i < shared_info->num_workers; ++i)
+					{
+						IndexScanInstrumentation *worker = &shared_info->instrument[i];
+
+						nsearches += worker->nsearches;
+					}
+				}
+				ExplainPropertyUInteger("Index Searches", NULL, nsearches, es);
+			}
 			break;
 		case T_BitmapHeapScan:
 			show_scan_qual(((BitmapHeapScan *) plan)->bitmapqualorig,

@@ -14,6 +14,7 @@
 #ifndef RELSCAN_H
 #define RELSCAN_H
 
+#include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/itup.h"
 #include "nodes/tidbitmap.h"
@@ -149,6 +150,13 @@ typedef struct IndexScanDescData
 
 	/* index access method's private state */
 	void	   *opaque;			/* access-method-specific info */
+
+	/*
+	 * Instrumentation counters that are maintained by every index access
+	 * method, for all scan types.  These go here because there is no standard
+	 * way to access PlanState.instrument during amgettuple calls.
+	 */
+	IndexScanInstrumentation *instrument;
 
 	/*
 	 * In an index-only scan, a successful amgettuple call must fill either

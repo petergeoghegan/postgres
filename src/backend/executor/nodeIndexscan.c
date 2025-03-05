@@ -109,6 +109,7 @@ IndexNext(IndexScanState *node)
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
 								   estate->es_snapshot,
+								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
 								   node->iss_NumOrderByKeys);
 
@@ -204,6 +205,7 @@ IndexNextWithReorder(IndexScanState *node)
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
 								   estate->es_snapshot,
+								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
 								   node->iss_NumOrderByKeys);
 
@@ -794,6 +796,20 @@ ExecEndIndexScan(IndexScanState *node)
 	indexScanDesc = node->iss_ScanDesc;
 
 	/*
+	 * When ending a parallel worker, copy the statistics gathered by the
+	 * worker back into shared memory so that it can be picked up by the main
+	 * process to report in EXPLAIN ANALYZE.
+	 */
+	if (node->shared_info != NULL && IsParallelWorker())
+	{
+		IndexScanInstrumentation *si;
+
+		Assert(ParallelWorkerNumber <= node->shared_info->num_workers);
+		si = &node->shared_info->instrument[ParallelWorkerNumber];
+		memcpy(si, &node->iss_Instrument, sizeof(IndexScanInstrumentation));
+	}
+
+	/*
 	 * close the index relation (no-op if we didn't open it)
 	 */
 	if (indexScanDesc)
@@ -960,6 +976,8 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 	indexstate->iss_RuntimeKeysReady = false;
 	indexstate->iss_RuntimeKeys = NULL;
 	indexstate->iss_NumRuntimeKeys = 0;
+	indexstate->iss_ParallelScanDesc = NULL;
+	indexstate->shared_info = NULL;
 
 	/*
 	 * build the index scan keys from the index qualification
@@ -1642,6 +1660,7 @@ ExecIndexScanEstimate(IndexScanState *node,
 					  ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
+	Size		size;
 
 	node->iss_PscanLen = index_parallelscan_estimate(node->iss_RelationDesc,
 													 node->iss_NumScanKeys,
@@ -1649,6 +1668,15 @@ ExecIndexScanEstimate(IndexScanState *node,
 													 estate->es_snapshot);
 	shm_toc_estimate_chunk(&pcxt->estimator, node->iss_PscanLen);
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = mul_size(pcxt->nworkers, sizeof(IndexScanInstrumentation));
+	size = add_size(size, offsetof(SharedIndexScanInstrumentation, instrument));
+	shm_toc_estimate_chunk(&pcxt->estimator, size);
+	shm_toc_estimate_keys(&pcxt->estimator, 2);
 }
 
 /* ----------------------------------------------------------------
@@ -1663,28 +1691,51 @@ ExecIndexScanInitializeDSM(IndexScanState *node,
 {
 	EState	   *estate = node->ss.ps.state;
 	ParallelIndexScanDesc piscan;
+	Size		size;
 
 	piscan = shm_toc_allocate(pcxt->toc, node->iss_PscanLen);
-	index_parallelscan_initialize(node->ss.ss_currentRelation,
-								  node->iss_RelationDesc,
-								  estate->es_snapshot,
-								  piscan);
+	node->iss_ParallelScanDesc = piscan;
+	if (node->ss.ps.plan->parallel_aware)
+	{
+		index_parallelscan_initialize(node->ss.ss_currentRelation,
+									  node->iss_RelationDesc,
+									  estate->es_snapshot,
+									  piscan);
+	}
 	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, piscan);
-	node->iss_ScanDesc =
-		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->iss_RelationDesc,
-								 node->iss_NumScanKeys,
-								 node->iss_NumOrderByKeys,
-								 piscan);
+	if (node->ss.ps.plan->parallel_aware)
+	{
+		node->iss_ScanDesc =
+			index_beginscan_parallel(node->ss.ss_currentRelation,
+									 node->iss_RelationDesc,
+									 node->iss_NumScanKeys,
+									 node->iss_NumOrderByKeys,
+									 piscan,
+									 &node->iss_Instrument);
 
-	/*
-	 * If no run-time keys to calculate or they are ready, go ahead and pass
-	 * the scankeys to the index AM.
-	 */
-	if (node->iss_NumRuntimeKeys == 0 || node->iss_RuntimeKeysReady)
-		index_rescan(node->iss_ScanDesc,
-					 node->iss_ScanKeys, node->iss_NumScanKeys,
-					 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
+		/*
+		 * If no run-time keys to calculate or they are ready, go ahead and
+		 * pass the scankeys to the index AM.
+		 */
+		if (node->iss_NumRuntimeKeys == 0 || node->iss_RuntimeKeysReady)
+			index_rescan(node->iss_ScanDesc,
+						 node->iss_ScanKeys, node->iss_NumScanKeys,
+						 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
+	}
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = offsetof(SharedIndexScanInstrumentation, instrument) +
+		pcxt->nworkers * sizeof(IndexScanInstrumentation);
+	node->shared_info = (SharedIndexScanInstrumentation *) shm_toc_allocate(pcxt->toc, size);
+
+	/* Each per-worker area must start out as zeroes. */
+	memset(node->shared_info, 0, size);
+
+	node->shared_info->num_workers = pcxt->nworkers;
+	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id + 3000, node->shared_info);
 }
 
 /* ----------------------------------------------------------------
@@ -1713,19 +1764,55 @@ ExecIndexScanInitializeWorker(IndexScanState *node,
 	ParallelIndexScanDesc piscan;
 
 	piscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
-	node->iss_ScanDesc =
-		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->iss_RelationDesc,
-								 node->iss_NumScanKeys,
-								 node->iss_NumOrderByKeys,
-								 piscan);
+	if (node->ss.ps.plan->parallel_aware)
+	{
+		node->iss_ScanDesc =
+			index_beginscan_parallel(node->ss.ss_currentRelation,
+									 node->iss_RelationDesc,
+									 node->iss_NumScanKeys,
+									 node->iss_NumOrderByKeys,
+									 piscan,
+									 &node->iss_Instrument);
+
+		/*
+		 * If no run-time keys to calculate or they are ready, go ahead and
+		 * pass the scankeys to the index AM.
+		 */
+		if (node->iss_NumRuntimeKeys == 0 || node->iss_RuntimeKeysReady)
+			index_rescan(node->iss_ScanDesc,
+						 node->iss_ScanKeys, node->iss_NumScanKeys,
+						 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
+	}
+
+	/* don't need this if not instrumenting */
+	if (!node->ss.ps.instrument)
+		return;
 
 	/*
-	 * If no run-time keys to calculate or they are ready, go ahead and pass
-	 * the scankeys to the index AM.
+	 * Find our entry in the shared area, and set up a pointer to it
 	 */
-	if (node->iss_NumRuntimeKeys == 0 || node->iss_RuntimeKeysReady)
-		index_rescan(node->iss_ScanDesc,
-					 node->iss_ScanKeys, node->iss_NumScanKeys,
-					 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
+	node->shared_info = (SharedIndexScanInstrumentation *)
+		shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id + 3000, false);
+}
+
+/* ----------------------------------------------------------------
+ * ExecIndexScanRetrieveInstrumentation
+ *
+ *		Transfer index scan statistics from DSM to private memory.
+ * ----------------------------------------------------------------
+ */
+void
+ExecIndexScanRetrieveInstrumentation(IndexScanState *node)
+{
+	SharedIndexScanInstrumentation *shared_info = node->shared_info;
+	size_t		size;
+
+	if (shared_info == NULL)
+		return;
+
+	/* Replace node->shared_info with a copy in backend-local memory. */
+	size = offsetof(SharedIndexScanInstrumentation, instrument) +
+		shared_info->num_workers * sizeof(IndexScanInstrumentation);
+	node->shared_info = palloc(size);
+	memcpy(node->shared_info, shared_info, size);
 }

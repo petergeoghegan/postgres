@@ -256,6 +256,7 @@ IndexScanDesc
 index_beginscan(Relation heapRelation,
 				Relation indexRelation,
 				Snapshot snapshot,
+				IndexScanInstrumentation *instrument,
 				int nkeys, int norderbys)
 {
 	IndexScanDesc scan;
@@ -270,6 +271,7 @@ index_beginscan(Relation heapRelation,
 	 */
 	scan->heapRelation = heapRelation;
 	scan->xs_snapshot = snapshot;
+	scan->instrument = instrument;
 
 	/* prepare to fetch index matches from table */
 	scan->xs_heapfetch = table_index_fetch_begin(heapRelation);
@@ -286,6 +288,7 @@ index_beginscan(Relation heapRelation,
 IndexScanDesc
 index_beginscan_bitmap(Relation indexRelation,
 					   Snapshot snapshot,
+					   IndexScanInstrumentation *instrument,
 					   int nkeys)
 {
 	IndexScanDesc scan;
@@ -299,6 +302,7 @@ index_beginscan_bitmap(Relation indexRelation,
 	 * up by RelationGetIndexScan.
 	 */
 	scan->xs_snapshot = snapshot;
+	scan->instrument = instrument;
 
 	return scan;
 }
@@ -539,7 +543,8 @@ index_parallelrescan(IndexScanDesc scan)
  */
 IndexScanDesc
 index_beginscan_parallel(Relation heaprel, Relation indexrel, int nkeys,
-						 int norderbys, ParallelIndexScanDesc pscan)
+						 int norderbys, ParallelIndexScanDesc pscan,
+						 IndexScanInstrumentation *instrument)
 {
 	Snapshot	snapshot;
 	IndexScanDesc scan;
@@ -558,6 +563,7 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel, int nkeys,
 	 */
 	scan->heapRelation = heaprel;
 	scan->xs_snapshot = snapshot;
+	scan->instrument = instrument;
 
 	/* prepare to fetch index matches from table */
 	scan->xs_heapfetch = table_index_fetch_begin(heaprel);

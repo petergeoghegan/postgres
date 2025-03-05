@@ -183,6 +183,15 @@ ExecEndBitmapIndexScan(BitmapIndexScanState *node)
 	indexRelationDesc = node->biss_RelationDesc;
 	indexScanDesc = node->biss_ScanDesc;
 
+	if (node->shared_info != NULL && IsParallelWorker())
+	{
+		IndexScanInstrumentation *si;
+
+		Assert(ParallelWorkerNumber <= node->shared_info->num_workers);
+		si = &node->shared_info->instrument[ParallelWorkerNumber];
+		memcpy(si, &node->biss_Instrument, sizeof(IndexScanInstrumentation));
+	}
+
 	/*
 	 * close the index relation (no-op if we didn't open it)
 	 */
@@ -217,6 +226,7 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 
 	/* normally we don't make the result bitmap till runtime */
 	indexstate->biss_result = NULL;
+	indexstate->shared_info = NULL;
 
 	/*
 	 * We do not open or lock the base relation here.  We assume that an
@@ -301,7 +311,7 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 	 */
 	indexstate->biss_ScanDesc =
 		index_beginscan_bitmap(indexstate->biss_RelationDesc,
-							   estate->es_snapshot,
+							   estate->es_snapshot, &indexstate->biss_Instrument,
 							   indexstate->biss_NumScanKeys);
 
 	/*
@@ -318,4 +328,96 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 	 * all done.
 	 */
 	return indexstate;
+}
+
+/* ----------------------------------------------------------------
+ *		ExecIndexScanEstimate
+ *
+ *		Compute the amount of space we'll need in the parallel
+ *		query DSM, and inform pcxt->estimator about our needs.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanEstimate(BitmapIndexScanState *node, ParallelContext *pcxt)
+{
+	Size		size;
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = mul_size(pcxt->nworkers, sizeof(IndexScanInstrumentation));
+	size = add_size(size, offsetof(SharedIndexScanInstrumentation, instrument));
+	shm_toc_estimate_chunk(&pcxt->estimator, size);
+	shm_toc_estimate_keys(&pcxt->estimator, 1);
+}
+
+/* ----------------------------------------------------------------
+ *		ExecIndexScanInitializeDSM
+ *
+ *		Set up a parallel index scan descriptor.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanInitializeDSM(BitmapIndexScanState *node,
+								 ParallelContext *pcxt)
+{
+	Size		size;
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = offsetof(SharedIndexScanInstrumentation, instrument) +
+		pcxt->nworkers * sizeof(IndexScanInstrumentation);
+	node->shared_info = (SharedIndexScanInstrumentation *) shm_toc_allocate(pcxt->toc, size);
+
+	/* Each per-worker area must start out as zeroes. */
+	memset(node->shared_info, 0, size);
+
+	node->shared_info->num_workers = pcxt->nworkers;
+	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id + 3000, node->shared_info);
+}
+
+/* ----------------------------------------------------------------
+ *		ExecIndexScanInitializeWorker
+ *
+ *		Copy relevant information from TOC into planstate.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanInitializeWorker(BitmapIndexScanState *node,
+									ParallelWorkerContext *pwcxt)
+{
+	/* don't need this if not instrumenting */
+	if (!node->ss.ps.instrument)
+		return;
+
+	/*
+	 * Find our entry in the shared area, and set up a pointer to it
+	 */
+	node->shared_info = (SharedIndexScanInstrumentation *)
+		shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id + 3000, false);
+}
+
+/* ----------------------------------------------------------------
+ * ExecIndexScanRetrieveInstrumentation
+ *
+ *		Transfer index scan statistics from DSM to private memory.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanRetrieveInstrumentation(BitmapIndexScanState *node)
+{
+	SharedIndexScanInstrumentation *shared_info = node->shared_info;
+	size_t		size;
+
+	if (shared_info == NULL)
+		return;
+
+	/* Replace node->shared_info with a copy in backend-local memory. */
+	size = offsetof(SharedIndexScanInstrumentation, instrument) +
+		shared_info->num_workers * sizeof(IndexScanInstrumentation);
+	node->shared_info = palloc(size);
+	memcpy(node->shared_info, shared_info, size);
 }
