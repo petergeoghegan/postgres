@@ -1680,6 +1680,8 @@ typedef struct
  *		RuntimeContext	   expr context for evaling runtime Skeys
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
+ *		Instrument		   local index scan instrumentation
+ *		SharedInfo		   statistics for parallel workers
  *
  *		ReorderQueue	   tuples that need reordering due to re-check
  *		ReachedEnd		   have we fetched all tuples from index already?
@@ -1689,6 +1691,7 @@ typedef struct
  *		OrderByTypByVals   is the datatype of order by expression pass-by-value?
  *		OrderByTypLens	   typlens of the datatypes of order by expressions
  *		PscanLen		   size of parallel index scan descriptor
+ *		PscanInstrOffset   offset to SharedInfo (only used in leader)
  * ----------------
  */
 typedef struct IndexScanState
@@ -1706,6 +1709,8 @@ typedef struct IndexScanState
 	ExprContext *iss_RuntimeContext;
 	Relation	iss_RelationDesc;
 	struct IndexScanDescData *iss_ScanDesc;
+	IndexScanInstrumentation iss_Instrument;
+	SharedIndexScanInstrumentation *iss_SharedInfo;
 
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
@@ -1716,6 +1721,7 @@ typedef struct IndexScanState
 	bool	   *iss_OrderByTypByVals;
 	int16	   *iss_OrderByTypLens;
 	Size		iss_PscanLen;
+	Size		iss_PscanInstrOffset;
 } IndexScanState;
 
 /* ----------------
@@ -1732,9 +1738,12 @@ typedef struct IndexScanState
  *		RuntimeContext	   expr context for evaling runtime Skeys
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
+ *		Instrument		   local index scan instrumentation
+ *		SharedInfo		   statistics for parallel workers
  *		TableSlot		   slot for holding tuples fetched from the table
  *		VMBuffer		   buffer in use for visibility map testing, if any
  *		PscanLen		   size of parallel index-only scan descriptor
+ *		PscanInstrOffset   offset to SharedInfo (only used in leader)
  *		NameCStringAttNums attnums of name typed columns to pad to NAMEDATALEN
  *		NameCStringCount   number of elements in the NameCStringAttNums array
  * ----------------
@@ -1753,9 +1762,12 @@ typedef struct IndexOnlyScanState
 	ExprContext *ioss_RuntimeContext;
 	Relation	ioss_RelationDesc;
 	struct IndexScanDescData *ioss_ScanDesc;
+	IndexScanInstrumentation ioss_Instrument;
+	SharedIndexScanInstrumentation *ioss_SharedInfo;
 	TupleTableSlot *ioss_TableSlot;
 	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
+	Size		ioss_PscanInstrOffset;
 	AttrNumber *ioss_NameCStringAttNums;
 	int			ioss_NameCStringCount;
 } IndexOnlyScanState;
@@ -1774,6 +1786,8 @@ typedef struct IndexOnlyScanState
  *		RuntimeContext	   expr context for evaling runtime Skeys
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
+ *		Instrument		   local index scan instrumentation
+ *		SharedInfo		   statistics for parallel workers
  * ----------------
  */
 typedef struct BitmapIndexScanState
@@ -1790,6 +1804,8 @@ typedef struct BitmapIndexScanState
 	ExprContext *biss_RuntimeContext;
 	Relation	biss_RelationDesc;
 	struct IndexScanDescData *biss_ScanDesc;
+	IndexScanInstrumentation biss_Instrument;
+	SharedIndexScanInstrumentation *biss_SharedInfo;
 } BitmapIndexScanState;
 
 /* ----------------

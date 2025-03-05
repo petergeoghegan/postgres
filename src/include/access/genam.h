@@ -85,6 +85,27 @@ typedef struct IndexBulkDeleteResult
 	BlockNumber pages_free;		/* # pages available for reuse */
 } IndexBulkDeleteResult;
 
+/*
+ * Data structure for reporting index scan statistics that are maintained by
+ * index scans.  Note that IndexScanInstrumentation can't contain any pointers
+ * because it might need to be copied into a SharedIndexScanInstrumentation.
+ */
+typedef struct IndexScanInstrumentation
+{
+	/* Index search count (increment after calling pgstat_count_index_scan) */
+	uint64		nsearches;
+} IndexScanInstrumentation;
+
+/* ----------------
+ * Shared memory container for per-worker index scan information
+ * ----------------
+ */
+typedef struct SharedIndexScanInstrumentation
+{
+	int			num_workers;
+	IndexScanInstrumentation winstrument[FLEXIBLE_ARRAY_MEMBER];
+}			SharedIndexScanInstrumentation;
+
 /* Typedef for callback function to determine if a tuple is bulk-deletable */
 typedef bool (*IndexBulkDeleteCallback) (ItemPointer itemptr, void *state);
 
@@ -157,9 +178,11 @@ extern void index_insert_cleanup(Relation indexRelation,
 extern IndexScanDesc index_beginscan(Relation heapRelation,
 									 Relation indexRelation,
 									 Snapshot snapshot,
+									 IndexScanInstrumentation *instrument,
 									 int nkeys, int norderbys);
 extern IndexScanDesc index_beginscan_bitmap(Relation indexRelation,
 											Snapshot snapshot,
+											IndexScanInstrumentation *instrument,
 											int nkeys);
 extern void index_rescan(IndexScanDesc scan,
 						 ScanKey keys, int nkeys,
@@ -168,14 +191,18 @@ extern void index_endscan(IndexScanDesc scan);
 extern void index_markpos(IndexScanDesc scan);
 extern void index_restrpos(IndexScanDesc scan);
 extern Size index_parallelscan_estimate(Relation indexRelation,
-										int nkeys, int norderbys, Snapshot snapshot);
+										int nkeys, int norderbys, Snapshot snapshot,
+										bool instrument, int nworkers,
+										Size *instroffset);
 extern void index_parallelscan_initialize(Relation heapRelation,
 										  Relation indexRelation, Snapshot snapshot,
-										  ParallelIndexScanDesc target);
+										  ParallelIndexScanDesc target,
+										  Size ps_offset_ins);
 extern void index_parallelrescan(IndexScanDesc scan);
 extern IndexScanDesc index_beginscan_parallel(Relation heaprel,
 											  Relation indexrel, int nkeys, int norderbys,
-											  ParallelIndexScanDesc pscan);
+											  ParallelIndexScanDesc pscan,
+											  IndexScanInstrumentation *instrument);
 extern ItemPointer index_getnext_tid(IndexScanDesc scan,
 									 ScanDirection direction);
 struct TupleTableSlot;

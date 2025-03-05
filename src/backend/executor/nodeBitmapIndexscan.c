@@ -184,6 +184,21 @@ ExecEndBitmapIndexScan(BitmapIndexScanState *node)
 	indexScanDesc = node->biss_ScanDesc;
 
 	/*
+	 * When ending a parallel worker, copy the statistics gathered by the
+	 * worker back into shared memory so that it can be picked up by the main
+	 * process to report in EXPLAIN ANALYZE
+	 */
+	if (node->biss_SharedInfo != NULL && IsParallelWorker())
+	{
+		IndexScanInstrumentation *winstrument;
+
+		Assert(ParallelWorkerNumber <= node->biss_SharedInfo->num_workers);
+		winstrument = &node->biss_SharedInfo->winstrument[ParallelWorkerNumber];
+		memcpy(winstrument, &node->biss_Instrument,
+			   sizeof(IndexScanInstrumentation));
+	}
+
+	/*
 	 * close the index relation (no-op if we didn't open it)
 	 */
 	if (indexScanDesc)
@@ -217,6 +232,7 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 
 	/* normally we don't make the result bitmap till runtime */
 	indexstate->biss_result = NULL;
+	indexstate->biss_SharedInfo = NULL;
 
 	/*
 	 * We do not open or lock the base relation here.  We assume that an
@@ -302,6 +318,7 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 	indexstate->biss_ScanDesc =
 		index_beginscan_bitmap(indexstate->biss_RelationDesc,
 							   estate->es_snapshot,
+							   &indexstate->biss_Instrument,
 							   indexstate->biss_NumScanKeys);
 
 	/*
@@ -318,4 +335,98 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 	 * all done.
 	 */
 	return indexstate;
+}
+
+/* ----------------------------------------------------------------
+ *		ExecBitmapIndexScanEstimate
+ *
+ *		Compute the amount of space we'll need in the parallel
+ *		query DSM, and inform pcxt->estimator about our needs.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanEstimate(BitmapIndexScanState *node, ParallelContext *pcxt)
+{
+	Size		size;
+
+	/*
+	 * Parallel bitmap index scans are not supported, but we still need to
+	 * store the scan's instrumentation in shared memory during parallel query
+	 */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = mul_size(pcxt->nworkers, sizeof(IndexScanInstrumentation));
+	size = add_size(size, offsetof(SharedIndexScanInstrumentation, winstrument));
+	shm_toc_estimate_chunk(&pcxt->estimator, size);
+	shm_toc_estimate_keys(&pcxt->estimator, 1);
+}
+
+/* ----------------------------------------------------------------
+ *		ExecBitmapIndexScanInitializeDSM
+ *
+ *		Set up parallel bitmap index scan shared instrumentation.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanInitializeDSM(BitmapIndexScanState *node,
+								 ParallelContext *pcxt)
+{
+	Size		size;
+
+	/* Only here to set up SharedInfo instrumentation */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = offsetof(SharedIndexScanInstrumentation, winstrument) +
+		pcxt->nworkers * sizeof(IndexScanInstrumentation);
+	node->biss_SharedInfo =
+		(SharedIndexScanInstrumentation *) shm_toc_allocate(pcxt->toc,
+															size);
+	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id,
+				   node->biss_SharedInfo);
+
+	/* Each per-worker area must start out as zeroes */
+	memset(node->biss_SharedInfo, 0, size);
+	node->biss_SharedInfo->num_workers = pcxt->nworkers;
+}
+
+/* ----------------------------------------------------------------
+ *		ExecBitmapIndexScanInitializeWorker
+ *
+ *		Copy relevant information from TOC into planstate.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanInitializeWorker(BitmapIndexScanState *node,
+									ParallelWorkerContext *pwcxt)
+{
+	/* Only here to set up SharedInfo instrumentation */
+	if (!node->ss.ps.instrument)
+		return;
+
+	node->biss_SharedInfo = (SharedIndexScanInstrumentation *)
+		shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
+}
+
+/* ----------------------------------------------------------------
+ * ExecBitmapIndexScanRetrieveInstrumentation
+ *
+ *		Transfer bitmap index scan statistics from DSM to private memory.
+ * ----------------------------------------------------------------
+ */
+void
+ExecBitmapIndexScanRetrieveInstrumentation(BitmapIndexScanState *node)
+{
+	SharedIndexScanInstrumentation *SharedInfo = node->biss_SharedInfo;
+	size_t		size;
+
+	if (SharedInfo == NULL)
+		return;
+
+	/* Replace node->shared_info with a copy in backend-local memory */
+	size = offsetof(SharedIndexScanInstrumentation, winstrument) +
+		SharedInfo->num_workers * sizeof(IndexScanInstrumentation);
+	node->biss_SharedInfo = palloc(size);
+	memcpy(node->biss_SharedInfo, SharedInfo, size);
 }
