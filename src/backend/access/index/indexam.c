@@ -256,6 +256,7 @@ IndexScanDesc
 index_beginscan(Relation heapRelation,
 				Relation indexRelation,
 				Snapshot snapshot,
+				IndexScanInstrumentation *instrument,
 				int nkeys, int norderbys)
 {
 	IndexScanDesc scan;
@@ -270,6 +271,7 @@ index_beginscan(Relation heapRelation,
 	 */
 	scan->heapRelation = heapRelation;
 	scan->xs_snapshot = snapshot;
+	scan->instrument = instrument;
 
 	/* prepare to fetch index matches from table */
 	scan->xs_heapfetch = table_index_fetch_begin(heapRelation);
@@ -286,6 +288,7 @@ index_beginscan(Relation heapRelation,
 IndexScanDesc
 index_beginscan_bitmap(Relation indexRelation,
 					   Snapshot snapshot,
+					   IndexScanInstrumentation *instrument,
 					   int nkeys)
 {
 	IndexScanDesc scan;
@@ -299,6 +302,7 @@ index_beginscan_bitmap(Relation indexRelation,
 	 * up by RelationGetIndexScan.
 	 */
 	scan->xs_snapshot = snapshot;
+	scan->instrument = instrument;
 
 	return scan;
 }
@@ -451,9 +455,11 @@ index_restrpos(IndexScanDesc scan)
  */
 Size
 index_parallelscan_estimate(Relation indexRelation, int nkeys, int norderbys,
-							Snapshot snapshot)
+							Snapshot snapshot, bool instrument, int nworkers,
+							Size *instroffset)
 {
 	Size		nbytes;
+	Size		ninstrbytes;
 
 	Assert(snapshot != InvalidSnapshot);
 
@@ -462,6 +468,7 @@ index_parallelscan_estimate(Relation indexRelation, int nkeys, int norderbys,
 	nbytes = offsetof(ParallelIndexScanDescData, ps_snapshot_data);
 	nbytes = add_size(nbytes, EstimateSnapshotSpace(snapshot));
 	nbytes = MAXALIGN(nbytes);
+	*instroffset = 0;
 
 	/*
 	 * If amestimateparallelscan is not provided, assume there is no
@@ -472,6 +479,15 @@ index_parallelscan_estimate(Relation indexRelation, int nkeys, int norderbys,
 		nbytes = add_size(nbytes,
 						  indexRelation->rd_indam->amestimateparallelscan(nkeys,
 																		  norderbys));
+	if (!instrument || nworkers == 0)
+		return nbytes;
+
+	*instroffset = MAXALIGN(nbytes);
+	ninstrbytes = mul_size(nworkers, sizeof(IndexScanInstrumentation));
+	ninstrbytes = add_size(ninstrbytes, offsetof(SharedIndexScanInstrumentation, winstrument));
+	ninstrbytes = MAXALIGN(ninstrbytes);
+
+	nbytes = add_size(nbytes, ninstrbytes);
 
 	return nbytes;
 }
@@ -488,21 +504,22 @@ index_parallelscan_estimate(Relation indexRelation, int nkeys, int norderbys,
  */
 void
 index_parallelscan_initialize(Relation heapRelation, Relation indexRelation,
-							  Snapshot snapshot, ParallelIndexScanDesc target)
+							  Snapshot snapshot, ParallelIndexScanDesc target,
+							  Size ps_offset_ins)
 {
-	Size		offset;
+	Size		ps_offset_am;
 
 	Assert(snapshot != InvalidSnapshot);
 
 	RELATION_CHECKS;
 
-	offset = add_size(offsetof(ParallelIndexScanDescData, ps_snapshot_data),
-					  EstimateSnapshotSpace(snapshot));
-	offset = MAXALIGN(offset);
+	ps_offset_am = add_size(offsetof(ParallelIndexScanDescData, ps_snapshot_data),
+							EstimateSnapshotSpace(snapshot));
+	ps_offset_am = MAXALIGN(ps_offset_am);
 
 	target->ps_locator = heapRelation->rd_locator;
 	target->ps_indexlocator = indexRelation->rd_locator;
-	target->ps_offset = offset;
+	target->ps_offset_am = ps_offset_am;
 	SerializeSnapshot(snapshot, target->ps_snapshot_data);
 
 	/* aminitparallelscan is optional; assume no-op if not provided by AM */
@@ -510,9 +527,10 @@ index_parallelscan_initialize(Relation heapRelation, Relation indexRelation,
 	{
 		void	   *amtarget;
 
-		amtarget = OffsetToPointer(target, offset);
+		amtarget = OffsetToPointer(target, ps_offset_am);
 		indexRelation->rd_indam->aminitparallelscan(amtarget);
 	}
+	target->ps_offset_ins = ps_offset_ins;
 }
 
 /* ----------------
@@ -539,7 +557,8 @@ index_parallelrescan(IndexScanDesc scan)
  */
 IndexScanDesc
 index_beginscan_parallel(Relation heaprel, Relation indexrel, int nkeys,
-						 int norderbys, ParallelIndexScanDesc pscan)
+						 int norderbys, ParallelIndexScanDesc pscan,
+						 IndexScanInstrumentation *instrument)
 {
 	Snapshot	snapshot;
 	IndexScanDesc scan;
@@ -558,6 +577,7 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel, int nkeys,
 	 */
 	scan->heapRelation = heaprel;
 	scan->xs_snapshot = snapshot;
+	scan->instrument = instrument;
 
 	/* prepare to fetch index matches from table */
 	scan->xs_heapfetch = table_index_fetch_begin(heaprel);

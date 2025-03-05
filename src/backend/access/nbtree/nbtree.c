@@ -573,7 +573,7 @@ btparallelrescan(IndexScanDesc scan)
 	Assert(parallel_scan);
 
 	btscan = (BTParallelScanDesc) OffsetToPointer(parallel_scan,
-												  parallel_scan->ps_offset);
+												  parallel_scan->ps_offset_am);
 
 	/*
 	 * In theory, we don't need to acquire the spinlock here, because there
@@ -651,7 +651,7 @@ _bt_parallel_seize(IndexScanDesc scan, BlockNumber *next_scan_page,
 	}
 
 	btscan = (BTParallelScanDesc) OffsetToPointer(parallel_scan,
-												  parallel_scan->ps_offset);
+												  parallel_scan->ps_offset_am);
 
 	while (1)
 	{
@@ -759,7 +759,7 @@ _bt_parallel_release(IndexScanDesc scan, BlockNumber next_scan_page,
 	Assert(BlockNumberIsValid(next_scan_page));
 
 	btscan = (BTParallelScanDesc) OffsetToPointer(parallel_scan,
-												  parallel_scan->ps_offset);
+												  parallel_scan->ps_offset_am);
 
 	SpinLockAcquire(&btscan->btps_mutex);
 	btscan->btps_nextScanPage = next_scan_page;
@@ -798,7 +798,7 @@ _bt_parallel_done(IndexScanDesc scan)
 		return;
 
 	btscan = (BTParallelScanDesc) OffsetToPointer(parallel_scan,
-												  parallel_scan->ps_offset);
+												  parallel_scan->ps_offset_am);
 
 	/*
 	 * Mark the parallel scan as done, unless some other process did so
@@ -836,7 +836,7 @@ _bt_parallel_primscan_schedule(IndexScanDesc scan, BlockNumber curr_page)
 	Assert(so->numArrayKeys);
 
 	btscan = (BTParallelScanDesc) OffsetToPointer(parallel_scan,
-												  parallel_scan->ps_offset);
+												  parallel_scan->ps_offset_am);
 
 	SpinLockAcquire(&btscan->btps_mutex);
 	if (btscan->btps_lastCurrPage == curr_page &&

@@ -125,6 +125,7 @@ static void show_recursive_union_info(RecursiveUnionState *rstate,
 static void show_memoize_info(MemoizeState *mstate, List *ancestors,
 							  ExplainState *es);
 static void show_hashagg_info(AggState *aggstate, ExplainState *es);
+static void show_indexsearches_info(PlanState *planstate, ExplainState *es);
 static void show_tidbitmap_info(BitmapHeapScanState *planstate,
 								ExplainState *es);
 static void show_instrumentation_count(const char *qlabel, int which,
@@ -2096,6 +2097,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (plan->qual)
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
+			show_indexsearches_info(planstate, es);
 			break;
 		case T_IndexOnlyScan:
 			show_scan_qual(((IndexOnlyScan *) plan)->indexqual,
@@ -2112,10 +2114,12 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (es->analyze)
 				ExplainPropertyFloat("Heap Fetches", NULL,
 									 planstate->instrument->ntuples2, 0, es);
+			show_indexsearches_info(planstate, es);
 			break;
 		case T_BitmapIndexScan:
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
 						   "Index Cond", planstate, ancestors, es);
+			show_indexsearches_info(planstate, es);
 			break;
 		case T_BitmapHeapScan:
 			show_scan_qual(((BitmapHeapScan *) plan)->bitmapqualorig,
@@ -3853,6 +3857,73 @@ show_hashagg_info(AggState *aggstate, ExplainState *es)
 				ExplainCloseWorker(n, es);
 		}
 	}
+}
+
+/*
+ * Show the total number of index searches performed by a
+ * IndexScan/IndexOnlyScan/BitmapIndexScan node
+ */
+static void
+show_indexsearches_info(PlanState *planstate, ExplainState *es)
+{
+	Plan	   *plan = planstate->plan;
+	SharedIndexScanInstrumentation *SharedInfo = NULL;
+	uint64		nsearches = 0;
+
+	if (!es->analyze)
+		return;
+
+	/*
+	 * Collect stats from the local process, even when it's a parallel query
+	 */
+	switch (nodeTag(plan))
+	{
+		case T_IndexScan:
+			{
+				IndexScanState *indexstate = ((IndexScanState *) planstate);
+
+				nsearches = indexstate->iss_Instrument.nsearches;
+				SharedInfo = indexstate->iss_SharedInfo;
+				break;
+			}
+		case T_IndexOnlyScan:
+			{
+				IndexOnlyScanState *indexstate = ((IndexOnlyScanState *) planstate);
+
+				nsearches = indexstate->ioss_Instrument.nsearches;
+				SharedInfo = indexstate->ioss_SharedInfo;
+				break;
+			}
+		case T_BitmapIndexScan:
+			{
+				BitmapIndexScanState *indexstate = ((BitmapIndexScanState *) planstate);
+
+				nsearches = indexstate->biss_Instrument.nsearches;
+				SharedInfo = indexstate->biss_SharedInfo;
+				break;
+			}
+		default:
+			break;
+	}
+
+	/*
+	 * Merge results from workers into local process counters.
+	 *
+	 * In a parallel query, the leader process may or may not have run the
+	 * index scan.  Therefore we have to be prepared to get instrumentation
+	 * data from all participants.
+	 */
+	if (SharedInfo)
+	{
+		for (int i = 0; i < SharedInfo->num_workers; ++i)
+		{
+			IndexScanInstrumentation *winstrument = &SharedInfo->winstrument[i];
+
+			nsearches += winstrument->nsearches;
+		}
+	}
+
+	ExplainPropertyUInteger("Index Searches", NULL, nsearches, es);
 }
 
 /*

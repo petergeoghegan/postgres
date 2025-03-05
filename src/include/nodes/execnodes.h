@@ -1679,7 +1679,11 @@ typedef struct
  *		RuntimeKeysReady   true if runtime Skeys have been computed
  *		RuntimeContext	   expr context for evaling runtime Skeys
  *		RelationDesc	   index relation descriptor
+ *		Instrument		   index scan instrumentation
  *		ScanDesc		   index scan descriptor
+ *		ParallelScanDesc   parallel index scan descriptor
+ *		SharedInfo		   statistics for parallel workers
+ *		InstrOffset		   offset to SharedInfo in shared memory allocation
  *
  *		ReorderQueue	   tuples that need reordering due to re-check
  *		ReachedEnd		   have we fetched all tuples from index already?
@@ -1705,7 +1709,11 @@ typedef struct IndexScanState
 	bool		iss_RuntimeKeysReady;
 	ExprContext *iss_RuntimeContext;
 	Relation	iss_RelationDesc;
+	IndexScanInstrumentation iss_Instrument;
 	struct IndexScanDescData *iss_ScanDesc;
+	ParallelIndexScanDesc iss_ParallelScanDesc;
+	SharedIndexScanInstrumentation *iss_SharedInfo;
+	Size		iss_InstrOffset;
 
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
@@ -1731,7 +1739,11 @@ typedef struct IndexScanState
  *		RuntimeKeysReady   true if runtime Skeys have been computed
  *		RuntimeContext	   expr context for evaling runtime Skeys
  *		RelationDesc	   index relation descriptor
+ *		Instrument		   index scan instrumentation
  *		ScanDesc		   index scan descriptor
+ *		ParallelScanDesc   parallel index scan descriptor
+ *		SharedInfo		   statistics for parallel workers
+ *		InstrOffset		   offset to SharedInfo in shared memory allocation
  *		TableSlot		   slot for holding tuples fetched from the table
  *		VMBuffer		   buffer in use for visibility map testing, if any
  *		PscanLen		   size of parallel index-only scan descriptor
@@ -1752,7 +1764,11 @@ typedef struct IndexOnlyScanState
 	bool		ioss_RuntimeKeysReady;
 	ExprContext *ioss_RuntimeContext;
 	Relation	ioss_RelationDesc;
+	IndexScanInstrumentation ioss_Instrument;
 	struct IndexScanDescData *ioss_ScanDesc;
+	ParallelIndexScanDesc ioss_ParallelScanDesc;
+	SharedIndexScanInstrumentation *ioss_SharedInfo;
+	Size		ioss_InstrOffset;
 	TupleTableSlot *ioss_TableSlot;
 	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
@@ -1773,7 +1789,10 @@ typedef struct IndexOnlyScanState
  *		RuntimeKeysReady   true if runtime Skeys have been computed
  *		RuntimeContext	   expr context for evaling runtime Skeys
  *		RelationDesc	   index relation descriptor
+ *		Instrument		   index scan instrumentation
  *		ScanDesc		   index scan descriptor
+ *		ParallelScanDesc   parallel index scan descriptor
+ *		SharedInfo		   statistics for parallel workers
  * ----------------
  */
 typedef struct BitmapIndexScanState
@@ -1789,7 +1808,10 @@ typedef struct BitmapIndexScanState
 	bool		biss_RuntimeKeysReady;
 	ExprContext *biss_RuntimeContext;
 	Relation	biss_RelationDesc;
+	IndexScanInstrumentation biss_Instrument;
 	struct IndexScanDescData *biss_ScanDesc;
+	ParallelIndexScanDesc biss_ParallelScanDesc;
+	SharedIndexScanInstrumentation *biss_SharedInfo;
 } BitmapIndexScanState;
 
 /* ----------------

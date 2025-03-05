@@ -123,6 +123,8 @@ typedef struct IndexFetchTableData
 	Relation	rel;
 } IndexFetchTableData;
 
+struct IndexScanInstrumentation;
+
 /*
  * We use the same IndexScanDescData structure for both amgettuple-based
  * and amgetbitmap-based index scans.  Some fields are only relevant in
@@ -149,6 +151,12 @@ typedef struct IndexScanDescData
 
 	/* index access method's private state */
 	void	   *opaque;			/* access-method-specific info */
+
+	/*
+	 * Instrumentation counters that are maintained by every index access
+	 * method, for all scan types
+	 */
+	struct IndexScanInstrumentation *instrument;
 
 	/*
 	 * In an index-only scan, a successful amgettuple call must fill either
@@ -188,7 +196,8 @@ typedef struct ParallelIndexScanDescData
 {
 	RelFileLocator ps_locator;	/* physical table relation to scan */
 	RelFileLocator ps_indexlocator; /* physical index relation to scan */
-	Size		ps_offset;		/* Offset in bytes of am specific structure */
+	Size		ps_offset_am;	/* Offset in bytes of am specific structure */
+	Size		ps_offset_ins;	/* Offset to SharedIndexScanInstrumentation */
 	char		ps_snapshot_data[FLEXIBLE_ARRAY_MEMBER];
 }			ParallelIndexScanDescData;
 
