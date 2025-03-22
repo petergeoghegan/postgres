@@ -4291,8 +4291,8 @@ order by a desc, b desc;
    Disabled: true
    Index Cond: (b = 1)
    Heap Fetches: 0
-   Index Searches: 7
-   Buffers: shared hit=15
+   Index Searches: 1
+   Buffers: shared hit=9
 (6 rows)
 
 select *
@@ -4314,8 +4314,8 @@ order by a desc, b desc;
    Disabled: true
    Index Cond: (b < 0)
    Heap Fetches: 0
-   Index Searches: 2
-   Buffers: shared hit=10
+   Index Searches: 1
+   Buffers: shared hit=8
 (6 rows)
 
 -------------------------------------------------------------------------------
@@ -5134,15 +5134,15 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute four_omitted;
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
- HashAggregate  (cost=21.64..21.84 rows=20 width=16) (actual rows=1.00 loops=1)
+ HashAggregate  (cost=69.78..69.98 rows=20 width=16) (actual rows=1.00 loops=1)
    Group Key: twenty
    Batches: 1  Memory Usage: 24kB
-   Buffers: shared hit=11
-   ->  Index Only Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..19.14 rows=500 width=8) (actual rows=500.00 loops=1)
+   Buffers: shared hit=7
+   ->  Index Only Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..67.28 rows=500 width=8) (actual rows=500.00 loops=1)
          Index Cond: ((two = 0) AND (twenty = ANY ('{9,10}'::integer[])))
          Heap Fetches: 0
-         Index Searches: 5
-         Buffers: shared hit=11
+         Index Searches: 1
+         Buffers: shared hit=7
 (9 rows)
 
 deallocate four_omitted;
@@ -5177,11 +5177,11 @@ where
   and twenty in (0, 1);
                                                                    QUERY PLAN                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=626.63..626.64 rows=1 width=8) (actual rows=1.00 loops=1)
+ Aggregate  (cost=724.06..724.07 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=546
-   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..624.13 rows=1000 width=0) (actual rows=1000.00 loops=1)
+   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..721.56 rows=1000 width=0) (actual rows=1000.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (twenty = ANY ('{0,1}'::integer[])))
-         Index Searches: 5
+         Index Searches: 1
          Buffers: shared hit=546
 (6 rows)
 
@@ -5213,11 +5213,11 @@ where
   and twenty in (0, 1);
                                                                    QUERY PLAN                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=629.13..629.14 rows=1 width=8) (actual rows=1.00 loops=1)
+ Aggregate  (cost=749.06..749.07 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=546
-   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..626.63 rows=1000 width=0) (actual rows=1000.00 loops=1)
+   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..746.56 rows=1000 width=0) (actual rows=1000.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (four IS NOT NULL) AND (twenty = ANY ('{0,1}'::integer[])))
-         Index Searches: 5
+         Index Searches: 1
          Buffers: shared hit=546
 (6 rows)
 
@@ -5258,7 +5258,7 @@ where
    Buffers: shared hit=271
    ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..729.70 rows=875 width=0) (actual rows=500.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (four >= ANY ('{1,2}'::integer[])) AND (twenty = ANY ('{0,1}'::integer[])))
-         Index Searches: 4
+         Index Searches: 1
          Buffers: shared hit=271
 (6 rows)
 
@@ -5288,11 +5288,11 @@ where
   and twenty in (0, 1, 2);
                                                                    QUERY PLAN                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=640.35..640.36 rows=1 width=8) (actual rows=1.00 loops=1)
+ Aggregate  (cost=732.78..732.79 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=815
-   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..636.60 rows=1500 width=0) (actual rows=1500.00 loops=1)
+   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..729.03 rows=1500 width=0) (actual rows=1500.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (twenty = ANY ('{0,1,2}'::integer[])))
-         Index Searches: 5
+         Index Searches: 1
          Buffers: shared hit=815
 (6 rows)
 
@@ -5330,11 +5330,11 @@ order by
   four,
   twenty
 limit 15;
-                                                                QUERY PLAN                                                                 
--------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.29..10.90 rows=1 width=250) (actual rows=0.00 loops=1)
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.29..6.31 rows=1 width=250) (actual rows=0.00 loops=1)
    Buffers: shared hit=2
-   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..10.90 rows=1 width=250) (actual rows=0.00 loops=1)
+   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..6.31 rows=1 width=250) (actual rows=0.00 loops=1)
          Index Cond: ((two = ANY ('{3,5}'::integer[])) AND (twenty = ANY ('{0,1,3}'::integer[])))
          Filter: (hundred = ANY ('{0,1,5}'::integer[]))
          Index Searches: 1
@@ -6559,13 +6559,13 @@ where
 order by two, four, twenty limit 20;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.29..41.77 rows=20 width=22) (actual rows=20.00 loops=1)
+ Limit  (cost=0.29..50.43 rows=20 width=22) (actual rows=20.00 loops=1)
    Buffers: shared hit=287
-   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..518.90 rows=250 width=22) (actual rows=20.00 loops=1)
+   ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..627.08 rows=250 width=22) (actual rows=20.00 loops=1)
          Index Cond: ((four = ANY ('{1,2}'::integer[])) AND (twenty = ANY ('{1,2}'::integer[])))
          Filter: (two <> 0)
          Rows Removed by Filter: 500
-         Index Searches: 3
+         Index Searches: 1
          Buffers: shared hit=287
 (8 rows)
 
@@ -7299,13 +7299,13 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute qual_on_four_nonrequired_skew;
                                                                                                              QUERY PLAN                                                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=0.29..291.89 rows=188 width=24) (actual rows=4.00 loops=1)
+ GroupAggregate  (cost=0.29..451.97 rows=188 width=24) (actual rows=4.00 loops=1)
    Group Key: two, four, twenty, hundred
-   Buffers: shared hit=352
-   ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..287.43 rows=206 width=16) (actual rows=400.00 loops=1)
+   Buffers: shared hit=349
+   ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..447.52 rows=206 width=16) (actual rows=400.00 loops=1)
          Index Cond: ((four = ANY ('{1,2,3}'::integer[])) AND (four = ANY ('{-1,1,2,4}'::integer[])) AND (twenty = ANY ('{1,2,5,7,8,11,12,13,14,17}'::integer[])) AND (hundred = ANY ('{1,3,4,9,14,51,90,88,41,39,22}'::integer[])))
-         Index Searches: 5
-         Buffers: shared hit=352
+         Index Searches: 1
+         Buffers: shared hit=349
 (7 rows)
 
 deallocate qual_on_four_nonrequired_skew;
@@ -7431,12 +7431,12 @@ execute skipskip_skipping_differs;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute skipskip_skipping_differs;
-                                                           QUERY PLAN                                                           
---------------------------------------------------------------------------------------------------------------------------------
- Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..12.92 rows=2 width=16) (actual rows=100.00 loops=1)
+                                                           QUERY PLAN                                                            
+---------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..151.06 rows=2 width=16) (actual rows=100.00 loops=1)
    Index Cond: ((four = 1) AND (twenty = ANY ('{-100000,5,13}'::integer[])) AND (hundred = ANY ('{25,10000000}'::integer[])))
-   Index Searches: 4
-   Buffers: shared hit=94
+   Index Searches: 1
+   Buffers: shared hit=93
 (4 rows)
 
 deallocate skipskip_skipping_differs;
@@ -7553,12 +7553,12 @@ execute skipskip_skipping_also_differs;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute skipskip_skipping_also_differs;
-                                                           QUERY PLAN                                                            
----------------------------------------------------------------------------------------------------------------------------------
- Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..28.49 rows=11 width=16) (actual rows=100.00 loops=1)
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..166.54 rows=11 width=16) (actual rows=100.00 loops=1)
    Index Cond: ((four = 1) AND (twenty = ANY ('{1,5,13}'::integer[])) AND (hundred = ANY ('{1,14,34}'::integer[])))
-   Index Searches: 4
-   Buffers: shared hit=97
+   Index Searches: 1
+   Buffers: shared hit=96
 (4 rows)
 
 deallocate skipskip_skipping_also_differs;
@@ -7619,13 +7619,13 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute nonrequired_array_nonrequired_inequality_confusion;
                                                                                               QUERY PLAN                                                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=0.29..675.03 rows=824 width=24) (actual rows=23.00 loops=1)
+ GroupAggregate  (cost=0.29..814.35 rows=824 width=24) (actual rows=23.00 loops=1)
    Group Key: two, four, twenty, hundred
-   Buffers: shared hit=1996
-   ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..646.86 rows=1594 width=16) (actual rows=2300.00 loops=1)
+   Buffers: shared hit=1993
+   ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..786.19 rows=1594 width=16) (actual rows=2300.00 loops=1)
          Index Cond: ((four = ANY ('{1,2,3}'::integer[])) AND (four = ANY ('{-1,1,2,4}'::integer[])) AND (twenty = ANY ('{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17}'::integer[])) AND (hundred < 50))
-         Index Searches: 5
-         Buffers: shared hit=1996
+         Index Searches: 1
+         Buffers: shared hit=1993
 (7 rows)
 
 deallocate nonrequired_array_nonrequired_inequality_confusion;
@@ -9136,16 +9136,16 @@ select * from redescend_test where district in (1,2,3) and warehouse > 4 and ord
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test where district in (1,2,3) and warehouse > 4 and orderid > 149; -- 6 buffer hits with skip scan
-                                                  QUERY PLAN                                                  
---------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on redescend_test  (cost=7.13..40.83 rows=22 width=16) (actual rows=30.00 loops=1)
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on redescend_test  (cost=108.47..142.17 rows=22 width=16) (actual rows=30.00 loops=1)
    Recheck Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid > 149))
    Heap Blocks: exact=3
-   Buffers: shared hit=9
-   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..7.12 rows=22 width=0) (actual rows=30.00 loops=1)
+   Buffers: shared hit=59
+   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..108.46 rows=22 width=0) (actual rows=30.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid > 149))
          Index Searches: 3
-         Buffers: shared hit=6
+         Buffers: shared hit=56
 (8 rows)
 
 -- (November 1 2024)
@@ -9194,14 +9194,14 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from redescend_test where district in (1,2,3) and warehouse > 4::int8 and orderid > 149::int8;
                                                         QUERY PLAN                                                         
 ---------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on redescend_test  (cost=7.13..40.83 rows=22 width=16) (actual rows=30.00 loops=1)
+ Bitmap Heap Scan on redescend_test  (cost=108.47..142.17 rows=22 width=16) (actual rows=30.00 loops=1)
    Recheck Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > '4'::bigint) AND (orderid > '149'::bigint))
    Heap Blocks: exact=3
-   Buffers: shared hit=16
-   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..7.12 rows=22 width=0) (actual rows=30.00 loops=1)
+   Buffers: shared hit=59
+   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..108.46 rows=22 width=0) (actual rows=30.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > '4'::bigint) AND (orderid > '149'::bigint))
-         Index Searches: 6
-         Buffers: shared hit=13
+         Index Searches: 3
+         Buffers: shared hit=56
 (8 rows)
 
 -- This variant returns same rows as previous test case, but has equality
@@ -9299,14 +9299,14 @@ select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in (6, 7, 8);
                                                                      QUERY PLAN                                                                     
 ----------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on redescend_test  (cost=20.72..31.53 rows=6 width=16) (actual rows=9.00 loops=1)
+ Bitmap Heap Scan on redescend_test  (cost=116.38..127.19 rows=6 width=16) (actual rows=9.00 loops=1)
    Recheck Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid > 149) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Heap Blocks: exact=3
-   Buffers: shared hit=9
-   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..20.72 rows=6 width=0) (actual rows=9.00 loops=1)
+   Buffers: shared hit=59
+   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..116.38 rows=6 width=0) (actual rows=9.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid > 149) AND (orderline = ANY ('{6,7,8}'::integer[])))
          Index Searches: 3
-         Buffers: shared hit=6
+         Buffers: shared hit=56
 (8 rows)
 
 -- (November 19)
@@ -9343,11 +9343,11 @@ select * from redescend_test
 where district in (1, 2, 3) and warehouse >= 5 and orderid >= 150 and orderline in (6, 7, 8);
                                                                       QUERY PLAN                                                                      
 ------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on redescend_test  (cost=20.72..31.53 rows=6 width=16) (actual rows=9.00 loops=1)
+ Bitmap Heap Scan on redescend_test  (cost=116.38..127.19 rows=6 width=16) (actual rows=9.00 loops=1)
    Recheck Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid >= 150) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Heap Blocks: exact=3
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..20.72 rows=6 width=0) (actual rows=9.00 loops=1)
+   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..116.38 rows=6 width=0) (actual rows=9.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid >= 150) AND (orderline = ANY ('{6,7,8}'::integer[])))
          Index Searches: 3
          Buffers: shared hit=6
@@ -9371,11 +9371,11 @@ select * from redescend_test
 where district in (1, 2, 3) and warehouse >= 5 and orderid >= 150 and orderline in (-1, 6, 8, 1000);
                                                                          QUERY PLAN                                                                         
 ------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on redescend_test  (cost=27.63..35.00 rows=4 width=16) (actual rows=6.00 loops=1)
+ Bitmap Heap Scan on redescend_test  (cost=116.38..123.75 rows=4 width=16) (actual rows=6.00 loops=1)
    Recheck Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid >= 150) AND (orderline = ANY ('{-1,6,8,1000}'::integer[])))
    Heap Blocks: exact=3
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..27.63 rows=4 width=0) (actual rows=6.00 loops=1)
+   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..116.38 rows=4 width=0) (actual rows=6.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid >= 150) AND (orderline = ANY ('{-1,6,8,1000}'::integer[])))
          Index Searches: 3
          Buffers: shared hit=6
@@ -9402,11 +9402,11 @@ select * from redescend_test
 where district in (1, 2, 3) and warehouse >= 5 and orderid > 149 and orderline in (6, 7, 8);
                                                                      QUERY PLAN                                                                      
 -----------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on redescend_test  (cost=20.72..31.53 rows=6 width=16) (actual rows=9.00 loops=1)
+ Bitmap Heap Scan on redescend_test  (cost=116.38..127.19 rows=6 width=16) (actual rows=9.00 loops=1)
    Recheck Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid > 149) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Heap Blocks: exact=3
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..20.72 rows=6 width=0) (actual rows=9.00 loops=1)
+   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..116.38 rows=6 width=0) (actual rows=9.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid > 149) AND (orderline = ANY ('{6,7,8}'::integer[])))
          Index Searches: 3
          Buffers: shared hit=6
@@ -9433,14 +9433,14 @@ select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid >= 150 and orderline in (6, 7, 8);
                                                                      QUERY PLAN                                                                      
 -----------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on redescend_test  (cost=20.72..31.53 rows=6 width=16) (actual rows=9.00 loops=1)
+ Bitmap Heap Scan on redescend_test  (cost=116.38..127.19 rows=6 width=16) (actual rows=9.00 loops=1)
    Recheck Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid >= 150) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Heap Blocks: exact=3
-   Buffers: shared hit=9
-   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..20.72 rows=6 width=0) (actual rows=9.00 loops=1)
+   Buffers: shared hit=59
+   ->  Bitmap Index Scan on must_not_full_scan  (cost=0.00..116.38 rows=6 width=0) (actual rows=9.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid >= 150) AND (orderline = ANY ('{6,7,8}'::integer[])))
          Index Searches: 3
-         Buffers: shared hit=6
+         Buffers: shared hit=56
 (8 rows)
 
 -- Index scan:
@@ -9470,15 +9470,16 @@ where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid > 149) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
-   Buffers: shared hit=9
+   Buffers: shared hit=59
 (4 rows)
 
 -- (November 19 2024) Never had this same problem with same query once it uses a backwards scan:
 -- (Repeat without skip support, caught a bug in avoid-coleman-testcase-regressions patch)
 set skipscan_skipsupport_enabled=false;
+ERROR:  unrecognized configuration parameter "skipscan_skipsupport_enabled"
 select * from redescend_test
 where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in (6, 7, 8)
 order by district desc, warehouse desc, orderid desc, orderline desc;
@@ -9501,13 +9502,14 @@ where district in (1, 2, 3) and warehouse > 4 and orderid > 149 and orderline in
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse > 4) AND (orderid > 149) AND (orderline = ANY ('{6,7,8}'::integer[])))
-   Index Searches: 6
-   Buffers: shared hit=15
+   Index Searches: 3
+   Buffers: shared hit=59
 (4 rows)
 
 reset skipscan_skipsupport_enabled;
+ERROR:  unrecognized configuration parameter "skipscan_skipsupport_enabled"
 -- UPDATE (March 2): "never had this problem" must have been due to how
 -- _bt_first can "cons up" a SK_SEARCHNOTNULL scan key in its insertion scan
 -- key, even though that doesn't appear in search type scan keys.
@@ -9579,10 +9581,10 @@ where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse < 2) AND (orderid < 2) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
-   Buffers: shared hit=9
+   Buffers: shared hit=60
 (4 rows)
 
 -- (November 1 2024)
@@ -9616,10 +9618,10 @@ where district in (1, 2, 3) and warehouse < 2::int8 and orderid < 2::int8 and or
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                            QUERY PLAN                                                                           
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse < '2'::bigint) AND (orderid < '2'::bigint) AND (orderline = ANY ('{6,7,8}'::integer[])))
-   Index Searches: 6
-   Buffers: shared hit=15
+   Index Searches: 3
+   Buffers: shared hit=60
 (4 rows)
 
 -- (November 19)
@@ -9658,7 +9660,7 @@ where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse <= 1) AND (orderid <= 1) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=9
@@ -9697,7 +9699,7 @@ where district in (1, 2, 3) and warehouse <= 1 and orderid in (0, 1) and orderli
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                              QUERY PLAN                                                                              
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..69.42 rows=33 width=16) (actual rows=15.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..144.09 rows=33 width=16) (actual rows=15.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse <= 1) AND (orderid = ANY ('{0,1}'::integer[])) AND (orderline >= ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=9
@@ -9723,7 +9725,7 @@ where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                      QUERY PLAN                                                                     
 ----------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..32.30 rows=4 width=16) (actual rows=6.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..121.05 rows=4 width=16) (actual rows=6.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse <= 1) AND (orderid <= 1) AND (orderline = ANY ('{-1,6,8,1000}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=9
@@ -9752,7 +9754,7 @@ where district in (1, 2, 3) and warehouse <= 1 and orderid < 2 and orderline in 
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                  QUERY PLAN                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse <= 1) AND (orderid < 2) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=9
@@ -9781,10 +9783,10 @@ where district in (1, 2, 3) and warehouse < 2 and orderid <= 1 and orderline in 
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                  QUERY PLAN                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse < 2) AND (orderid <= 1) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
-   Buffers: shared hit=9
+   Buffers: shared hit=60
 (4 rows)
 
 -- (November 21)
@@ -12364,11 +12366,11 @@ where district in (1, 2, 3) and warehouse < 2 and orderid < 2 and orderline in (
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Disabled: true
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse < 2) AND (orderid < 2) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
-   Buffers: shared hit=9
+   Buffers: shared hit=60
 (5 rows)
 
 -- Now test cursors that change the direction of the scan repeatedly, with
@@ -13862,7 +13864,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
- 27
+ 19
 (1 row)
 
 -- See the first few rows there:
@@ -13904,7 +13906,7 @@ and orderline in (-500,5,7,8,9,500)
 order by district, warehouse, orderid, orderline;
                                                                                                QUERY PLAN                                                                                               
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using must_not_full_scan on redescend_test  (cost=0.29..253.28 rows=144 width=16) (actual rows=144.00 loops=1)
+ Index Scan using must_not_full_scan on redescend_test  (cost=0.29..111.36 rows=144 width=16) (actual rows=144.00 loops=1)
    Index Cond: ((district = ANY ('{1,3}'::integer[])) AND (warehouse = ANY ('{3,4,5,6,7}'::integer[])) AND (orderid >= 42) AND (orderid <= 47) AND (orderline = ANY ('{-500,5,7,8,9,500}'::integer[])))
    Index Searches: 8
    Buffers: shared hit=31
@@ -15011,7 +15013,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh  
 -----
- 105
+ 101
 (1 row)
 
 fetch forward 15 from inequalities_orderid;
@@ -15108,7 +15110,7 @@ where
   and orderline in (6, 7, 8);
                                                                    QUERY PLAN                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid >= 150) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=9
@@ -15151,7 +15153,7 @@ where
   and orderline in (6, 7, 8);
                                                                    QUERY PLAN                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=9.00 loops=1)
+ Index Scan using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=9.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid >= 150) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=9
@@ -15184,7 +15186,7 @@ where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=6.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=6.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse <= 1) AND (orderid <= 1) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=8
@@ -15215,7 +15217,7 @@ where district in (1, 2, 3) and warehouse <= 1 and orderid <= 1 and orderline in
 order by district desc, warehouse desc, orderid desc, orderline desc;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..27.16 rows=6 width=16) (actual rows=6.00 loops=1)
+ Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..122.82 rows=6 width=16) (actual rows=6.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse <= 1) AND (orderid <= 1) AND (orderline = ANY ('{6,7,8}'::integer[])))
    Index Searches: 3
    Buffers: shared hit=8
@@ -15290,9 +15292,9 @@ where
   district in (1, 2, 3)
   and warehouse >= 5
   and orderid >= 150;
-                                                       QUERY PLAN                                                       
-------------------------------------------------------------------------------------------------------------------------
- Index Scan using must_not_full_scan on redescend_test  (cost=0.29..28.65 rows=24 width=16) (actual rows=20.00 loops=1)
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ Index Scan using must_not_full_scan on redescend_test  (cost=0.29..141.77 rows=24 width=16) (actual rows=20.00 loops=1)
    Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (warehouse >= 5) AND (orderid >= 150))
    Index Searches: 3
    Buffers: shared hit=8
@@ -18112,26 +18114,26 @@ execute skip_restore_buggy_primscan_qry;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute skip_restore_buggy_primscan_qry;
-                                                                QUERY PLAN                                                                 
--------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=0.88..33.96 rows=10 width=16) (actual rows=3.00 loops=1)
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.88..42.06 rows=10 width=16) (actual rows=3.00 loops=1)
    Group Key: o.a, o.b
-   Buffers: shared hit=32
+   Buffers: shared hit=31
    InitPlan 1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
                  Filter: ((i % 10) = 0)
                  Rows Removed by Filter: 18
-   ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=21.00 loops=1)
+   ->  Merge Join  (cost=0.55..41.55 rows=10 width=8) (actual rows=21.00 loops=1)
          Merge Cond: ((o.a = bug.x) AND (o.b = bug.y))
-         Buffers: shared hit=32
+         Buffers: shared hit=31
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..21.91 rows=584 width=8) (actual rows=395.00 loops=1)
                Index Searches: 1
                Buffers: shared hit=7
-         ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.47 rows=10 width=8) (actual rows=21.00 loops=1)
+         ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..16.57 rows=10 width=8) (actual rows=21.00 loops=1)
                Index Cond: (y = ANY (ARRAY[(InitPlan 1).col1]))
-               Index Searches: 2
-               Buffers: shared hit=25
+               Index Searches: 1
+               Buffers: shared hit=24
 (18 rows)
 
 -- (Jun 6 2024)
@@ -18164,26 +18166,26 @@ execute skip_restore_buggy_primscan_qry;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute skip_restore_buggy_primscan_qry;
-                                                                QUERY PLAN                                                                 
--------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=0.88..33.96 rows=10 width=16) (actual rows=9.00 loops=1)
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=0.88..42.06 rows=10 width=16) (actual rows=9.00 loops=1)
    Group Key: o.a, o.b
-   Buffers: shared hit=84
+   Buffers: shared hit=83
    InitPlan 1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
                  Filter: ((i % 10) = 0)
                  Rows Removed by Filter: 18
-   ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=63.00 loops=1)
+   ->  Merge Join  (cost=0.55..41.55 rows=10 width=8) (actual rows=63.00 loops=1)
          Merge Cond: ((o.a = bug.x) AND (o.b = bug.y))
-         Buffers: shared hit=84
+         Buffers: shared hit=83
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..21.91 rows=584 width=8) (actual rows=1563.00 loops=1)
                Index Searches: 1
                Buffers: shared hit=22
-         ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.47 rows=10 width=8) (actual rows=63.00 loops=1)
+         ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..16.57 rows=10 width=8) (actual rows=63.00 loops=1)
                Index Cond: (y = ANY (ARRAY[(InitPlan 1).col1]))
-               Index Searches: 2
-               Buffers: shared hit=62
+               Index Searches: 1
+               Buffers: shared hit=61
 (18 rows)
 
 deallocate skip_restore_buggy_primscan_qry;
@@ -20651,15 +20653,15 @@ execute tenth;
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=4.83..4.86 rows=1 width=44) (actual rows=660.00 loops=1)
    Group Key: sdate, item_class, store
-   Buffers: shared hit=2010
+   Buffers: shared hit=2012
    ->  Sort  (cost=4.83..4.83 rows=1 width=44) (actual rows=1980.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 129kB
-         Buffers: shared hit=2010
+         Buffers: shared hit=2012
          ->  Index Scan using oppodir_mdam_idx on sales_mdam_oppodir_issue  (cost=0.28..4.82 rows=1 width=44) (actual rows=1980.00 loops=1)
                Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store >= 15) AND (store <= 25))
-               Index Searches: 2
-               Buffers: shared hit=2010
+               Index Searches: 1
+               Buffers: shared hit=2012
 (11 rows)
 
 deallocate tenth;
@@ -20917,6 +20919,7 @@ order by
   inequal_one_ten_range,
   nonrequired_equal_one_ten_range;
 set skipscan_prefix_cols = 0; -- don't allow skip scan patch to suppress coverage of issue
+ERROR:  unrecognized configuration parameter "skipscan_prefix_cols"
 execute dec_bug_test_qry;
  leading_singleval | second_twovals | inequal_one_ten_range | nonrequired_equal_one_ten_range 
 -------------------+----------------+-----------------------+---------------------------------
@@ -20973,6 +20976,7 @@ execute dec_bug_test_qry;
 (4 rows)
 
 reset skipscan_prefix_cols; -- now do it again, this time with skip scan enabled
+ERROR:  unrecognized configuration parameter "skipscan_prefix_cols"
 execute dec_bug_test_qry;
  leading_singleval | second_twovals | inequal_one_ten_range | nonrequired_equal_one_ten_range 
 -------------------+----------------+-----------------------+---------------------------------
