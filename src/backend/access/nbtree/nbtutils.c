@@ -1542,19 +1542,8 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		/*
 		 * Precondition array state assertion
 		 */
-		if (!(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
-											tupnatts, false, 0, NULL)))
-		{
-			char	   *pitup;
-
-			pitup = _nbtree_print_itup(tuple, rel);
-
-			elog(ERROR, "pitup: %s\n\n %s", pitup, so->debugstr.data);
-
-			if (pitup)
-				pfree(pitup);
-
-		}
+		Assert(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
+											 tupnatts, false, 0, NULL));
 
 		/*
 		 * Once we return we'll have a new set of required array keys, so
@@ -2037,19 +2026,9 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 	 * scan keys required in the opposite direction only; those aren't tracked
 	 * by all_required_satisfied.
 	 */
-	if (!(_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc, tupnatts,
-									   false, 0,
-									   NULL) == !all_required_satisfied))
-	{
-		char	   *pitup;
-
-		pitup = _nbtree_print_itup(tuple, rel);
-
-		elog(ERROR, "later pitup: %s\n\n %s", pitup, so->debugstr.data);
-
-		if (pitup)
-			pfree(pitup);
-	}
+	Assert(_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc, tupnatts,
+										false, 0, NULL) ==
+		   !all_required_satisfied);
 
 	/*
 	 * We generally permit primitive index scans to continue onto the next
