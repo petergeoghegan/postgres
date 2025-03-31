@@ -1509,7 +1509,7 @@ _bt_delitems_cmp(const void *a, const void *b)
  * field (tableam will sort deltids for its own reasons, so we'll need to put
  * it back in leaf-page-wise order afterwards).
  */
-int
+void
 _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 						  TM_IndexDeleteOp *delstate)
 {
@@ -1521,10 +1521,6 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 				nupdatable = 0;
 	OffsetNumber deletable[MaxIndexTuplesPerPage];
 	BTVacuumPosting updatable[MaxIndexTuplesPerPage];
-	int			orig_ntidstotal = delstate->ntidstotal;
-	int			finaldeletedtids = 0;
-	int			finaldeletedtidsposting = 0;
-	int			testfinaldeletedtids PG_USED_FOR_ASSERTS_ONLY = 0;
 
 	/* Use tableam interface to determine which tuples to delete first */
 	snapshotConflictHorizon = table_index_delete_tuples(heapRel, delstate);
@@ -1550,7 +1546,7 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 	if (delstate->ndeltids == 0)
 	{
 		Assert(delstate->bottomup);
-		goto done;
+		return;
 	}
 
 	/* We definitely have to delete at least one index tuple (or one TID) */
@@ -1562,7 +1558,6 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 		IndexTuple	itup = (IndexTuple) PageGetItem(page, itemid);
 		int			nestedi,
 					nitem;
-		int			npromising = 0;
 		BTVacuumPosting vacposting;
 
 		Assert(OffsetNumberIsValid(idxoffnum));
@@ -1586,22 +1581,7 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 			/* Plain non-pivot tuple */
 			Assert(ItemPointerEquals(&itup->t_tid, &delstate->deltids[i].tid));
 			if (dstatus->knowndeletable)
-			{
-				char	   *dataitemstr = NULL;
-
-				finaldeletedtids++;
 				deletable[ndeletable++] = idxoffnum;
-
-				dataitemstr = _nbtree_print_itup(itup, rel);
-				appendStringInfo(&delstate->debugstr, "%3u. %s w TID (%u,%u) will be deleted freeing %zu %s\n",
-								 idxoffnum, dataitemstr,
-								 ItemPointerGetBlockNumber(&itup->t_tid),
-								 ItemPointerGetOffsetNumber(&itup->t_tid),
-								 IndexTupleSize(itup) + sizeof(ItemIdData),
-								 ItemIdIsDead(itemid) ? "(LP_DEAD bit set)" : dstatus->promising ? "(promising)" : "");
-				if (dataitemstr)
-					pfree(dataitemstr);
-			}
 			continue;
 		}
 
@@ -1663,12 +1643,8 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 				vacposting->itup = itup;
 				vacposting->updatedoffset = idxoffnum;
 				vacposting->ndeletedtids = 0;
-				if (dstatus->promising)
-					npromising++;
 			}
 			vacposting->deletetids[vacposting->ndeletedtids++] = p;
-			finaldeletedtids++;
-			finaldeletedtidsposting++;
 		}
 
 		/* Final decision on itup, a posting list tuple */
@@ -1679,49 +1655,17 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 		}
 		else if (vacposting->ndeletedtids == nitem)
 		{
-			char	   *dataitemstr = NULL;
-
 			/* Straight delete of itup (to delete all TIDs) */
 			deletable[ndeletable++] = idxoffnum;
 			/* Turns out we won't need granular information */
 			pfree(vacposting);
-
-			dataitemstr = _nbtree_print_itup(itup, rel);
-			if (delstate->bottomup)
-				appendStringInfo(&delstate->debugstr, "%3u. %s w %d TIDs (of which %d promising) will be deleted outright freeing %zu %s\n",
-								 idxoffnum, dataitemstr,
-								 nitem,
-								 npromising,
-								 IndexTupleSize(itup) + sizeof(ItemIdData),
-								 ItemIdIsDead(itemid) ? "(LP_DEAD bit set)" : "");
-			else
-				appendStringInfo(&delstate->debugstr, "%3u. %s w %d TIDs will be deleted outright freeing %zu %s\n",
-								 idxoffnum, dataitemstr,
-								 nitem,
-								 IndexTupleSize(itup) + sizeof(ItemIdData),
-								 ItemIdIsDead(itemid) ? "(LP_DEAD bit set)" : "");
-			if (dataitemstr)
-				pfree(dataitemstr);
 		}
 		else
 		{
-			char	   *dataitemstr = NULL;
-
 			/* Delete some (but not all) TIDs from itup */
 			Assert(vacposting->ndeletedtids > 0 &&
 				   vacposting->ndeletedtids < nitem);
 			updatable[nupdatable++] = vacposting;
-
-			dataitemstr = _nbtree_print_itup(itup, rel);
-			appendStringInfo(&delstate->debugstr,
-							 "%3u. %s w %d TIDs will have %d deleted freeing %zu\n",
-							 idxoffnum, dataitemstr,
-							 nitem,
-							 vacposting->ndeletedtids,
-							 vacposting->ndeletedtids *
-							 sizeof(ItemPointerData));
-			if (dataitemstr)
-				pfree(dataitemstr);
 		}
 	}
 
@@ -1732,34 +1676,6 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 	/* be tidy */
 	for (int i = 0; i < nupdatable; i++)
 		pfree(updatable[i]);
-
-	Assert(finaldeletedtids > 0);
-	for (int i = 0; i < delstate->ndeltids; i++)
-	{
-		TM_IndexStatus *dstatus = delstate->status + delstate->deltids[i].id;
-
-		if (dstatus->knowndeletable)
-			testfinaldeletedtids++;
-	}
-
-	Assert(finaldeletedtids == testfinaldeletedtids);
-
-done:
-	appendStringInfo(&delstate->debugstr,
-					 "results: checked %d tids out of %d on page (%.2f%% of total on page), of which %d (%.2f%% of total on page) deleted\n",
-					 delstate->ncheckedtids,
-					 orig_ntidstotal,
-					 100.0 * delstate->ncheckedtids / orig_ntidstotal,
-					 finaldeletedtids,
-					 100.0 * finaldeletedtids / orig_ntidstotal);
-
-	appendStringInfo(&delstate->debugstr,
-					 "results: deleted tids plain %d, deleted tids posting %d, pagelsn: %X/%X\n",
-					 finaldeletedtids - finaldeletedtidsposting,
-					 finaldeletedtidsposting,
-					 LSN_FORMAT_ARGS(PageGetLSN(page)));
-
-	return finaldeletedtids;
 }
 
 /*
@@ -2051,7 +1967,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate)
 				/* Set up a BTLessStrategyNumber-like insertion scan key */
 				itup_key->nextkey = false;
 				itup_key->backward = true;
-				stack = _bt_search(rel, NULL, itup_key, &sleafbuf, BT_READ, NULL);
+				stack = _bt_search(rel, NULL, itup_key, &sleafbuf, BT_READ);
 				/* won't need a second lock or pin on leafbuf */
 				_bt_relbuf(rel, sleafbuf);
 
