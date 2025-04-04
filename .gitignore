@@ -44,3 +44,6 @@ lib*.pc
 /tmp_install/
 /portlock/
 /mdam_fuzz_output/
+debug.log
+results.csv
+test.log
