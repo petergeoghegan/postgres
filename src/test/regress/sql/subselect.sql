@@ -1243,11 +1243,8 @@ SELECT * from onek WHERE unique1 in (VALUES(1200::bigint), (1));
 
 -- VtA shouldn't depend on the side of the join probing with the VALUES expression.
 EXPLAIN (COSTS OFF)
-SELECT c.oid,c.relname FROM pg_class c JOIN pg_am a USING (oid)
-WHERE a.oid IN (VALUES (1), (2));
-EXPLAIN (COSTS OFF)
-SELECT c.oid,c.relname FROM pg_class c JOIN pg_am a USING (oid)
-WHERE c.oid IN (VALUES (1), (2));
+SELECT c.unique1,c.ten FROM onek c JOIN tenk1 a USING (ten)
+WHERE a.ten IN (VALUES (1), (2));
 
 -- Constant expressions are simplified
 EXPLAIN (COSTS OFF)
