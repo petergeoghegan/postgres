@@ -94,20 +94,21 @@ select count(*) from cost_of_skipping where ten between 8 and 9;
  166394
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 8 and 9;
-                                                                                     QUERY PLAN                                                                                     
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=19643.86..19643.87 rows=1 width=8) (actual time=27.467..27.467 rows=1 loops=1)
-   Buffers: shared hit=825
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=3355.96..19227.87 rows=166394 width=0) (actual time=9.037..20.549 rows=166394 loops=1)
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=19643.86..19643.87 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=4348 read=9809 written=1822
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=3355.96..19227.87 rows=166394 width=0) (actual rows=166394.00 loops=1)
          Recheck Cond: ((ten >= 8) AND (ten <= 9))
-         Buffers: shared hit=825
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..3314.37 rows=166394 width=0) (actual time=7.501..7.502 rows=166394 loops=1)
+         Heap Blocks: exact=13334
+         Buffers: shared hit=4348 read=9809 written=1822
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..3314.37 rows=166394 width=0) (actual rows=166394.00 loops=1)
                Index Cond: ((ten >= 8) AND (ten <= 9))
                Index Searches: 1
-               Buffers: shared hit=823
-(9 rows)
+               Buffers: shared read=823
+(10 rows)
 
 -- Don't change cost of this compared to master:
 select count(*) from cost_of_skipping where ten between 9 and 10;
@@ -116,20 +117,21 @@ select count(*) from cost_of_skipping where ten between 9 and 10;
  55281
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 9 and 10;
-                                                                                    QUERY PLAN                                                                                    
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=15458.47..15458.48 rows=1 width=8) (actual time=11.133..11.134 rows=1 loops=1)
-   Buffers: shared hit=278
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=1115.06..15320.27 rows=55281 width=0) (actual time=4.112..8.842 rows=55281 loops=1)
+                                                                            QUERY PLAN                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=15458.47..15458.48 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=13408
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=1115.06..15320.27 rows=55281 width=0) (actual rows=55281.00 loops=1)
          Recheck Cond: ((ten >= 9) AND (ten <= 10))
-         Buffers: shared hit=278
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..1101.23 rows=55281 width=0) (actual time=2.610..2.610 rows=55281 loops=1)
+         Heap Blocks: exact=13132
+         Buffers: shared hit=13408
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..1101.23 rows=55281 width=0) (actual rows=55281.00 loops=1)
                Index Cond: ((ten >= 9) AND (ten <= 10))
                Index Searches: 1
                Buffers: shared hit=276
-(9 rows)
+(10 rows)
 
 -------------------------------------------------------------------------------
 -- As selectivity increases, we want to see a commensurate increase in costs --
@@ -144,18 +146,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 1
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=4.49..6.52 rows=1 width=76) (actual time=0.006..0.006 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=2.45..4.47 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 1) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=3
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..4.49 rows=1 width=0) (actual time=0.005..0.005 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..2.44 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 1) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 1
          Buffers: shared hit=3
@@ -171,18 +173,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=2.44..4.47 rows=1 width=76) (actual time=0.004..0.004 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=2.44..4.47 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten = 1) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=3
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..2.44 rows=1 width=0) (actual time=0.003..0.003 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..2.44 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten = 1) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 1
          Buffers: shared hit=3
@@ -198,18 +200,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 2
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=6.99..9.01 rows=1 width=76) (actual time=0.007..0.007 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=4.89..6.92 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 2) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=6
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..6.99 rows=1 width=0) (actual time=0.006..0.006 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..4.89 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 2) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 2
          Buffers: shared hit=6
@@ -225,18 +227,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=4.89..6.91 rows=1 width=76) (actual time=0.007..0.007 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=4.89..6.91 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=6
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..4.88 rows=1 width=0) (actual time=0.005..0.006 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..4.88 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 2
          Buffers: shared hit=6
@@ -252,18 +254,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 3
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=9.48..11.51 rows=1 width=76) (actual time=0.008..0.008 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=7.34..9.36 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 3) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..9.48 rows=1 width=0) (actual time=0.007..0.007 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..7.33 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 3) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 3
          Buffers: shared hit=9
@@ -279,18 +281,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=7.33..9.35 rows=1 width=76) (actual time=0.007..0.008 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=7.33..9.35 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..7.33 rows=1 width=0) (actual time=0.006..0.006 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..7.33 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 3
          Buffers: shared hit=9
@@ -306,18 +308,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 4
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=11.98..14.01 rows=1 width=76) (actual time=0.009..0.009 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=9.78..11.81 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 4) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=12
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..11.98 rows=1 width=0) (actual time=0.008..0.008 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..9.78 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 4) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 4
          Buffers: shared hit=12
@@ -333,18 +335,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3, 4)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=9.77..11.80 rows=1 width=76) (actual time=0.008..0.009 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=9.77..11.80 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3,4}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=12
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..9.77 rows=1 width=0) (actual time=0.007..0.007 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..9.77 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3,4}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 4
          Buffers: shared hit=12
@@ -360,18 +362,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 5
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=14.48..16.50 rows=1 width=76) (actual time=0.010..0.010 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=14.67..16.70 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 5) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=15
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..14.48 rows=1 width=0) (actual time=0.009..0.009 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..14.67 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 5) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 5
          Buffers: shared hit=15
@@ -387,18 +389,18 @@ where
 ---+-----+---------+----------+--------------+---------------
 (0 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=12.21..14.24 rows=1 width=76) (actual time=0.009..0.010 rows=0 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=12.21..14.24 rows=1 width=76) (actual rows=0.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3,4,5}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Buffers: shared hit=15
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..12.21 rows=1 width=0) (actual time=0.008..0.008 rows=0 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..12.21 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3,4,5}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 5
          Buffers: shared hit=15
@@ -415,19 +417,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 6
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=16.97..18.99 rows=1 width=76) (actual time=0.012..0.013 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=17.12..19.14 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 6) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=19
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..16.97 rows=1 width=0) (actual time=0.011..0.011 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..17.12 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 6) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 6
          Buffers: shared hit=18
@@ -444,19 +446,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=14.66..16.68 rows=1 width=76) (actual time=0.011..0.012 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=14.66..16.68 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3,4,5,6}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=19
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..14.66 rows=1 width=0) (actual time=0.010..0.010 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..14.66 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3,4,5,6}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 6
          Buffers: shared hit=18
@@ -473,19 +475,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 7
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=19.46..21.49 rows=1 width=76) (actual time=0.013..0.013 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=19.56..21.59 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 7) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=22
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..19.46 rows=1 width=0) (actual time=0.011..0.012 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..19.56 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 7) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 7
          Buffers: shared hit=21
@@ -502,19 +504,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=17.10..19.13 rows=1 width=76) (actual time=0.012..0.013 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=17.10..19.13 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3,4,5,6,7}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=22
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..17.10 rows=1 width=0) (actual time=0.011..0.011 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..17.10 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3,4,5,6,7}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 7
          Buffers: shared hit=21
@@ -531,19 +533,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 8
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=21.95..23.98 rows=1 width=76) (actual time=0.014..0.014 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=22.01..24.03 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 8) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=25
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..21.95 rows=1 width=0) (actual time=0.013..0.013 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..22.00 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 8) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 8
          Buffers: shared hit=24
@@ -560,19 +562,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7, 8)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=19.54..21.57 rows=1 width=76) (actual time=0.014..0.014 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=19.54..21.57 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=25
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..19.54 rows=1 width=0) (actual time=0.012..0.012 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..19.54 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 8
          Buffers: shared hit=24
@@ -589,19 +591,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 9
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=24.20..26.23 rows=1 width=76) (actual time=0.015..0.016 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=22.01..24.03 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 9) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=28
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..24.20 rows=1 width=0) (actual time=0.014..0.014 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..22.00 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 9) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 9
          Buffers: shared hit=27
@@ -618,19 +620,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7, 8, 9)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=22.01..24.03 rows=1 width=76) (actual time=0.015..0.015 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=22.01..24.03 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8,9}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=28
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..21.98 rows=1 width=0) (actual time=0.013..0.013 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..21.98 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8,9}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 9
          Buffers: shared hit=27
@@ -647,19 +649,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten between 1 and 10
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=24.20..26.23 rows=1 width=76) (actual time=0.016..0.016 rows=1 loops=1)
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=22.01..24.03 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten >= 1) AND (ten <= 10) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=31
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..24.20 rows=1 width=0) (actual time=0.014..0.014 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..22.00 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten >= 1) AND (ten <= 10) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 10
          Buffers: shared hit=30
@@ -676,19 +678,19 @@ where
  441 |   6 |       4 |       35 |           36 | 441AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-                                                                            QUERY PLAN                                                                            
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on cost_of_skipping  (cost=24.45..26.48 rows=1 width=76) (actual time=0.015..0.016 rows=1 loops=1)
+                                                                     QUERY PLAN                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on cost_of_skipping  (cost=24.45..26.48 rows=1 width=76) (actual rows=1.00 loops=1)
    Recheck Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8,9,10}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
    Heap Blocks: exact=1
    Buffers: shared hit=31
-   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..24.43 rows=1 width=0) (actual time=0.014..0.014 rows=1 loops=1)
+   ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..24.43 rows=1 width=0) (actual rows=1.00 loops=1)
          Index Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8,9,10}'::integer[])) AND (hundred = 4) AND (thousand = 35) AND (ten_thousand = 36) AND (i = 441))
          Index Searches: 10
          Buffers: shared hit=30
@@ -704,16 +706,16 @@ select count(*) from cost_of_skipping where ten between 9000 and 10000;
      0
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 9000 and 10000;
-                                                                              QUERY PLAN                                                                               
------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=4.45..4.46 rows=1 width=8) (actual time=0.004..0.005 rows=1 loops=1)
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=4.45..4.46 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=3
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=2.44..4.45 rows=1 width=0) (actual time=0.003..0.004 rows=0 loops=1)
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=2.44..4.45 rows=1 width=0) (actual rows=0.00 loops=1)
          Recheck Cond: ((ten >= 9000) AND (ten <= 10000))
          Buffers: shared hit=3
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..2.43 rows=1 width=0) (actual time=0.002..0.002 rows=0 loops=1)
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..2.43 rows=1 width=0) (actual rows=0.00 loops=1)
                Index Cond: ((ten >= 9000) AND (ten <= 10000))
                Index Searches: 1
                Buffers: shared hit=3
@@ -726,20 +728,21 @@ select count(*) from cost_of_skipping where thousand = 666;
   1013
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where thousand = 666;
-                                                                                   QUERY PLAN                                                                                   
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=4366.40..4366.41 rows=1 width=8) (actual time=1.401..1.402 rows=1 loops=1)
-   Buffers: shared hit=3032
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=2661.25..4363.87 rows=1013 width=0) (actual time=1.238..1.359 rows=1013 loops=1)
+                                                                           QUERY PLAN                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=4183.91..4183.92 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=4009
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=2478.76..4181.38 rows=1013 width=0) (actual rows=1013.00 loops=1)
          Recheck Cond: (thousand = 666)
-         Buffers: shared hit=3032
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..2661.00 rows=1013 width=0) (actual time=1.152..1.152 rows=1013 loops=1)
+         Heap Blocks: exact=976
+         Buffers: shared hit=4009
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..2478.51 rows=1013 width=0) (actual rows=1013.00 loops=1)
                Index Cond: (thousand = 666)
                Index Searches: 1009
-               Buffers: shared hit=3030
-(9 rows)
+               Buffers: shared hit=3033
+(10 rows)
 
 -- Simulated good equality case skip scan using regular SAOPs:
 prepare simulated_good_skip_scan as
@@ -766,32 +769,33 @@ execute simulated_good_skip_scan;
   1013
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 -- Expect parity with master for this case, while letting it serve as a guide
 -- for the costs we ought to expect for prior true skip original:
 execute simulated_good_skip_scan;
-                                                                                 QUERY PLAN                                                                                  
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=918.10..918.11 rows=1 width=8) (actual time=4.810..4.811 rows=1 loops=1)
-   Buffers: shared hit=3032
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=918.10..918.11 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=4009
    CTE a
-     ->  Function Scan on generate_series i  (cost=0.00..100.02 rows=10002 width=4) (actual time=0.331..0.689 rows=10002 loops=1)
+     ->  Function Scan on generate_series i  (cost=0.00..100.02 rows=10002 width=4) (actual rows=10002.00 loops=1)
    InitPlan 2
-     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual time=2.149..2.149 rows=1 loops=1)
-           ->  CTE Scan on a  (cost=0.00..200.04 rows=10002 width=4) (actual time=0.332..1.530 rows=10002 loops=1)
-                 Storage: Memory  Maximum Storage: 441kB
+     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  CTE Scan on a  (cost=0.00..200.04 rows=10002 width=4) (actual rows=10002.00 loops=1)
+                 Storage: Memory  Maximum Storage: 519kB
    InitPlan 3
-     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual time=1.041..1.041 rows=1 loops=1)
-           ->  CTE Scan on a a_1  (cost=0.00..200.04 rows=10002 width=4) (actual time=0.000..0.437 rows=10002 loops=1)
-                 Storage: Memory  Maximum Storage: 441kB
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=243.77..367.80 rows=63 width=0) (actual time=4.647..4.768 rows=1013 loops=1)
+     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  CTE Scan on a a_1  (cost=0.00..200.04 rows=10002 width=4) (actual rows=10002.00 loops=1)
+                 Storage: Memory  Maximum Storage: 519kB
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=243.77..367.80 rows=63 width=0) (actual rows=1013.00 loops=1)
          Recheck Cond: ((ten = ANY (ARRAY[(InitPlan 2).col1])) AND (hundred = ANY (ARRAY[(InitPlan 3).col1])) AND (thousand = 666))
-         Buffers: shared hit=3032
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..243.75 rows=63 width=0) (actual time=4.562..4.562 rows=1013 loops=1)
+         Heap Blocks: exact=976
+         Buffers: shared hit=4009
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..243.75 rows=63 width=0) (actual rows=1013.00 loops=1)
                Index Cond: ((ten = ANY (ARRAY[(InitPlan 2).col1])) AND (hundred = ANY (ARRAY[(InitPlan 3).col1])) AND (thousand = 666))
                Index Searches: 1009
-               Buffers: shared hit=3030
-(19 rows)
+               Buffers: shared hit=3033
+(20 rows)
 
 -- Good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping where ten between 1 and 2 and hundred = 55;
@@ -800,20 +804,21 @@ select count(*) from cost_of_skipping where ten between 1 and 2 and hundred = 55
   2310
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 1 and 2 and hundred = 55;
-                                                                                  QUERY PLAN                                                                                  
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=3399.44..3399.45 rows=1 width=8) (actual time=0.744..0.744 rows=1 loops=1)
-   Buffers: shared hit=20
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=53.28..3393.88 rows=2223 width=0) (actual time=0.376..0.647 rows=2310 loops=1)
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=3399.34..3399.35 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=2125
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=53.18..3393.78 rows=2223 width=0) (actual rows=2310.00 loops=1)
          Recheck Cond: ((ten >= 1) AND (ten <= 2) AND (hundred = 55))
-         Buffers: shared hit=20
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..52.72 rows=2223 width=0) (actual time=0.171..0.171 rows=2310 loops=1)
+         Heap Blocks: exact=2106
+         Buffers: shared hit=2125
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..52.63 rows=2223 width=0) (actual rows=2310.00 loops=1)
                Index Cond: ((ten >= 1) AND (ten <= 2) AND (hundred = 55))
                Index Searches: 2
-               Buffers: shared hit=18
-(9 rows)
+               Buffers: shared hit=19
+(10 rows)
 
 -- Simulated good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping where ten in (1, 2) and hundred = 55;
@@ -822,20 +827,21 @@ select count(*) from cost_of_skipping where ten in (1, 2) and hundred = 55;
   2310
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten in (1, 2) and hundred = 55;
-                                                                                  QUERY PLAN                                                                                  
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=3388.22..3388.23 rows=1 width=8) (actual time=0.709..0.710 rows=1 loops=1)
-   Buffers: shared hit=20
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=47.63..3382.67 rows=2223 width=0) (actual time=0.346..0.616 rows=2310 loops=1)
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=3388.22..3388.23 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=2125
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=47.63..3382.67 rows=2223 width=0) (actual rows=2310.00 loops=1)
          Recheck Cond: ((ten = ANY ('{1,2}'::integer[])) AND (hundred = 55))
-         Buffers: shared hit=20
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..47.07 rows=2223 width=0) (actual time=0.148..0.148 rows=2310 loops=1)
+         Heap Blocks: exact=2106
+         Buffers: shared hit=2125
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..47.07 rows=2223 width=0) (actual rows=2310.00 loops=1)
                Index Cond: ((ten = ANY ('{1,2}'::integer[])) AND (hundred = 55))
                Index Searches: 2
-               Buffers: shared hit=18
-(9 rows)
+               Buffers: shared hit=19
+(10 rows)
 
 -- Other good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping where ten between 1 and 8 and hundred = 55;
@@ -844,20 +850,21 @@ select count(*) from cost_of_skipping where ten between 1 and 8 and hundred = 55
   8914
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 1 and 8 and hundred = 55;
-                                                                                  QUERY PLAN                                                                                   
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=9030.67..9030.68 rows=1 width=8) (actual time=2.661..2.661 rows=1 loops=1)
-   Buffers: shared hit=70
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=207.41..9008.38 rows=8913 width=0) (actual time=1.272..2.270 rows=8914 loops=1)
+                                                                           QUERY PLAN                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=9030.68..9030.69 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=6591
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=207.43..9008.40 rows=8913 width=0) (actual rows=8914.00 loops=1)
          Recheck Cond: ((ten >= 1) AND (ten <= 8) AND (hundred = 55))
-         Buffers: shared hit=70
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..205.19 rows=8913 width=0) (actual time=0.585..0.585 rows=8914 loops=1)
+         Heap Blocks: exact=6516
+         Buffers: shared hit=6591
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..205.20 rows=8913 width=0) (actual rows=8914.00 loops=1)
                Index Cond: ((ten >= 1) AND (ten <= 8) AND (hundred = 55))
                Index Searches: 8
-               Buffers: shared hit=68
-(9 rows)
+               Buffers: shared hit=75
+(10 rows)
 
 -- Simulated other good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping
@@ -867,21 +874,22 @@ where ten in (1, 2, 3, 4, 5, 6, 7, 8) and hundred = 55;
   8914
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping
 where ten in (1, 2, 3, 4, 5, 6, 7, 8) and hundred = 55;
-                                                                                  QUERY PLAN                                                                                   
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=9058.56..9058.57 rows=1 width=8) (actual time=2.573..2.573 rows=1 loops=1)
-   Buffers: shared hit=70
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=190.75..9036.28 rows=8913 width=0) (actual time=1.197..2.207 rows=8914 loops=1)
+                                                                           QUERY PLAN                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=9058.56..9058.57 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=6591
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=190.75..9036.28 rows=8913 width=0) (actual rows=8914.00 loops=1)
          Recheck Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8}'::integer[])) AND (hundred = 55))
-         Buffers: shared hit=70
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..188.52 rows=8913 width=0) (actual time=0.517..0.517 rows=8914 loops=1)
+         Heap Blocks: exact=6516
+         Buffers: shared hit=6591
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..188.52 rows=8913 width=0) (actual rows=8914.00 loops=1)
                Index Cond: ((ten = ANY ('{1,2,3,4,5,6,7,8}'::integer[])) AND (hundred = 55))
                Index Searches: 8
-               Buffers: shared hit=68
-(9 rows)
+               Buffers: shared hit=75
+(10 rows)
 
 -- Full index scan using skip arrays:
 select count(*) from cost_of_skipping where i = 123456;
@@ -890,20 +898,21 @@ select count(*) from cost_of_skipping where i = 123456;
      1
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where i = 123456;
-                                                                                 QUERY PLAN                                                                                  
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=15483.02..15483.03 rows=1 width=8) (actual time=18.080..18.081 rows=1 loops=1)
-   Buffers: shared hit=4930
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=15481.00..15483.01 rows=1 width=0) (actual time=18.078..18.079 rows=1 loops=1)
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=17410.44..17410.45 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=3378 read=1552 written=3
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=17408.43..17410.44 rows=1 width=0) (actual rows=1.00 loops=1)
          Recheck Cond: (i = 123456)
-         Buffers: shared hit=4930
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..15481.00 rows=1 width=0) (actual time=18.072..18.073 rows=1 loops=1)
+         Heap Blocks: exact=1
+         Buffers: shared hit=3378 read=1552 written=3
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..17408.42 rows=1 width=0) (actual rows=1.00 loops=1)
                Index Cond: (i = 123456)
                Index Searches: 1
-               Buffers: shared hit=4929
-(9 rows)
+               Buffers: shared hit=3377 read=1552 written=3
+(10 rows)
 
 -- Simulated full index scan using regular SAOPs:
 prepare simulated_full_index_scan as
@@ -936,38 +945,39 @@ execute simulated_full_index_scan;
 
 -- Expect parity with master for this case, while letting it serve as a guide
 -- for the costs we ought to expect for prior true skip original:
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute simulated_full_index_scan;
                                                                                                                QUERY PLAN                                                                                                               
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=4565.33..4565.34 rows=1 width=8) (actual time=235.360..235.361 rows=1 loops=1)
+ Aggregate  (cost=4565.33..4565.34 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=4930
    CTE a
-     ->  Function Scan on generate_series i  (cost=0.00..100.02 rows=10002 width=4) (actual time=0.336..0.691 rows=10002 loops=1)
+     ->  Function Scan on generate_series i  (cost=0.00..100.02 rows=10002 width=4) (actual rows=10002.00 loops=1)
    InitPlan 2
-     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual time=2.158..2.158 rows=1 loops=1)
-           ->  CTE Scan on a  (cost=0.00..200.04 rows=10002 width=4) (actual time=0.337..1.535 rows=10002 loops=1)
-                 Storage: Memory  Maximum Storage: 441kB
+     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  CTE Scan on a  (cost=0.00..200.04 rows=10002 width=4) (actual rows=10002.00 loops=1)
+                 Storage: Memory  Maximum Storage: 519kB
    InitPlan 3
-     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual time=1.082..1.082 rows=1 loops=1)
-           ->  CTE Scan on a a_1  (cost=0.00..200.04 rows=10002 width=4) (actual time=0.000..0.441 rows=10002 loops=1)
-                 Storage: Memory  Maximum Storage: 441kB
+     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  CTE Scan on a a_1  (cost=0.00..200.04 rows=10002 width=4) (actual rows=10002.00 loops=1)
+                 Storage: Memory  Maximum Storage: 519kB
    InitPlan 4
-     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual time=1.064..1.064 rows=1 loops=1)
-           ->  CTE Scan on a a_2  (cost=0.00..200.04 rows=10002 width=4) (actual time=0.000..0.447 rows=10002 loops=1)
-                 Storage: Memory  Maximum Storage: 441kB
+     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  CTE Scan on a a_2  (cost=0.00..200.04 rows=10002 width=4) (actual rows=10002.00 loops=1)
+                 Storage: Memory  Maximum Storage: 519kB
    InitPlan 5
-     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual time=1.048..1.049 rows=1 loops=1)
-           ->  CTE Scan on a a_3  (cost=0.00..200.04 rows=10002 width=4) (actual time=0.000..0.438 rows=10002 loops=1)
-                 Storage: Memory  Maximum Storage: 441kB
-   ->  Bitmap Heap Scan on cost_of_skipping  (cost=3563.01..3565.07 rows=1 width=0) (actual time=235.358..235.358 rows=1 loops=1)
+     ->  Aggregate  (cost=225.05..225.06 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  CTE Scan on a a_3  (cost=0.00..200.04 rows=10002 width=4) (actual rows=10002.00 loops=1)
+                 Storage: Memory  Maximum Storage: 519kB
+   ->  Bitmap Heap Scan on cost_of_skipping  (cost=3563.01..3565.07 rows=1 width=0) (actual rows=1.00 loops=1)
          Recheck Cond: ((ten = ANY (ARRAY[(InitPlan 2).col1])) AND (hundred = ANY (ARRAY[(InitPlan 3).col1])) AND (thousand = ANY (ARRAY[(InitPlan 4).col1])) AND (ten_thousand = ANY (ARRAY[(InitPlan 5).col1])) AND (i = 123456))
+         Heap Blocks: exact=1
          Buffers: shared hit=4930
-         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..3563.01 rows=1 width=0) (actual time=235.354..235.354 rows=1 loops=1)
+         ->  Bitmap Index Scan on cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx  (cost=0.00..3563.01 rows=1 width=0) (actual rows=1.00 loops=1)
                Index Cond: ((ten = ANY (ARRAY[(InitPlan 2).col1])) AND (hundred = ANY (ARRAY[(InitPlan 3).col1])) AND (thousand = ANY (ARRAY[(InitPlan 4).col1])) AND (ten_thousand = ANY (ARRAY[(InitPlan 5).col1])) AND (i = 123456))
                Index Searches: 1
                Buffers: shared hit=4929
-(27 rows)
+(28 rows)
 
 -- Index-only scan:
 set enable_bitmapscan to off;
@@ -984,17 +994,17 @@ select count(*) from cost_of_skipping where ten = 1                             
    110
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten = 1                               and thousand = 33;
-                                                                                         QUERY PLAN                                                                                         
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=249.75..249.75 rows=1 width=8) (actual time=0.136..0.137 rows=1 loops=1)
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=247.31..247.32 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=304
-   ->  Index Only Scan using cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx on cost_of_skipping  (cost=0.42..249.47 rows=110 width=0) (actual time=0.011..0.130 rows=110 loops=1)
+   ->  Index Only Scan using cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx on cost_of_skipping  (cost=0.42..247.03 rows=110 width=0) (actual rows=110.00 loops=1)
          Disabled: true
          Index Cond: ((ten = 1) AND (thousand = 33))
-         Index Searches: 101
          Heap Fetches: 0
+         Index Searches: 101
          Buffers: shared hit=304
 (8 rows)
 
@@ -1005,17 +1015,17 @@ select count(*) from cost_of_skipping where ten = 1 and hundred between 0 and 10
    110
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten = 1 and hundred between 0 and 100 and thousand = 33;
-                                                                                         QUERY PLAN                                                                                         
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=247.38..247.38 rows=1 width=8) (actual time=0.132..0.132 rows=1 loops=1)
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=247.38..247.38 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=304
-   ->  Index Only Scan using cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx on cost_of_skipping  (cost=0.42..247.10 rows=110 width=0) (actual time=0.011..0.126 rows=110 loops=1)
+   ->  Index Only Scan using cost_of_skipping_ten_hundred_thousand_ten_thousand_i_idx on cost_of_skipping  (cost=0.42..247.10 rows=110 width=0) (actual rows=110.00 loops=1)
          Disabled: true
          Index Cond: ((ten = 1) AND (hundred >= 0) AND (hundred <= 100) AND (thousand = 33))
-         Index Searches: 101
          Heap Fetches: 0
+         Index Searches: 101
          Buffers: shared hit=304
 (8 rows)
 
@@ -1029,11 +1039,11 @@ select * from cost_of_skipping where i = 123456;
  123456 |   1 |      34 |      522 |          603 | 123456AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from cost_of_skipping where i = 123456;
-                                                            QUERY PLAN                                                             
------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using expression_idx on cost_of_skipping  (cost=0.42..14.17 rows=1 width=76) (actual time=0.006..0.010 rows=1 loops=1)
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Index Scan using expression_idx on cost_of_skipping  (cost=0.42..11.74 rows=1 width=76) (actual rows=1.00 loops=1)
    Disabled: true
    Index Cond: (i = 123456)
    Index Searches: 5
@@ -1049,11 +1059,11 @@ select * from cost_of_skipping where hundred = 34 and i = 123456;
  123456 |   1 |      34 |      522 |          603 | 123456AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from cost_of_skipping where hundred = 34 and i = 123456;
-                                                           QUERY PLAN                                                            
----------------------------------------------------------------------------------------------------------------------------------
- Index Scan using partial_idx on cost_of_skipping  (cost=0.29..137.15 rows=1 width=76) (actual time=0.007..0.015 rows=1 loops=1)
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Index Scan using partial_idx on cost_of_skipping  (cost=0.29..22.94 rows=1 width=76) (actual rows=1.00 loops=1)
    Disabled: true
    Index Cond: (i = 123456)
    Index Searches: 11
@@ -1082,15 +1092,15 @@ select * from dont_pick_wrong_index where i = 55562;
                      666 | 55562
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from dont_pick_wrong_index where i = 55562;
-                                                             QUERY PLAN                                                             
-------------------------------------------------------------------------------------------------------------------------------------
- Index Only Scan using correct on dont_pick_wrong_index  (cost=0.29..4.31 rows=1 width=8) (actual time=0.004..0.004 rows=1 loops=1)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using correct on dont_pick_wrong_index  (cost=0.29..4.31 rows=1 width=8) (actual rows=1.00 loops=1)
    Disabled: true
    Index Cond: (i = 55562)
-   Index Searches: 1
    Heap Fetches: 0
+   Index Searches: 1
    Buffers: shared hit=3
 (6 rows)
 
@@ -1099,7 +1109,7 @@ select * from dont_pick_wrong_index where i = 55562;
 -------------------------------
 -- Taken from: https://postgr.es/m/TYWPR01MB10982A413E0EC4088E78C0E11B1A62@TYWPR01MB10982.jpnprd01.prod.outlook.com
 -- prepare
-set default_statistics_target=200;
+set default_statistics_target=10000;
 set client_min_messages=error;
 DROP TABLE IF EXISTS ikeda_test;
 CREATE EXTENSION if not exists pg_prewarm;
@@ -1113,6 +1123,7 @@ INSERT INTO ikeda_test (SELECT i%11, i%103, i%1009, 'hello' FROM generate_series
 ANALYZE;
 -- prepare
 SET skipscan_prefix_cols = 3;
+ERROR:  unrecognized configuration parameter "skipscan_prefix_cols"
 SET enable_seqscan = off;
 SET enable_indexscan = off;
 SET enable_bitmapscan = off;
@@ -1124,16 +1135,16 @@ SELECT pg_prewarm('ikeda_test');
 
 -- seqscan
 SET enable_seqscan = on;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                  QUERY PLAN                                                  
---------------------------------------------------------------------------------------------------------------
- Seq Scan on ikeda_test  (cost=0.00..18870.00 rows=986 width=20) (actual time=0.009..40.249 rows=991 loops=1)
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Seq Scan on ikeda_test  (cost=0.00..18870.00 rows=991 width=20) (actual rows=991.00 loops=1)
    Filter: (id3 = 101)
    Rows Removed by Filter: 999009
    Buffers: shared hit=6370
  Planning:
-   Buffers: shared hit=19
+   Buffers: shared hit=21
 (6 rows)
 
 SET enable_seqscan = off;
@@ -1146,11 +1157,11 @@ SELECT pg_prewarm('idx_id3');
         904
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                         QUERY PLAN                                                         
-----------------------------------------------------------------------------------------------------------------------------
- Index Scan using idx_id3 on ikeda_test  (cost=0.42..1851.48 rows=986 width=20) (actual time=0.013..0.621 rows=991 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_id3 on ikeda_test  (cost=0.42..1859.76 rows=991 width=20) (actual rows=991.00 loops=1)
    Index Cond: (id3 = 101)
    Index Searches: 1
    Buffers: shared hit=998
@@ -1166,16 +1177,16 @@ SELECT pg_prewarm('idx_id1_id3');
         861
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                           QUERY PLAN                                                           
---------------------------------------------------------------------------------------------------------------------------------
- Index Scan using idx_id1_id3 on ikeda_test  (cost=0.42..1872.25 rows=986 width=20) (actual time=0.015..0.661 rows=991 loops=1)
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_id1_id3 on ikeda_test  (cost=0.42..1877.96 rows=991 width=20) (actual rows=991.00 loops=1)
    Index Cond: (id3 = 101)
    Index Searches: 13
    Buffers: shared hit=1033
  Planning:
-   Buffers: shared hit=5
+   Buffers: shared hit=6
 (6 rows)
 
 DROP INDEX idx_id1_id3;
@@ -1186,16 +1197,16 @@ SELECT pg_prewarm('idx_id2_id3');
        1263
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                           QUERY PLAN                                                           
---------------------------------------------------------------------------------------------------------------------------------
- Index Scan using idx_id2_id3 on ikeda_test  (cost=0.42..2095.45 rows=986 width=20) (actual time=0.010..0.746 rows=991 loops=1)
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_id2_id3 on ikeda_test  (cost=0.42..2101.81 rows=991 width=20) (actual rows=991.00 loops=1)
    Index Cond: (id3 = 101)
    Index Searches: 105
    Buffers: shared hit=1306
  Planning:
-   Buffers: shared hit=5
+   Buffers: shared hit=6
 (6 rows)
 
 DROP INDEX idx_id2_id3;
@@ -1206,16 +1217,16 @@ SELECT pg_prewarm('idx_id1_id2_id3');
        3853
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                             QUERY PLAN                                                              
--------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using idx_id1_id2_id3 on ikeda_test  (cost=0.42..14484.83 rows=986 width=20) (actual time=0.011..2.806 rows=991 loops=1)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_id1_id2_id3 on ikeda_test  (cost=0.42..4531.15 rows=991 width=20) (actual rows=991.00 loops=1)
    Index Cond: (id3 = 101)
    Index Searches: 1137
    Buffers: shared hit=4402
  Planning:
-   Buffers: shared hit=5
+   Buffers: shared hit=6
 (6 rows)
 
 DROP INDEX idx_id1_id2_id3;
@@ -1229,20 +1240,20 @@ SELECT pg_prewarm('idx_id3');
         904
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                     QUERY PLAN                                                      
----------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on ikeda_test  (cost=10.07..1507.04 rows=986 width=20) (actual time=0.164..0.894 rows=991 loops=1)
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on ikeda_test  (cost=10.11..1512.86 rows=991 width=20) (actual rows=991.00 loops=1)
    Recheck Cond: (id3 = 101)
    Heap Blocks: exact=991
    Buffers: shared hit=995
-   ->  Bitmap Index Scan on idx_id3  (cost=0.00..9.82 rows=986 width=0) (actual time=0.066..0.067 rows=991 loops=1)
+   ->  Bitmap Index Scan on idx_id3  (cost=0.00..9.86 rows=991 width=0) (actual rows=991.00 loops=1)
          Index Cond: (id3 = 101)
          Index Searches: 1
          Buffers: shared hit=4
  Planning:
-   Buffers: shared hit=5
+   Buffers: shared hit=6
 (10 rows)
 
 DROP INDEX idx_id3;
@@ -1253,20 +1264,20 @@ SELECT pg_prewarm('idx_id1_id3');
         861
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                       QUERY PLAN                                                        
--------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on ikeda_test  (cost=39.18..1536.15 rows=986 width=20) (actual time=0.190..0.946 rows=991 loops=1)
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on ikeda_test  (cost=36.82..1539.57 rows=991 width=20) (actual rows=991.00 loops=1)
    Recheck Cond: (id3 = 101)
    Heap Blocks: exact=991
    Buffers: shared hit=1030
-   ->  Bitmap Index Scan on idx_id1_id3  (cost=0.00..38.93 rows=986 width=0) (actual time=0.094..0.094 rows=991 loops=1)
+   ->  Bitmap Index Scan on idx_id1_id3  (cost=0.00..36.57 rows=991 width=0) (actual rows=991.00 loops=1)
          Index Cond: (id3 = 101)
          Index Searches: 13
          Buffers: shared hit=39
  Planning:
-   Buffers: shared hit=5
+   Buffers: shared hit=6
 (10 rows)
 
 DROP INDEX idx_id1_id3;
@@ -1277,20 +1288,20 @@ SELECT pg_prewarm('idx_id2_id3');
        1263
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                        QUERY PLAN                                                        
---------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on ikeda_test  (cost=253.96..1750.93 rows=986 width=20) (actual time=0.356..1.104 rows=991 loops=1)
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on ikeda_test  (cost=252.25..1755.00 rows=991 width=20) (actual rows=991.00 loops=1)
    Recheck Cond: (id3 = 101)
    Heap Blocks: exact=991
    Buffers: shared hit=1306
-   ->  Bitmap Index Scan on idx_id2_id3  (cost=0.00..253.71 rows=986 width=0) (actual time=0.260..0.260 rows=991 loops=1)
+   ->  Bitmap Index Scan on idx_id2_id3  (cost=0.00..252.00 rows=991 width=0) (actual rows=991.00 loops=1)
          Index Cond: (id3 = 101)
          Index Searches: 105
          Buffers: shared hit=315
  Planning:
-   Buffers: shared hit=5
+   Buffers: shared hit=6
 (10 rows)
 
 DROP INDEX idx_id2_id3;
@@ -1301,15 +1312,15 @@ SELECT pg_prewarm('idx_id1_id2_id3');
        3853
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
-                                                           QUERY PLAN                                                           
---------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on ikeda_test  (cost=12651.76..14148.73 rows=986 width=20) (actual time=2.744..3.475 rows=991 loops=1)
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on ikeda_test  (cost=2690.01..4192.76 rows=991 width=20) (actual rows=991.00 loops=1)
    Recheck Cond: (id3 = 101)
    Heap Blocks: exact=991
    Buffers: shared hit=4402
-   ->  Bitmap Index Scan on idx_id1_id2_id3  (cost=0.00..12651.52 rows=986 width=0) (actual time=2.647..2.647 rows=991 loops=1)
+   ->  Bitmap Index Scan on idx_id1_id2_id3  (cost=0.00..2689.76 rows=991 width=0) (actual rows=991.00 loops=1)
          Index Cond: (id3 = 101)
          Index Searches: 1137
          Buffers: shared hit=3411
@@ -1352,16 +1363,16 @@ select * from demo_pachot where a = 50 limit 10;
  50 | 10
 (10 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a = 50 limit 10;
-                                                                    QUERY PLAN                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.43..0.66 rows=10 width=8) (actual time=0.006..0.007 rows=10 loops=1)
+                                                            QUERY PLAN                                                             
+-----------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..0.66 rows=10 width=8) (actual rows=10.00 loops=1)
    Buffers: shared hit=4
-   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..2361.11 rows=102667 width=8) (actual time=0.006..0.006 rows=10 loops=1)
+   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..2303.41 rows=100170 width=8) (actual rows=10.00 loops=1)
          Index Cond: (a = 50)
-         Index Searches: 1
          Heap Fetches: 0
+         Index Searches: 1
          Buffers: shared hit=4
 (7 rows)
 
@@ -1380,16 +1391,16 @@ select * from demo_pachot where b = 5000 limit 10;
  10 | 5000
 (10 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where b = 5000 limit 10;
-                                                                  QUERY PLAN                                                                  
-----------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.43..25.16 rows=10 width=8) (actual time=0.006..0.020 rows=10 loops=1)
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..25.16 rows=10 width=8) (actual rows=10.00 loops=1)
    Buffers: shared hit=34
-   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..250.14 rows=101 width=8) (actual time=0.006..0.019 rows=10 loops=1)
+   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..247.69 rows=100 width=8) (actual rows=10.00 loops=1)
          Index Cond: (b = 5000)
-         Index Searches: 11
          Heap Fetches: 0
+         Index Searches: 11
          Buffers: shared hit=34
 (7 rows)
 
@@ -1399,16 +1410,16 @@ select * from demo_pachot where a = 50 and b = 5000 limit 10;
  50 | 5000
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a = 50 and b = 5000 limit 10;
-                                                               QUERY PLAN                                                                
------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.43..2.45 rows=1 width=8) (actual time=0.004..0.005 rows=1 loops=1)
+                                                        QUERY PLAN                                                        
+--------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..2.45 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=4
-   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..2.45 rows=1 width=8) (actual time=0.004..0.004 rows=1 loops=1)
+   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..2.45 rows=1 width=8) (actual rows=1.00 loops=1)
          Index Cond: ((a = 50) AND (b = 5000))
-         Index Searches: 1
          Heap Fetches: 0
+         Index Searches: 1
          Buffers: shared hit=4
 (7 rows)
 
@@ -1427,16 +1438,16 @@ select * from demo_pachot where a = 50 and b > 5000 limit 10;
  50 | 5010
 (10 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a = 50 and b > 5000 limit 10;
-                                                                   QUERY PLAN                                                                    
--------------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.43..0.69 rows=10 width=8) (actual time=0.009..0.010 rows=10 loops=1)
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..0.69 rows=10 width=8) (actual rows=10.00 loops=1)
    Buffers: shared hit=4
-   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..2485.51 rows=97454 width=8) (actual time=0.008..0.009 rows=10 loops=1)
+   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..2425.39 rows=95148 width=8) (actual rows=10.00 loops=1)
          Index Cond: ((a = 50) AND (b > 5000))
-         Index Searches: 1
          Heap Fetches: 0
+         Index Searches: 1
          Buffers: shared hit=4
 (7 rows)
 
@@ -1455,16 +1466,16 @@ select * from demo_pachot where a > 50 and b = 5000 limit 10;
  60 | 5000
 (10 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a > 50 and b = 5000 limit 10;
-                                                                 QUERY PLAN                                                                  
----------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.43..25.30 rows=10 width=8) (actual time=0.006..0.020 rows=10 loops=1)
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..24.90 rows=10 width=8) (actual rows=10.00 loops=1)
    Buffers: shared hit=31
-   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..127.23 rows=51 width=8) (actual time=0.005..0.019 rows=10 loops=1)
+   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..122.75 rows=50 width=8) (actual rows=10.00 loops=1)
          Index Cond: ((a > 50) AND (b = 5000))
-         Index Searches: 10
          Heap Fetches: 0
+         Index Searches: 10
          Buffers: shared hit=31
 (7 rows)
 
@@ -2474,16 +2485,16 @@ select * from demo_pachot where a > 50 and b > 5000 limit 1000;
  51 | 6000
 (1000 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a > 50 and b > 5000 limit 1000;
-                                                                      QUERY PLAN                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.43..24.88 rows=1000 width=8) (actual time=0.007..0.148 rows=1000 loops=1)
+                                                               QUERY PLAN                                                               
+----------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..24.88 rows=1000 width=8) (actual rows=1000.00 loops=1)
    Buffers: shared hit=7
-   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..116185.72 rows=4752482 width=8) (actual time=0.007..0.089 rows=1000 loops=1)
+   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..115998.69 rows=4744644 width=8) (actual rows=1000.00 loops=1)
          Index Cond: ((a > 50) AND (b > 5000))
-         Index Searches: 1
          Heap Fetches: 0
+         Index Searches: 1
          Buffers: shared hit=7
 (7 rows)
 
@@ -3493,16 +3504,16 @@ select * from demo_pachot where (a,b) > (50, 5000) limit 1000;
  50 | 6000
 (1000 rows)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where (a,b) > (50, 5000) limit 1000;
-                                                                      QUERY PLAN                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------
- Limit  (cost=0.43..23.42 rows=1000 width=8) (actual time=0.009..0.151 rows=1000 loops=1)
+                                                               QUERY PLAN                                                               
+----------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..23.42 rows=1000 width=8) (actual rows=1000.00 loops=1)
    Buffers: shared hit=7
-   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..115075.11 rows=5006667 width=8) (actual time=0.009..0.092 rows=1000 loops=1)
+   ->  Index Only Scan using demo_pachot_pkey on demo_pachot  (cost=0.43..114808.04 rows=4995063 width=8) (actual rows=1000.00 loops=1)
          Index Cond: (ROW(a, b) > ROW(50, 5000))
-         Index Searches: 1
          Heap Fetches: 0
+         Index Searches: 1
          Buffers: shared hit=7
 (7 rows)
 
@@ -3536,18 +3547,18 @@ where
  42 | 99609 | 99609
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_multirange_medcard
 where
   a = 42
   and c = 99609;
-                                                                        QUERY PLAN                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------
- Index Only Scan using cost_multirange_medcard_idx on cost_multirange_medcard  (cost=0.42..7.43 rows=1 width=12) (actual time=0.022..0.022 rows=1 loops=1)
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using cost_multirange_medcard_idx on cost_multirange_medcard  (cost=0.42..7.44 rows=1 width=12) (actual rows=1.00 loops=1)
    Index Cond: ((a = 42) AND (c = 99609))
-   Index Searches: 1
    Heap Fetches: 0
+   Index Searches: 1
    Buffers: shared hit=5
 (5 rows)
 
@@ -3563,19 +3574,19 @@ where
  42 | 99609 | 99609
 (1 row)
 
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_multirange_medcard
 where
   a = 42
   and b between 0 and 1_000_000
   and c = 99609;
-                                                                        QUERY PLAN                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------
- Index Only Scan using cost_multirange_medcard_idx on cost_multirange_medcard  (cost=0.42..8.93 rows=1 width=12) (actual time=0.022..0.022 rows=1 loops=1)
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using cost_multirange_medcard_idx on cost_multirange_medcard  (cost=0.42..8.94 rows=1 width=12) (actual rows=1.00 loops=1)
    Index Cond: ((a = 42) AND (b >= 0) AND (b <= 1000000) AND (c = 99609))
-   Index Searches: 1
    Heap Fetches: 0
+   Index Searches: 1
    Buffers: shared hit=5
 (5 rows)
 

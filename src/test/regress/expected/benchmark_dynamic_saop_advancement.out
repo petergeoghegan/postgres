@@ -95,9 +95,9 @@ order by
 limit 20;
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
- Limit (actual rows=20 loops=1)
+ Limit (actual rows=20.00 loops=1)
    Buffers: shared hit=293
-   ->  Index Scan using mini_idx on docs_testcase (actual rows=20 loops=1)
+   ->  Index Scan using mini_idx on docs_testcase (actual rows=20.00 loops=1)
          Index Cond: ((sender_reference = ANY ('{Custom/1175,Client/362,Custom/280}'::text[])) AND (status = ANY ('{draft,sent}'::text[])))
          Index Searches: 1
          Buffers: shared hit=293
@@ -148,13 +148,13 @@ order by
 limit 20;
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
- Limit (actual rows=20 loops=1)
+ Limit (actual rows=20.00 loops=1)
    Buffers: shared hit=274
-   ->  Index Only Scan using mini_idx on docs_testcase (actual rows=20 loops=1)
+   ->  Index Only Scan using mini_idx on docs_testcase (actual rows=20.00 loops=1)
          Disabled: true
          Index Cond: ((sender_reference = ANY ('{Custom/1175,Client/362,Custom/280}'::text[])) AND (status = ANY ('{draft,sent}'::text[])))
-         Index Searches: 1
          Heap Fetches: 0
+         Index Searches: 1
          Buffers: shared hit=274
 (8 rows)
 
@@ -251,15 +251,15 @@ from coleman
 where bar_fk in (1, 2, 3)
 order by created_at
 limit 50;
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
- Limit (actual rows=50 loops=1)
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Limit (actual rows=50.00 loops=1)
    Buffers: shared hit=76
-   ->  Index Only Scan using index_coleman_on_created_and_at_bar_fk on coleman (actual rows=50 loops=1)
+   ->  Index Only Scan using index_coleman_on_created_and_at_bar_fk on coleman (actual rows=50.00 loops=1)
          Disabled: true
          Index Cond: (bar_fk = ANY ('{1,2,3}'::integer[]))
-         Index Searches: 1
          Heap Fetches: 0
+         Index Searches: 1
          Buffers: shared hit=76
 (8 rows)
 
@@ -331,11 +331,11 @@ from coleman
 where bar_fk in (1, 2, 3)
 order by created_at
 limit 50;
-                                            QUERY PLAN                                             
----------------------------------------------------------------------------------------------------
- Limit (actual rows=50 loops=1)
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
+ Limit (actual rows=50.00 loops=1)
    Buffers: shared hit=125
-   ->  Index Scan using index_coleman_on_created_and_at_bar_fk on coleman (actual rows=50 loops=1)
+   ->  Index Scan using index_coleman_on_created_and_at_bar_fk on coleman (actual rows=50.00 loops=1)
          Disabled: true
          Index Cond: (bar_fk = ANY ('{1,2,3}'::integer[]))
          Index Searches: 1

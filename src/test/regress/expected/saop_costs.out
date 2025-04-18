@@ -55,15 +55,15 @@ select * from multi_test_gist where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11,12);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1.00 loops=1)
    Recheck Cond: (a = 183)
    Filter: (b = ANY ('{1,2,3,4,5,6,7,8,9,10,11,12}'::integer[]))
    Rows Removed by Filter: 13
    Heap Blocks: exact=1
    Buffers: shared hit=3
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14.00 loops=1)
          Index Cond: (a = 183)
          Index Searches: 1
          Buffers: shared hit=2
@@ -82,13 +82,13 @@ select * from multi_test_gist where a in (123, 182, 183) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (123, 182, 183) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=2
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -108,13 +108,13 @@ select * from multi_test_gist where a in (182, 183, 184) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 184) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=1
    Buffers: shared hit=10
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -140,13 +140,13 @@ select * from multi_test_gist where a in (182, 183, 245) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 245) and b in (1,2); -- 4 buffer hits
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,245}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=2
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,245}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -168,13 +168,13 @@ select * from multi_test_gist where a in (182, 183, 306) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 306) and b in (1,2); -- 4 buffer hits
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,306}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=2
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,306}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -195,13 +195,13 @@ select * from multi_test_gist where a in (3,4,5) and b > 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b > 0;
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -257,13 +257,13 @@ select * from multi_test_gist where a in (3,4,5) and b >= 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b >= 0;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -280,13 +280,13 @@ select * from multi_test_gist where a in (123, 182, 183) and b > 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (123, 182, 183) and b > 0; -- 2 buffer hits
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b > 0))
    Heap Blocks: exact=2
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b > 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -307,13 +307,13 @@ select * from multi_test_gist where a in (123, 182, 183, 184) and b > 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (123, 182, 183, 184) and b > 0; -- 4 buffer hits
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=8.63..15.10 rows=4 width=8) (actual rows=4 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=8.63..15.10 rows=4 width=8) (actual rows=4.00 loops=1)
    Recheck Cond: ((a = ANY ('{123,182,183,184}'::integer[])) AND (b > 0))
    Heap Blocks: exact=2
    Buffers: shared hit=10
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..8.63 rows=4 width=0) (actual rows=4 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..8.63 rows=4 width=0) (actual rows=4.00 loops=1)
          Index Cond: ((a = ANY ('{123,182,183,184}'::integer[])) AND (b > 0))
          Index Searches: 4
          Buffers: shared hit=8
@@ -331,12 +331,12 @@ select * from multi_test_gist where a in (3,4,5) and b < 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 0;
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (b < 0)
-   Index Searches: 1
    Filter: (a = ANY ('{3,4,5}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=40
 (5 rows)
 
@@ -387,13 +387,13 @@ select * from multi_test_gist where a in (3,4,5) and b < 1;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 1;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
          Index Searches: 3
          Buffers: shared hit=6
@@ -449,13 +449,13 @@ select * from multi_test_gist where a in (123, 182, 183) and b < 3;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (123, 182, 183) and b < 3; -- 2 buffer hits
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42.00 loops=1)
    Recheck Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b < 3))
    Heap Blocks: exact=2
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42.00 loops=1)
          Index Cond: ((a = ANY ('{123,182,183}'::integer[])) AND (b < 3))
          Index Searches: 3
          Buffers: shared hit=6
@@ -529,13 +529,13 @@ select * from multi_test_gist where a in (123, 182, 183, 184) and b < 3;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (123, 182, 183, 184) and b < 3; -- 3 buffer hits
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=9.16..35.14 rows=56 width=8) (actual rows=56 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=9.16..35.14 rows=56 width=8) (actual rows=56.00 loops=1)
    Recheck Cond: ((a = ANY ('{123,182,183,184}'::integer[])) AND (b < 3))
    Heap Blocks: exact=2
    Buffers: shared hit=10
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..9.15 rows=56 width=0) (actual rows=56 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..9.15 rows=56 width=0) (actual rows=56.00 loops=1)
          Index Cond: ((a = ANY ('{123,182,183,184}'::integer[])) AND (b < 3))
          Index Searches: 4
          Buffers: shared hit=8
@@ -551,15 +551,15 @@ select * from multi_test_gist where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11,12);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1.00 loops=1)
    Recheck Cond: (a = 183)
    Filter: (b = ANY ('{1,2,3,4,5,6,7,8,9,10,11,12}'::integer[]))
    Rows Removed by Filter: 13
    Heap Blocks: exact=1
    Buffers: shared hit=3
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14.00 loops=1)
          Index Cond: (a = 183)
          Index Searches: 1
          Buffers: shared hit=2
@@ -576,19 +576,19 @@ order by a desc, b desc;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11,12)
 order by a desc, b desc;
-                                                    QUERY PLAN                                                    
-------------------------------------------------------------------------------------------------------------------
- Sort  (cost=17.24..17.25 rows=1 width=8) (actual rows=1 loops=1)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=17.24..17.25 rows=1 width=8) (actual rows=1.00 loops=1)
    Sort Key: b DESC
    Sort Method: quicksort  Memory: 25kB
    Buffers: shared hit=3
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1.00 loops=1)
          Recheck Cond: (a = 183)
          Filter: (b = ANY ('{1,2,3,4,5,6,7,8,9,10,11,12}'::integer[]))
          Rows Removed by Filter: 13
          Heap Blocks: exact=1
          Buffers: shared hit=3
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14 loops=1)
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14.00 loops=1)
                Index Cond: (a = 183)
                Index Searches: 1
                Buffers: shared hit=2
@@ -606,13 +606,13 @@ select * from multi_test_gist where a in (182, 183, 184) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 184) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=1
    Buffers: shared hit=10
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -629,17 +629,17 @@ select * from multi_test_gist where a in (182, 183, 184) and b in (1,2) order by
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 184) and b in (1,2) order by a desc, b desc;
-                                                   QUERY PLAN                                                    
------------------------------------------------------------------------------------------------------------------
- Sort  (cost=17.98..17.99 rows=3 width=8) (actual rows=3 loops=1)
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=17.98..17.99 rows=3 width=8) (actual rows=3.00 loops=1)
    Sort Key: a DESC, b DESC
    Sort Method: quicksort  Memory: 25kB
    Buffers: shared hit=10
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
          Recheck Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Heap Blocks: exact=1
          Buffers: shared hit=10
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
                Index Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
                Index Searches: 6
                Buffers: shared hit=9
@@ -657,13 +657,13 @@ select * from multi_test_gist where a in (182, 183, 245) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 245) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,245}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=2
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,245}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -681,13 +681,13 @@ select * from multi_test_gist where a in (182, 183, 306) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 306) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,306}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=2
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,306}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -705,13 +705,13 @@ select * from multi_test_gist where a in (3,4,5) and b > 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b > 0;
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -730,17 +730,17 @@ order by a desc, b desc;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b > 0
 order by a desc, b desc;
-                                                   QUERY PLAN                                                   
-----------------------------------------------------------------------------------------------------------------
- Sort  (cost=11.51..11.51 rows=3 width=8) (actual rows=3 loops=1)
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=11.51..11.51 rows=3 width=8) (actual rows=3.00 loops=1)
    Sort Key: a DESC, b DESC
    Sort Method: quicksort  Memory: 25kB
    Buffers: shared hit=7
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3.00 loops=1)
          Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
          Heap Blocks: exact=1
          Buffers: shared hit=7
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3 loops=1)
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3.00 loops=1)
                Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
                Index Searches: 3
                Buffers: shared hit=6
@@ -796,13 +796,13 @@ select * from multi_test_gist where a in (3,4,5) and b >= 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b >= 0;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -860,17 +860,17 @@ order by a desc, b desc;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b >= 0
 order by a desc, b desc;
-                                                    QUERY PLAN                                                    
-------------------------------------------------------------------------------------------------------------------
- Sort  (cost=32.63..32.73 rows=42 width=8) (actual rows=42 loops=1)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=32.63..32.73 rows=42 width=8) (actual rows=42.00 loops=1)
    Sort Key: a DESC, b DESC
-   Sort Method: quicksort  Memory: 25kB
+   Sort Method: quicksort  Memory: 26kB
    Buffers: shared hit=7
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42.00 loops=1)
          Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
          Heap Blocks: exact=1
          Buffers: shared hit=7
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42 loops=1)
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42.00 loops=1)
                Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
                Index Searches: 3
                Buffers: shared hit=6
@@ -884,12 +884,12 @@ select * from multi_test_gist where a in (3,4,5) and b < 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 0;
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (b < 0)
-   Index Searches: 1
    Filter: (a = ANY ('{3,4,5}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=40
 (5 rows)
 
@@ -901,12 +901,12 @@ select * from multi_test_gist where a in (3,4,5) and b <= -1;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b <= -1;
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (b <= '-1'::integer)
-   Index Searches: 1
    Filter: (a = ANY ('{3,4,5}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=1
 (5 rows)
 
@@ -920,16 +920,16 @@ order by a desc, b desc;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 0
 order by a desc, b desc;
-                                                       QUERY PLAN                                                        
--------------------------------------------------------------------------------------------------------------------------
- Sort  (cost=4.18..4.18 rows=1 width=8) (actual rows=0 loops=1)
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=4.18..4.18 rows=1 width=8) (actual rows=0.00 loops=1)
    Sort Key: a DESC, b DESC
    Sort Method: quicksort  Memory: 25kB
    Buffers: shared hit=40
-   ->  Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+   ->  Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
          Index Cond: (b < 0)
-         Index Searches: 1
          Filter: (a = ANY ('{3,4,5}'::integer[]))
+         Index Searches: 1
          Buffers: shared hit=40
 (9 rows)
 
@@ -943,16 +943,16 @@ order by a desc, b desc;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b <= -1
 order by a desc, b desc;
-                                                       QUERY PLAN                                                        
--------------------------------------------------------------------------------------------------------------------------
- Sort  (cost=4.18..4.18 rows=1 width=8) (actual rows=0 loops=1)
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=4.18..4.18 rows=1 width=8) (actual rows=0.00 loops=1)
    Sort Key: a DESC, b DESC
    Sort Method: quicksort  Memory: 25kB
    Buffers: shared hit=1
-   ->  Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+   ->  Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
          Index Cond: (b <= '-1'::integer)
-         Index Searches: 1
          Filter: (a = ANY ('{3,4,5}'::integer[]))
+         Index Searches: 1
          Buffers: shared hit=1
 (9 rows)
 
@@ -1003,13 +1003,13 @@ select * from multi_test_gist where a in (3,4,5) and b < 1;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 1;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
          Index Searches: 3
          Buffers: shared hit=6
@@ -1062,13 +1062,13 @@ select * from multi_test_gist where a in (3,4,5) and b <= 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b <= 0;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b <= 0))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b <= 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -1123,17 +1123,17 @@ order by a desc, b desc;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 1
 order by a desc, b desc;
-                                                    QUERY PLAN                                                    
-------------------------------------------------------------------------------------------------------------------
- Sort  (cost=31.87..31.97 rows=39 width=8) (actual rows=39 loops=1)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=31.87..31.97 rows=39 width=8) (actual rows=39.00 loops=1)
    Sort Key: a DESC, b DESC
    Sort Method: quicksort  Memory: 25kB
    Buffers: shared hit=7
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39.00 loops=1)
          Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
          Heap Blocks: exact=1
          Buffers: shared hit=7
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39 loops=1)
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39.00 loops=1)
                Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
                Index Searches: 3
                Buffers: shared hit=6
@@ -1188,17 +1188,17 @@ order by a desc, b desc;
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b <= 0
 order by a desc, b desc;
-                                                    QUERY PLAN                                                    
-------------------------------------------------------------------------------------------------------------------
- Sort  (cost=31.87..31.97 rows=39 width=8) (actual rows=39 loops=1)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=31.87..31.97 rows=39 width=8) (actual rows=39.00 loops=1)
    Sort Key: a DESC, b DESC
    Sort Method: quicksort  Memory: 25kB
    Buffers: shared hit=7
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39.00 loops=1)
          Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b <= 0))
          Heap Blocks: exact=1
          Buffers: shared hit=7
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39 loops=1)
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39.00 loops=1)
                Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b <= 0))
                Index Searches: 3
                Buffers: shared hit=6
@@ -1214,15 +1214,15 @@ select * from multi_test_gist where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (183) and b in (1,2,3,4,5,6,7,8,9,10,11,12);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=2.28..17.23 rows=1 width=8) (actual rows=1.00 loops=1)
    Recheck Cond: (a = 183)
    Filter: (b = ANY ('{1,2,3,4,5,6,7,8,9,10,11,12}'::integer[]))
    Rows Removed by Filter: 13
    Heap Blocks: exact=1
    Buffers: shared hit=3
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.25 rows=14 width=0) (actual rows=14.00 loops=1)
          Index Cond: (a = 183)
          Index Searches: 1
          Buffers: shared hit=2
@@ -1240,13 +1240,13 @@ select * from multi_test_gist where a in (182, 183, 184) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 184) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=1
    Buffers: shared hit=10
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,184}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -1264,13 +1264,13 @@ select * from multi_test_gist where a in (182, 183, 245) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 245) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,245}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=2
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,245}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -1288,13 +1288,13 @@ select * from multi_test_gist where a in (182, 183, 306) and b in (1,2);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (182, 183, 306) and b in (1,2);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=12.95..17.96 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{182,183,306}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
    Heap Blocks: exact=2
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..12.95 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{182,183,306}'::integer[])) AND (b = ANY ('{1,2}'::integer[])))
          Index Searches: 6
          Buffers: shared hit=9
@@ -1312,13 +1312,13 @@ select * from multi_test_gist where a in (3,4,5) and b > 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b > 0;
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.47..11.48 rows=3 width=8) (actual rows=3.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.47 rows=3 width=0) (actual rows=3.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b > 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -1374,13 +1374,13 @@ select * from multi_test_gist where a in (3,4,5) and b >= 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b >= 0;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.87..31.49 rows=42 width=8) (actual rows=42.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.86 rows=42 width=0) (actual rows=42.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b >= 0))
          Index Searches: 3
          Buffers: shared hit=6
@@ -1394,12 +1394,12 @@ select * from multi_test_gist where a in (3,4,5) and b < 0;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 0;
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (b < 0)
-   Index Searches: 1
    Filter: (a = ANY ('{3,4,5}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=40
 (5 rows)
 
@@ -1450,13 +1450,13 @@ select * from multi_test_gist where a in (3,4,5) and b < 1;
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (3,4,5) and b < 1;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.84..30.84 rows=39 width=8) (actual rows=39.00 loops=1)
    Recheck Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.83 rows=39 width=0) (actual rows=39.00 loops=1)
          Index Cond: ((a = ANY ('{3,4,5}'::integer[])) AND (b < 1))
          Index Searches: 3
          Buffers: shared hit=6
@@ -1475,12 +1475,12 @@ select * from multi_test_gist where a in (180,345) and a in (230, 300);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a in (180,345) and a in (230, 300);
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=8.63..10.65 rows=1 width=8) (actual rows=0 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=8.63..10.65 rows=1 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a = ANY ('{180,345}'::integer[])) AND (a = ANY ('{230,300}'::integer[])))
    Buffers: shared hit=4
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..8.63 rows=1 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..8.63 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a = ANY ('{180,345}'::integer[])) AND (a = ANY ('{230,300}'::integer[])))
          Index Searches: 4
          Buffers: shared hit=4
@@ -1501,10 +1501,10 @@ select * from multi_test_gist where a = any('{180,345}'::bigint[]) and a = any('
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a = any('{180,345}'::bigint[]) and a = any('{230,300}'::bigint[]);
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
- Seq Scan on multi_test_gist  (cost=0.00..109.00 rows=1 width=8) (actual rows=0 loops=1)
-   Disabled Nodes: 1
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Seq Scan on multi_test_gist  (cost=0.00..109.00 rows=1 width=8) (actual rows=0.00 loops=1)
+   Disabled: true
    Filter: ((a = ANY ('{180,345}'::bigint[])) AND (a = ANY ('{230,300}'::bigint[])))
    Rows Removed by Filter: 5600
    Buffers: shared hit=25
@@ -1525,15 +1525,15 @@ select * from multi_test_gist where a = any('{180,345}'::bigint[]) and a = any('
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from multi_test_gist where a = any('{180,345}'::bigint[]) and a = any('{230,300}'::integer[]);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=4.51..25.65 rows=1 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=4.51..25.65 rows=1 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: (a = ANY ('{230,300}'::integer[]))
    Filter: (a = ANY ('{180,345}'::bigint[]))
    Rows Removed by Filter: 28
    Heap Blocks: exact=2
    Buffers: shared hit=6
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..4.50 rows=28 width=0) (actual rows=28 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..4.50 rows=28 width=0) (actual rows=28.00 loops=1)
          Index Cond: (a = ANY ('{230,300}'::integer[]))
          Index Searches: 2
          Buffers: shared hit=4
@@ -1566,18 +1566,18 @@ from
 where
   a = any (array[( select array_agg(i) from a)])
   and b in (0, 1, 2, 3);
-                                                      QUERY PLAN                                                      
-----------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=95.02..95.03 rows=1 width=8) (actual rows=1 loops=1)
-   Buffers: shared hit=2478
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=95.02..95.03 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=2501
    InitPlan 1
-     ->  Aggregate  (cost=5.01..5.02 rows=1 width=32) (actual rows=1 loops=1)
-           ->  Function Scan on generate_series i  (cost=0.00..4.00 rows=400 width=4) (actual rows=400 loops=1)
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=61.13..89.68 rows=129 width=0) (actual rows=5600 loops=1)
+     ->  Aggregate  (cost=5.01..5.02 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  Function Scan on generate_series i  (cost=0.00..4.00 rows=400 width=4) (actual rows=400.00 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=61.13..89.68 rows=129 width=0) (actual rows=5600.00 loops=1)
          Recheck Cond: ((a = ANY (ARRAY[(InitPlan 1).col1])) AND (b = ANY ('{0,1,2,3}'::integer[])))
          Heap Blocks: exact=25
-         Buffers: shared hit=2478
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..61.10 rows=129 width=0) (actual rows=5600 loops=1)
+         Buffers: shared hit=2501
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..61.10 rows=129 width=0) (actual rows=5600.00 loops=1)
                Index Cond: ((a = ANY (ARRAY[(InitPlan 1).col1])) AND (b = ANY ('{0,1,2,3}'::integer[])))
                Index Searches: 1600
                Buffers: shared hit=2476
@@ -1611,18 +1611,18 @@ from
 where
   a = any (array[( select array_agg(i) from a)])
   and b < 4;
-                                                      QUERY PLAN                                                      
-----------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=54.72..54.73 rows=1 width=8) (actual rows=1 loops=1)
-   Buffers: shared hit=840
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=54.72..54.73 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=863
    InitPlan 1
-     ->  Aggregate  (cost=5.01..5.02 rows=1 width=32) (actual rows=1 loops=1)
-           ->  Function Scan on generate_series i  (cost=0.00..4.00 rows=400 width=4) (actual rows=400 loops=1)
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=20.91..49.36 rows=138 width=0) (actual rows=5600 loops=1)
+     ->  Aggregate  (cost=5.01..5.02 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  Function Scan on generate_series i  (cost=0.00..4.00 rows=400 width=4) (actual rows=400.00 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=20.91..49.36 rows=138 width=0) (actual rows=5600.00 loops=1)
          Recheck Cond: ((a = ANY (ARRAY[(InitPlan 1).col1])) AND (b < 4))
          Heap Blocks: exact=25
-         Buffers: shared hit=840
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..20.88 rows=138 width=0) (actual rows=5600 loops=1)
+         Buffers: shared hit=863
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..20.88 rows=138 width=0) (actual rows=5600.00 loops=1)
                Index Cond: ((a = ANY (ARRAY[(InitPlan 1).col1])) AND (b < 4))
                Index Searches: 400
                Buffers: shared hit=838
@@ -1658,18 +1658,18 @@ from
 where
   a = any (array[( select array_agg(i) from a)])
   and b >= 0;
-                                                      QUERY PLAN                                                      
-----------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=54.72..54.73 rows=1 width=8) (actual rows=1 loops=1)
-   Buffers: shared hit=840
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=54.72..54.73 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=863
    InitPlan 1
-     ->  Aggregate  (cost=5.01..5.02 rows=1 width=32) (actual rows=1 loops=1)
-           ->  Function Scan on generate_series i  (cost=0.00..4.00 rows=400 width=4) (actual rows=400 loops=1)
-   ->  Bitmap Heap Scan on multi_test_gist  (cost=20.91..49.36 rows=138 width=0) (actual rows=5600 loops=1)
+     ->  Aggregate  (cost=5.01..5.02 rows=1 width=32) (actual rows=1.00 loops=1)
+           ->  Function Scan on generate_series i  (cost=0.00..4.00 rows=400 width=4) (actual rows=400.00 loops=1)
+   ->  Bitmap Heap Scan on multi_test_gist  (cost=20.91..49.36 rows=138 width=0) (actual rows=5600.00 loops=1)
          Recheck Cond: ((a = ANY (ARRAY[(InitPlan 1).col1])) AND (b >= 0))
          Heap Blocks: exact=25
-         Buffers: shared hit=840
-         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..20.88 rows=138 width=0) (actual rows=5600 loops=1)
+         Buffers: shared hit=863
+         ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..20.88 rows=138 width=0) (actual rows=5600.00 loops=1)
                Index Cond: ((a = ANY (ARRAY[(InitPlan 1).col1])) AND (b >= 0))
                Index Searches: 400
                Buffers: shared hit=838
@@ -1699,12 +1699,12 @@ execute is_null_confusion ('{1,2,3}');
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
 execute is_null_confusion ('{1,2,3}');
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (a IS NULL)
-   Index Searches: 1
    Filter: (a = ANY ('{1,2,3}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=40
 (5 rows)
 
@@ -1723,13 +1723,14 @@ execute is_not_null_confusion (NULL);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
 execute is_not_null_confusion (NULL);
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=2.16..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=2.16..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a = ANY (NULL::integer[])) AND (a IS NOT NULL))
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.16 rows=1 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.16 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a = ANY (NULL::integer[])) AND (a IS NOT NULL))
-(4 rows)
+         Index Searches: 0
+(5 rows)
 
 deallocate is_not_null_confusion;
 -- Same again, but with a NULL array alone
@@ -1746,13 +1747,14 @@ execute null_array_confusion (NULL);
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
 execute null_array_confusion (NULL);
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=2.16..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=2.16..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: (a = ANY (NULL::integer[]))
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.15 rows=1 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..2.15 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: (a = ANY (NULL::integer[]))
-(4 rows)
+         Index Searches: 0
+(5 rows)
 
 deallocate null_array_confusion;
 prepare null_array_elements_coverage as
@@ -1797,13 +1799,13 @@ execute null_array_elements_coverage ('{1, NULL, 2}');
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 2 buffer hits
 execute null_array_elements_coverage ('{1, NULL, 2}');
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=6.65..27.76 rows=28 width=8) (actual rows=28 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=6.65..27.76 rows=28 width=8) (actual rows=28.00 loops=1)
    Recheck Cond: (a = ANY ('{1,NULL,2}'::integer[]))
    Heap Blocks: exact=1
    Buffers: shared hit=5
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.64 rows=28 width=0) (actual rows=28 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..6.64 rows=28 width=0) (actual rows=28.00 loops=1)
          Index Cond: (a = ANY ('{1,NULL,2}'::integer[]))
          Index Searches: 2
          Buffers: shared hit=4
@@ -1816,13 +1818,14 @@ execute null_array_elements_coverage ('{NULL,NULL,NULL, NULL, NULL}');
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 0 buffer hits (contradictory qual)
 execute null_array_elements_coverage ('{NULL,NULL,NULL, NULL, NULL}');
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.78..12.79 rows=1 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.78..12.79 rows=1 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: (a = ANY ('{NULL,NULL,NULL,NULL,NULL}'::integer[]))
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.78 rows=1 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.78 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: (a = ANY ('{NULL,NULL,NULL,NULL,NULL}'::integer[]))
-(4 rows)
+         Index Searches: 0
+(5 rows)
 
 deallocate null_array_elements_coverage;
 -- (March 9)
@@ -1845,12 +1848,12 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a = 181;
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
          Index Searches: 5
          Buffers: shared hit=8
@@ -1872,12 +1875,12 @@ from multi_test_gist
 where
   a = 181
   and a in (1, 99, 182, 183, 184);
-                                                QUERY PLAN                                                 
------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 181))
          Index Searches: 5
          Buffers: shared hit=8
@@ -1913,13 +1916,13 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a = 182;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
    Heap Blocks: exact=1
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
          Index Searches: 5
          Buffers: shared hit=8
@@ -1955,13 +1958,13 @@ from multi_test_gist
 where
   a = 182
   and a in (1, 99, 182, 183, 184);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
    Heap Blocks: exact=1
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a = 182))
          Index Searches: 5
          Buffers: shared hit=8
@@ -1986,12 +1989,12 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a > 184;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 184))
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 184))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2013,12 +2016,12 @@ from multi_test_gist
 where
   a > 184
   and a in (1, 99, 182, 183, 184);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a > 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a > 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2054,13 +2057,13 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a > 183;
-                                                 QUERY PLAN                                                  
--------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14 loops=1)
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 183))
    Heap Blocks: exact=1
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a > 183))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2096,13 +2099,13 @@ from multi_test_gist
 where
   a > 183
   and a in (1, 99, 182, 183, 184);
-                                                 QUERY PLAN                                                  
--------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14 loops=1)
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a > 183) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
    Heap Blocks: exact=1
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a > 183) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2127,12 +2130,12 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a >= 185;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 185))
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 185))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2154,12 +2157,12 @@ from multi_test_gist
 where
   a >= 185
   and a in (1, 99, 182, 183, 184);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=0.00 loops=1)
    Recheck Cond: ((a >= 185) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
    Buffers: shared hit=8
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=0.00 loops=1)
          Index Cond: ((a >= 185) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2195,13 +2198,13 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a >= 184;
-                                                 QUERY PLAN                                                  
--------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14 loops=1)
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 184))
    Heap Blocks: exact=1
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a >= 184))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2237,13 +2240,13 @@ from multi_test_gist
 where
   a >= 184
   and a in (1, 99, 182, 183, 184);
-                                                 QUERY PLAN                                                  
--------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14 loops=1)
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=11.15..35.22 rows=38 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a >= 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
    Heap Blocks: exact=1
    Buffers: shared hit=9
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..11.14 rows=38 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a >= 184) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
          Index Searches: 5
          Buffers: shared hit=8
@@ -2268,12 +2271,12 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a < 1;
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (a < 1)
-   Index Searches: 1
    Filter: (a = ANY ('{1,99,182,183,184}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=2
 (5 rows)
 
@@ -2293,12 +2296,12 @@ from multi_test_gist
 where
   a < 1
   and a in (1, 99, 182, 183, 184);
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (a < 1)
-   Index Searches: 1
    Filter: (a = ANY ('{1,99,182,183,184}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=2
 (5 rows)
 
@@ -2332,13 +2335,13 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a < 2;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a < 2))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a < 2))
          Index Searches: 5
          Buffers: shared hit=6
@@ -2374,13 +2377,13 @@ from multi_test_gist
 where
   a < 2
   and a in (1, 99, 182, 183, 184);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a < 2) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a < 2) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
          Index Searches: 5
          Buffers: shared hit=6
@@ -2405,12 +2408,12 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a <= 0;
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (a <= 0)
-   Index Searches: 1
    Filter: (a = ANY ('{1,99,182,183,184}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=1
 (5 rows)
 
@@ -2430,12 +2433,12 @@ from multi_test_gist
 where
   a <= 0
   and a in (1, 99, 182, 183, 184);
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (a <= 0)
-   Index Searches: 1
    Filter: (a = ANY ('{1,99,182,183,184}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=1
 (5 rows)
 
@@ -2469,13 +2472,13 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a <= 1;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a <= 1))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,183,184}'::integer[])) AND (a <= 1))
          Index Searches: 5
          Buffers: shared hit=6
@@ -2511,13 +2514,13 @@ from multi_test_gist
 where
   a <= 1
   and a in (1, 99, 182, 183, 184);
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=10.79..12.81 rows=1 width=8) (actual rows=14.00 loops=1)
    Recheck Cond: ((a <= 1) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
    Heap Blocks: exact=1
    Buffers: shared hit=7
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..10.79 rows=1 width=0) (actual rows=14.00 loops=1)
          Index Cond: ((a <= 1) AND (a = ANY ('{1,99,182,183,184}'::integer[])))
          Index Searches: 5
          Buffers: shared hit=6
@@ -2541,12 +2544,12 @@ from multi_test_gist
 where
   a in (1, 99, 182, 183, 184)
   and a > 1000;
-                                                    QUERY PLAN                                                     
--------------------------------------------------------------------------------------------------------------------
- Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0 loops=1)
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Index Scan using multi_test_gist_idx on multi_test_gist  (cost=0.15..4.17 rows=1 width=8) (actual rows=0.00 loops=1)
    Index Cond: (a > 1000)
-   Index Searches: 1
    Filter: (a = ANY ('{1,99,182,183,184}'::integer[]))
+   Index Searches: 1
    Buffers: shared hit=1
 (5 rows)
 
@@ -2623,13 +2626,13 @@ from multi_test_gist
 where
   a in (1, 99, 182, 184)
   and a < 188;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on multi_test_gist  (cost=8.88..30.06 rows=26 width=8) (actual rows=56 loops=1)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on multi_test_gist  (cost=8.88..30.06 rows=26 width=8) (actual rows=56.00 loops=1)
    Recheck Cond: ((a = ANY ('{1,99,182,184}'::integer[])) AND (a < 188))
    Heap Blocks: exact=3
    Buffers: shared hit=11
-   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..8.87 rows=26 width=0) (actual rows=56 loops=1)
+   ->  Bitmap Index Scan on multi_test_gist_idx  (cost=0.00..8.87 rows=26 width=0) (actual rows=56.00 loops=1)
          Index Cond: ((a = ANY ('{1,99,182,184}'::integer[])) AND (a < 188))
          Index Searches: 4
          Buffers: shared hit=8

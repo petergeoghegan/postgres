@@ -73,12 +73,12 @@ set enable_indexscan to off;
 
 -- Don't change cost of this compared to master:
 select count(*) from cost_of_skipping where ten between 8 and 9;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 8 and 9;
 
 -- Don't change cost of this compared to master:
 select count(*) from cost_of_skipping where ten between 9 and 10;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 9 and 10;
 
 -------------------------------------------------------------------------------
@@ -91,7 +91,7 @@ from cost_of_skipping
 where
   ten between 1 and 1
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -103,7 +103,7 @@ from cost_of_skipping
 where
   ten in (1)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -116,7 +116,7 @@ from cost_of_skipping
 where
   ten between 1 and 2
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -128,7 +128,7 @@ from cost_of_skipping
 where
   ten in (1, 2)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -141,7 +141,7 @@ from cost_of_skipping
 where
   ten between 1 and 3
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -153,7 +153,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -166,7 +166,7 @@ from cost_of_skipping
 where
   ten between 1 and 4
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -178,7 +178,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3, 4)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -191,7 +191,7 @@ from cost_of_skipping
 where
   ten between 1 and 5
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -203,7 +203,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -216,7 +216,7 @@ from cost_of_skipping
 where
   ten between 1 and 6
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -228,7 +228,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -241,7 +241,7 @@ from cost_of_skipping
 where
   ten between 1 and 7
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -253,7 +253,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -266,7 +266,7 @@ from cost_of_skipping
 where
   ten between 1 and 8
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -278,7 +278,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7, 8)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -291,7 +291,7 @@ from cost_of_skipping
 where
   ten between 1 and 9
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -303,7 +303,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7, 8, 9)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -316,7 +316,7 @@ from cost_of_skipping
 where
   ten between 1 and 10
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -328,7 +328,7 @@ from cost_of_skipping
 where
   ten in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
   and hundred = 4 and thousand = 35 and ten_thousand = 36 and i = 441;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_of_skipping
 where
@@ -341,12 +341,12 @@ where
 
 -- Don't change cost of this compared to master, returns no rows:
 select count(*) from cost_of_skipping where ten between 9000 and 10000;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 9000 and 10000;
 
 -- Good equality case using skip arrays:
 select count(*) from cost_of_skipping where thousand = 666;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where thousand = 666;
 
 -- Simulated good equality case skip scan using regular SAOPs:
@@ -374,36 +374,36 @@ thousand = 666;
 
 -- Execute simulated good equality case skip scan using regular SAOPs:
 execute simulated_good_skip_scan;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 -- Expect parity with master for this case, while letting it serve as a guide
 -- for the costs we ought to expect for prior true skip original:
 execute simulated_good_skip_scan;
 
 -- Good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping where ten between 1 and 2 and hundred = 55;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 1 and 2 and hundred = 55;
 
 -- Simulated good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping where ten in (1, 2) and hundred = 55;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten in (1, 2) and hundred = 55;
 
 -- Other good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping where ten between 1 and 8 and hundred = 55;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten between 1 and 8 and hundred = 55;
 
 -- Simulated other good case using skip arrays, inequalities to make skip array:
 select count(*) from cost_of_skipping
 where ten in (1, 2, 3, 4, 5, 6, 7, 8) and hundred = 55;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping
 where ten in (1, 2, 3, 4, 5, 6, 7, 8) and hundred = 55;
 
 -- Full index scan using skip arrays:
 select count(*) from cost_of_skipping where i = 123456;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where i = 123456;
 
 -- Simulated full index scan using regular SAOPs:
@@ -437,7 +437,7 @@ i = 123456;
 execute simulated_full_index_scan;
 -- Expect parity with master for this case, while letting it serve as a guide
 -- for the costs we ought to expect for prior true skip original:
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute simulated_full_index_scan;
 
 -- Index-only scan:
@@ -452,12 +452,12 @@ set enable_indexscan to off;
 -- First query (problematic one, had way too low cost of ~7 before I fixed
 -- this bug):
 select count(*) from cost_of_skipping where ten = 1                               and thousand = 33;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten = 1                               and thousand = 33;
 
 -- Second query:
 select count(*) from cost_of_skipping where ten = 1 and hundred between 0 and 100 and thousand = 33;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from cost_of_skipping where ten = 1 and hundred between 0 and 100 and thousand = 33;
 
 -- Low cardinality leading expression column:
@@ -466,7 +466,7 @@ analyze cost_of_skipping; -- need this for stats on expression
 
 -- This should be fast/cheap:
 select * from cost_of_skipping where i = 123456;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from cost_of_skipping where i = 123456;
 
 drop index expression_idx;
@@ -475,7 +475,7 @@ create index partial_idx on cost_of_skipping (ten, i) where hundred = 34;
 
 -- This should be fast/cheap:
 select * from cost_of_skipping where hundred = 34 and i = 123456;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from cost_of_skipping where hundred = 34 and i = 123456;
 
 ----------------------------------------------------------------------------
@@ -498,7 +498,7 @@ create index wrong on dont_pick_wrong_index(low_cardinality_nothing, i);
 
 -- We had better not pick dont_pick_me here:
 select * from dont_pick_wrong_index where i = 55562;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from dont_pick_wrong_index where i = 55562;
 
 -------------------------------
@@ -508,7 +508,7 @@ select * from dont_pick_wrong_index where i = 55562;
 -- Taken from: https://postgr.es/m/TYWPR01MB10982A413E0EC4088E78C0E11B1A62@TYWPR01MB10982.jpnprd01.prod.outlook.com
 
 -- prepare
-set default_statistics_target=200;
+set default_statistics_target=10000;
 set client_min_messages=error;
 DROP TABLE IF EXISTS ikeda_test;
 CREATE EXTENSION if not exists pg_prewarm;
@@ -531,7 +531,7 @@ SELECT pg_prewarm('ikeda_test');
 
 -- seqscan
 SET enable_seqscan = on;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 SET enable_seqscan = off;
 
@@ -540,25 +540,25 @@ SET enable_indexscan = on;
 
 CREATE INDEX idx_id3 ON ikeda_test(id3);
 SELECT pg_prewarm('idx_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id3;
 
 CREATE INDEX idx_id1_id3 ON ikeda_test(id1, id3);
 SELECT pg_prewarm('idx_id1_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id1_id3;
 
 CREATE INDEX idx_id2_id3 ON ikeda_test(id2, id3);
 SELECT pg_prewarm('idx_id2_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id2_id3;
 
 CREATE INDEX idx_id1_id2_id3 ON ikeda_test(id1, id2, id3);
 SELECT pg_prewarm('idx_id1_id2_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id1_id2_id3;
 
@@ -569,25 +569,25 @@ SET enable_bitmapscan = on;
 
 CREATE INDEX idx_id3 ON ikeda_test(id3);
 SELECT pg_prewarm('idx_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id3;
 
 CREATE INDEX idx_id1_id3 ON ikeda_test(id1, id3);
 SELECT pg_prewarm('idx_id1_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id1_id3;
 
 CREATE INDEX idx_id2_id3 ON ikeda_test(id2, id3);
 SELECT pg_prewarm('idx_id2_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id2_id3;
 
 CREATE INDEX idx_id1_id2_id3 ON ikeda_test(id1, id2, id3);
 SELECT pg_prewarm('idx_id1_id2_id3');
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 SELECT * FROM ikeda_test WHERE id3 = 101;
 DROP INDEX idx_id1_id2_id3;
 
@@ -616,33 +616,33 @@ insert into demo_pachot select a, b
 vacuum analyze demo_pachot;
 
 select * from demo_pachot where a = 50 limit 10;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a = 50 limit 10;
 
 select * from demo_pachot where b = 5000 limit 10;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where b = 5000 limit 10;
 
 select * from demo_pachot where a = 50 and b = 5000 limit 10;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a = 50 and b = 5000 limit 10;
 
 select * from demo_pachot where a = 50 and b > 5000 limit 10;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a = 50 and b > 5000 limit 10;
 
 select * from demo_pachot where a > 50 and b = 5000 limit 10;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a > 50 and b = 5000 limit 10;
 
 -- Per https://github.com/yugabyte/yugabyte-db/issues/11965
 select * from demo_pachot where a > 50 and b > 5000 limit 1000;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where a > 50 and b > 5000 limit 1000;
 
 -- (September 26) The cost of this should not change at all, relative to master:
 select * from demo_pachot where (a,b) > (50, 5000) limit 1000;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select * from demo_pachot where (a,b) > (50, 5000) limit 1000;
 
 ----------------------------------------------
@@ -671,7 +671,7 @@ from cost_multirange_medcard
 where
   a = 42
   and c = 99609;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_multirange_medcard
 where
@@ -685,7 +685,7 @@ where
   a = 42
   and b between 0 and 1_000_000
   and c = 99609;
-EXPLAIN (ANALYZE, BUFFERS, SUMMARY OFF)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select *
 from cost_multirange_medcard
 where

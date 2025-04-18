@@ -74,18 +74,19 @@ select count(*) from small_sales_mdam_paper where sdate = '1995-01-02';
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from small_sales_mdam_paper where sdate = '1995-01-02';
-                                                       QUERY PLAN                                                        
--------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=3661.54..3661.55 rows=1 width=8) (actual rows=1 loops=1)
-   Buffers: shared hit=103
-   ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=202.54..3636.54 rows=10000 width=0) (actual rows=10000 loops=1)
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=3651.14..3651.15 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=221
+   ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=192.14..3626.14 rows=10000 width=0) (actual rows=10000.00 loops=1)
          Recheck Cond: (sdate = '01-02-1995'::date)
-         Buffers: shared hit=103
-         ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..200.04 rows=10000 width=0) (actual rows=10000 loops=1)
+         Heap Blocks: exact=120
+         Buffers: shared hit=221
+         ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..189.64 rows=10000 width=0) (actual rows=10000.00 loops=1)
                Index Cond: (sdate = '01-02-1995'::date)
                Index Searches: 11
                Buffers: shared hit=101
-(9 rows)
+(10 rows)
 
 -- This very similar case was _not_ regressed when this happened, presumably
 -- because the lack of matching tuples accidentally avoids the confusion:
@@ -98,14 +99,14 @@ select count(*) from small_sales_mdam_paper where sdate = '1995-01-01';
 
 EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 select count(*) from small_sales_mdam_paper where sdate = '1995-01-01';
-                                                  QUERY PLAN                                                  
---------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=31.18..31.19 rows=1 width=8) (actual rows=1 loops=1)
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=28.75..28.76 rows=1 width=8) (actual rows=1.00 loops=1)
    Buffers: shared hit=33
-   ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=29.16..31.17 rows=1 width=0) (actual rows=0 loops=1)
+   ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=26.73..28.74 rows=1 width=0) (actual rows=0.00 loops=1)
          Recheck Cond: (sdate = '01-01-1995'::date)
          Buffers: shared hit=33
-         ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..29.16 rows=1 width=0) (actual rows=0 loops=1)
+         ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..26.73 rows=1 width=0) (actual rows=0.00 loops=1)
                Index Cond: (sdate = '01-01-1995'::date)
                Index Searches: 11
                Buffers: shared hit=33
@@ -154,18 +155,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- win: patch 243, master 23
 execute first;
                                                                                          QUERY PLAN                                                                                         
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=1087.22..1093.21 rows=239 width=44) (actual rows=24 loops=1)
+ GroupAggregate  (cost=1034.72..1040.71 rows=239 width=44) (actual rows=24.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=264
-   ->  Sort  (cost=1087.22..1087.82 rows=240 width=23) (actual rows=240 loops=1)
+   ->  Sort  (cost=1034.72..1035.32 rows=240 width=23) (actual rows=240.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 34kB
          Buffers: shared hit=264
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=670.06..1077.73 rows=240 width=23) (actual rows=240 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=617.56..1025.23 rows=240 width=23) (actual rows=240.00 loops=1)
                Recheck Cond: ((sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                Heap Blocks: exact=21
                Buffers: shared hit=264
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..670.00 rows=240 width=0) (actual rows=240 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..617.50 rows=240 width=0) (actual rows=240.00 loops=1)
                      Index Cond: ((sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                      Index Searches: 81
                      Buffers: shared hit=243
@@ -215,18 +216,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- tiny win (24 patch vs 25 
 execute second;
                                                                                                 QUERY PLAN                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=105.64..106.24 rows=24 width=44) (actual rows=24 loops=1)
+ GroupAggregate  (cost=105.64..106.24 rows=24 width=44) (actual rows=24.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=36
-   ->  Sort  (cost=105.64..105.70 rows=24 width=23) (actual rows=24 loops=1)
+   ->  Sort  (cost=105.64..105.70 rows=24 width=23) (actual rows=24.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 25kB
          Buffers: shared hit=36
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=58.57..105.09 rows=24 width=23) (actual rows=24 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=58.57..105.09 rows=24 width=23) (actual rows=24.00 loops=1)
                Recheck Cond: ((dept = 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                Heap Blocks: exact=12
                Buffers: shared hit=36
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..58.56 rows=24 width=0) (actual rows=24 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..58.56 rows=24 width=0) (actual rows=24.00 loops=1)
                      Index Cond: ((dept = 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                      Index Searches: 8
                      Buffers: shared hit=24
@@ -279,10 +280,10 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- backwards scan, master no
 execute third;
                                                                                           QUERY PLAN                                                                                           
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=0.42..107.08 rows=24 width=48) (actual rows=24 loops=1)
+ GroupAggregate  (cost=0.42..107.08 rows=24 width=48) (actual rows=24.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=52
-   ->  Index Scan Backward using small_mdam_idx on small_sales_mdam_paper  (cost=0.42..106.54 rows=24 width=27) (actual rows=24 loops=1)
+   ->  Index Scan Backward using small_mdam_idx on small_sales_mdam_paper  (cost=0.42..106.54 rows=24 width=27) (actual rows=24.00 loops=1)
          Index Cond: ((dept = 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
          Index Searches: 9
          Buffers: shared hit=52
@@ -406,18 +407,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- close to parity, but we l
 execute fourth;
                                                                                                 QUERY PLAN                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=411.61..414.01 rows=96 width=44) (actual rows=96 loops=1)
+ GroupAggregate  (cost=411.61..414.01 rows=96 width=44) (actual rows=96.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=147
-   ->  Sort  (cost=411.61..411.85 rows=96 width=23) (actual rows=96 loops=1)
+   ->  Sort  (cost=411.61..411.85 rows=96 width=23) (actual rows=96.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 28kB
          Buffers: shared hit=147
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=232.26..408.45 rows=96 width=23) (actual rows=96 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=232.26..408.45 rows=96 width=23) (actual rows=96.00 loops=1)
                Recheck Cond: ((dept = 7) AND (sdate >= '01-15-1995'::date) AND (sdate <= '01-30-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                Heap Blocks: exact=51
                Buffers: shared hit=147
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..232.24 rows=96 width=0) (actual rows=96 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..232.24 rows=96 width=0) (actual rows=96.00 loops=1)
                      Index Cond: ((dept = 7) AND (sdate >= '01-15-1995'::date) AND (sdate <= '01-30-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                      Index Searches: 32
                      Buffers: shared hit=96
@@ -467,18 +468,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- much larger win now (72 p
 execute fifth;
                                                                                                          QUERY PLAN                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=311.37..313.17 rows=72 width=44) (actual rows=24 loops=1)
+ GroupAggregate  (cost=311.37..313.17 rows=72 width=44) (actual rows=24.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=88
-   ->  Sort  (cost=311.37..311.55 rows=72 width=23) (actual rows=72 loops=1)
+   ->  Sort  (cost=311.37..311.55 rows=72 width=23) (actual rows=72.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 27kB
          Buffers: shared hit=88
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=173.88..309.15 rows=72 width=23) (actual rows=72 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=173.88..309.15 rows=72 width=23) (actual rows=72.00 loops=1)
                Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                Heap Blocks: exact=16
                Buffers: shared hit=88
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..173.86 rows=72 width=0) (actual rows=72 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..173.86 rows=72 width=0) (actual rows=72.00 loops=1)
                      Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                      Index Searches: 24
                      Buffers: shared hit=72
@@ -792,18 +793,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute sixth;
                                                                        QUERY PLAN                                                                       
 --------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=2872.67..2892.83 rows=803 width=44) (actual rows=270 loops=1)
+ GroupAggregate  (cost=2872.67..2892.83 rows=803 width=44) (actual rows=270.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=1000
-   ->  Sort  (cost=2872.67..2874.69 rows=810 width=23) (actual rows=810 loops=1)
+   ->  Sort  (cost=2872.67..2874.69 rows=810 width=23) (actual rows=810.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 57kB
          Buffers: shared hit=1000
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=1709.58..2833.54 rows=810 width=23) (actual rows=810 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=1709.58..2833.54 rows=810 width=23) (actual rows=810.00 loops=1)
                Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                Heap Blocks: exact=183
                Buffers: shared hit=1000
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..1709.38 rows=810 width=0) (actual rows=810 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..1709.38 rows=810 width=0) (actual rows=810.00 loops=1)
                      Index Cond: ((dept >= 5) AND (dept <= 7) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                      Index Searches: 271
                      Buffers: shared hit=817
@@ -835,18 +836,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- big win now (18 patch vs 
 execute seventh;
                                                                                        QUERY PLAN                                                                                        
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=79.40..79.80 rows=18 width=44) (actual rows=6 loops=1)
+ GroupAggregate  (cost=79.40..79.80 rows=18 width=44) (actual rows=6.00 loops=1)
    Group Key: item_class, store
    Buffers: shared hit=22
-   ->  Sort  (cost=79.40..79.44 rows=18 width=23) (actual rows=18 loops=1)
+   ->  Sort  (cost=79.40..79.44 rows=18 width=23) (actual rows=18.00 loops=1)
          Sort Key: item_class, store
          Sort Method: quicksort  Memory: 25kB
          Buffers: shared hit=22
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=43.92..79.02 rows=18 width=23) (actual rows=18 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=43.92..79.02 rows=18 width=23) (actual rows=18.00 loops=1)
                Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate = '01-10-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                Heap Blocks: exact=4
                Buffers: shared hit=22
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..43.92 rows=18 width=0) (actual rows=18 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..43.92 rows=18 width=0) (actual rows=18.00 loops=1)
                      Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate = '01-10-1995'::date) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                      Index Searches: 6
                      Buffers: shared hit=18
@@ -1147,18 +1148,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute eighth;
                                                               QUERY PLAN                                                               
 ---------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=1119.82..1126.56 rows=269 width=44) (actual rows=270 loops=1)
+ GroupAggregate  (cost=1105.21..1111.95 rows=269 width=44) (actual rows=270.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=426
-   ->  Sort  (cost=1119.82..1120.50 rows=270 width=23) (actual rows=270 loops=1)
+   ->  Sort  (cost=1105.21..1105.89 rows=270 width=23) (actual rows=270.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 35kB
          Buffers: shared hit=426
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=656.74..1108.92 rows=270 width=23) (actual rows=270 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=642.13..1094.31 rows=270 width=23) (actual rows=270.00 loops=1)
                Recheck Cond: ((dept = 6) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                Heap Blocks: exact=153
                Buffers: shared hit=426
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..656.67 rows=270 width=0) (actual rows=270 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..642.06 rows=270 width=0) (actual rows=270.00 loops=1)
                      Index Cond: ((dept = 6) AND (item_class = ANY ('{1,15}'::integer[])) AND (store = ANY ('{15,25,45}'::integer[])))
                      Index Searches: 91
                      Buffers: shared hit=273
@@ -1207,18 +1208,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute ninth;
                                                                                          QUERY PLAN                                                                                         
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=1087.22..1093.21 rows=239 width=44) (actual rows=24 loops=1)
+ GroupAggregate  (cost=1034.72..1040.71 rows=239 width=44) (actual rows=24.00 loops=1)
    Group Key: sdate, item_class, store
    Buffers: shared hit=407
-   ->  Sort  (cost=1087.22..1087.82 rows=240 width=23) (actual rows=240 loops=1)
+   ->  Sort  (cost=1034.72..1035.32 rows=240 width=23) (actual rows=240.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 34kB
          Buffers: shared hit=407
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=670.06..1077.73 rows=240 width=23) (actual rows=240 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=617.56..1025.23 rows=240 width=23) (actual rows=240.00 loops=1)
                Recheck Cond: ((sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{5,10,15}'::integer[])) AND (store = ANY ('{25,45}'::integer[])))
                Heap Blocks: exact=14
                Buffers: shared hit=407
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..670.00 rows=240 width=0) (actual rows=240 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..617.50 rows=240 width=0) (actual rows=240.00 loops=1)
                      Index Cond: ((sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class = ANY ('{5,10,15}'::integer[])) AND (store = ANY ('{25,45}'::integer[])))
                      Index Searches: 131
                      Buffers: shared hit=393
@@ -1910,21 +1911,21 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- Nice win: 83 hits for pat
 execute tenth;
                                                                                                      QUERY PLAN                                                                                                     
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=2656.59..2705.60 rows=1941 width=44) (actual rows=660 loops=1)
+ GroupAggregate  (cost=2656.59..2705.60 rows=1941 width=44) (actual rows=660.00 loops=1)
    Group Key: sdate, item_class, store
-   Buffers: shared hit=142
-   ->  Sort  (cost=2656.59..2661.54 rows=1980 width=23) (actual rows=1980 loops=1)
+   Buffers: shared hit=150
+   ->  Sort  (cost=2656.59..2661.54 rows=1980 width=23) (actual rows=1980.00 loops=1)
          Sort Key: sdate, item_class, store
          Sort Method: quicksort  Memory: 128kB
-         Buffers: shared hit=142
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=474.04..2548.17 rows=1980 width=23) (actual rows=1980 loops=1)
+         Buffers: shared hit=150
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=474.05..2548.17 rows=1980 width=23) (actual rows=1980.00 loops=1)
                Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store >= 15) AND (store <= 25))
                Heap Blocks: exact=59
-               Buffers: shared hit=142
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..473.55 rows=1980 width=0) (actual rows=1980 loops=1)
+               Buffers: shared hit=150
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..473.55 rows=1980 width=0) (actual rows=1980.00 loops=1)
                      Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store >= 15) AND (store <= 25))
-                     Index Searches: 7
-                     Buffers: shared hit=83
+                     Index Searches: 11
+                     Buffers: shared hit=91
 (15 rows)
 
 deallocate tenth;
@@ -2007,21 +2008,21 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- nice win, 89 for patch vs
 execute eleventh;
                                                                                            QUERY PLAN                                                                                            
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=751.25..755.09 rows=163 width=44) (actual rows=60 loops=1)
+ GroupAggregate  (cost=751.25..755.09 rows=163 width=44) (actual rows=60.00 loops=1)
    Group Key: sdate, item_class
-   Buffers: shared hit=90
-   ->  Sort  (cost=751.25..751.70 rows=180 width=23) (actual rows=180 loops=1)
+   Buffers: shared hit=96
+   ->  Sort  (cost=751.25..751.70 rows=180 width=23) (actual rows=180.00 loops=1)
          Sort Key: sdate, item_class
          Sort Method: quicksort  Memory: 32kB
-         Buffers: shared hit=90
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=428.14..744.50 rows=180 width=23) (actual rows=180 loops=1)
+         Buffers: shared hit=96
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=428.15..744.50 rows=180 width=23) (actual rows=180.00 loops=1)
                Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = 10))
                Heap Blocks: exact=5
-               Buffers: shared hit=90
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..428.10 rows=180 width=0) (actual rows=180 loops=1)
+               Buffers: shared hit=96
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..428.10 rows=180 width=0) (actual rows=180.00 loops=1)
                      Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = 10))
-                     Index Searches: 8
-                     Buffers: shared hit=85
+                     Index Searches: 11
+                     Buffers: shared hit=91
 (15 rows)
 
 deallocate eleventh;
@@ -2044,20 +2045,20 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- nice win, 89 for patch vs
 execute twelfth;
                                                                                                  QUERY PLAN                                                                                                 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=430.14..430.16 rows=1 width=44) (actual rows=0 loops=1)
+ GroupAggregate  (cost=430.14..430.16 rows=1 width=44) (actual rows=0.00 loops=1)
    Group Key: sdate, item_class
-   Buffers: shared hit=85
-   ->  Sort  (cost=430.14..430.14 rows=1 width=23) (actual rows=0 loops=1)
+   Buffers: shared hit=91
+   ->  Sort  (cost=430.14..430.14 rows=1 width=23) (actual rows=0.00 loops=1)
          Sort Key: sdate, item_class
          Sort Method: quicksort  Memory: 25kB
-         Buffers: shared hit=85
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=428.10..430.13 rows=1 width=23) (actual rows=0 loops=1)
+         Buffers: shared hit=91
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=428.10..430.13 rows=1 width=23) (actual rows=0.00 loops=1)
                Recheck Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = '-1'::integer))
-               Buffers: shared hit=85
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..428.10 rows=1 width=0) (actual rows=0 loops=1)
+               Buffers: shared hit=91
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..428.10 rows=1 width=0) (actual rows=0.00 loops=1)
                      Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = '-1'::integer))
-                     Index Searches: 8
-                     Buffers: shared hit=85
+                     Index Searches: 11
+                     Buffers: shared hit=91
 (14 rows)
 
 deallocate twelfth;
@@ -4063,13 +4064,13 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- 2163 hits for patch vs 24
 execute thirteenth;
                                                                                                QUERY PLAN                                                                                               
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=0.42..3575.15 rows=1941 width=48) (actual rows=1980 loops=1)
+ GroupAggregate  (cost=0.42..3575.15 rows=1941 width=48) (actual rows=1980.00 loops=1)
    Group Key: dept, sdate, item_class, store
-   Buffers: shared hit=2150
-   ->  Index Scan Backward using small_mdam_idx on small_sales_mdam_paper  (cost=0.42..3526.13 rows=1980 width=27) (actual rows=1980 loops=1)
+   Buffers: shared hit=2092
+   ->  Index Scan Backward using small_mdam_idx on small_sales_mdam_paper  (cost=0.42..3526.13 rows=1980 width=27) (actual rows=1980.00 loops=1)
          Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store >= 15) AND (store <= 25))
-         Index Searches: 52
-         Buffers: shared hit=2150
+         Index Searches: 21
+         Buffers: shared hit=2092
 (7 rows)
 
 deallocate thirteenth;
@@ -4273,13 +4274,13 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- good: 202 hits for patch 
 execute fourteenth;
                                                                                      QUERY PLAN                                                                                      
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=0.42..783.94 rows=178 width=48) (actual rows=180 loops=1)
+ GroupAggregate  (cost=0.42..783.94 rows=178 width=48) (actual rows=180.00 loops=1)
    Group Key: dept, sdate, item_class
-   Buffers: shared hit=204
-   ->  Index Scan Backward using small_mdam_idx on small_sales_mdam_paper  (cost=0.42..779.92 rows=180 width=27) (actual rows=180 loops=1)
+   Buffers: shared hit=127
+   ->  Index Scan Backward using small_mdam_idx on small_sales_mdam_paper  (cost=0.42..779.92 rows=180 width=27) (actual rows=180.00 loops=1)
          Index Cond: ((dept >= 5) AND (dept <= 7) AND (sdate >= '01-01-1995'::date) AND (sdate <= '01-05-1995'::date) AND (item_class >= 1) AND (item_class <= 15) AND (store = 10))
-         Index Searches: 62
-         Buffers: shared hit=204
+         Index Searches: 22
+         Buffers: shared hit=127
 (7 rows)
 
 deallocate fourteenth;
@@ -5426,18 +5427,18 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) -- Master branch gets only 1
 execute dont_repeat_leaf_readpage;
                                                                                    QUERY PLAN                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=2139.51..2166.13 rows=963 width=48) (actual rows=972 loops=1)
+ GroupAggregate  (cost=2098.96..2125.58 rows=963 width=48) (actual rows=972.00 loops=1)
    Group Key: dept, sdate, item_class, store
    Buffers: shared hit=142
-   ->  Sort  (cost=2139.51..2141.94 rows=972 width=27) (actual rows=972 loops=1)
+   ->  Sort  (cost=2098.96..2101.39 rows=972 width=27) (actual rows=972.00 loops=1)
          Sort Key: dept, sdate, item_class, store
          Sort Method: quicksort  Memory: 70kB
          Buffers: shared hit=142
-         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=802.69..2091.28 rows=972 width=27) (actual rows=972 loops=1)
+         ->  Bitmap Heap Scan on small_sales_mdam_paper  (cost=762.14..2050.73 rows=972 width=27) (actual rows=972.00 loops=1)
                Recheck Cond: ((dept = ANY ('{5,7}'::integer[])) AND (sdate >= '01-02-1995'::date) AND (sdate <= '01-10-1995'::date) AND (item_class >= 3) AND (store <= 3))
                Heap Blocks: exact=39
                Buffers: shared hit=142
-               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..802.45 rows=972 width=0) (actual rows=972 loops=1)
+               ->  Bitmap Index Scan on small_mdam_idx  (cost=0.00..761.90 rows=972 width=0) (actual rows=972.00 loops=1)
                      Index Cond: ((dept = ANY ('{5,7}'::integer[])) AND (sdate >= '01-02-1995'::date) AND (sdate <= '01-10-1995'::date) AND (item_class >= 3) AND (store <= 3))
                      Index Searches: 3
                      Buffers: shared hit=103
