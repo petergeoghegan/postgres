@@ -310,6 +310,11 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 	{
 		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->nextBatch-1);
 		pos = (BTBatchScanPos) batch->opaque;
+
+		if (ScanDirectionIsForward(scan->xs_batches->direction))
+			pos->moreRight = true;
+		else
+			pos->moreLeft = true;
 	}
 
 	/* Each loop iteration performs another primitive index scan */
@@ -324,6 +329,12 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 			res = _bt_first_batch(scan, dir);
 		else
 		{
+			if (so->numArrayKeys)
+			{
+				_bt_start_array_keys(scan, so->currPos.dir);
+				so->needPrimScan = false;
+			}
+
 			/*
 			 * Now continue the scan.
 			 */
