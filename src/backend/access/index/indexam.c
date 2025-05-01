@@ -516,11 +516,9 @@ index_markpos(IndexScanDesc scan)
 	 * Without batching, just use the ammarkpos() callback. With batching
 	 * everything is handled at this layer, without calling the AM.
 	 */
-	if (scan->xs_batches == NULL)
-	{
-		scan->indexRelation->rd_indam->ammarkpos(scan);
-	}
-	else
+	scan->indexRelation->rd_indam->ammarkpos(scan);
+
+	if (scan->xs_batches != NULL)
 	{
 		IndexScanBatches *batches = scan->xs_batches;
 		IndexScanBatchPos *pos = &batches->markPos;
@@ -588,9 +586,9 @@ index_restrpos(IndexScanDesc scan)
 	 * Without batching, just use the amrestrpos() callback. With batching
 	 * everything is handled at this layer, without calling the AM.
 	 */
-	if (scan->xs_batches == NULL)
-		scan->indexRelation->rd_indam->amrestrpos(scan);
-	else
+	scan->indexRelation->rd_indam->amrestrpos(scan);
+
+	if (scan->xs_batches != NULL)
 	{
 		IndexScanBatches *batches = scan->xs_batches;
 		IndexScanBatchPos *pos = &batches->markPos;

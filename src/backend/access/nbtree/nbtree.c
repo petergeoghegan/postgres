@@ -311,10 +311,13 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->nextBatch-1);
 		pos = (BTBatchScanPos) batch->opaque;
 
-		if (ScanDirectionIsForward(scan->xs_batches->direction))
-			pos->moreRight = true;
-		else
-			pos->moreLeft = true;
+		if (so->needPrimScan)
+		{
+			if (ScanDirectionIsForward(scan->xs_batches->direction))
+				pos->moreRight = true;
+			else
+				pos->moreLeft = true;
+		}
 	}
 
 	/* Each loop iteration performs another primitive index scan */
@@ -329,11 +332,7 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 			res = _bt_first_batch(scan, dir);
 		else
 		{
-			if (so->numArrayKeys)
-			{
-				_bt_start_array_keys(scan, so->currPos.dir);
-				so->needPrimScan = false;
-			}
+			so->needPrimScan = false;
 
 			/*
 			 * Now continue the scan.
@@ -688,7 +687,20 @@ btmarkpos(IndexScanDesc scan)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
 	/* with batching, mark/restore is handled in indexam */
-	Assert(scan->xs_batches == NULL);
+	if (scan->xs_batches != NULL)
+	{
+		IndexScanBatch	batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->firstBatch);
+		BTBatchScanPos pos = NULL;
+		pos = (BTBatchScanPos) batch->opaque;
+		if (so->needPrimScan)
+		{
+			if (ScanDirectionIsForward(scan->xs_batches->direction))
+				pos->moreRight = true;
+			else
+				pos->moreLeft = true;
+		}
+		return;
+	}
 
 	/* There may be an old mark with a pin (but no lock). */
 	BTScanPosUnpinIfPinned(so->markPos);
@@ -720,7 +732,20 @@ btrestrpos(IndexScanDesc scan)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
 	/* with batching, mark/restore is handled in indexam */
-	Assert(scan->xs_batches == NULL);
+	if (scan->xs_batches != NULL)
+	{
+		if (scan->xs_batches->markPos.batch != scan->xs_batches->firstBatch)
+		{
+			/* Reset the scan's array keys (see _bt_steppage for why) */
+			if (so->numArrayKeys)
+			{
+				_bt_start_array_keys(scan, so->currPos.dir);
+				so->needPrimScan = false;
+			}
+		}
+
+		return;
+	}
 
 	if (so->markItemIndex >= 0)
 	{
