@@ -939,7 +939,7 @@ typedef BTVacuumPostingData *BTVacuumPosting;
  * processing.  This approach minimizes lock/unlock traffic.  We must always
  * drop the lock to make it okay for caller to process the returned items.
  * Whether or not we can also release the pin during this window will vary.
- * We drop the pin eagerly (when safe) to avoid blocking progress by VACUUM
+ * We drop the pin (when so->drop_pin) to avoid blocking progress by VACUUM
  * (see nbtree/README section about making concurrent TID recycling safe).
  * We'll always release both the lock and the pin on the current page before
  * moving on to its sibling page.
@@ -967,7 +967,7 @@ typedef struct BTScanPosData
 	BlockNumber currPage;		/* page referenced by items array */
 	BlockNumber prevPage;		/* currPage's left link */
 	BlockNumber nextPage;		/* currPage's right link */
-	XLogRecPtr	lsn;			/* currPage's LSN */
+	XLogRecPtr	lsn;			/* currPage's LSN (when so->drop_pin) */
 
 	/* scan direction for the saved position's call to _bt_readpage */
 	ScanDirection dir;
@@ -1054,6 +1054,7 @@ typedef struct BTScanOpaqueData
 {
 	/* these fields are set by _bt_preprocess_keys(): */
 	bool		qual_ok;		/* false if qual can never be satisfied */
+	bool		drop_pin;		/* drop leaf pin before btgettuple returns? */
 	int			numberOfKeys;	/* number of preprocessed scan keys */
 	ScanKey		keyData;		/* array of preprocessed scan keys */
 
