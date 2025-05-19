@@ -3364,9 +3364,10 @@ _bt_killitems(IndexScanDesc scan)
 	int			i;
 	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
-	bool		droppedpin PG_USED_FOR_ASSERTS_ONLY;
 
+	Assert(numKilled > 0);
 	Assert(BTScanPosIsValid(so->currPos));
+	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
 
 	/*
 	 * Always reset the scan state, so we don't look for same items on other
@@ -3374,7 +3375,7 @@ _bt_killitems(IndexScanDesc scan)
 	 */
 	so->numKilled = 0;
 
-	if (BTScanPosIsPinned(so->currPos))
+	if (!so->drop_pin)
 	{
 		/*
 		 * We have held the pin on this page since we read the index tuples,
@@ -3382,7 +3383,7 @@ _bt_killitems(IndexScanDesc scan)
 		 * re-use of any TID on the page, so there is no need to check the
 		 * LSN.
 		 */
-		droppedpin = false;
+		Assert(BTScanPosIsPinned(so->currPos));
 		_bt_lockbuf(scan->indexRelation, so->currPos.buf, BT_READ);
 
 		page = BufferGetPage(so->currPos.buf);
@@ -3390,13 +3391,17 @@ _bt_killitems(IndexScanDesc scan)
 	else
 	{
 		Buffer		buf;
+		XLogRecPtr	latestlsn;
 
-		droppedpin = true;
 		/* Attempt to re-read the buffer, getting pin and lock. */
+		Assert(!BTScanPosIsPinned(so->currPos));
 		buf = _bt_getbuf(scan->indexRelation, so->currPos.currPage, BT_READ);
 
 		page = BufferGetPage(buf);
-		if (BufferGetLSNAtomic(buf) == so->currPos.lsn)
+		latestlsn = BufferGetLSNAtomic(buf);
+		Assert(!XLogRecPtrIsInvalid(so->currPos.lsn));
+		Assert(so->currPos.lsn <= latestlsn);
+		if (so->currPos.lsn == latestlsn)
 			so->currPos.buf = buf;
 		else
 		{
@@ -3442,7 +3447,7 @@ _bt_killitems(IndexScanDesc scan)
 				 * correctness.
 				 *
 				 * Note that the page may have been modified in almost any way
-				 * since we first read it (in the !droppedpin case), so it's
+				 * since we first read it (in the !so->drop_pin case), so it's
 				 * possible that this posting list tuple wasn't a posting list
 				 * tuple when we first encountered its heap TIDs.
 				 */
@@ -3458,7 +3463,7 @@ _bt_killitems(IndexScanDesc scan)
 					 * though only in the common case where the page can't
 					 * have been concurrently modified
 					 */
-					Assert(kitem->indexOffset == offnum || !droppedpin);
+					Assert(kitem->indexOffset == offnum || !so->drop_pin);
 
 					/*
 					 * Read-ahead to later kitems here.
