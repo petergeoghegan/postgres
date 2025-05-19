@@ -205,6 +205,19 @@ _bt_preprocess_keys(IndexScanDesc scan)
 
 	/* initialize result variables */
 	so->qual_ok = true;
+
+	/*
+	 * We prefer to eagerly drop a leaf page pin to avoid blocking concurrent
+	 * heap TID recycling by VACUUM.  But we cannot safely drop leaf page pins
+	 * during index-only scans, nor scans of logged relations, where checking
+	 * if the page's LSN changed while the pin was dropped isn't sufficient.
+	 * (Setting so->drop_pin=true doesn't meaningfully affect the behavior of
+	 * bitmap index scans, so they always set it 'false' to avoid needlessly
+	 * calling BufferGetLSNAtomic.)
+	 */
+	so->drop_pin = (IsMVCCSnapshot(scan->xs_snapshot) &&
+					RelationNeedsWAL(scan->indexRelation) &&
+					!scan->xs_want_itup && scan->heapRelation);
 	so->numberOfKeys = 0;
 
 	if (numberOfKeys < 1)

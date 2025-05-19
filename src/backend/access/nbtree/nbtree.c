@@ -228,6 +228,8 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		res;
 
+	Assert(scan->heapRelation != NULL);
+
 	/* btree indexes are never lossy */
 	scan->xs_recheck = false;
 
@@ -288,6 +290,8 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	int64		ntids = 0;
 	ItemPointer heapTid;
+
+	Assert(scan->heapRelation == NULL);
 
 	/* Each loop iteration performs another primitive index scan */
 	do

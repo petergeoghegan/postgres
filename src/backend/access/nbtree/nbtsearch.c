@@ -25,7 +25,8 @@
 #include "utils/rel.h"
 
 
-static void _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp);
+static inline void _bt_drop_lock_and_maybe_pin(Relation rel, BTScanOpaque so,
+											   BTScanPos sp);
 static Buffer _bt_moveright(Relation rel, Relation heaprel, BTScanInsert key,
 							Buffer buf, bool forupdate, BTStack stack,
 							int access);
@@ -63,18 +64,26 @@ static bool _bt_endpoint(IndexScanDesc scan, ScanDirection dir);
  *
  * See nbtree/README section on making concurrent TID recycling safe.
  */
-static void
-_bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp)
+static inline void
+_bt_drop_lock_and_maybe_pin(Relation rel, BTScanOpaque so, BTScanPos sp)
 {
-	_bt_unlockbuf(scan->indexRelation, sp->buf);
-
-	if (IsMVCCSnapshot(scan->xs_snapshot) &&
-		RelationNeedsWAL(scan->indexRelation) &&
-		!scan->xs_want_itup)
+	if (!so->drop_pin)
 	{
-		ReleaseBuffer(sp->buf);
-		sp->buf = InvalidBuffer;
+		/* Just drop the lock (not the pin) */
+		_bt_unlockbuf(rel, sp->buf);
+		return;
 	}
+
+	/*
+	 * Drop the lock and the pin.
+	 *
+	 * Have to establish so->currPos.lsn to provide _bt_killitems with an
+	 * alternative mechanism to ensure that no unsafe concurrent heap TID
+	 * recycling has taken place.
+	 */
+	so->currPos.lsn = BufferGetLSNAtomic(so->currPos.buf);
+	_bt_relbuf(rel, so->currPos.buf);
+	sp->buf = InvalidBuffer;
 }
 
 /*
@@ -1610,6 +1619,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	so->currPos.currPage = BufferGetBlockNumber(so->currPos.buf);
 	so->currPos.prevPage = opaque->btpo_prev;
 	so->currPos.nextPage = opaque->btpo_next;
+	/* delay setting so->currPos.lsn until _bt_drop_lock_and_maybe_pin */
 
 	Assert(!P_IGNORE(opaque));
 	Assert(BTScanPosIsPinned(so->currPos));
@@ -1626,8 +1636,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 								 so->currPos.currPage);
 	}
 
-	/* initialize remaining currPos fields related to current page */
-	so->currPos.lsn = BufferGetLSNAtomic(so->currPos.buf);
+	/* initialize most remaining currPos fields related to current page */
 	so->currPos.dir = dir;
 	so->currPos.nextTupleOffset = 0;
 	/* either moreLeft or moreRight should be set now (may be unset later) */
@@ -2251,12 +2260,14 @@ _bt_readfirstpage(IndexScanDesc scan, OffsetNumber offnum, ScanDirection dir)
 	 */
 	if (_bt_readpage(scan, dir, offnum, true))
 	{
+		Relation	rel = scan->indexRelation;
+
 		/*
 		 * _bt_readpage succeeded.  Drop the lock (and maybe the pin) on
 		 * so->currPos.buf in preparation for btgettuple returning tuples.
 		 */
 		Assert(BTScanPosIsPinned(so->currPos));
-		_bt_drop_lock_and_maybe_pin(scan, &so->currPos);
+		_bt_drop_lock_and_maybe_pin(rel, so, &so->currPos);
 		return true;
 	}
 
@@ -2413,7 +2424,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 	 */
 	Assert(so->currPos.currPage == blkno);
 	Assert(BTScanPosIsPinned(so->currPos));
-	_bt_drop_lock_and_maybe_pin(scan, &so->currPos);
+	_bt_drop_lock_and_maybe_pin(rel, so, &so->currPos);
 
 	return true;
 }
