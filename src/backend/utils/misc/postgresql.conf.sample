@@ -432,6 +432,7 @@
 #enable_indexscan = on
 #enable_indexonlyscan = on
 #enable_material = on
+#enable_mdam = on
 #enable_memoize = on
 #enable_mergejoin = on
 #enable_nestloop = on

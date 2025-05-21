@@ -58,6 +58,8 @@ pgpa_cstring_advice_tag(pgpa_advice_tag_type advice_tag)
 			return "NESTED_LOOP_MEMOIZE";
 		case PGPA_TAG_NESTED_LOOP_PLAIN:
 			return "NESTED_LOOP_PLAIN";
+		case PGPA_TAG_MDAM:
+			return "MDAM";
 		case PGPA_TAG_NO_GATHER:
 			return "NO_GATHER";
 		case PGPA_TAG_PARTITIONWISE:
@@ -123,6 +125,8 @@ pgpa_parse_advice_tag(const char *tag, bool *fail)
 				return PGPA_TAG_JOIN_ORDER;
 			break;
 		case 'm':
+			if (strcmp(tag, "mdam") == 0)
+				return PGPA_TAG_MDAM;
 			if (strcmp(tag, "merge_join_materialize") == 0)
 				return PGPA_TAG_MERGE_JOIN_MATERIALIZE;
 			if (strcmp(tag, "merge_join_plain") == 0)

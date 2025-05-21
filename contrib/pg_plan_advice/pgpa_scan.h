@@ -61,11 +61,12 @@ typedef enum
 	PGPA_SCAN_INDEX,
 	PGPA_SCAN_INDEX_ONLY,
 	PGPA_SCAN_PARTITIONWISE,
-	PGPA_SCAN_TID
+	PGPA_SCAN_TID,
+	PGPA_SCAN_MDAM
 	/* update NUM_PGPA_SCAN_STRATEGY if you add anything here */
 } pgpa_scan_strategy;
 
-#define NUM_PGPA_SCAN_STRATEGY	((int) PGPA_SCAN_TID + 1)
+#define NUM_PGPA_SCAN_STRATEGY	((int) PGPA_SCAN_MDAM + 1)
 
 /*
  * All of the details we need regarding a scan.

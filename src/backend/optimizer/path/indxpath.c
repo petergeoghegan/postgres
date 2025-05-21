@@ -32,6 +32,7 @@
 #include "optimizer/paths.h"
 #include "optimizer/placeholder.h"
 #include "optimizer/prep.h"
+#include "optimizer/mdampath.h"
 #include "optimizer/restrictinfo.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
@@ -123,7 +124,6 @@ static PathClauseUsage *classify_index_clause_usage(Path *path,
 													List **clauselist);
 static void find_indexpath_quals(Path *bitmapqual, List **quals, List **preds);
 static int	find_list_position(Node *node, List **nodelist);
-static bool check_index_only(RelOptInfo *rel, IndexOptInfo *index);
 static double get_loop_count(PlannerInfo *root, Index cur_relid, Relids outer_relids);
 static double adjust_rowcount_for_semijoins(PlannerInfo *root,
 											Index cur_relid,
@@ -329,6 +329,14 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 	indexpaths = generate_bitmap_or_paths(root, rel,
 										  joinorclauses, rel->baserestrictinfo);
 	bitjoinpaths = list_concat(bitjoinpaths, indexpaths);
+
+	/*
+	 * Generate MDAM-style Append-of-IndexScans paths for OR predicates
+	 * involving multiple columns of a single multi-column B-tree index. These
+	 * paths preserve index ordering and can use index-only scans, unlike the
+	 * bitmap paths above.
+	 */
+	generate_mdam_or_paths(root, rel);
 
 	/*
 	 * If we found anything usable, generate a BitmapHeapPath for the most
@@ -2222,7 +2230,7 @@ find_list_position(Node *node, List **nodelist)
  * check_index_only
  *		Determine whether an index-only scan is possible for this index.
  */
-static bool
+bool
 check_index_only(RelOptInfo *rel, IndexOptInfo *index)
 {
 	bool		result;

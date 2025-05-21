@@ -148,12 +148,16 @@ pgpa_build_scan(pgpa_plan_walker_context *walker, Plan *plan,
 			case T_Append:
 
 				/*
-				 * Append nodes can represent partitionwise scans of a
-				 * relation, but when they implement a set operation, they are
-				 * just ordinary scans.
+				 * Append nodes can represent: (1) partitionwise scans/joins
+				 * of partitioned relations, (2) MDAM OR-clause optimization
+				 * (multiple index scans on one base relation), or (3) set
+				 * operations (ordinary).  The planner marks MDAM Appends with
+				 * is_mdam so we can classify them distinctly.
 				 */
-				if (unique_nonjoin_rtekind(relids, walker->pstmt->rtable)
-					== RTE_RELATION)
+				if (((Append *) plan)->is_mdam)
+					strategy = PGPA_SCAN_MDAM;
+				else if (unique_nonjoin_rtekind(relids, walker->pstmt->rtable)
+						 == RTE_RELATION)
 					strategy = PGPA_SCAN_PARTITIONWISE;
 				else
 					strategy = PGPA_SCAN_ORDINARY;

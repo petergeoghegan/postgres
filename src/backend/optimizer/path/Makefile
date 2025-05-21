@@ -20,6 +20,7 @@ OBJS = \
 	indxpath.o \
 	joinpath.o \
 	joinrels.o \
+	mdampath.o \
 	pathkeys.o \
 	tidpath.o
 

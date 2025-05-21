@@ -940,11 +940,17 @@
   variable => 'enable_indexscan',
   boot_val => 'true',
 },
-
 { name => 'enable_material', type => 'bool', context => 'PGC_USERSET', group => 'QUERY_TUNING_METHOD',
   short_desc => 'Enables the planner\'s use of materialization.',
   flags => 'GUC_EXPLAIN',
   variable => 'enable_material',
+  boot_val => 'true',
+},
+
+{ name => 'enable_mdam', type => 'bool', context => 'PGC_USERSET', group => 'QUERY_TUNING_METHOD',
+  short_desc => 'Enables MDAM OR-clause optimization for multi-column indexes.',
+  flags => 'GUC_EXPLAIN',
+  variable => 'enable_mdam',
   boot_val => 'true',
 },
 

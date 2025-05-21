@@ -840,6 +840,10 @@ pgpa_walker_would_advise(pgpa_plan_walker_context *walker,
 
 				return pgpa_walker_index_target_matches_plan(target->itarget, scan->plan);
 			}
+		case PGPA_TAG_MDAM:
+			return pgpa_walker_find_scan(walker,
+										 PGPA_SCAN_MDAM,
+										 relids) != NULL;
 		case PGPA_TAG_PARTITIONWISE:
 			return pgpa_walker_find_scan(walker,
 										 PGPA_SCAN_PARTITIONWISE,

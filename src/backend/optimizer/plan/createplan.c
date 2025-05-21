@@ -1265,6 +1265,7 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path, int flags)
 	plan->plan.righttree = NULL;
 	plan->apprelids = rel->relids;
 	plan->child_append_relid_sets = best_path->child_append_relid_sets;
+	plan->is_mdam = best_path->is_mdam;
 
 	if (pathkeys != NIL)
 	{

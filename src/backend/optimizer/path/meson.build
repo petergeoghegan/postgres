@@ -8,6 +8,7 @@ backend_sources += files(
   'indxpath.c',
   'joinpath.c',
   'joinrels.c',
+  'mdampath.c',
   'pathkeys.c',
   'tidpath.c',
 )

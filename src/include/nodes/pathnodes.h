@@ -2286,6 +2286,7 @@ typedef struct AppendPath
 	int			first_partial_path;
 	Cardinality limit_tuples;	/* hard limit on output tuples, or -1 */
 	List	   *child_append_relid_sets;
+	bool		is_mdam;		/* MDAM OR-clause optimization? */
 } AppendPath;
 
 #define IS_DUMMY_APPEND(p) \

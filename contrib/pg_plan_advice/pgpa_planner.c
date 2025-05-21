@@ -1669,9 +1669,22 @@ pgpa_planner_apply_scan_advice(RelOptInfo *rel,
 			my_scan_type = PGS_BITMAPSCAN | PGS_CONSIDER_INDEXONLY;
 		}
 		else if (my_entry->tag == PGPA_TAG_INDEX_ONLY_SCAN)
-			my_scan_type = PGS_INDEXONLYSCAN | PGS_CONSIDER_INDEXONLY;
+			my_scan_type = PGS_INDEXONLYSCAN | PGS_CONSIDER_INDEXONLY |
+				PGS_APPEND | PGS_MERGE_APPEND;
 		else if (my_entry->tag == PGPA_TAG_INDEX_SCAN)
-			my_scan_type = PGS_INDEXSCAN;
+			my_scan_type = PGS_INDEXSCAN |
+				PGS_APPEND | PGS_MERGE_APPEND;
+		else if (my_entry->tag == PGPA_TAG_MDAM)
+		{
+			/*
+			 * MDAM is a container (Append of IndexScans), not a scan type
+			 * itself.  The child IndexScans are already captured by their own
+			 * INDEX_SCAN/INDEX_ONLY_SCAN entries.  Mark MDAM as fully matched
+			 * but don't participate in scan-type conflict detection.
+			 */
+			my_entry->flags |= PGPA_FB_MATCH_PARTIAL | PGPA_FB_MATCH_FULL;
+			continue;
+		}
 		else if (my_entry->tag == PGPA_TAG_SEQ_SCAN)
 			my_scan_type = PGS_SEQSCAN;
 		else if (my_entry->tag == PGPA_TAG_TID_SCAN)

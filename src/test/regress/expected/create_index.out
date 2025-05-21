@@ -1976,6 +1976,9 @@ SELECT * FROM tenk1
          Index Cond: (thousand = 42)
 (5 rows)
 
+-- Mixed constant types (int2, int8) prevent MDAM from handling this --
+-- it rejects cross-type comparisons.  The existing OR-to-SAOP path
+-- in match_orclause_to_indexcol() handles it instead.
 EXPLAIN (COSTS OFF)
 SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1::int2 OR tenthous = 3::int8 OR tenthous = 42::int8);
@@ -2118,17 +2121,15 @@ SELECT count(*) FROM tenk1
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3) OR thousand = 41;
-                                             QUERY PLAN                                              
------------------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
  Aggregate
-   ->  Bitmap Heap Scan on tenk1
-         Recheck Cond: (((thousand = 42) AND ((tenthous = 1) OR (tenthous = 3))) OR (thousand = 41))
-         ->  BitmapOr
-               ->  Bitmap Index Scan on tenk1_thous_tenthous
-                     Index Cond: ((thousand = 42) AND (tenthous = ANY ('{1,3}'::integer[])))
-               ->  Bitmap Index Scan on tenk1_thous_tenthous
-                     Index Cond: (thousand = 41)
-(8 rows)
+   ->  Append
+         ->  Index Only Scan using tenk1_thous_tenthous on tenk1
+               Index Cond: (thousand = 41)
+         ->  Index Only Scan using tenk1_thous_tenthous on tenk1
+               Index Cond: ((thousand = 42) AND (tenthous = ANY ('{1,3}'::integer[])))
+(6 rows)
 
 SELECT count(*) FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3) OR thousand = 41;

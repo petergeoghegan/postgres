@@ -513,6 +513,8 @@ pgpa_cstring_scan_strategy(pgpa_scan_strategy strategy)
 			return "PARTITIONWISE";
 		case PGPA_SCAN_TID:
 			return "TID_SCAN";
+		case PGPA_SCAN_MDAM:
+			return "MDAM";
 	}
 
 	pg_unreachable();

@@ -767,6 +767,9 @@ SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1::int2 OR tenthous::int2 = 3::int8 OR tenthous::int2 = 42::int8);
 
 
+-- Mixed constant types (int2, int8) prevent MDAM from handling this --
+-- it rejects cross-type comparisons.  The existing OR-to-SAOP path
+-- in match_orclause_to_indexcol() handles it instead.
 EXPLAIN (COSTS OFF)
 SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1::int2 OR tenthous = 3::int8 OR tenthous = 42::int8);

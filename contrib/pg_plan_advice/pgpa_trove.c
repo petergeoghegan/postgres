@@ -164,6 +164,7 @@ pgpa_build_trove(List *advice_items)
 
 			case PGPA_TAG_BITMAP_HEAP_SCAN:
 			case PGPA_TAG_DO_NOT_SCAN:
+			case PGPA_TAG_MDAM:
 			case PGPA_TAG_INDEX_ONLY_SCAN:
 			case PGPA_TAG_INDEX_SCAN:
 			case PGPA_TAG_SEQ_SCAN:
