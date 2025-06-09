@@ -3323,9 +3323,9 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
  * current page and killed tuples thereon (generally, this should only be
  * called if so->numKilled > 0).
  *
- * The caller does not have a lock on the page and may or may not have the
- * page pinned in a buffer.  Note that read-lock is sufficient for setting
- * LP_DEAD status (which is only a hint).
+ * Caller should not have a lock on the so->currPos page, but must hold a
+ * buffer pin when !so->dropPin.  When we return, it still won't be locked.
+ * It'll continue to hold the same pins that were held when we were called.
  *
  * We match items by heap TID before assuming they are the right ones to
  * delete.  We cope with cases where items have moved right due to insertions.
@@ -3353,6 +3353,7 @@ _bt_killitems(IndexScanDesc scan)
 	OffsetNumber maxoff;
 	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
+	Buffer		buf;
 
 	Assert(numKilled > 0);
 	Assert(BTScanPosIsValid(so->currPos));
@@ -3369,11 +3370,11 @@ _bt_killitems(IndexScanDesc scan)
 		 * concurrent VACUUMs from recycling any of the TIDs on the page.
 		 */
 		Assert(BTScanPosIsPinned(so->currPos));
-		_bt_lockbuf(rel, so->currPos.buf, BT_READ);
+		buf = so->currPos.buf;
+		_bt_lockbuf(rel, buf, BT_READ);
 	}
 	else
 	{
-		Buffer		buf;
 		XLogRecPtr	latestlsn;
 
 		Assert(!BTScanPosIsPinned(so->currPos));
@@ -3391,10 +3392,9 @@ _bt_killitems(IndexScanDesc scan)
 		}
 
 		/* Unmodified, hinting is safe */
-		so->currPos.buf = buf;
 	}
 
-	page = BufferGetPage(so->currPos.buf);
+	page = BufferGetPage(buf);
 	opaque = BTPageGetOpaque(page);
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -3511,10 +3511,17 @@ _bt_killitems(IndexScanDesc scan)
 	if (killedsomething)
 	{
 		opaque->btpo_flags |= BTP_HAS_GARBAGE;
-		MarkBufferDirtyHint(so->currPos.buf, true);
+		MarkBufferDirtyHint(buf, true);
 	}
 
-	_bt_unlockbuf(rel, so->currPos.buf);
+	/*
+	 * so->currPos retains no locks, but retains whatever pins it held when we
+	 * were called
+	 */
+	if (!so->dropPin)
+		_bt_unlockbuf(rel, buf);
+	else
+		_bt_relbuf(rel, buf);
 }
 
 

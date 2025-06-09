@@ -1012,11 +1012,6 @@ typedef BTScanPosData *BTScanPos;
 		ReleaseBuffer((scanpos).buf); \
 		(scanpos).buf = InvalidBuffer; \
 	} while (0)
-#define BTScanPosUnpinIfPinned(scanpos) \
-	do { \
-		if (BTScanPosIsPinned(scanpos)) \
-			BTScanPosUnpin(scanpos); \
-	} while (0)
 
 #define BTScanPosIsValid(scanpos) \
 ( \
