@@ -431,18 +431,14 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 	{
 		BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
 
-		BTBatchScanPosIsValid(*pos);
-		BTBatchScanPosIsPinned(*pos);
-
-		BTBatchScanPosUnpinIfPinned(*pos);
+		if (!so->dropPin)
+			BTScanPosUnpin(*pos);
 
 		pfree(batch->opaque);
 	}
 
 	/* and finally free the batch itself */
 	pfree(batch);
-
-	return;
 }
 
 /*
@@ -555,16 +551,6 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
-	/* we aren't holding any read locks, but gotta drop the pins */
-	if (BTScanPosIsValid(so->currPos))
-	{
-		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
-			_bt_killitems(scan);
-		BTScanPosUnpinIfPinned(so->currPos);
-		BTScanPosInvalidate(so->currPos);
-	}
-
 	/*
 	 * We prefer to eagerly drop leaf page pins before btgettuple returns.
 	 * This avoids making VACUUM wait to acquire a cleanup lock on the page.
@@ -593,12 +579,27 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 				   RelationNeedsWAL(scan->indexRelation) &&
 				   scan->heapRelation != NULL);
 
+	/*
+	 * Before leaving the current position, perform final steps, since we'll
+	 * never call _bt_steppage for its page
+	 */
+	if (BTScanPosIsValid(so->currPos))
+	{
+		if (so->numKilled > 0)
+			_bt_killitems(scan);
+		if (!so->dropPin)
+			BTScanPosUnpin(so->currPos);
+		BTScanPosInvalidate(so->currPos);
+	}
+
+	/* Always invalidate any existing mark */
 	so->markItemIndex = -1;
-	so->needPrimScan = false;
-	so->scanBehind = false;
-	so->oppositeDirCheck = false;
-	BTScanPosUnpinIfPinned(so->markPos);
-	BTScanPosInvalidate(so->markPos);
+	if (BTScanPosIsValid(so->markPos))
+	{
+		if (!so->dropPin)
+			BTScanPosUnpin(so->markPos);
+		BTScanPosInvalidate(so->markPos);
+	}
 
 	/* FIXME should be in indexam.c I think */
 	// if (scan->xs_batches)
@@ -631,6 +632,9 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	 */
 	if (scankey && scan->numberOfKeys > 0)
 		memcpy(scan->keyData, scankey, scan->numberOfKeys * sizeof(ScanKeyData));
+	so->needPrimScan = false;
+	so->scanBehind = false;
+	so->oppositeDirCheck = false;
 	so->numberOfKeys = 0;		/* until _bt_preprocess_keys sets it */
 	so->numArrayKeys = 0;		/* ditto */
 }
@@ -647,19 +651,27 @@ btendscan(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
-	/* we aren't holding any read locks, but gotta drop the pins */
+	/*
+	 * Before leaving the current position, perform final steps, since we'll
+	 * never call _bt_steppage for its page
+	 */
 	if (BTScanPosIsValid(so->currPos))
 	{
-		/* Before leaving current page, deal with any killed items */
 		if (so->numKilled > 0)
 			_bt_killitems(scan);
-		BTScanPosUnpinIfPinned(so->currPos);
+		if (!so->dropPin)
+			BTScanPosUnpin(so->currPos);
+		BTScanPosInvalidate(so->currPos);	/* unnecessary, but be consistent */
 	}
 
-	so->markItemIndex = -1;
-	BTScanPosUnpinIfPinned(so->markPos);
-
-	/* No need to invalidate positions, the RAM is about to be freed. */
+	/* Always invalidate any existing mark */
+	so->markItemIndex = -1;		/* unnecessary, but be consistent */
+	if (BTScanPosIsValid(so->markPos))
+	{
+		if (!so->dropPin)
+			BTScanPosUnpin(so->markPos);
+		BTScanPosInvalidate(so->markPos);	/* unnecessary, but be consistent */
+	}
 
 	/* Release storage */
 	if (so->keyData != NULL)
@@ -702,8 +714,17 @@ btmarkpos(IndexScanDesc scan)
 		return;
 	}
 
-	/* There may be an old mark with a pin (but no lock). */
-	BTScanPosUnpinIfPinned(so->markPos);
+	/* mark/restore not supported by parallel scans */
+	Assert(!scan->parallel_scan);
+
+	/* Always invalidate any existing mark */
+	so->markItemIndex = -1;
+	if (BTScanPosIsValid(so->markPos))
+	{
+		if (!so->dropPin)
+			BTScanPosUnpin(so->markPos);
+		BTScanPosInvalidate(so->markPos);
+	}
 
 	/*
 	 * Just record the current itemIndex.  If we later step to next page
@@ -713,11 +734,6 @@ btmarkpos(IndexScanDesc scan)
 	 */
 	if (BTScanPosIsValid(so->currPos))
 		so->markItemIndex = so->currPos.itemIndex;
-	else
-	{
-		BTScanPosInvalidate(so->markPos);
-		so->markItemIndex = -1;
-	}
 }
 
 /*
@@ -750,41 +766,62 @@ btrestrpos(IndexScanDesc scan)
 	if (so->markItemIndex >= 0)
 	{
 		/*
-		 * The scan has never moved to a new page since the last mark.  Just
+		 * The mark position is on the same page we are currently on.  Just
 		 * restore the itemIndex.
 		 *
-		 * NB: In this case we can't count on anything in so->markPos to be
-		 * accurate.
+		 * We generally only need to keep around a separate BTScanPosData
+		 * (which will have its own buffer pin when !so->dropPin) for a mark
+		 * whose page doesn't match so->currPos.currPage.  That requires care
+		 * later on in this function, and in _bt_steppage.
 		 */
+		Assert(!BTScanPosIsValid(so->markPos)); /* can't also be valid */
 		so->currPos.itemIndex = so->markItemIndex;
 	}
 	else
 	{
 		/*
-		 * The scan moved to a new page after last mark or restore, and we are
-		 * now restoring to the marked page.  We aren't holding any read
-		 * locks, but if we're still holding the pin for the current position,
-		 * we must drop it.
+		 * The scan moved to a page beyond that of the last mark we took.
+		 *
+		 * Before leaving the current position, perform final steps, since
+		 * we'll never call _bt_steppage for its page.
 		 */
 		if (BTScanPosIsValid(so->currPos))
 		{
-			/* Before leaving current page, deal with any killed items */
 			if (so->numKilled > 0)
 				_bt_killitems(scan);
-			BTScanPosUnpinIfPinned(so->currPos);
+			if (!so->dropPin)
+				BTScanPosUnpin(so->currPos);
+			BTScanPosInvalidate(so->currPos);
 		}
 
+		/*
+		 * We're completely done with our old so->currPos.  Copy so->markPos
+		 * into so->currPos to actually restore the mark.
+		 */
 		if (BTScanPosIsValid(so->markPos))
 		{
-			/* bump pin on mark buffer for assignment to current buffer */
-			if (BTScanPosIsPinned(so->markPos))
-				IncrBufferRefCount(so->markPos.buf);
 			memcpy(&so->currPos, &so->markPos,
 				   offsetof(BTScanPosData, items[1]) +
 				   so->markPos.lastItem * sizeof(BTScanPosItem));
 			if (so->currTuples)
 				memcpy(so->currTuples, so->markTuples,
 					   so->markPos.nextTupleOffset);
+
+			/*
+			 * We need to keep the mark around, in case it gets restored
+			 * again.  We use the so->markItemIndex representation for this.
+			 * Converting to that representation involves invalidating the
+			 * original so->markPos representation. (This is the opposite of
+			 * what happened back when _bt_steppage created this so->markPos
+			 * from the scan's then-obsolescent so->currPos.)
+			 *
+			 * Note: We deliberately avoid a "BTScanPosUnpin(so->markPos)"
+			 * when invalidating so->markPos, since so->markPos's original pin
+			 * is "transferred" to the new so->currPos.
+			 */
+			BTScanPosInvalidate(so->markPos);
+			so->markItemIndex = so->currPos.itemIndex;	/* keep the mark */
+
 			/* Reset the scan's array keys (see _bt_steppage for why) */
 			if (so->numArrayKeys)
 			{
@@ -792,8 +829,6 @@ btrestrpos(IndexScanDesc scan)
 				so->needPrimScan = false;
 			}
 		}
-		else
-			BTScanPosInvalidate(so->currPos);
 	}
 }
 
