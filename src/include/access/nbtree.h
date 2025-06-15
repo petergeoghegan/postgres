@@ -956,7 +956,8 @@ typedef struct BTScanPosItem	/* what we remember about each match */
 {
 	ItemPointerData heapTid;	/* TID of referenced heap item */
 	OffsetNumber indexOffset;	/* index item's location within page */
-	LocationIndex tupleOffset;	/* IndexTuple's offset in workspace, if any */
+	uint16		tupleOffset:15, /* IndexTuple's offset in workspace, if any */
+				itemDead:1;		/* Mark IndexTuple LP_DEAD later on? */
 } BTScanPosItem;
 
 typedef struct BTScanPosData
@@ -1067,9 +1068,8 @@ typedef struct BTScanOpaqueData
 	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
 
-	/* info about killed items if any (killedItems is NULL if never used) */
-	int		   *killedItems;	/* currPos.items indexes of killed items */
-	int			numKilled;		/* number of currently stored items */
+	/* guides _bt_killitems on how to LP_DEAD mark known dead currPos items */
+	bool		itemDead;		/* dead items saved in so->currpos.items[]? */
 	bool		dropPin;		/* drop leaf pin before btgettuple returns? */
 
 	/*
