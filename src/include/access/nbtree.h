@@ -1067,9 +1067,8 @@ typedef struct BTScanOpaqueData
 	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
 
-	/* info about killed items if any (killedItems is NULL if never used) */
-	int		   *killedItems;	/* currPos.items indexes of killed items */
-	int			numKilled;		/* number of currently stored items */
+	/* info about killed items if any */
+	Bitmapset  *killedItems;	/* currPos.items indexes of killed items */
 	bool		dropPin;		/* drop leaf pin before btgettuple returns? */
 
 	/*

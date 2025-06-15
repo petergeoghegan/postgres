@@ -252,18 +252,10 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 			{
 				/*
 				 * Yes, remember it for later. (We'll deal with all such
-				 * tuples at once right before leaving the index page.)  The
-				 * test for numKilled overrun is not just paranoia: if the
-				 * caller reverses direction in the indexscan then the same
-				 * item might get entered multiple times. It's not worth
-				 * trying to optimize that, so we don't detect it, but instead
-				 * just forget any excess entries.
+				 * tuples at once right before leaving the index page.)
 				 */
-				if (so->killedItems == NULL)
-					so->killedItems = (int *)
-						palloc(MaxTIDsPerBTreePage * sizeof(int));
-				if (so->numKilled < MaxTIDsPerBTreePage)
-					so->killedItems[so->numKilled++] = so->currPos.itemIndex;
+				so->killedItems = bms_add_member(so->killedItems,
+												 so->currPos.itemIndex);
 			}
 
 			/*
@@ -362,7 +354,6 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	so->arrayContext = NULL;
 
 	so->killedItems = NULL;		/* until needed */
-	so->numKilled = 0;
 
 	/*
 	 * We don't know yet whether the scan will be index-only, so we do not
@@ -391,7 +382,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	if (BTScanPosIsValid(so->currPos))
 	{
 		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
+		if (!bms_is_empty(so->killedItems))
 			_bt_killitems(scan);
 		BTScanPosUnpinIfPinned(so->currPos);
 		BTScanPosInvalidate(so->currPos);
@@ -405,7 +396,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	 * race condition involving VACUUM setting pages all-visible in the VM.
 	 * It's also unsafe for plain index scans that use a non-MVCC snapshot.
 	 *
-	 * When we drop pins eagerly, the mechanism that marks so->killedItems[]
+	 * When we drop pins eagerly, the btgettuple mechanism that marks dead
 	 * index tuples LP_DEAD has to deal with concurrent TID recycling races.
 	 * The scheme used to detect unsafe TID recycling won't work when scanning
 	 * unlogged relations (since it involves saving an affected page's LSN).
@@ -475,15 +466,13 @@ btendscan(IndexScanDesc scan)
 	if (BTScanPosIsValid(so->currPos))
 	{
 		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
+		if (!bms_is_empty(so->killedItems))
 			_bt_killitems(scan);
 		BTScanPosUnpinIfPinned(so->currPos);
 	}
 
 	so->markItemIndex = -1;
 	BTScanPosUnpinIfPinned(so->markPos);
-
-	/* No need to invalidate positions, the RAM is about to be freed. */
 
 	/* Release storage */
 	if (so->keyData != NULL)
@@ -492,7 +481,7 @@ btendscan(IndexScanDesc scan)
 	if (so->arrayContext != NULL)
 		MemoryContextDelete(so->arrayContext);
 	if (so->killedItems != NULL)
-		pfree(so->killedItems);
+		bms_free(so->killedItems);
 	if (so->currTuples != NULL)
 		pfree(so->currTuples);
 	/* so->markTuples should not be pfree'd, see btrescan */
@@ -555,7 +544,7 @@ btrestrpos(IndexScanDesc scan)
 		if (BTScanPosIsValid(so->currPos))
 		{
 			/* Before leaving current page, deal with any killed items */
-			if (so->numKilled > 0)
+			if (!bms_is_empty(so->killedItems))
 				_bt_killitems(scan);
 			BTScanPosUnpinIfPinned(so->currPos);
 		}

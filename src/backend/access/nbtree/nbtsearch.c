@@ -1797,19 +1797,18 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				}
 				else
 				{
+					int			nitems = BTreeTupleGetNPosting(itup);
 					int			tupleOffset;
 
-					/*
-					 * Set up state to return posting list, and remember first
-					 * TID
-					 */
+					/* Set up posting list state (and remember first TID) */
 					tupleOffset =
 						_bt_setuppostingitems(so, itemIndex, offnum,
 											  BTreeTupleGetPostingN(itup, 0),
 											  itup);
 					itemIndex++;
-					/* Remember additional TIDs */
-					for (int i = 1; i < BTreeTupleGetNPosting(itup); i++)
+
+					/* Remember all later TIDs (must be at least one) */
+					for (int i = 1; i < nitems; i++)
 					{
 						_bt_savepostingitem(so, itemIndex, offnum,
 											BTreeTupleGetPostingN(itup, i),
@@ -1984,25 +1983,18 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 				}
 				else
 				{
+					int			nitems = BTreeTupleGetNPosting(itup);
 					int			tupleOffset;
 
-					/*
-					 * Set up state to return posting list, and remember first
-					 * TID.
-					 *
-					 * Note that we deliberately save/return items from
-					 * posting lists in ascending heap TID order for backwards
-					 * scans.  This allows _bt_killitems() to make a
-					 * consistent assumption about the order of items
-					 * associated with the same posting list tuple.
-					 */
+					/* Set up posting list state (and remember last TID) */
 					itemIndex--;
 					tupleOffset =
 						_bt_setuppostingitems(so, itemIndex, offnum,
-											  BTreeTupleGetPostingN(itup, 0),
+											  BTreeTupleGetPostingN(itup, nitems - 1),
 											  itup);
-					/* Remember additional TIDs */
-					for (int i = 1; i < BTreeTupleGetNPosting(itup); i++)
+
+					/* Remember all prior TIDs (must be at least one) */
+					for (int i = nitems - 2; i >= 0; i--)
 					{
 						itemIndex--;
 						_bt_savepostingitem(so, itemIndex, offnum,
@@ -2173,7 +2165,7 @@ _bt_steppage(IndexScanDesc scan, ScanDirection dir)
 	Assert(BTScanPosIsValid(so->currPos));
 
 	/* Before leaving current page, deal with any killed items */
-	if (so->numKilled > 0)
+	if (!bms_is_empty(so->killedItems))
 		_bt_killitems(scan);
 
 	/*
@@ -2268,8 +2260,7 @@ _bt_readfirstpage(IndexScanDesc scan, OffsetNumber offnum, ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
-	so->numKilled = 0;			/* just paranoia */
-	so->markItemIndex = -1;		/* ditto */
+	so->markItemIndex = -1;		/* just paranoia  */
 
 	/* Initialize so->currPos for the first page (page in so->currPos.buf) */
 	if (so->needPrimScan)

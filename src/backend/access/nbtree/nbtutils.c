@@ -3372,9 +3372,9 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
  * _bt_killitems - set LP_DEAD state for items an indexscan caller has
  * told us were killed
  *
- * scan->opaque, referenced locally through so, contains information about the
- * current page and killed tuples thereon (generally, this should only be
- * called if so->numKilled > 0).
+ * so->currPos contains information about tuples that are now known to be dead
+ * following a series of btgettuple calls made after _bt_readpage returned
+ * true.  Called when the scan is about to step off so->currPos's page.
  *
  * Caller should not have a lock on the so->currPos page, but must hold a
  * buffer pin when !so->dropPin.  When we return, it still won't be locked.
@@ -3406,16 +3406,13 @@ _bt_killitems(IndexScanDesc scan)
 	BTPageOpaque opaque;
 	OffsetNumber minoff;
 	OffsetNumber maxoff;
-	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
 	Buffer		buf;
+	int			itemIndex = -1;
 
-	Assert(numKilled > 0);
+	Assert(!bms_is_empty(so->killedItems));
 	Assert(BTScanPosIsValid(so->currPos));
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
-
-	/* Always invalidate so->killedItems[] before leaving so->currPos */
-	so->numKilled = 0;
 
 	if (!so->dropPin)
 	{
@@ -3442,6 +3439,10 @@ _bt_killitems(IndexScanDesc scan)
 		{
 			/* Modified, give up on hinting */
 			_bt_relbuf(rel, buf);
+
+			/* Always invalidate before leaving so->currPos */
+			bms_free(so->killedItems);
+			so->killedItems = NULL;
 			return;
 		}
 
@@ -3453,9 +3454,8 @@ _bt_killitems(IndexScanDesc scan)
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
 
-	for (int i = 0; i < numKilled; i++)
+	while ((itemIndex = bms_next_member(so->killedItems, itemIndex)) >= 0)
 	{
-		int			itemIndex = so->killedItems[i];
 		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
 		OffsetNumber offnum = kitem->indexOffset;
 
@@ -3471,7 +3471,7 @@ _bt_killitems(IndexScanDesc scan)
 
 			if (BTreeTupleIsPosting(ituple))
 			{
-				int			pi = i + 1;
+				int			nextIndex = itemIndex;
 				int			nposting = BTreeTupleGetNPosting(ituple);
 				int			j;
 
@@ -3479,10 +3479,7 @@ _bt_killitems(IndexScanDesc scan)
 				 * We rely on the convention that heap TIDs in the scanpos
 				 * items array are stored in ascending heap TID order for a
 				 * group of TIDs that originally came from a posting list
-				 * tuple.  This convention even applies during backwards
-				 * scans, where returning the TIDs in descending order might
-				 * seem more natural.  This is about effectiveness, not
-				 * correctness.
+				 * tuple.
 				 *
 				 * Note that the page may have been modified in almost any way
 				 * since we first read it (in the !so->dropPin case), so it's
@@ -3517,18 +3514,16 @@ _bt_killitems(IndexScanDesc scan)
 					 * kitem is also the last heap TID in the last index tuple
 					 * correctly -- posting tuple still gets killed).
 					 */
-					if (pi < numKilled)
-						kitem = &so->currPos.items[so->killedItems[pi++]];
+					nextIndex = bms_next_member(so->killedItems, nextIndex);
+					if (nextIndex >= 0)
+						kitem = &so->currPos.items[nextIndex];
 				}
 
 				/*
-				 * Don't bother advancing the outermost loop's int iterator to
-				 * avoid processing killed items that relate to the same
-				 * offnum/posting list tuple.  This micro-optimization hardly
-				 * seems worth it.  (Further iterations of the outermost loop
-				 * will fail to match on this same posting list's first heap
-				 * TID instead, so we'll advance to the next offnum/index
-				 * tuple pretty quickly.)
+				 * Don't advance itemIndex for outermost loop, no matter how
+				 * nextIndex was advanced.  It's possible that items whose
+				 * TIDs weren't matched in posting list can still be killed
+				 * (there might be a later tuple whose TID is a match).
 				 */
 				if (j == nposting)
 					killtuple = true;
@@ -3572,6 +3567,10 @@ _bt_killitems(IndexScanDesc scan)
 		_bt_unlockbuf(rel, buf);
 	else
 		_bt_relbuf(rel, buf);
+
+	/* Always invalidate before leaving so->currPos */
+	bms_free(so->killedItems);
+	so->killedItems = NULL;
 }
 
 
