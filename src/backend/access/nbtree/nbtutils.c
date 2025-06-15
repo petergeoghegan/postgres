@@ -3326,9 +3326,9 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
  * _bt_killitems - set LP_DEAD state for items an indexscan caller has
  * told us were killed
  *
- * scan->opaque, referenced locally through so, contains information about the
- * current page and killed tuples thereon (generally, this should only be
- * called if so->numKilled > 0).
+ * so->currPos contains information about tuples that are now known to be dead
+ * following a series of btgettuple calls made after _bt_readpage returned
+ * true, and before _bt_next asked to step off so->currPos's page.
  *
  * Caller should not have a lock on the so->currPos page, but must hold a
  * buffer pin when !so->dropPin.  When we return, it still won't be locked.
@@ -3360,16 +3360,26 @@ _bt_killitems(IndexScanDesc scan)
 	BTPageOpaque opaque;
 	OffsetNumber minoff;
 	OffsetNumber maxoff;
-	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
 	Buffer		buf;
 
-	Assert(numKilled > 0);
+	Assert(so->itemDead);
 	Assert(BTScanPosIsValid(so->currPos));
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
 
-	/* Always invalidate so->killedItems[] before leaving so->currPos */
-	so->numKilled = 0;
+	/*
+	 * Unset so->itemDead to avoid repeatedly processing so->currPos.items[]
+	 * again and again in scenarios involving mark and restore.
+	 *
+	 * We don't bother to unset individual itemDead bits.  When so->currPos is
+	 * saved in so->markPos, we shouldn't end up back here again (restoring
+	 * from so->markPos always unsets so->itemDead as needed by calling here).
+	 * If so->itemDead is set once more, then it's still safe to use a set of
+	 * itemDead bits that weren't all set before/after restoring a mark.  It's
+	 * also reasonably efficient, since we avoid trying to set an LP_DEAD bit
+	 * that's already been set.
+	 */
+	so->itemDead = false;
 
 	if (!so->dropPin)
 	{
@@ -3403,21 +3413,40 @@ _bt_killitems(IndexScanDesc scan)
 		/* Unmodified, hinting is safe */
 	}
 
+	/*
+	 * Iterate through so->currPos.items[], and LP_DEAD mark index tuples
+	 * whose item array element's itemDead field has been set.
+	 *
+	 * Note: we rely on so->currPos.items[] always being in the same
+	 * leaf-page-wise order, regardless of the _bt_readpage scan direction:
+	 * items must appear in ASC page offset number order.  Posting list tuple
+	 * entries from the same tuple/page offset must appear in ASC TID order.
+	 */
 	page = BufferGetPage(buf);
 	opaque = BTPageGetOpaque(page);
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
 
-	for (int i = 0; i < numKilled; i++)
+	for (int itemIndex = so->currPos.firstItem;
+		 itemIndex <= so->currPos.lastItem;
+		 itemIndex++)
 	{
-		int			itemIndex = so->killedItems[i];
 		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
 		OffsetNumber offnum = kitem->indexOffset;
 
-		Assert(itemIndex >= so->currPos.firstItem &&
-			   itemIndex <= so->currPos.lastItem);
+		/* Skip over items not marked ItemDead up front */
+		if (!kitem->itemDead)
+			continue;
+
 		if (offnum < minoff)
-			continue;			/* pure paranoia */
+		{
+			/*
+			 * Page must have originally been the rightmost page, but has
+			 * since split (possible in the !so->dropPin case only)
+			 */
+			offnum = minoff;
+		}
+
 		while (offnum <= maxoff)
 		{
 			ItemId		iid = PageGetItemId(page, offnum);
@@ -3426,27 +3455,15 @@ _bt_killitems(IndexScanDesc scan)
 
 			if (BTreeTupleIsPosting(ituple))
 			{
-				int			pi = i + 1;
+				int			pItemIndex = itemIndex + 1;
 				int			nposting = BTreeTupleGetNPosting(ituple);
 				int			j;
 
-				/*
-				 * We rely on the convention that heap TIDs in the scanpos
-				 * items array are stored in ascending heap TID order for a
-				 * group of TIDs that originally came from a posting list
-				 * tuple.  This convention even applies during backwards
-				 * scans, where returning the TIDs in descending order might
-				 * seem more natural.  This is about effectiveness, not
-				 * correctness.
-				 *
-				 * Note that the page may have been modified in almost any way
-				 * since we first read it (in the !so->dropPin case), so it's
-				 * possible that this posting list tuple wasn't a posting list
-				 * tuple when we first encountered its heap TIDs.
-				 */
 				for (j = 0; j < nposting; j++)
 				{
 					ItemPointer item = BTreeTupleGetPostingN(ituple, j);
+
+					Assert(kitem->itemDead);
 
 					if (!ItemPointerEquals(item, &kitem->heapTid))
 						break;	/* out of posting list loop */
@@ -3458,26 +3475,36 @@ _bt_killitems(IndexScanDesc scan)
 					 */
 					Assert(kitem->indexOffset == offnum || !so->dropPin);
 
+					/* Read-ahead to later kitems here */
+					if (pItemIndex > so->currPos.lastItem ||
+						!so->currPos.items[pItemIndex].itemDead)
+					{
+						/*
+						 * We've run out of kitems, or the next kitem isn't
+						 * itemDead.
+						 *
+						 * If this is the last posting list TID, it'll still
+						 * be LP_DEAD-marked.  If not, then a failed attempt
+						 * to compare our unchanged kitem against the next
+						 * posting list TID will take place during the next
+						 * innermost loop iteration, preventing the posting
+						 * list from being LP_DEAD-marked.
+						 */
+						continue;
+					}
+
 					/*
-					 * Read-ahead to later kitems here.
+					 * Advanced to the next kitem, which is itemDead-set.
 					 *
-					 * We rely on the assumption that not advancing kitem here
-					 * will prevent us from considering the posting list tuple
-					 * fully dead by not matching its next heap TID in next
-					 * loop iteration.
-					 *
-					 * If, on the other hand, this is the final heap TID in
-					 * the posting list tuple, then tuple gets killed
-					 * regardless (i.e. we handle the case where the last
-					 * kitem is also the last heap TID in the last index tuple
-					 * correctly -- posting tuple still gets killed).
+					 * If the next innermost loop iteration (if any) finds
+					 * that this TID is a match for the next posting list TID,
+					 * then the next TID will be deletable in principle.
 					 */
-					if (pi < numKilled)
-						kitem = &so->currPos.items[so->killedItems[pi++]];
+					kitem = &so->currPos.items[pItemIndex++];
 				}
 
 				/*
-				 * Don't bother advancing the outermost loop's int iterator to
+				 * Don't bother advancing the outermost loop's itemIndex to
 				 * avoid processing killed items that relate to the same
 				 * offnum/posting list tuple.  This micro-optimization hardly
 				 * seems worth it.  (Further iterations of the outermost loop

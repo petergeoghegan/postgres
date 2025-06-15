@@ -252,18 +252,10 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 			{
 				/*
 				 * Yes, remember it for later. (We'll deal with all such
-				 * tuples at once right before leaving the index page.)  The
-				 * test for numKilled overrun is not just paranoia: if the
-				 * caller reverses direction in the indexscan then the same
-				 * item might get entered multiple times. It's not worth
-				 * trying to optimize that, so we don't detect it, but instead
-				 * just forget any excess entries.
+				 * tuples at once right before leaving the index page.)
 				 */
-				if (so->killedItems == NULL)
-					so->killedItems = (int *)
-						palloc(MaxTIDsPerBTreePage * sizeof(int));
-				if (so->numKilled < MaxTIDsPerBTreePage)
-					so->killedItems[so->numKilled++] = so->currPos.itemIndex;
+				so->currPos.items[so->currPos.itemIndex].itemDead = 1;
+				so->itemDead = true;
 			}
 
 			/*
@@ -361,9 +353,6 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	so->orderProcs = NULL;
 	so->arrayContext = NULL;
 
-	so->killedItems = NULL;		/* until needed */
-	so->numKilled = 0;
-
 	/*
 	 * We don't know yet whether the scan will be index-only, so we do not
 	 * allocate the tuple workspace arrays until btrescan.  However, we set up
@@ -391,7 +380,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	if (BTScanPosIsValid(so->currPos))
 	{
 		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
+		if (so->itemDead)
 			_bt_killitems(scan);
 		BTScanPosUnpinIfPinned(so->currPos);
 		BTScanPosInvalidate(so->currPos);
@@ -405,7 +394,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	 * race condition involving VACUUM setting pages all-visible in the VM.
 	 * It's also unsafe for plain index scans that use a non-MVCC snapshot.
 	 *
-	 * When we drop pins eagerly, the mechanism that marks so->killedItems[]
+	 * When we drop pins eagerly, the btgettuple mechanism that marks dead
 	 * index tuples LP_DEAD has to deal with concurrent TID recycling races.
 	 * The scheme used to detect unsafe TID recycling won't work when scanning
 	 * unlogged relations (since it involves saving an affected page's LSN).
@@ -420,6 +409,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	 *
 	 * Note: so->dropPin should never change across rescans.
 	 */
+	so->itemDead = false;
 	so->dropPin = (!scan->xs_want_itup &&
 				   IsMVCCSnapshot(scan->xs_snapshot) &&
 				   RelationNeedsWAL(scan->indexRelation) &&
@@ -475,7 +465,7 @@ btendscan(IndexScanDesc scan)
 	if (BTScanPosIsValid(so->currPos))
 	{
 		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
+		if (so->itemDead)
 			_bt_killitems(scan);
 		BTScanPosUnpinIfPinned(so->currPos);
 	}
@@ -491,8 +481,6 @@ btendscan(IndexScanDesc scan)
 	/* so->arrayKeys and so->orderProcs are in arrayContext */
 	if (so->arrayContext != NULL)
 		MemoryContextDelete(so->arrayContext);
-	if (so->killedItems != NULL)
-		pfree(so->killedItems);
 	if (so->currTuples != NULL)
 		pfree(so->currTuples);
 	/* so->markTuples should not be pfree'd, see btrescan */
@@ -555,7 +543,7 @@ btrestrpos(IndexScanDesc scan)
 		if (BTScanPosIsValid(so->currPos))
 		{
 			/* Before leaving current page, deal with any killed items */
-			if (so->numKilled > 0)
+			if (so->itemDead)
 				_bt_killitems(scan);
 			BTScanPosUnpinIfPinned(so->currPos);
 		}
