@@ -3369,15 +3369,16 @@ _bt_killitems(IndexScanDesc scan)
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
 
 	/*
-	 * Always invalidate so->currPos.items[] killed item bits.
+	 * Unset so->itemDead to avoid repeatedly processing so->currPos.items[]
+	 * again and again in scenarios involving mark and restore.
 	 *
 	 * We don't bother to unset individual itemDead bits.  When so->currPos is
-	 * saved in so->markPos, we shouldn't end up back here again (restoring a
-	 * mark reliably calls here, unsetting so->itemDead).  If so->itemDead is
-	 * set once more, then it's still safe to use a set of itemDead bits that
-	 * weren't all set before/after restoring a mark.  It's also reasonably
-	 * efficient, since we are generally prepared to avoid work when LP_DEAD
-	 * bits were independently set.
+	 * saved in so->markPos, we shouldn't end up back here again (restoring
+	 * from so->markPos always unsets so->itemDead as needed by calling here).
+	 * If so->itemDead is set once more, then it's still safe to use a set of
+	 * itemDead bits that weren't all set before/after restoring a mark.  It's
+	 * also reasonably efficient, since we avoid trying to set an LP_DEAD bit
+	 * that's already been set.
 	 */
 	so->itemDead = false;
 
