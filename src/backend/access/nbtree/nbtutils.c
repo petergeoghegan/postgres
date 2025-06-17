@@ -3435,9 +3435,6 @@ _bt_killitems(IndexScanDesc scan)
 		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
 		OffsetNumber offnum = kitem->indexOffset;
 
-		if (offnum < minoff)
-			continue;			/* pure paranoia */
-
 		/* Skip over items not marked ItemDead up front */
 		if (!kitem->itemDead)
 			continue;
@@ -3451,6 +3448,15 @@ _bt_killitems(IndexScanDesc scan)
 			continue;
 		}
 
+		if (offnum < minoff)
+		{
+			/*
+			 * Page must have originally been the rightmost page, but has
+			 * since split (possible in the !so->dropPin case only)
+			 */
+			offnum = minoff;
+		}
+
 		while (offnum <= maxoff)
 		{
 			ItemId		iid = PageGetItemId(page, offnum);
@@ -3462,6 +3468,16 @@ _bt_killitems(IndexScanDesc scan)
 				int			pItemIndex = itemIndex + 1;
 				int			nposting = BTreeTupleGetNPosting(ituple);
 				int			j;
+
+				/*
+				 * Remember work in outermost loop.
+				 *
+				 * Note: we deliberately don't use offnum for this, since
+				 * postingidxoffnum needs to be applied against page offset
+				 * numbers as of the time that _bt_readpage read the page,
+				 * which might have changed (in the !so->dropPin case).
+				 */
+				postingidxoffnum = kitem->indexOffset;
 
 				for (j = 0; j < nposting; j++)
 				{
@@ -3479,27 +3495,33 @@ _bt_killitems(IndexScanDesc scan)
 					 */
 					Assert(kitem->indexOffset == offnum || !so->dropPin);
 
-					/*
-					 * Read-ahead to later kitems here.
-					 *
-					 * We rely on the assumption that not advancing kitem here
-					 * will prevent us from considering the posting list tuple
-					 * fully dead by not matching its next heap TID in next
-					 * loop iteration.
-					 *
-					 * If, on the other hand, this is the final heap TID in
-					 * the posting list tuple, then tuple gets killed
-					 * regardless (i.e. we handle the case where the last
-					 * kitem is also the last heap TID in the last index tuple
-					 * correctly -- posting tuple still gets killed).
-					 */
-					if (pItemIndex <= so->currPos.lastItem &&
-						so->currPos.items[pItemIndex].indexOffset == offnum &&
-						so->currPos.items[pItemIndex].itemDead)
-						kitem = &so->currPos.items[pItemIndex++];
-				}
+					/* Read-ahead to later kitems here */
+					if (pItemIndex >= so->currPos.lastItem ||
+						!so->currPos.items[pItemIndex].itemDead)
+					{
+						/*
+						 * We've run out of kitems, or the next kitem isn't
+						 * itemDead.
+						 *
+						 * If this is the last posting list TID, it'll still
+						 * be LP_DEAD-marked.  If not, then a failed attempt
+						 * to compare our unchanged kitem against the next
+						 * posting list TID will take place during the next
+						 * innermost loop iteration, preventing the posting
+						 * list from being LP_DEAD-marked.
+						 */
+						continue;
+					}
 
-				postingidxoffnum = offnum;	/* Remember work in outer loop */
+					/*
+					 * Advanced to the next kitem, which is itemDead-set.
+					 *
+					 * If the next innermost loop iteration (if any) finds
+					 * that this TID is a match for the next posting list TID,
+					 * then the next TID will be deletable in principle.
+					 */
+					kitem = &so->currPos.items[pItemIndex++];
+				}
 
 				if (j == nposting)
 					killtuple = true;
