@@ -3493,10 +3493,16 @@ _bt_killitems(IndexScanDesc scan)
 					 * kitem is also the last heap TID in the last index tuple
 					 * correctly -- posting tuple still gets killed).
 					 */
-					if (pItemIndex <= so->currPos.lastItem &&
-						so->currPos.items[pItemIndex].indexOffset == offnum &&
+					if (pItemIndex == so->currPos.lastItem)
+						continue;
+
+					if (so->currPos.items[pItemIndex].indexOffset == offnum &&
 						so->currPos.items[pItemIndex].itemDead)
+					{
 						kitem = &so->currPos.items[pItemIndex++];
+						continue;
+					}
+					break;
 				}
 
 				postingidxoffnum = offnum;	/* Remember work in outer loop */
