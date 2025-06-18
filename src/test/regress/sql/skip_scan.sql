@@ -222,6 +222,30 @@ from fuzz_skip_scan
 where a = 19 and (c, d) >=(54, 5976) and c <= 58
 order by a desc, b desc, c desc, d desc;
 
+-- 2025-06-18 17:46
+-- RowCompares probably don't need to disable forcenonrequired when we reach
+-- them within _bt_set_startikey, after all.  However, that requires better
+-- _bt_first row compare initial positioning logic in the presence of NULL row
+-- members.  We have good tests for that elsewhere.  This test exists to prove
+-- that it is also necessary to make the relevant "NULL row member/row
+-- element" code within _bt_check_rowcompare more particular about the attno
+-- of the required scan key that it gets to via "subkey--"; there cannot be a
+-- "index attribute gap" between it and the NULL row member.
+--
+-- Here the gap is between "b" and "d" row members.  Since we have a skip
+-- array on "a", and since we're now going to allow forcenonrequired with row
+-- compares, this test case will spin ceaselessly without those
+-- _bt_set_startikey changes playing their part in avoiding confusion:
+select *
+from fuzz_skip_scan
+where (b, d) >= (6, null) and (b, d) <= (7, null)
+order by a desc, b desc, c desc, d desc;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+select *
+from fuzz_skip_scan
+where (b, d) >= (6, null) and (b, d) <= (7, null)
+order by a desc, b desc, c desc, d desc;
+
 -- Reset
 set enable_bitmapscan to on;
 set enable_indexonlyscan to on;

@@ -11226,11 +11226,11 @@ execute test_rowcompare_null;
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..254.95 rows=990 width=20) (actual rows=450.00 loops=1)
    Group Key: district, warehouse, orderid
-   Buffers: shared hit=133
+   Buffers: shared hit=84
    ->  Index Scan using must_not_full_scan on redescend_test  (cost=0.29..232.38 rows=1267 width=12) (actual rows=1800.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (ROW(warehouse, orderid) > ROW(4, NULL::integer)) AND (orderline = ANY ('{-5,1,7,9,10,11}'::integer[])))
          Index Searches: 3
-         Buffers: shared hit=133
+         Buffers: shared hit=84
 (7 rows)
 
 deallocate test_rowcompare_null;
@@ -12306,11 +12306,11 @@ execute test_rowcompare_null;
 -----------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.29..298.88 rows=1756 width=20) (actual rows=0.00 loops=1)
    Group Key: district, warehouse, orderid
-   Buffers: shared hit=57
+   Buffers: shared hit=6
    ->  Index Scan Backward using must_not_full_scan on redescend_test  (cost=0.29..249.65 rows=3167 width=12) (actual rows=0.00 loops=1)
          Index Cond: ((district = ANY ('{1,2,3}'::integer[])) AND (ROW(warehouse, orderid) <= ROW(1, NULL::integer)))
          Index Searches: 3
-         Buffers: shared hit=57
+         Buffers: shared hit=6
 (7 rows)
 
 deallocate test_rowcompare_null;
