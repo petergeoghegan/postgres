@@ -1257,6 +1257,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 			 * Row comparison header: look to the first row member instead
 			 */
 			ScanKey		subkey = (ScanKey) DatumGetPointer(cur->sk_argument);
+			bool		keep_strat_total = false;
+			bool		tighten_strat_total = false;
 
 			/*
 			 * Cannot be a NULL in the first row member: _bt_preprocess_keys
@@ -1268,64 +1270,87 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 			Assert(!(subkey->sk_flags & SK_ISNULL));
 
 			/*
+			 * A row comparison key can only become an initial position key
+			 * when it was marked required by preprocessing, which means that
+			 * it must be the final key we picked as a positioning key
+			 */
+			Assert(i == keysz - 1);
+			Assert(cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD));
+
+			/*
 			 * The member scankeys are already in insertion format (ie, they
 			 * have sk_func = 3-way-comparison function)
 			 */
 			memcpy(inskey.scankeys + i, subkey, sizeof(ScanKeyData));
 
 			/*
-			 * If the row comparison is the last positioning key we accepted,
-			 * try to add additional keys from the lower-order row members.
-			 * (If we accepted independent conditions on additional index
-			 * columns, we use those instead --- doesn't seem worth trying to
-			 * determine which is more restrictive.)  Note that this is OK
-			 * even if the row comparison is of ">" or "<" type, because the
-			 * condition applied to all but the last row member is effectively
-			 * ">=" or "<=", and so the extra keys don't break the positioning
-			 * scheme.  But, by the same token, if we aren't able to use all
-			 * the row members, then the part of the row comparison that we
-			 * did use has to be treated as just a ">=" or "<=" condition, and
-			 * so we'd better adjust strat_total accordingly.
+			 * If a "column gap" appears between row compare members, then the
+			 * part of the row comparison that we use has to be treated as
+			 * just a ">=" or "<=" condition. and so we'd better adjust
+			 * strat_total accordingly.
+			 *
+			 * We're able to use a _more_ restrictive strategy when we
+			 * encounter a NULL row compare member (which is unsatisfiable).
+			 * For example, a qual "(a, b, c) >= (1, NULL, 77)" will use an
+			 * insertion scan key "a > 1".  All rows where "a = 1" have to
+			 * perform a NULL row member comparison (or would, if we didn't
+			 * use the more restrictive ">" strategy), which is guranteed to
+			 * return false/return NULL.
 			 */
-			if (i == keysz - 1)
+			Assert(!(subkey->sk_flags & SK_ROW_END));
+			for (;;)
 			{
-				bool		used_all_subkeys = false;
-
-				Assert(!(subkey->sk_flags & SK_ROW_END));
-				for (;;)
+				subkey++;
+				Assert(subkey->sk_flags & SK_ROW_MEMBER);
+				if (subkey->sk_attno != keysz + 1)
+					break;		/* out-of-sequence, can't use it */
+				if (subkey->sk_strategy != cur->sk_strategy)
+					break;		/* wrong direction, can't use it */
+				if (subkey->sk_flags & SK_ISNULL)
 				{
-					subkey++;
-					Assert(subkey->sk_flags & SK_ROW_MEMBER);
-					if (subkey->sk_attno != keysz + 1)
-						break;	/* out-of-sequence, can't use it */
-					if (subkey->sk_strategy != cur->sk_strategy)
-						break;	/* wrong direction, can't use it */
-					if (subkey->sk_flags & SK_ISNULL)
-						break;	/* can't use null keys */
-					Assert(keysz < INDEX_MAX_KEYS);
-					memcpy(inskey.scankeys + keysz, subkey,
-						   sizeof(ScanKeyData));
-					keysz++;
-					if (subkey->sk_flags & SK_ROW_END)
-					{
-						used_all_subkeys = true;
-						break;
-					}
+					/* Unsatisfiable NULL row member */
+					keep_strat_total = true;
+					tighten_strat_total = true;
+					break;
 				}
-				if (!used_all_subkeys)
+				Assert(keysz < INDEX_MAX_KEYS);
+				memcpy(inskey.scankeys + keysz, subkey,
+					   sizeof(ScanKeyData));
+				keysz++;
+				if (subkey->sk_flags & SK_ROW_END)
 				{
-					switch (strat_total)
-					{
-						case BTLessStrategyNumber:
-							strat_total = BTLessEqualStrategyNumber;
-							break;
-						case BTGreaterStrategyNumber:
-							strat_total = BTGreaterEqualStrategyNumber;
-							break;
-					}
+					keep_strat_total = true;
+					break;
 				}
-				break;			/* done with outer loop */
 			}
+			if (!keep_strat_total)
+			{
+				/* Use less restrictive strategy (and fewer keys) */
+				Assert(!tighten_strat_total);
+				switch (strat_total)
+				{
+					case BTLessStrategyNumber:
+						strat_total = BTLessEqualStrategyNumber;
+						break;
+					case BTGreaterStrategyNumber:
+						strat_total = BTGreaterEqualStrategyNumber;
+						break;
+				}
+			}
+			if (tighten_strat_total)
+			{
+				/* Use more restrictive strategy (and fewer keys) */
+				switch (strat_total)
+				{
+					case BTLessEqualStrategyNumber:
+						strat_total = BTLessStrategyNumber;
+						break;
+					case BTGreaterEqualStrategyNumber:
+						strat_total = BTGreaterStrategyNumber;
+						break;
+				}
+			}
+			break;				/* done building insertion scan key */
 		}
 		else
 		{
