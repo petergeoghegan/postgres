@@ -2568,23 +2568,7 @@ _bt_set_startikey(IndexScanDesc scan, BTReadPageState *pstate)
 			 * whether or not every tuple on the page satisfies a RowCompare
 			 * key based only on firsttup and lasttup -- so we just give up.
 			 */
-			if (!start_past_saop_eq && !so->skipScan)
-				break;			/* unsafe to go further */
-
-			/*
-			 * We have to be even more careful with RowCompares that come
-			 * after an array: we assume it's unsafe to even bypass the array.
-			 * Calling _bt_start_array_keys to recover the scan's arrays
-			 * following use of forcenonrequired mode isn't compatible with
-			 * _bt_check_rowcompare's continuescan=false behavior with NULL
-			 * row compare members.  _bt_advance_array_keys must not make a
-			 * decision on the basis of a key not being satisfied in the
-			 * opposite-to-scan direction until the scan reaches a leaf page
-			 * where the same key begins to be satisfied in scan direction.
-			 * The _bt_first !used_all_subkeys behavior makes this limitation
-			 * hard to work around some other way.
-			 */
-			return;				/* completely unsafe to set pstate.startikey */
+			break;				/* unsafe */
 		}
 		if (key->sk_strategy != BTEqualStrategyNumber)
 		{
@@ -3081,6 +3065,56 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 
 		Assert(subkey->sk_flags & SK_ROW_MEMBER);
 
+		/*
+		 * Unlike the simple-scankey case, NULL row members aren't disallowed
+		 * (except when it's the first row element that has the NULL arg,
+		 * where preprocessing recognizes the scan's qual as unsatisfiable).
+		 * But it can never match any rows.
+		 *
+		 * If the first row member's column is marked required, and this row
+		 * comparison is on the very next column, we can stop the scan; there
+		 * can't be another tuple that will succeed.
+		 */
+		if (subkey->sk_flags & SK_ISNULL)
+		{
+			AttrNumber	isnull_attno = subkey->sk_attno;
+
+			/* can't be the first row member (preprocessing catches this) */
+			Assert(subkey != (ScanKey) DatumGetPointer(skey->sk_argument));
+
+			subkey--;
+			if (forcenonrequired)
+			{
+				/* treating scan's keys as non-required */
+			}
+			else if (subkey->sk_attno != isnull_attno - 1)
+			{
+				/*
+				 * There's an index column gap between the NULL row member,
+				 * and the next most significant row member.  Cannot end scan.
+				 *
+				 * The presence of this gap doesn't actually imply that there
+				 * really can be another tuple that will succeed; there can't.
+				 * This isn't really about the _current_ primitive index scan.
+				 *
+				 * When we set continuescan=false, it had better be safe for a
+				 * scan with a more-significant-than-rowcompare array key to
+				 * reposition itself to some later leaf page, in the usual way
+				 * (by starting the next primitive index scan).  But there'd
+				 * be no way for _bt_first to actually locate some later leaf
+				 * page if we were to set continuescan=false here -- we'd run
+				 * the risk of getting stuck in an unending cycle.
+				 */
+			}
+			else if ((subkey->sk_flags & SK_BT_REQFWD) &&
+					 ScanDirectionIsForward(dir))
+				*continuescan = false;
+			else if ((subkey->sk_flags & SK_BT_REQBKWD) &&
+					 ScanDirectionIsBackward(dir))
+				*continuescan = false;
+			return false;
+		}
+
 		if (subkey->sk_attno > tupnatts)
 		{
 			/*
@@ -3090,11 +3124,7 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			 * attribute passes the qual.
 			 */
 			Assert(BTreeTupleIsPivot(tuple));
-			cmpresult = 0;
-			if (subkey->sk_flags & SK_ROW_END)
-				break;
-			subkey++;
-			continue;
+			return true;
 		}
 
 		datum = index_getattr(tuple,
@@ -3148,30 +3178,6 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			/*
 			 * In any case, this indextuple doesn't match the qual.
 			 */
-			return false;
-		}
-
-		if (subkey->sk_flags & SK_ISNULL)
-		{
-			/*
-			 * Unlike the simple-scankey case, this isn't a disallowed case
-			 * (except when it's the first row element that has the NULL arg).
-			 * But it can never match.  If all the earlier row comparison
-			 * columns are required for the scan direction, we can stop the
-			 * scan, because there can't be another tuple that will succeed.
-			 */
-			Assert(subkey != (ScanKey) DatumGetPointer(skey->sk_argument));
-			subkey--;
-			if (forcenonrequired)
-			{
-				/* treating scan's keys as non-required */
-			}
-			else if ((subkey->sk_flags & SK_BT_REQFWD) &&
-					 ScanDirectionIsForward(dir))
-				*continuescan = false;
-			else if ((subkey->sk_flags & SK_BT_REQBKWD) &&
-					 ScanDirectionIsBackward(dir))
-				*continuescan = false;
 			return false;
 		}
 
