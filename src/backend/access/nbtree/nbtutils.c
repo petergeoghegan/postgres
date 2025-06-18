@@ -2565,23 +2565,7 @@ _bt_set_startikey(IndexScanDesc scan, BTReadPageState *pstate)
 			 * whether or not every tuple on the page satisfies a RowCompare
 			 * key based only on firsttup and lasttup -- so we just give up.
 			 */
-			if (!start_past_saop_eq && !so->skipScan)
-				break;			/* unsafe to go further */
-
-			/*
-			 * We have to be even more careful with RowCompares that come
-			 * after an array: we assume it's unsafe to even bypass the array.
-			 * Calling _bt_start_array_keys to recover the scan's arrays
-			 * following use of forcenonrequired mode isn't compatible with
-			 * _bt_check_rowcompare's continuescan=false behavior with NULL
-			 * row compare members.  _bt_advance_array_keys must not make a
-			 * decision on the basis of a key not being satisfied in the
-			 * opposite-to-scan direction until the scan reaches a leaf page
-			 * where the same key begins to be satisfied in scan direction.
-			 * The _bt_first !used_all_subkeys behavior makes this limitation
-			 * hard to work around some other way.
-			 */
-			return;				/* completely unsafe to set pstate.startikey */
+			break;				/* unsafe */
 		}
 		if (key->sk_strategy != BTEqualStrategyNumber)
 		{
@@ -3078,6 +3062,34 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 
 		Assert(subkey->sk_flags & SK_ROW_MEMBER);
 
+		/*
+		 * Unlike the simple-scankey case, NULL row members aren't disallowed
+		 * (except when it's the first row element that has the NULL arg,
+		 * where preprocessing recognizes the scan's qual as unsatisfiable).
+		 * But it can never match any rows.
+		 *
+		 * If this row comparison member is marked required in the current
+		 * scan direction, we can stop the scan; there can't be another tuple
+		 * that will succeed.
+		 */
+		if (subkey->sk_flags & SK_ISNULL)
+		{
+			/* can't be the first row member (preprocessing catches this) */
+			Assert(subkey != (ScanKey) DatumGetPointer(skey->sk_argument));
+
+			if (forcenonrequired)
+			{
+				/* treating scan's keys as non-required */
+			}
+			else if ((subkey->sk_flags & SK_BT_REQFWD) &&
+					 ScanDirectionIsForward(dir))
+				*continuescan = false;
+			else if ((subkey->sk_flags & SK_BT_REQBKWD) &&
+					 ScanDirectionIsBackward(dir))
+				*continuescan = false;
+			return false;
+		}
+
 		if (subkey->sk_attno > tupnatts)
 		{
 			/*
@@ -3087,11 +3099,7 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			 * attribute passes the qual.
 			 */
 			Assert(BTreeTupleIsPivot(tuple));
-			cmpresult = 0;
-			if (subkey->sk_flags & SK_ROW_END)
-				break;
-			subkey++;
-			continue;
+			return true;
 		}
 
 		datum = index_getattr(tuple,
@@ -3107,6 +3115,8 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			}
 			else if (subkey->sk_flags & SK_BT_NULLS_FIRST)
 			{
+				int			reqflags = SK_BT_REQBKWD;
+
 				/*
 				 * Since NULLs are sorted before non-NULLs, we know we have
 				 * reached the lower limit of the range of values for this
@@ -3118,13 +3128,34 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 				 * have initially positioned to the start of the index.
 				 * (_bt_advance_array_keys also relies on this behavior during
 				 * forward scans.)
+				 *
+				 * For example, quals like "WHERE (a, b, c) < (2, 42, 333)"
+				 * can terminate a backwards scan upon reaching the rightmost
+				 * tuple whose "a" column has a NULL, since the entire index
+				 * cannot contain further matches to the left of that tuple.
+				 * NULL is "<" 2, but it nevertheless indicates the end of all
+				 * matching tuples to our < row compare qual.
+				 *
+				 * Note, however, that it is _not_ safe to end the scan on a
+				 * row member that's marked required in the opposite-to-scan
+				 * direction for row compare members beyond the first one.
+				 * We'll only terminate the scan on a second or subsequent row
+				 * member when they're marked required in the scan direction.
+				 * For example, quals like "WHERE (a, b, c) > (2, 42, 333)"
+				 * can terminate a backwards scan upon reaching the index's
+				 * rightmost "a = 2" tuple whose "b" column contains a NULL.
+				 * NULL is treated like just another value that's "<" 42.
 				 */
-				if ((subkey->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) &&
+				if (subkey->sk_attno == skey->sk_attno)
+					reqflags |= SK_BT_REQFWD;	/* for first member only */
+				if ((subkey->sk_flags & reqflags) &&
 					ScanDirectionIsBackward(dir))
 					*continuescan = false;
 			}
 			else
 			{
+				int			reqflags = SK_BT_REQFWD;
+
 				/*
 				 * Since NULLs are sorted after non-NULLs, we know we have
 				 * reached the upper limit of the range of values for this
@@ -3136,8 +3167,27 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 				 * may have initially positioned to the end of the index.
 				 * (_bt_advance_array_keys also relies on this behavior during
 				 * backward scans.)
+				 *
+				 * For example, quals like "WHERE (a, b, c) > (2, 42, 333)"
+				 * can terminate a forwards scan upon reaching the leftmost
+				 * tuple whose "a" column has a NULL, since the entire index
+				 * cannot contain further matches to the right of that tuple.
+				 * NULL is ">" 2, but it nevertheless indicates the end of all
+				 * matching tuples to our > row compare qual.
+				 *
+				 * Note, however, that it is _not_ safe to end the scan on a
+				 * row member that's marked required in the opposite-to-scan
+				 * direction for row compare members beyond the first one.
+				 * We'll only terminate the scan on a second or subsequent row
+				 * member when they're marked required in the scan direction.
+				 * For example, quals like "WHERE (a, b, c) < (2, 42, 333)"
+				 * can terminate a forwards scan upon reaching the index's
+				 * leftmost "a = 2" tuple whose "b" column contains a NULL.
+				 * NULL is treated like just another value that's ">" 42.
 				 */
-				if ((subkey->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) &&
+				if (subkey->sk_attno == skey->sk_attno)
+					reqflags |= SK_BT_REQBKWD;	/* for first member only */
+				if ((subkey->sk_flags & reqflags) &&
 					ScanDirectionIsForward(dir))
 					*continuescan = false;
 			}
@@ -3145,30 +3195,6 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			/*
 			 * In any case, this indextuple doesn't match the qual.
 			 */
-			return false;
-		}
-
-		if (subkey->sk_flags & SK_ISNULL)
-		{
-			/*
-			 * Unlike the simple-scankey case, this isn't a disallowed case
-			 * (except when it's the first row element that has the NULL arg).
-			 * But it can never match.  If all the earlier row comparison
-			 * columns are required for the scan direction, we can stop the
-			 * scan, because there can't be another tuple that will succeed.
-			 */
-			Assert(subkey != (ScanKey) DatumGetPointer(skey->sk_argument));
-			subkey--;
-			if (forcenonrequired)
-			{
-				/* treating scan's keys as non-required */
-			}
-			else if ((subkey->sk_flags & SK_BT_REQFWD) &&
-					 ScanDirectionIsForward(dir))
-				*continuescan = false;
-			else if ((subkey->sk_flags & SK_BT_REQBKWD) &&
-					 ScanDirectionIsBackward(dir))
-				*continuescan = false;
 			return false;
 		}
 
