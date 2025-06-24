@@ -971,22 +971,13 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * of what initial positioning strategy to use.
 	 *
 	 * When the scan keys include cross-type operators, _bt_preprocess_keys
-	 * may not be able to eliminate redundant keys; in such cases we will
-	 * arbitrarily pick a usable one for each attribute.  This is correct
-	 * but possibly not optimal behavior.  (For example, with keys like
-	 * "x >= 4 AND x >= 5" we would elect to scan starting at x=4 when
-	 * x=5 would be more efficient.)  Since the situation only arises given
-	 * a poorly-worded query plus an incomplete opfamily, live with it.
-	 *
-	 * When both equality and inequality keys appear for a single attribute
-	 * (again, only possible when cross-type operators appear), we *must*
-	 * select one of the equality keys for the starting point, because
-	 * _bt_checkkeys() will stop the scan as soon as an equality qual fails.
-	 * For example, if we have keys like "x >= 4 AND x = 10" and we elect to
-	 * start at x=4, we will fail and stop before reaching x=10.  If multiple
-	 * equality quals survive preprocessing, however, it doesn't matter which
-	 * one we use --- by definition, they are either redundant or
-	 * contradictory.
+	 * may not be able to eliminate redundant keys; in such cases it will
+	 * arbitrarily pick a usable one for each attribute, making sure that the
+	 * other key isn't marked required to continue the scan.  We only use keys
+	 * that were marked required (perhaps _only_ marked required in the scan
+	 * direction opposite our own) here.  There's no risk that we'll get
+	 * confused about which key to use, since _bt_preprocess_keys will also
+	 * relocate the other key to the end of so->keyData[].
 	 *
 	 * In practice we rarely see any "attribute boundary key gaps" here.
 	 * Preprocessing can usually backfill skip array keys for any attributes
@@ -996,10 +987,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * This happens with range skip arrays, which store inequality keys in the
 	 * array's low_compare/high_compare fields (used to find the first/last
 	 * set of matches, when = key will lack a usable sk_argument value).
-	 * These are always preferred over any redundant "standard" inequality
-	 * keys on the same column (per the usual rule about preferring = keys).
-	 * Note also that any column with an = skip array key can never have an
-	 * additional, contradictory = key.
 	 *
 	 * All keys (with the exception of SK_SEARCHNULL keys and SK_BT_SKIP
 	 * array keys whose array is "null_elem=true") imply a NOT NULL qualifier.
@@ -1012,7 +999,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 *
 	 * In this loop, row-comparison keys are treated the same as keys on their
 	 * first (leftmost) columns.  We'll add on lower-order columns of the row
-	 * comparison below, if possible.
+	 * comparison below.
 	 *
 	 * The selected scan keys (at most one per index column) are remembered by
 	 * storing their addresses into the local startKeys[] array.
@@ -1195,6 +1182,13 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				chosen = NULL;
 				impliesNN = NULL;
 			}
+
+			/*
+			 * Keys that are not marked required in either scan direction
+			 * aren't eligible to be an initial positioning key
+			 */
+			if ((cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) == 0)
+				continue;
 
 			/*
 			 * Can we use this key as a starting boundary for this attr?

@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "access/nbtree.h"
+#include "common/int.h"
 #include "lib/qunique.h"
 #include "utils/array.h"
 #include "utils/lsyscache.h"
@@ -56,6 +57,8 @@ static void _bt_skiparray_strat_decrement(IndexScanDesc scan, ScanKey arraysk,
 										  BTArrayKeyInfo *array);
 static void _bt_skiparray_strat_increment(IndexScanDesc scan, ScanKey arraysk,
 										  BTArrayKeyInfo *array);
+static void _bt_unmark_extra_keys(IndexScanDesc scan, int *keyDataMap);
+static int	_bt_reorder_array_cmp(const void *a, const void *b);
 static ScanKey _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys);
 static void _bt_preprocess_array_keys_final(IndexScanDesc scan, int *keyDataMap);
 static int	_bt_num_array_keys(IndexScanDesc scan, Oid *skip_eq_ops_out,
@@ -96,7 +99,7 @@ static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
  * incomplete sets of cross-type operators, we may fail to detect redundant
  * or contradictory keys, but we can survive that.)
  *
- * The output keys must be sorted by index attribute.  Presently we expect
+ * Required output keys are sorted by index attribute.  Presently we expect
  * (but verify) that the input keys are already so sorted --- this is done
  * by match_clauses_to_index() in indxpath.c.  Some reordering of the keys
  * within each attribute may be done as a byproduct of the processing here.
@@ -134,22 +137,17 @@ static int	_bt_compare_array_elements(const void *a, const void *b, void *arg);
  * cannot compare two keys for lack of a suitable cross-type operator,
  * we cannot eliminate either.  If there are two such keys of the same
  * operator strategy, the second one is just pushed into the output array
- * without further processing here.  We may also emit both >/>= or both
- * </<= keys if we can't compare them.  The logic about required keys still
- * works if we don't eliminate redundant keys.
+ * without further processing here.  We may also emit both >/>= or both </<=
+ * keys if we can't compare them (though only one will be marked required).
  *
- * Note that one reason we need direction-sensitive required-key flags is
- * precisely that we may not be able to eliminate redundant keys.  Suppose
- * we have "x > 4::int AND x > 10::bigint", and we are unable to determine
- * which key is more restrictive for lack of a suitable cross-type operator.
- * _bt_first will arbitrarily pick one of the keys to do the initial
- * positioning with.  If it picks x > 4, then the x > 10 condition will fail
- * until we reach index entries > 10; but we can't stop the scan just because
- * x > 10 is failing.  On the other hand, if we are scanning backwards, then
- * failure of either key is indeed enough to stop the scan.  (In general, when
- * inequality keys are present, the initial-positioning code only promises to
- * position before the first possible match, not exactly at the first match,
- * for a forward scan; or after the last match for a backward scan.)
+ * We may not be able to eliminate redundant keys.  Suppose we have a qual
+ * like "x > 4::int AND x > 10::bigint", and we are unable to determine which
+ * key is more restrictive for lack of a suitable cross-type operator.  We'll
+ * handle this by arbitrarily picking one of the keys to marked as required.
+ * If we pick x > 4, then the x > 10 condition will fail until we reach index
+ * entries > 10.  That won't end the scan, because x > 10 won't be marked
+ * required.  Note that in addition to not marking these redundant keys as
+ * required, we also relocate them to the end of the array.
  *
  * As a byproduct of this work, we can detect contradictory quals such
  * as "x = 1 AND x > 2".  If we see that, we return so->qual_ok = false,
@@ -193,6 +191,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	ScanKey		arrayKeyData;
 	int		   *keyDataMap = NULL;
 	int			arrayidx = 0;
+	bool		comparisonfailed = false;
 
 	if (so->numberOfKeys > 0)
 	{
@@ -388,7 +387,8 @@ _bt_preprocess_keys(IndexScanDesc scan)
 						xform[j].inkey = NULL;
 						xform[j].inkeyi = -1;
 					}
-					/* else, cannot determine redundancy, keep both keys */
+					else
+						comparisonfailed = true;
 				}
 				/* track number of attrs for which we have "=" keys */
 				numberOfEqualCols++;
@@ -409,6 +409,8 @@ _bt_preprocess_keys(IndexScanDesc scan)
 					else
 						xform[BTLessStrategyNumber - 1].inkey = NULL;
 				}
+				else
+					comparisonfailed = true;
 			}
 
 			/* try to keep only one of >, >= */
@@ -426,6 +428,8 @@ _bt_preprocess_keys(IndexScanDesc scan)
 					else
 						xform[BTGreaterStrategyNumber - 1].inkey = NULL;
 				}
+				else
+					comparisonfailed = true;
 			}
 
 			/*
@@ -465,25 +469,6 @@ _bt_preprocess_keys(IndexScanDesc scan)
 
 		/* check strategy this key's operator corresponds to */
 		j = inkey->sk_strategy - 1;
-
-		/* if row comparison, push it directly to the output array */
-		if (inkey->sk_flags & SK_ROW_HEADER)
-		{
-			ScanKey		outkey = &so->keyData[new_numberOfKeys++];
-
-			memcpy(outkey, inkey, sizeof(ScanKeyData));
-			if (arrayKeyData)
-				keyDataMap[new_numberOfKeys - 1] = i;
-			if (numberOfEqualCols == attno - 1)
-				_bt_mark_scankey_required(outkey);
-
-			/*
-			 * We don't support RowCompare using equality; such a qual would
-			 * mess up the numberOfEqualCols tracking.
-			 */
-			Assert(j != (BTEqualStrategyNumber - 1));
-			continue;
-		}
 
 		if (inkey->sk_strategy == BTEqualStrategyNumber &&
 			(inkey->sk_flags & SK_SEARCHARRAY))
@@ -591,11 +576,6 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				 * We can't determine which key is more restrictive.  Push
 				 * xform[j] directly to the output array, then set xform[j] to
 				 * the new scan key.
-				 *
-				 * Note: We do things this way around so that our arrays are
-				 * always in the same order as their corresponding scan keys,
-				 * even with incomplete opfamilies.  _bt_advance_array_keys
-				 * depends on this.
 				 */
 				ScanKey		outkey = &so->keyData[new_numberOfKeys++];
 
@@ -607,6 +587,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
 				xform[j].inkey = inkey;
 				xform[j].inkeyi = i;
 				xform[j].arrayidx = arrayidx;
+				comparisonfailed = true;
 			}
 		}
 	}
@@ -621,6 +602,16 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	 */
 	if (arrayKeyData)
 		_bt_preprocess_array_keys_final(scan, keyDataMap);
+
+	/*
+	 * If all prior preprocessing steps failed to eliminate any "extra" keys
+	 * due to a lack of suitable cross-type support, unset their required
+	 * markings now.  This leaves so->keyData[] with only one required > or >=
+	 * key, and only one required < or <= key.  It'll always prefer to keep a
+	 * required = key on an attr that also has a redundant inequality.
+	 */
+	if (comparisonfailed)
+		_bt_unmark_extra_keys(scan, keyDataMap);
 
 	/* Could pfree arrayKeyData/keyDataMap now, but not worth the cycles */
 }
@@ -847,8 +838,12 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 				cmp_op;
 	StrategyNumber strat;
 
-	Assert(!((leftarg->sk_flags | rightarg->sk_flags) &
-			 (SK_ROW_HEADER | SK_ROW_MEMBER)));
+	/*
+	 * We don't yet know how to determine redundancy when it involves a row
+	 * compare key
+	 */
+	if ((leftarg->sk_flags | rightarg->sk_flags) & SK_ROW_HEADER)
+		return false;
 
 	/*
 	 * First, deal with cases where one or both args are NULL.  This should
@@ -1465,6 +1460,271 @@ _bt_skiparray_strat_increment(IndexScanDesc scan, ScanKey arraysk,
 		low_compare->sk_argument = new_sk_argument;
 		low_compare->sk_strategy = BTGreaterEqualStrategyNumber;
 	}
+}
+
+/*
+ *	_bt_unmark_extra_keys() -- make "extra" so->keyData[] keys nonrequired.
+ *
+ * When _bt_preprocess_keys failed to eliminate one or more contradictory
+ * keys, it calls here to make sure that there is no more than one > or >= key
+ * marked required, and no more than one < or <= key marked required.  That
+ * way _bt_first and _bt_checkkeys will reliably have exactly the same ideas
+ * about which keys to use to start and end the scan.  This is important
+ * during scans with array keys, where _bt_checkkeys/_bt_advance_array_keys
+ * relies on _bt_first to reposition the scan when scheduling a new primscan.
+ *
+ * We also relocate "extra" keys that were unmarked required to the end of the
+ * so->keyData[] array.  This is for the benefit of _bt_advance_array_keys,
+ * which expects to be able to test if the scan's keys would end the scan were
+ * the scan direction to change.  This is used to test whether _bt_first is
+ * able to relocate the scan to a later leaf page; if an inequality would end
+ * the scan if the scan direction were reversed, then _bt_first will be able
+ * to apply the same inequality to relocate the scan to a later leaf page
+ * (even when the current leaf page satisfies the scan's current = keys,
+ * including those used by one or more = arrays).
+ *
+ * Only call here when _bt_compare_scankey_args returned false at least once
+ * (otherwise, calling here will just waste cycles).  We always unmark at
+ * least one key per call to _bt_compare_scankey_args that reported failure.
+ */
+static void
+_bt_unmark_extra_keys(IndexScanDesc scan, int *keyDataMap)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	AttrNumber	curattr;
+	ScanKey		cur;
+	bool	   *unmarkikey;
+	int			nunmark,
+				nunmarked,
+				nkept,
+				firsti;
+	ScanKey		keepKeys,
+				unmarkKeys;
+	FmgrInfo   *keepOrderProcs,
+			   *unmarkOrderProcs;
+	bool		haveEquals,
+				haveReqForward,
+				haveReqBackward;
+
+	/*
+	 * Do an initial pass over so->keyData[] that determines which keys to
+	 * keeo as required, and which to mark non-required.
+	 *
+	 * When both equality and inequality keys remain on a single attribute, we
+	 * *must* leave only the equality key as required to continue the scan.
+	 * That way _bt_first will use the key for initial positioning purposes.
+	 *
+	 * This isn't optional.  _bt_checkkeys() will stop the scan as soon as an
+	 * equality qual fails.  For example, if _bt_first were allowed to start
+	 * at x=4 given a qual "x >= 4 AND x = 10", it would fail and stop before
+	 * reaching x=10.  If multiple equality quals on the same attribute have
+	 * survived all prior preprocessing steps, we'll arbitrarily allow only
+	 * one to remain marked required.
+	 */
+	unmarkikey = palloc0(so->numberOfKeys * sizeof(bool));
+	nunmark = 0;
+
+	/* Set things up for first key's attr */
+	cur = so->keyData;
+	curattr = cur->sk_attno;
+	firsti = 0;
+	haveEquals = false;
+	haveReqForward = false;
+	haveReqBackward = false;
+	for (int i = 0; i < so->numberOfKeys; cur++, i++)
+	{
+		if (cur->sk_attno != curattr)
+		{
+			/* Reset for next attr */
+			curattr = cur->sk_attno;
+			firsti = i;
+
+			haveEquals = false;
+			haveReqForward = false;
+			haveReqBackward = false;
+		}
+
+		/* First consider equalities */
+		if (haveEquals)
+		{
+			/*
+			 * We've already found the first "=" key for attr.  We already
+			 * decided that every other key on the same attr is to be unmarked
+			 */
+			unmarkikey[i] = true;
+			nunmark++;
+			continue;
+		}
+		else if ((cur->sk_flags & SK_BT_REQFWD) &&
+				 (cur->sk_flags & SK_BT_REQBKWD))
+		{
+			/*
+			 * Found the first "=" key for attr.  All other keys on the same
+			 * attr will be unmarked.
+			 */
+			haveEquals = true;
+			for (int j = firsti; j < i; j++)
+			{
+				/* We'll unmark prior keys for the same attr after all */
+				if (!unmarkikey[j])
+				{
+					unmarkikey[j] = true;
+					nunmark++;
+				}
+			}
+			continue;
+		}
+
+		/* Next consider inequalities */
+		if ((cur->sk_flags & SK_BT_REQFWD) && !haveReqForward)
+		{
+			haveReqForward = true;
+			continue;
+		}
+		else if ((cur->sk_flags & SK_BT_REQBKWD) && !haveReqBackward)
+		{
+			haveReqBackward = true;
+			continue;
+		}
+		unmarkikey[i] = true;
+		nunmark++;
+	}
+
+	/*
+	 * We're only supposed to be called when _bt_compare_scankey_args reported
+	 * failure when called from the main _bt_preprocess_keys loop
+	 */
+	Assert(nunmark > 0);
+
+	/*
+	 * Next, allocate temp arrays: one set for unchanged keys, another for
+	 * keys that will be unmarked/made non-required
+	 */
+	unmarkKeys = palloc(so->numberOfKeys * sizeof(ScanKeyData));
+	keepKeys = palloc(so->numberOfKeys * sizeof(ScanKeyData));
+	nunmarked = 0;
+	nkept = 0;
+	if (so->numArrayKeys)
+	{
+		unmarkOrderProcs = palloc(so->numberOfKeys * sizeof(FmgrInfo));
+		keepOrderProcs = palloc(so->numberOfKeys * sizeof(FmgrInfo));
+	}
+
+	/*
+	 * Next, copy the contents of so->keyData[] into the appropriate temp
+	 * array.
+	 *
+	 * Note: scans with array keys need us to maintain a mapping of the old
+	 * so->keyData[] positions to the new ones.  This is similar to what
+	 * already just happened in _bt_preprocess_array_keys_final.
+	 */
+	for (int origikey = 0; origikey < so->numberOfKeys; origikey++)
+	{
+		ScanKey		origkey = so->keyData + origikey;
+		ScanKey		unmark;
+
+		if (!unmarkikey[origikey])
+		{
+			/* non-redundant key stays at the start of so->keyData[] */
+			memcpy(keepKeys + nkept, origkey, sizeof(ScanKeyData));
+
+			if (so->numArrayKeys)
+			{
+				keyDataMap[origikey] = nkept;
+				memcpy(keepOrderProcs + nkept, &so->orderProcs[origikey],
+					   sizeof(FmgrInfo));
+			}
+
+			nkept++;
+			continue;
+		}
+
+		/* key will be unmarked */
+		unmark = unmarkKeys + nunmarked;
+		memcpy(unmark, origkey, sizeof(ScanKeyData));
+
+		if (so->numArrayKeys)
+		{
+			keyDataMap[origikey] = (so->numberOfKeys - nunmark) + nunmarked;
+			memcpy(&unmarkOrderProcs[nunmarked], &so->orderProcs[origikey],
+				   sizeof(FmgrInfo));
+		}
+
+		nunmarked++;
+
+		/* clear requiredness flags on redundant key (and its subkeys) */
+		unmark->sk_flags &= ~(SK_BT_REQFWD | SK_BT_REQBKWD);
+		if (unmark->sk_flags & SK_ROW_HEADER)
+		{
+			ScanKey		subkey = (ScanKey) DatumGetPointer(origkey->sk_argument);
+
+			Assert(subkey->sk_strategy == origkey->sk_strategy);
+			for (;;)
+			{
+				Assert(subkey->sk_flags & SK_ROW_MEMBER);
+				subkey->sk_flags &= ~(SK_BT_REQFWD | SK_BT_REQBKWD);
+				if (subkey->sk_flags & SK_ROW_END)
+					break;
+				subkey++;
+			}
+		}
+	}
+
+	/*
+	 * Copy temp arrays back into so->keyData[]
+	 */
+	Assert(nkept == so->numberOfKeys - nunmark);
+	Assert(nunmarked == nunmark);
+	memcpy(so->keyData, keepKeys, sizeof(ScanKeyData) * nkept);
+	memcpy(so->keyData + nkept, unmarkKeys, sizeof(ScanKeyData) * nunmarked);
+
+	/* Done with temp arrays */
+	pfree(unmarkikey);
+	pfree(keepKeys);
+	pfree(unmarkKeys);
+
+	/*
+	 * Now copy temp entries needed by scans with = array keys back into
+	 * so->orderProcs[].  The order needs to continue to match the new order
+	 * used by so->keyData[].
+	 */
+	if (so->numArrayKeys)
+	{
+		memcpy(so->orderProcs, keepOrderProcs, sizeof(FmgrInfo) * nkept);
+		memcpy(so->orderProcs + nkept, unmarkOrderProcs,
+			   sizeof(FmgrInfo) * nunmarked);
+
+		/* Also fix-up array->scan_key references */
+		for (int arridx = 0; arridx < so->numArrayKeys; arridx++)
+		{
+			BTArrayKeyInfo *array = &so->arrayKeys[arridx];
+
+			array->scan_key = keyDataMap[array->scan_key];
+		}
+
+		/*
+		 * Also make sure that the scan's arrays appear in the expected order.
+		 * This must match corresponding scan key/so->orderProcs[] entries.
+		 */
+		qsort(so->arrayKeys, so->numArrayKeys, sizeof(BTArrayKeyInfo),
+			  _bt_reorder_array_cmp);
+
+		/* Done with temp arrays */
+		pfree(unmarkOrderProcs);
+		pfree(keepOrderProcs);
+	}
+}
+
+/*
+ * qsort comparator for reordering so->arrayKeys[] BTArrayKeyInfo entries
+ */
+static int
+_bt_reorder_array_cmp(const void *a, const void *b)
+{
+	BTArrayKeyInfo *arraya = (BTArrayKeyInfo *) a;
+	BTArrayKeyInfo *arrayb = (BTArrayKeyInfo *) b;
+
+	return pg_cmp_s32(arraya->scan_key, arrayb->scan_key);
 }
 
 /*
