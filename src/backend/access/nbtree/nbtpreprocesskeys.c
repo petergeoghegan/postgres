@@ -1513,8 +1513,8 @@ _bt_unmark_extra_keys(IndexScanDesc scan, int *keyDataMap)
 				firsti;
 	ScanKey		keepKeys,
 				unmarkKeys;
-	FmgrInfo   *keepOrderProcs,
-			   *unmarkOrderProcs;
+	FmgrInfo   *keepOrderProcs = NULL,
+			   *unmarkOrderProcs = NULL;
 	bool		haveEquals,
 				haveReqForward,
 				haveReqBackward;
