@@ -852,13 +852,6 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 	StrategyNumber strat;
 
 	/*
-	 * We don't yet know how to determine redundancy when it involves a row
-	 * compare key
-	 */
-	if ((leftarg->sk_flags | rightarg->sk_flags) & SK_ROW_HEADER)
-		return false;
-
-	/*
 	 * First, deal with cases where one or both args are NULL.  This should
 	 * only happen when the scankeys represent IS NULL/NOT NULL conditions.
 	 */
@@ -931,6 +924,13 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 		}
 		return true;
 	}
+
+	/*
+	 * We don't yet know how to determine redundancy when it involves a row
+	 * compare key (barring simple cases involving NULLs)
+	 */
+	if ((leftarg->sk_flags | rightarg->sk_flags) & SK_ROW_HEADER)
+		return false;
 
 	/*
 	 * If either leftarg or rightarg are equality-type array scankeys, we need
