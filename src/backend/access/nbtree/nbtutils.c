@@ -62,6 +62,7 @@ static bool _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 							  IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 							  bool advancenonrequired, bool forcenonrequired,
 							  bool *continuescan, int *ikey);
+static bool _bt_rowcompare_result(ScanKey subkey, int cmpresult);
 static bool _bt_check_rowcompare(ScanKey skey,
 								 IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 								 ScanDirection dir, bool forcenonrequired, bool *continuescan);
@@ -2438,15 +2439,102 @@ _bt_set_startikey(IndexScanDesc scan, BTReadPageState *pstate)
 		 * Determine if it's safe to set pstate.startikey to an offset to a
 		 * key that comes after this key, by examining this key
 		 */
-		if (!(key->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)))
-		{
-			/* Scan key isn't marked required (corner case) */
-			break;				/* unsafe */
-		}
 		if (key->sk_flags & SK_ROW_HEADER)
 		{
-			/* RowCompare inequalities currently aren't supported */
-			break;				/* "unsafe" */
+			/*
+			 * RowCompare inequality header key.
+			 *
+			 * We can prove that the row compare must satisfy every tuple on
+			 * the page when both firsttup and lasttup are satisfied by the
+			 * row compare at or before the subkey for the least significant
+			 * attribute whose values change on the page.
+			 */
+			ScanKey		subkey = (ScanKey) DatumGetPointer(key->sk_argument);
+			bool		firstsatisfied = false,
+						lastsatisfied = false;
+
+			for (;;)
+			{
+				int			cmpresult;
+
+				if (subkey->sk_attno > firstchangingattnum) /* >, not >= */
+					break;		/* unsafe, preceding attr has multiple
+								 * distinct values */
+
+				if (subkey->sk_flags & SK_ISNULL)
+					break;		/* unsafe, unsatisfiable NULL subkey */
+
+				firstdatum = index_getattr(firsttup, subkey->sk_attno,
+										   tupdesc, &firstnull);
+				lastdatum = index_getattr(lasttup, subkey->sk_attno,
+										  tupdesc, &lastnull);
+
+				if (firstnull || lastnull)
+					break;		/* unsafe, NULL tuple value isn't satisfied */
+
+				/*
+				 * Compare the first tuple's datum for this row compare member
+				 * (unless we've already determined that tuple satisfies the
+				 * row compare as a whole)
+				 */
+				if (!firstsatisfied)
+				{
+					cmpresult = DatumGetInt32(FunctionCall2Coll(&subkey->sk_func,
+																subkey->sk_collation,
+																firstdatum,
+																subkey->sk_argument));
+					if (subkey->sk_flags & SK_BT_DESC)
+						INVERT_COMPARE_RESULT(cmpresult);
+
+					if (cmpresult != 0 || (subkey->sk_flags & SK_ROW_END))
+					{
+						if (!_bt_rowcompare_result(subkey, cmpresult))
+							break;	/* unsafe, subkey not satisfied */
+						firstsatisfied = true;
+					}
+				}
+
+				/*
+				 * Compare the last tuple's datum for this row compare member
+				 * (unless we've already determined that tuple satisfies the
+				 * row compare as a whole)
+				 */
+				if (!lastsatisfied)
+				{
+					cmpresult = DatumGetInt32(FunctionCall2Coll(&subkey->sk_func,
+																subkey->sk_collation,
+																lastdatum,
+																subkey->sk_argument));
+					if (subkey->sk_flags & SK_BT_DESC)
+						INVERT_COMPARE_RESULT(cmpresult);
+
+					if (cmpresult != 0 || (subkey->sk_flags & SK_ROW_END))
+					{
+						if (!_bt_rowcompare_result(subkey, cmpresult))
+							break;	/* unsafe, subkey not satisfied */
+						lastsatisfied = true;
+					}
+				}
+
+				if (firstsatisfied && lastsatisfied)
+				{
+					/* Safe, row compare satisfied by every tuple on page */
+					break;
+				}
+
+				/* Move on to next row member/subkey */
+				if (subkey->sk_flags & SK_ROW_END)
+					break;		/* defensive */
+				subkey++;
+			}
+
+			if (firstsatisfied && lastsatisfied)
+			{
+				/* Safe, row compare satisfied by every tuple on page */
+				continue;
+			}
+
+			break;				/* unsafe */
 		}
 		if (key->sk_strategy != BTEqualStrategyNumber)
 		{
@@ -2915,6 +3003,42 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 }
 
 /*
+ * Call here when a row compare member returns a non-zero result, or with the
+ * result for the final ROW_END row compare member (no matter the cmpresult).
+ *
+ * cmpresult indicates the overall result of the row comparison, and subkey
+ * points to the deciding column.
+ */
+static bool
+_bt_rowcompare_result(ScanKey subkey, int cmpresult)
+{
+	bool		satisfied;
+
+	switch (subkey->sk_strategy)
+	{
+		case BTLessStrategyNumber:
+			satisfied = (cmpresult < 0);
+			break;
+		case BTLessEqualStrategyNumber:
+			satisfied = (cmpresult <= 0);
+			break;
+		case BTGreaterEqualStrategyNumber:
+			satisfied = (cmpresult >= 0);
+			break;
+		case BTGreaterStrategyNumber:
+			satisfied = (cmpresult > 0);
+			break;
+		default:
+			/* EQ and NE cases aren't allowed here */
+			elog(ERROR, "unexpected strategy number %d", subkey->sk_strategy);
+			satisfied = false;	/* keep compiler quiet */
+			break;
+	}
+
+	return satisfied;
+}
+
+/*
  * Test whether an indextuple satisfies a row-comparison scan condition.
  *
  * Return true if so, false if not.  If not, also clear *continuescan if
@@ -3094,31 +3218,8 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 		subkey++;
 	}
 
-	/*
-	 * At this point cmpresult indicates the overall result of the row
-	 * comparison, and subkey points to the deciding column (or the last
-	 * column if the result is "=").
-	 */
-	switch (subkey->sk_strategy)
-	{
-			/* EQ and NE cases aren't allowed here */
-		case BTLessStrategyNumber:
-			result = (cmpresult < 0);
-			break;
-		case BTLessEqualStrategyNumber:
-			result = (cmpresult <= 0);
-			break;
-		case BTGreaterEqualStrategyNumber:
-			result = (cmpresult >= 0);
-			break;
-		case BTGreaterStrategyNumber:
-			result = (cmpresult > 0);
-			break;
-		default:
-			elog(ERROR, "unexpected strategy number %d", subkey->sk_strategy);
-			result = 0;			/* keep compiler quiet */
-			break;
-	}
+	/* Determine if cmpresult satisfies final subkey's strategy */
+	result = _bt_rowcompare_result(subkey, cmpresult);
 
 	if (!result && !forcenonrequired)
 	{
