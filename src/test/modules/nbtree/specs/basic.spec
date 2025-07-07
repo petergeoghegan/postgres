@@ -11,6 +11,10 @@ setup
   CREATE INDEX ON nbtree_incomplete_splits(col);
   INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(0, 700) i;
 }
+setup
+{
+  VACUUM (FREEZE, DISABLE_PAGE_SKIPPING) nbtree_incomplete_splits;
+}
 teardown
 {
   DROP EXTENSION injection_points;
@@ -30,8 +34,8 @@ step b_scan { SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER B
 
 session insert_scan_session
 step i_detach {
-  SELECT injection_points_wakeup('lock-and-validate-left');
   SELECT injection_points_detach('lock-and-validate-left');
+  SELECT injection_points_wakeup('lock-and-validate-left');
 }
 step i_insert { INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(-2000, 200) i; }
 
