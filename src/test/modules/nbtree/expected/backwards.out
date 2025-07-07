@@ -1,0 +1,32 @@
+Parsed test spec with 2 sessions
+
+starting permutation: b_scan i_insert i_detach
+step b_scan: SELECT * FROM backwards_scan_tbl WHERE col % 100 = 1 ORDER BY col DESC; <waiting ...>
+step i_insert: INSERT INTO backwards_scan_tbl SELECT i FROM generate_series(-2000, 700) i;
+step i_detach: 
+  SELECT injection_points_detach('lock-and-validate-left');
+  SELECT injection_points_wakeup('lock-and-validate-left');
+
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+injection_points_wakeup
+-----------------------
+                       
+(1 row)
+
+backwards_scan_session: NOTICE:  notice triggered for injection point lock-and-validate-new-lastcurrblkno
+step b_scan: <... completed>
+col
+---
+601
+501
+401
+301
+201
+101
+  1
+(7 rows)
+

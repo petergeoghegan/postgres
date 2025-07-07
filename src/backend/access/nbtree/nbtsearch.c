@@ -21,6 +21,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/predicate.h"
+#include "utils/injection_point.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 
@@ -2500,6 +2501,8 @@ _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 {
 	BlockNumber origblkno = *blkno; /* detects circular links */
 
+	INJECTION_POINT("lock-and-validate-left", NULL);
+
 	for (;;)
 	{
 		Buffer		buf;
@@ -2598,6 +2601,7 @@ _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 		/* Start from scratch with new lastcurrblkno's blkno/prev link */
 		*blkno = origblkno = opaque->btpo_prev;
 		_bt_relbuf(rel, buf);
+		INJECTION_POINT("lock-and-validate-new-lastcurrblkno", NULL);
 	}
 
 	return InvalidBuffer;
