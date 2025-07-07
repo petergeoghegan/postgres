@@ -33,7 +33,7 @@ setup {
 step b_scan { SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; }
 
 session insert_scan_session
-step i_noop	{ }
+step i_noop { }
 step i_detach {
   SELECT injection_points_detach('lock-and-validate-left');
   SELECT injection_points_wakeup('lock-and-validate-left');
