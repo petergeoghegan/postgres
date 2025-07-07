@@ -25,6 +25,7 @@
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "utils/injection_point.h"
 
 /* Minimum tree height for application of fastpath optimization */
 #define BTREE_FASTPATH_MIN_LEVEL	2
@@ -2106,6 +2107,8 @@ _bt_insert_parent(Relation rel,
 {
 	Assert(heaprel != NULL);
 
+	INJECTION_POINT("nbtree-insert-parent", NULL);
+
 	/*
 	 * Here we have to do something Lehman and Yao don't talk about: deal with
 	 * a root split and construction of a new root.  If our stack is empty
@@ -2247,6 +2250,8 @@ _bt_finish_split(Relation rel, Relation heaprel, Buffer lbuf, BTStack stack)
 	BTPageOpaque rpageop;
 	bool		wasroot;
 	bool		wasonly;
+
+	INJECTION_POINT("nbtree-finish-split", NULL);
 
 	Assert(P_INCOMPLETE_SPLIT(lpageop));
 	Assert(heaprel != NULL);
