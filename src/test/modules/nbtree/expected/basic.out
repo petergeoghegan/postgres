@@ -1,6 +1,6 @@
 Parsed test spec with 2 sessions
 
-starting permutation: i_noop b_scan i_insert i_detach
+starting permutation: i_noop b_scan i_insert i_detach i_wakeup
 injection_points_attach
 -----------------------
                        
@@ -11,12 +11,14 @@ step b_scan: SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY
 step i_insert: INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(-2000, 200) i;
 step i_detach: 
   SELECT injection_points_detach('lock-and-validate-left');
-  SELECT injection_points_wakeup('lock-and-validate-left');
 
 injection_points_detach
 -----------------------
                        
 (1 row)
+
+step i_wakeup: 
+  SELECT injection_points_wakeup('lock-and-validate-left');
 
 injection_points_wakeup
 -----------------------
