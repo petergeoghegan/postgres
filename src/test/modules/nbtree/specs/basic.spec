@@ -51,4 +51,4 @@ step i_insert { INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_seri
 # concurrent session performs insertions that cause many page splits.  When
 # the backwards scan session wakes up, it'll have to reason about these
 # concurrent page splits.
-permutation s_noop i_noop b_scan i_insert i_wakeup i_detach s_noop
+permutation s_noop b_scan i_noop i_insert i_wakeup i_detach s_noop

@@ -1,14 +1,14 @@
 Parsed test spec with 2 sessions
 
-starting permutation: s_noop i_noop b_scan i_insert i_wakeup i_detach s_noop
+starting permutation: s_noop b_scan i_noop i_insert i_wakeup i_detach s_noop
 injection_points_set_local
 --------------------------
                           
 (1 row)
 
 step s_noop: 
-step i_noop: 
 step b_scan: SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; <waiting ...>
+step i_noop: 
 step i_insert: INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(-2000, 200) i;
 step i_wakeup: 
   SELECT injection_points_wakeup('lock-and-validate-left');
