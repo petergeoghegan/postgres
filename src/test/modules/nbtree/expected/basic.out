@@ -1,11 +1,6 @@
 Parsed test spec with 2 sessions
 
 starting permutation: b_scan i_insert i_detach
-injection_points_set_local
---------------------------
-                          
-(1 row)
-
 step b_scan: SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; <waiting ...>
 step i_insert: INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(-2000, 700) i;
 step i_detach: 

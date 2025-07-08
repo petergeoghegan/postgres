@@ -24,7 +24,6 @@ teardown
 # Wait happens in the first session, wakeup in the second session.
 session backwards_scan_session
 setup {
-  SELECT injection_points_set_local();
   SELECT injection_points_attach('lock-and-validate-new-lastcurrblkno', 'notice');
   SELECT injection_points_attach('lock-and-validate-left', 'wait');
   SET enable_seqscan=off;
@@ -33,9 +32,6 @@ setup {
 step b_scan { SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; }
 
 session insert_scan_session
-setup {
-  SELECT injection_points_set_local();
-}
 step i_detach {
   SELECT injection_points_detach('lock-and-validate-left');
   SELECT injection_points_wakeup('lock-and-validate-left');
