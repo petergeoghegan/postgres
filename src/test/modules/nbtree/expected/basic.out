@@ -1,9 +1,9 @@
 Parsed test spec with 2 sessions
 
 starting permutation: s_noop i_noop b_scan i_insert i_wakeup i_detach s_noop
-injection_points_attach
------------------------
-                       
+injection_points_set_local
+--------------------------
+                          
 (1 row)
 
 step s_noop: 
