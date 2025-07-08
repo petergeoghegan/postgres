@@ -30,12 +30,14 @@ setup {
   SELECT injection_points_attach('lock-and-validate-left', 'wait');
   SELECT injection_points_attach('lock-and-validate-new-lastcurrblkno', 'notice');
 }
+step s_noop { }
 step b_scan { SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; }
 
 session insert_scan_session
 step i_noop { }
 step i_detach {
   SELECT injection_points_detach('lock-and-validate-left');
+  SELECT injection_points_wakeup('lock-and-validate-left');
 }
 step i_wakeup {
   SELECT injection_points_wakeup('lock-and-validate-left');
@@ -46,4 +48,4 @@ step i_insert { INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_seri
 # concurrent session performs insertions that cause many page splits.  When
 # the backwards scan session wakes up, it'll have to reason about these
 # concurrent page splits.
-permutation i_noop b_scan i_insert i_detach i_wakeup
+permutation s_noop i_noop b_scan i_insert i_wakeup i_detach s_noop
