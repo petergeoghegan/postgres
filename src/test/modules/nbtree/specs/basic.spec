@@ -31,7 +31,7 @@ setup {
   SET enable_sort=off;
 }
 step s_noop { }
-step b_scan { SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; }
+step b_scan { EXPLAIN ANALYZE SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; }
 
 session insert_scan_session
 setup {
