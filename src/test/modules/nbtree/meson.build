@@ -8,6 +8,11 @@ tests += {
   'name': 'nbtree',
   'sd': meson.current_source_dir(),
   'bd': meson.current_build_dir(),
+  'regress': {
+    'sql': [
+      'nbtree_incomplete_splits',
+    ],
+  },
   'isolation': {
     'specs': [
       'backwards',
