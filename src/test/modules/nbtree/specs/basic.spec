@@ -30,14 +30,12 @@ setup {
   SET enable_seqscan=off;
   SET enable_sort=off;
 }
-step s_noop { }
-step b_scan { EXPLAIN ANALYZE SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; }
+step b_scan { SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; }
 
 session insert_scan_session
 setup {
   SELECT injection_points_set_local();
 }
-step i_noop { }
 step i_detach {
   SELECT injection_points_detach('lock-and-validate-left');
   SELECT injection_points_wakeup('lock-and-validate-left');
@@ -45,10 +43,10 @@ step i_detach {
 step i_wakeup {
   SELECT injection_points_wakeup('lock-and-validate-left');
 }
-step i_insert { INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(-2000, 200) i; }
+step i_insert { INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(-2000, 700) i; }
 
 # Start a backwards scan session that waits "between pages".  Meanwhile, a
 # concurrent session performs insertions that cause many page splits.  When
 # the backwards scan session wakes up, it'll have to reason about these
 # concurrent page splits.
-permutation s_noop b_scan i_noop i_insert i_wakeup i_detach s_noop
+permutation b_scan i_insert i_wakeup i_detach
