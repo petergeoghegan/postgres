@@ -2,6 +2,8 @@
 
 EXTRA_INSTALL = src/test/modules/injection_points
 
+REGRESS = nbtree_incomplete_splits
+
 ISOLATION = backwards
 
 ifdef USE_PGXS
