@@ -4,15 +4,15 @@ starting permutation: b_scan i_insert i_detach
 step b_scan: SELECT * FROM nbtree_incomplete_splits WHERE col % 100 = 1 ORDER BY col DESC; <waiting ...>
 step i_insert: INSERT INTO nbtree_incomplete_splits SELECT i FROM generate_series(-2000, 700) i;
 step i_detach: 
-  SELECT injection_points_detach('lock-and-validate-left');
   SELECT injection_points_wakeup('lock-and-validate-left');
+  SELECT injection_points_detach('lock-and-validate-left');
 
-injection_points_detach
+injection_points_wakeup
 -----------------------
                        
 (1 row)
 
-injection_points_wakeup
+injection_points_detach
 -----------------------
                        
 (1 row)
