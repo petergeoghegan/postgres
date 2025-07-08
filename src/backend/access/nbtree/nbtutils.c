@@ -3437,7 +3437,8 @@ _bt_killitems(IndexScanDesc scan)
 void
 _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 {
-	/* BTScanOpaque so = (BTScanOpaque) scan->opaque; */
+	Relation	rel = scan->indexRelation;
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
 	Page		page;
 	BTPageOpaque opaque;
@@ -3446,9 +3447,9 @@ _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 	int			i;
 	int			numKilled = batch->numKilled;
 	bool		killedsomething = false;
-	bool		droppedpin PG_USED_FOR_ASSERTS_ONLY;
+	Buffer		buf;
 
-	Assert(BTBatchScanPosIsValid(*pos));
+	Assert(BTScanPosIsValid(*pos));
 
 	/*
 	 * Always reset the scan state, so we don't look for same items on other
@@ -3456,38 +3457,39 @@ _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 	 */
 	batch->numKilled = 0;
 
-	if (BTBatchScanPosIsPinned(*pos))
+	if (!so->dropPin)
 	{
 		/*
 		 * We have held the pin on this page since we read the index tuples,
 		 * so all we need to do is lock it.  The pin will have prevented
-		 * re-use of any TID on the page, so there is no need to check the
-		 * LSN.
+		 * concurrent VACUUMs from recycling any of the TIDs on the page.
 		 */
-		droppedpin = false;
-		_bt_lockbuf(scan->indexRelation, pos->buf, BT_READ);
-
-		page = BufferGetPage(pos->buf);
+		Assert(BTScanPosIsPinned(*pos));
+		buf = pos->buf;
+		_bt_lockbuf(rel, buf, BT_READ);
 	}
 	else
 	{
-		Buffer		buf;
+		XLogRecPtr	latestlsn;
 
-		droppedpin = true;
-		/* Attempt to re-read the buffer, getting pin and lock. */
-		buf = _bt_getbuf(scan->indexRelation, pos->currPage, BT_READ);
+		Assert(!BTScanPosIsPinned(so->currPos));
+		Assert(RelationNeedsWAL(rel));
+		buf = _bt_getbuf(rel, so->currPos.currPage, BT_READ);
 
-		page = BufferGetPage(buf);
-		if (BufferGetLSNAtomic(buf) == pos->lsn)
-			pos->buf = buf;
-		else
+		latestlsn = BufferGetLSNAtomic(buf);
+		Assert(!XLogRecPtrIsInvalid(so->currPos.lsn));
+		Assert(so->currPos.lsn <= latestlsn);
+		if (so->currPos.lsn != latestlsn)
 		{
-			/* Modified while not pinned means hinting is not safe. */
-			_bt_relbuf(scan->indexRelation, buf);
+			/* Modified, give up on hinting */
+			_bt_relbuf(rel, buf);
 			return;
 		}
+
+		/* Unmodified, hinting is safe */
 	}
 
+	page = BufferGetPage(buf);
 	opaque = BTPageGetOpaque(page);
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -3540,7 +3542,7 @@ _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 					 * though only in the common case where the page can't
 					 * have been concurrently modified
 					 */
-					Assert(kitem->indexOffset == offnum || !droppedpin);
+					Assert(kitem->indexOffset == offnum || !so->dropPin);
 
 					/*
 					 * Read-ahead to later kitems here.
@@ -3604,10 +3606,13 @@ _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 	if (killedsomething)
 	{
 		opaque->btpo_flags |= BTP_HAS_GARBAGE;
-		MarkBufferDirtyHint(pos->buf, true);
+		MarkBufferDirtyHint(buf, true);
 	}
 
-	_bt_unlockbuf(scan->indexRelation, pos->buf);
+	if (!so->dropPin)
+		_bt_unlockbuf(rel, buf);
+	else
+		_bt_relbuf(rel, buf);
 }
 
 /*

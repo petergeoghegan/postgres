@@ -2107,6 +2107,8 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 */
 	if (scan->xs_batches->direction != direction)
 	{
+		BTScanOpaque so = (BTScanOpaque) scan->opaque;
+		so->needPrimScan = false;
 		/* release "future" batches in the wrong direction */
 		while (scan->xs_batches->nextBatch > scan->xs_batches->firstBatch + 1)
 		{

@@ -302,6 +302,9 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 	/* batching does not work with regular scan-level positions */
 	Assert(!BTScanPosIsValid(so->currPos));
 	Assert(!BTScanPosIsValid(so->markPos));
+	Assert(!ScanDirectionIsNoMovement(dir));
+	Assert(dir == scan->xs_batches->direction);
+
 
 	/* btree indexes are never lossy */
 	scan->xs_recheck = false;
@@ -313,10 +316,9 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 
 		if (so->needPrimScan)
 		{
-			if (ScanDirectionIsForward(scan->xs_batches->direction))
-				pos->moreRight = true;
-			else
-				pos->moreLeft = true;
+			// elog(WARNING, "scan->xs_batches->firstBatch: %d, scan->xs_batches->nextBatch: %d", scan->xs_batches->firstBatch, scan->xs_batches->nextBatch);
+			so->scanBehind = so->oppositeDirCheck = false;	/* reset */
+			pos = NULL;
 		}
 	}
 
@@ -332,8 +334,6 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 			res = _bt_first_batch(scan, dir);
 		else
 		{
-			so->needPrimScan = false;
-
 			/*
 			 * Now continue the scan.
 			 */
@@ -577,7 +577,8 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	so->dropPin = (!scan->xs_want_itup &&
 				   IsMVCCSnapshot(scan->xs_snapshot) &&
 				   RelationNeedsWAL(scan->indexRelation) &&
-				   scan->heapRelation != NULL);
+				   scan->heapRelation != NULL &&
+				   !scan->xs_batches);
 
 	/*
 	 * Before leaving the current position, perform final steps, since we'll
@@ -600,10 +601,6 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 			BTScanPosUnpin(so->markPos);
 		BTScanPosInvalidate(so->markPos);
 	}
-
-	/* FIXME should be in indexam.c I think */
-	// if (scan->xs_batches)
-	//	scan->xs_batches->currentBatch = NULL;
 
 	/*
 	 * Allocate tuple workspace arrays, if needed for an index-only scan and
@@ -700,19 +697,7 @@ btmarkpos(IndexScanDesc scan)
 
 	/* with batching, mark/restore is handled in indexam */
 	if (scan->xs_batches != NULL)
-	{
-		IndexScanBatch	batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->firstBatch);
-		BTBatchScanPos pos = NULL;
-		pos = (BTBatchScanPos) batch->opaque;
-		if (so->needPrimScan)
-		{
-			if (ScanDirectionIsForward(scan->xs_batches->direction))
-				pos->moreRight = true;
-			else
-				pos->moreLeft = true;
-		}
 		return;
-	}
 
 	/* mark/restore not supported by parallel scans */
 	Assert(!scan->parallel_scan);
@@ -750,14 +735,17 @@ btrestrpos(IndexScanDesc scan)
 	/* with batching, mark/restore is handled in indexam */
 	if (scan->xs_batches != NULL)
 	{
-		if (scan->xs_batches->markPos.batch != scan->xs_batches->firstBatch)
+		if (so->numArrayKeys)
 		{
-			/* Reset the scan's array keys (see _bt_steppage for why) */
-			if (so->numArrayKeys)
-			{
-				_bt_start_array_keys(scan, so->currPos.dir);
-				so->needPrimScan = false;
-			}
+			IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->markPos.batch);
+			BTBatchScanPos pos =  (BTBatchScanPos) batch->opaque;
+
+			_bt_start_array_keys(scan, scan->xs_batches->direction);
+			so->needPrimScan = false;
+			if (ScanDirectionIsForward(scan->xs_batches->direction))
+				pos->moreRight = true;
+			else
+				pos->moreLeft = true;
 		}
 
 		return;
