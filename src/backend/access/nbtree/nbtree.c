@@ -227,60 +227,7 @@ btinsert(Relation rel, Datum *values, bool *isnull,
 bool
 btgettuple(IndexScanDesc scan, ScanDirection dir)
 {
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	bool		res;
-
-	Assert(scan->heapRelation != NULL);
-
-	/* btree indexes are never lossy */
-	scan->xs_recheck = false;
-
-	/* Each loop iteration performs another primitive index scan */
-	do
-	{
-		/*
-		 * If we've already initialized this scan, we can just advance it in
-		 * the appropriate direction.  If we haven't done so yet, we call
-		 * _bt_first() to get the first item in the scan.
-		 */
-		if (!BTScanPosIsValid(so->currPos))
-			res = _bt_first(scan, dir);
-		else
-		{
-			/*
-			 * Check to see if we should kill the previously-fetched tuple.
-			 */
-			if (scan->kill_prior_tuple)
-			{
-				/*
-				 * Yes, remember it for later. (We'll deal with all such
-				 * tuples at once right before leaving the index page.)  The
-				 * test for numKilled overrun is not just paranoia: if the
-				 * caller reverses direction in the indexscan then the same
-				 * item might get entered multiple times. It's not worth
-				 * trying to optimize that, so we don't detect it, but instead
-				 * just forget any excess entries.
-				 */
-				if (so->killedItems == NULL)
-					so->killedItems = (int *)
-						palloc(MaxTIDsPerBTreePage * sizeof(int));
-				if (so->numKilled < MaxTIDsPerBTreePage)
-					so->killedItems[so->numKilled++] = so->currPos.itemIndex;
-			}
-
-			/*
-			 * Now continue the scan.
-			 */
-			res = _bt_next(scan, dir);
-		}
-
-		/* If we have a tuple, return it ... */
-		if (res)
-			break;
-		/* ... otherwise see if we need another primitive index scan */
-	} while (so->numArrayKeys && _bt_start_prim_scan(scan, dir));
-
-	return res;
+	Assert(false);
 }
 
 /* FIXME duplicate from indexam.c */

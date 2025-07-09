@@ -460,7 +460,7 @@ systable_beginscan(Relation heapRelation,
 		 * XXX This also means scans on catalogs won't use read_stream.
 		 */
 		sysscan->iscan = index_beginscan(heapRelation, irel,
-										 snapshot, NULL, nkeys, 0, false);
+										 snapshot, NULL, nkeys, 0, true);
 		index_rescan(sysscan->iscan, idxkey, nkeys, NULL, 0);
 		sysscan->scan = NULL;
 
@@ -734,7 +734,7 @@ systable_beginscan_ordered(Relation heapRelation,
 	 * XXX This also means scans on catalogs won't use read_stream.
 	 */
 	sysscan->iscan = index_beginscan(heapRelation, indexRelation,
-									 snapshot, NULL, nkeys, 0, false);
+									 snapshot, NULL, nkeys, 0, true);
 	index_rescan(sysscan->iscan, idxkey, nkeys, NULL, 0);
 	sysscan->scan = NULL;
 

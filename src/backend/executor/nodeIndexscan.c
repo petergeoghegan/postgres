@@ -211,7 +211,7 @@ IndexNextWithReorder(IndexScanState *node)
 								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
 								   node->iss_NumOrderByKeys,
-								   false);
+								   true);
 
 		node->iss_ScanDesc = scandesc;
 

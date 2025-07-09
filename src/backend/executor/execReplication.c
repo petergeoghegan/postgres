@@ -207,7 +207,7 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 	 * XXX No prefetching for replication identity. We expect to find just one
 	 * row, so prefetching would be pointless.
 	 */
-	scan = index_beginscan(rel, idxrel, &snap, NULL, skey_attoff, 0, false);
+	scan = index_beginscan(rel, idxrel, &snap, NULL, skey_attoff, 0, true);
 
 retry:
 	found = false;

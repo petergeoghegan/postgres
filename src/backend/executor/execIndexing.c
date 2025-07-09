@@ -825,7 +825,7 @@ retry:
 	 * rows, e.g. with exclusion constraints? Not sure.
 	 */
 	index_scan = index_beginscan(heap, index, &DirtySnapshot, NULL, indnkeyatts, 0,
-								 false);
+								 true);
 	index_rescan(index_scan, scankeys, indnkeyatts, NULL, 0);
 
 	while (index_getnext_slot(index_scan, ForwardScanDirection, existing_slot))

@@ -875,7 +875,7 @@ heapam_relation_copy_for_cluster(Relation OldHeap, Relation NewHeap,
 		 * clustered by the index.
 		 */
 		indexScan = index_beginscan(OldHeap, OldIndex, SnapshotAny, NULL, 0, 0,
-									false);
+									true);
 		index_rescan(indexScan, NULL, 0, NULL, 0);
 	}
 	else
