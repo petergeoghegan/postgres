@@ -1242,9 +1242,7 @@ extern StrategyNumber bttranslatecmptype(CompareType cmptype, Oid opfamily);
 /*
  * prototypes for internal functions in nbtree.c
  */
-extern bool _bt_parallel_seize(IndexScanDesc scan, BlockNumber *next_scan_page,
-							   BlockNumber *last_curr_page, bool first);
-extern bool _bt_parallel_seize_batch(IndexScanDesc scan, BTBatchScanPos pos,
+extern bool _bt_parallel_seize(IndexScanDesc scan, BTBatchScanPos pos,
 									 BlockNumber *next_scan_page,
 									 BlockNumber *last_curr_page, bool first);
 extern void _bt_parallel_release(IndexScanDesc scan,

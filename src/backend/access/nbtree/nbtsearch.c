@@ -897,7 +897,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * will likely release the parallel scan later on.
 	 */
 	if (scan->parallel_scan != NULL &&
-		!_bt_parallel_seize_batch(scan, &pos, &blkno, &lastcurrblkno, true))
+		!_bt_parallel_seize(scan, &pos, &blkno, &lastcurrblkno, true))
 		return false;
 
 	/*
@@ -2348,7 +2348,7 @@ _bt_readnextpage(IndexScanDesc scan, BTBatchScanPos pos, BlockNumber blkno,
 
 		/* parallel scan must never actually visit so->currPos blkno */
 		if (!seized && scan->parallel_scan != NULL &&
-			!_bt_parallel_seize_batch(scan, pos, &blkno, &lastcurrblkno, false))
+			!_bt_parallel_seize(scan, pos, &blkno, &lastcurrblkno, false))
 		{
 			/* whole scan is now done (or another primitive scan required) */
 			BTScanPosInvalidate(*pos);
