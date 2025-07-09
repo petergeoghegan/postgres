@@ -388,9 +388,10 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	IndexScanBatch batch;
-	BTBatchScanPos pos = palloc0(sizeof(BTBatchScanPosData));
 	int64		ntids = 0;
 	ItemPointer heapTid;
+	BTBatchScanPosData pos;
+	memset(&pos, 0, sizeof(BTBatchScanPosData));
 
 	Assert(scan->heapRelation == NULL);
 
@@ -411,14 +412,9 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 				 */
 				if (++batch->itemIndex > batch->lastItem)
 				{
-					// if (pos->buf)
-					// 	ReleaseBuffer(pos->buf);
-
-					/* let _bt_next do the heavy lifting */
-
-					btfreebatch(scan, batch);
-					batch = _bt_next_batch(scan, pos, ForwardScanDirection);
-					if (!batch)
+					// btfreebatch(scan, batch);
+					batch = _bt_next_batch(scan, &pos, ForwardScanDirection);
+					if (!batch || so->needPrimScan)
 						break;
 				}
 

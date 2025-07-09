@@ -2439,7 +2439,8 @@ _bt_next_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 
 	// Assert(BTScanPosIsPinned(*pos));
 
-	memcpy(&tmp, pos, sizeof(tmp));
+	if (pos)
+		memcpy(&tmp, pos, sizeof(tmp));
 
 	/*
 	 * Advance to next page, load the data into the index batch.
