@@ -2501,6 +2501,12 @@ _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 {
 	BlockNumber origblkno = *blkno; /* detects circular links */
 
+	for (int i = 0; i < 10; i++)
+	{
+		InjectionPointLoad("lock-and-validate-left");
+		InjectionPointLoad("lock-and-validate-new-lastcurrblkno");
+	}
+
 	INJECTION_POINT("lock-and-validate-left", NULL);
 
 	for (;;)
