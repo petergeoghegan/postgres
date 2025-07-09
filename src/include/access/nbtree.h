@@ -1116,7 +1116,7 @@ typedef struct BTScanOpaqueData
 	 */
 	int			markItemIndex;	/* itemIndex, or -1 if not valid */
 
-	/* keep these last in struct for efficiency */
+	/* TODO Get rid of currPos + markPos */
 	BTScanPosData currPos;		/* current position data */
 	BTScanPosData markPos;		/* marked position, if any */
 } BTScanOpaqueData;
@@ -1335,9 +1335,8 @@ extern BTStack _bt_search(Relation rel, Relation heaprel, BTScanInsert key,
 extern OffsetNumber _bt_binsrch_insert(Relation rel, BTInsertState insertstate);
 extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum);
 extern IndexScanBatch _bt_first(IndexScanDesc scan, ScanDirection dir);
-extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
-
 extern IndexScanBatch _bt_next(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir);
+extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
 
 /*
  * prototypes for functions in nbtutils.c
