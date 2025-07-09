@@ -1218,7 +1218,6 @@ extern bool btinsert(Relation rel, Datum *values, bool *isnull,
 extern IndexScanDesc btbeginscan(Relation rel, int nkeys, int norderbys);
 extern Size btestimateparallelscan(Relation rel, int nkeys, int norderbys);
 extern void btinitparallelscan(void *target);
-extern bool btgettuple(IndexScanDesc scan, ScanDirection dir);
 extern IndexScanBatch btgetbatch(IndexScanDesc scan, ScanDirection dir);
 extern void btfreebatch(IndexScanDesc scan, IndexScanBatch batch);
 extern int64 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);

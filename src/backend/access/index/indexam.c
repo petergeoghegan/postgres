@@ -863,7 +863,6 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	bool		found;
 
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(amgettuple);
 
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
@@ -888,6 +887,8 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 */
 	if (scan->xs_batches != NULL)
 		return index_batch_getnext_tid(scan, direction);
+
+	CHECK_SCAN_PROCEDURE(amgettuple);
 
 	/*
 	 * The AM's amgettuple proc finds the next index entry matching the scan

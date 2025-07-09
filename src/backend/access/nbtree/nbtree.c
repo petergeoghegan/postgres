@@ -158,7 +158,7 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amadjustmembers = btadjustmembers;
 	amroutine->ambeginscan = btbeginscan;
 	amroutine->amrescan = btrescan;
-	amroutine->amgettuple = btgettuple;
+	amroutine->amgettuple = NULL;
 	amroutine->amgetbatch = btgetbatch;
 	amroutine->amfreebatch = btfreebatch;
 	amroutine->amgetbitmap = btgetbitmap;
@@ -219,15 +219,6 @@ btinsert(Relation rel, Datum *values, bool *isnull,
 	pfree(itup);
 
 	return result;
-}
-
-/*
- *	btgettuple() -- Get the next tuple in the scan.
- */
-bool
-btgettuple(IndexScanDesc scan, ScanDirection dir)
-{
-	Assert(false);
 }
 
 /* FIXME duplicate from indexam.c */
