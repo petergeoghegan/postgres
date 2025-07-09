@@ -337,7 +337,8 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 	/*
 	 * Check to see if we should kill tuples from the previous batch.
 	 */
-	_bt_kill_batch(scan, batch);
+	if (scan->heapRelation)
+		_bt_kill_batch(scan, batch);
 
 	/* free all the stuff that might be allocated */
 
@@ -414,6 +415,8 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 					// 	ReleaseBuffer(pos->buf);
 
 					/* let _bt_next do the heavy lifting */
+
+					btfreebatch(scan, batch);
 					batch = _bt_next_batch(scan, pos, ForwardScanDirection);
 					if (!batch)
 						break;
