@@ -338,7 +338,7 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 	 * Check to see if we should kill tuples from the previous batch.
 	 */
 	if (scan->heapRelation)
-		_bt_kill_batch(scan, batch);
+		_bt_killitems(scan, batch);
 
 	/* free all the stuff that might be allocated */
 

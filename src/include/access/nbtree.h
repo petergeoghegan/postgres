@@ -1340,7 +1340,6 @@ extern IndexScanBatch _bt_first(IndexScanDesc scan, ScanDirection dir);
 extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
 
 extern IndexScanBatch _bt_next(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir);
-extern void _bt_kill_batch(IndexScanDesc scan, IndexScanBatch batch);
 
 /*
  * prototypes for functions in nbtutils.c

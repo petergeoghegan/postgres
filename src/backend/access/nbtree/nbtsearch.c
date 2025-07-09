@@ -1577,35 +1577,25 @@ _bt_next(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 }
 
 /*
- *	_bt_kill_batch() -- remember the items-to-be-killed from the current batch
+ *	_bt_readpage() -- Load data from current index page into so->currPos
  *
- * We simply translate the bitmap into the "regular" killedItems array, and let
- * that to drive which items are killed.
+ * Caller must have pinned and read-locked so->currPos.buf; the buffer's state
+ * is not changed here.  Also, currPos.moreLeft and moreRight must be valid;
+ * they are updated as appropriate.  All other fields of so->currPos are
+ * initialized from scratch here.
+ *
+ * We scan the current page starting at offnum and moving in the indicated
+ * direction.  All items matching the scan keys are loaded into currPos.items.
+ * moreLeft or moreRight (as appropriate) is cleared if _bt_checkkeys reports
+ * that there can be no more matching tuples in the current scan direction
+ * (could just be for the current primitive index scan when scan has arrays).
+ *
+ * In the case of a parallel scan, caller must have called _bt_parallel_seize
+ * prior to calling this function; this function will invoke
+ * _bt_parallel_release before returning.
+ *
+ * Returns true if any matching items found on the page, false if none.
  */
-void
-_bt_kill_batch(IndexScanDesc scan, IndexScanBatch batch)
-{
-	/* we should only get here for scans with batching */
-	Assert(scan->xs_batches);
-
-	/* bail out if the batch has no killed items */
-	if (batch->numKilled == 0)
-		return;
-
-	/*
-	 * XXX Now what? we don't have the currPos around anymore, so we should
-	 * load that, and apply the killed items to that, somehow?
-	 */
-	/* FIXME: _bt_kill_batch not implemented */
-
-	/*
-	 * XXX maybe we should have a separate callback for this, and call it from
-	 * the indexam.c directly whenever we think it's appropriate? And not only
-	 * from here when freeing the batch?
-	 */
-	_bt_killitems(scan, batch);
-}
-
 static IndexScanBatch
 _bt_readpage(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir,
 			 OffsetNumber offnum, bool firstpage)
