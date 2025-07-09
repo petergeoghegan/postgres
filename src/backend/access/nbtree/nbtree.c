@@ -527,26 +527,6 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 				   !scan->xs_batches);
 
 	/*
-	 * Before leaving the current position, perform final steps, since we'll
-	 * never call _bt_steppage for its page
-	 */
-	if (BTScanPosIsValid(so->currPos))
-	{
-		if (!so->dropPin)
-			BTScanPosUnpin(so->currPos);
-		BTScanPosInvalidate(so->currPos);
-	}
-
-	/* Always invalidate any existing mark */
-	so->markItemIndex = -1;
-	if (BTScanPosIsValid(so->markPos))
-	{
-		if (!so->dropPin)
-			BTScanPosUnpin(so->markPos);
-		BTScanPosInvalidate(so->markPos);
-	}
-
-	/*
 	 * Allocate tuple workspace arrays, if needed for an index-only scan and
 	 * not already done in a previous rescan call.  To save on palloc
 	 * overhead, both workspaces are allocated as one palloc block; only this
@@ -592,26 +572,6 @@ btendscan(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
-	/*
-	 * Before leaving the current position, perform final steps, since we'll
-	 * never call _bt_steppage for its page
-	 */
-	if (BTScanPosIsValid(so->currPos))
-	{
-		if (!so->dropPin)
-			BTScanPosUnpin(so->currPos);
-		BTScanPosInvalidate(so->currPos);	/* unnecessary, but be consistent */
-	}
-
-	/* Always invalidate any existing mark */
-	so->markItemIndex = -1;		/* unnecessary, but be consistent */
-	if (BTScanPosIsValid(so->markPos))
-	{
-		if (!so->dropPin)
-			BTScanPosUnpin(so->markPos);
-		BTScanPosInvalidate(so->markPos);	/* unnecessary, but be consistent */
-	}
-
 	/* Release storage */
 	if (so->keyData != NULL)
 		pfree(so->keyData);
@@ -626,137 +586,32 @@ btendscan(IndexScanDesc scan)
 	pfree(so);
 }
 
-/*
- *	btmarkpos() -- save current scan position
- *
- * With batching, all the interesting markpos() stuff happens in indexam.c. We
- * should not even get here.
- */
 void
 btmarkpos(IndexScanDesc scan)
 {
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-
-	/* with batching, mark/restore is handled in indexam */
-	if (scan->xs_batches != NULL)
-		return;
-
-	/* mark/restore not supported by parallel scans */
-	Assert(!scan->parallel_scan);
-
-	/* Always invalidate any existing mark */
-	so->markItemIndex = -1;
-	if (BTScanPosIsValid(so->markPos))
-	{
-		if (!so->dropPin)
-			BTScanPosUnpin(so->markPos);
-		BTScanPosInvalidate(so->markPos);
-	}
-
-	/*
-	 * Just record the current itemIndex.  If we later step to next page
-	 * before releasing the marked position, _bt_steppage makes a full copy of
-	 * the currPos struct in markPos.  If (as often happens) the mark is moved
-	 * before we leave the page, we don't have to do that work.
-	 */
-	if (BTScanPosIsValid(so->currPos))
-		so->markItemIndex = so->currPos.itemIndex;
 }
 
 /*
  *	btrestrpos() -- restore scan to last saved position
  *
- * With batching, all the interesting restrpos() stuff happens in indexam.c. We
- * should not even get here.
+ * With batching, all the interesting restrpos() stuff happens in indexam.c.
  */
 void
 btrestrpos(IndexScanDesc scan)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
-	/* with batching, mark/restore is handled in indexam */
-	if (scan->xs_batches != NULL)
+	if (so->numArrayKeys)
 	{
-		if (so->numArrayKeys)
-		{
-			IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->markPos.batch);
-			BTBatchScanPos pos =  (BTBatchScanPos) batch->opaque;
+		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->markPos.batch);
+		BTBatchScanPos pos =  (BTBatchScanPos) batch->opaque;
 
-			_bt_start_array_keys(scan, scan->xs_batches->direction);
-			so->needPrimScan = false;
-			if (ScanDirectionIsForward(scan->xs_batches->direction))
-				pos->moreRight = true;
-			else
-				pos->moreLeft = true;
-		}
-
-		return;
-	}
-
-	if (so->markItemIndex >= 0)
-	{
-		/*
-		 * The mark position is on the same page we are currently on.  Just
-		 * restore the itemIndex.
-		 *
-		 * We generally only need to keep around a separate BTScanPosData
-		 * (which will have its own buffer pin when !so->dropPin) for a mark
-		 * whose page doesn't match so->currPos.currPage.  That requires care
-		 * later on in this function, and in _bt_steppage.
-		 */
-		Assert(!BTScanPosIsValid(so->markPos)); /* can't also be valid */
-		so->currPos.itemIndex = so->markItemIndex;
-	}
-	else
-	{
-		/*
-		 * The scan moved to a page beyond that of the last mark we took.
-		 *
-		 * Before leaving the current position, perform final steps, since
-		 * we'll never call _bt_steppage for its page.
-		 */
-		if (BTScanPosIsValid(so->currPos))
-		{
-			if (!so->dropPin)
-				BTScanPosUnpin(so->currPos);
-			BTScanPosInvalidate(so->currPos);
-		}
-
-		/*
-		 * We're completely done with our old so->currPos.  Copy so->markPos
-		 * into so->currPos to actually restore the mark.
-		 */
-		if (BTScanPosIsValid(so->markPos))
-		{
-			memcpy(&so->currPos, &so->markPos,
-				   offsetof(BTScanPosData, items[1]) +
-				   so->markPos.lastItem * sizeof(BTScanPosItem));
-			if (so->currTuples)
-				memcpy(so->currTuples, so->markTuples,
-					   so->markPos.nextTupleOffset);
-
-			/*
-			 * We need to keep the mark around, in case it gets restored
-			 * again.  We use the so->markItemIndex representation for this.
-			 * Converting to that representation involves invalidating the
-			 * original so->markPos representation. (This is the opposite of
-			 * what happened back when _bt_steppage created this so->markPos
-			 * from the scan's then-obsolescent so->currPos.)
-			 *
-			 * Note: We deliberately avoid a "BTScanPosUnpin(so->markPos)"
-			 * when invalidating so->markPos, since so->markPos's original pin
-			 * is "transferred" to the new so->currPos.
-			 */
-			BTScanPosInvalidate(so->markPos);
-			so->markItemIndex = so->currPos.itemIndex;	/* keep the mark */
-
-			/* Reset the scan's array keys (see _bt_steppage for why) */
-			if (so->numArrayKeys)
-			{
-				_bt_start_array_keys(scan, so->currPos.dir);
-				so->needPrimScan = false;
-			}
-		}
+		_bt_start_array_keys(scan, scan->xs_batches->direction);
+		so->needPrimScan = false;
+		if (ScanDirectionIsForward(scan->xs_batches->direction))
+			pos->moreRight = true;
+		else
+			pos->moreLeft = true;
 	}
 }
 

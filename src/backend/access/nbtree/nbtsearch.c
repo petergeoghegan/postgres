@@ -1651,7 +1651,6 @@ _bt_readpage(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir,
 		   pos->moreLeft);
 	Assert(!P_IGNORE(opaque));
 	Assert(so->numKilled == 0);
-	Assert(so->markItemIndex < 0);
 	Assert(BTScanPosIsPinned(*pos));
 	Assert(!so->needPrimScan);
 
@@ -2199,7 +2198,6 @@ _bt_readfirstpage(IndexScanDesc scan, BTBatchScanPos pos, OffsetNumber offnum,
 				lastcurrblkno;
 
 	so->numKilled = 0;			/* just paranoia */
-	so->markItemIndex = -1;		/* ditto */
 
 	/* copy position info from BTScanOpaque */
 
