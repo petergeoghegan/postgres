@@ -3710,6 +3710,7 @@ _bt_steppage_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 	 */
 
 	/* Don't unpin the buffer here, keep the batch pinned until amfreebatch. */
+	pos->buf = InvalidBuffer;
 
 	/* Walk to the next page with data */
 	if (ScanDirectionIsForward(dir))
@@ -3889,8 +3890,7 @@ _bt_readfirstpage_batch(IndexScanDesc scan, BTBatchScanPos pos, OffsetNumber off
 
 	/* There's no actually-matching data on the page in so->currPos.buf */
 	_bt_relbuf(rel, pos->buf);
-	/* XXX PG Why not set this InvalidBuffer? */
-	// pos->buf = InvalidBuffer;
+	pos->buf = InvalidBuffer;
 
 	/* Walk to the next page with data */
 	if (ScanDirectionIsForward(dir))
@@ -4062,12 +4062,9 @@ _bt_readnextpage_batch(IndexScanDesc scan, BTBatchScanPos pos, BlockNumber blkno
 	/* BTBatchScanPosData	newpos; */
 	IndexScanBatch newbatch = NULL;
 
-	/* batching does not work with regular scan-level positions */
-	Assert(!BTScanPosIsValid(so->currPos));
-	Assert(!BTScanPosIsValid(so->markPos));
+	Assert(!BTScanPosIsPinned(*pos));
 
 	Assert(pos->currPage == lastcurrblkno || seized);
-	Assert(BTScanPosIsPinned(*pos) || seized);
 
 	/* initialize the new position to the old one, we'll modify it */
 	/* newpos = *pos; */
