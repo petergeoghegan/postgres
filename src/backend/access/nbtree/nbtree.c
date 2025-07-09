@@ -275,7 +275,7 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 			/*
 			 * Now continue the scan.
 			 */
-			res = _bt_next_batch(scan, pos, dir);
+			res = _bt_next(scan, pos, dir);
 		}
 
 		/* If we have a batch, return it ... */
@@ -418,7 +418,7 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 					if (buf)
 						ReleaseBuffer(buf);
 					// btfreebatch(scan, batch);
-					batch = _bt_next_batch(scan, batch->opaque, ForwardScanDirection);
+					batch = _bt_next(scan, batch->opaque, ForwardScanDirection);
 					if (!batch)
 						break;
 				}

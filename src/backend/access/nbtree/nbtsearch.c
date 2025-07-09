@@ -42,7 +42,7 @@ static int	_bt_setuppostingitems(IndexScanBatch batch, int itemIndex,
 static inline void _bt_savepostingitem(IndexScanBatch batch, int itemIndex,
 									   OffsetNumber offnum,
 									   ItemPointer heapTid, int tupleOffset);
-static IndexScanBatch _bt_steppage_batch(IndexScanDesc scan, BTBatchScanPos pos,
+static IndexScanBatch _bt_steppage(IndexScanDesc scan, BTBatchScanPos pos,
 										 ScanDirection dir);
 static IndexScanBatch _bt_readfirstpage(IndexScanDesc scan, BTBatchScanPos pos,
 										OffsetNumber offnum,
@@ -1543,51 +1543,23 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 }
 
 /*
- *	_bt_next_batch() -- Get the next batch of items in a scan.
+ *	_bt_next() -- Get the next item in a scan.
  *
- * A batch variant of _bt_next(). Most of the comments for that function
- * apply here too.
+ *		On entry, so->currPos describes the current page, which may be pinned
+ *		but is not locked, and so->currPos.itemIndex identifies which item was
+ *		previously returned.
  *
- * We should only get here only when the current batch has no more items
- * in the given direction. We don't get here with empty batches, that's
- * handled by _bt_fist_batch().
+ *		On success exit, so->currPos is updated as needed, and _bt_returnitem
+ *		sets the next item to return to the scan.  so->currPos remains valid.
  *
- * XXX See also the comments at _bt_first_batch() about returning a single
- * batch for the page, etc.
+ *		On failure exit (no more tuples), we invalidate so->currPos.  It'll
+ *		still be possible for the scan to return tuples by changing direction,
+ *		though we'll need to call _bt_first anew in that other direction.
  */
 IndexScanBatch
-_bt_next_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
+_bt_next(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 {
 	BTBatchScanPosData tmp;
-
-	/*
-	 * restore the BTScanOpaque from the current batch
-	 *
-	 * XXX This is pretty ugly/expensive. Ideally we'd have all the fields
-	 * needed to determine "location" in the index (essentially BTScanPosData)
-	 * in the batch, without cloning all the other stuff.
-	 */
-	/* Assert(scan->xs_batches->currentBatch != NULL); */
-
-	/*
-	 * Use the last batch as the "current" batch. We use the streamPos if
-	 * initialized, or the readPos as a fallback. Alternatively, we could
-	 * simply use the last batch in the queue, i.e. (nextBatch - 1).
-	 *
-	 * Even better, we could pass the "correct" batch from indexam.c, and let
-	 * that figure out which position to move from.
-	 */
-/*
-	idx = scan->xs_batches->streamPos.batch;
-	if (idx == -1)
-		idx = scan->xs_batches->readPos.batch;
-
-	batch = INDEX_SCAN_BATCH(scan, idx);
-	Assert(batch != NULL);
-	pos = (BTBatchScanPos) batch->opaque;
-*/
-
-	/* Assert(BTScanPosIsPinned(*pos)); */
 
 	if (pos)
 		memcpy(&tmp, pos, sizeof(tmp));
@@ -1601,7 +1573,7 @@ _bt_next_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 	 *
 	 * XXX For now we pass a local copy "tmp".
 	 */
-	return _bt_steppage_batch(scan, &tmp, dir);
+	return _bt_steppage(scan, &tmp, dir);
 }
 
 /*
@@ -2162,10 +2134,16 @@ _bt_savepostingitem(IndexScanBatch batch, int itemIndex, OffsetNumber offnum,
 }
 
 /*
- *	a batching version of _bt_steppage(), ignoring irrelevant bits
+ *	_bt_steppage() -- Step to next page containing valid data for scan
+ *
+ * Wrapper on _bt_readnextpage that performs final steps for the current page.
+ *
+ * On entry, so->currPos must be valid.  Its buffer will be pinned, though
+ * never locked. (Actually, when so->dropPin there won't even be a pin held,
+ * though so->currPos.currPage must still be set to a valid block number.)
  */
 static IndexScanBatch
-_bt_steppage_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
+_bt_steppage(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	BlockNumber blkno,
