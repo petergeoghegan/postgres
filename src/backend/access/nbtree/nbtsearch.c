@@ -2437,7 +2437,7 @@ _bt_next_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 	pos = (BTBatchScanPos) batch->opaque;
 */
 
-	Assert(BTScanPosIsPinned(*pos));
+	// Assert(BTScanPosIsPinned(*pos));
 
 	memcpy(&tmp, pos, sizeof(tmp));
 

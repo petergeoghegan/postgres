@@ -386,6 +386,8 @@ int64
 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	IndexScanBatch batch;
+	BTBatchScanPos pos = palloc0(sizeof(BTBatchScanPosData));
 	int64		ntids = 0;
 	ItemPointer heapTid;
 
@@ -394,11 +396,9 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	/* Each loop iteration performs another primitive index scan */
 	do
 	{
-		/* Fetch the first page & tuple */
-		if (_bt_first(scan, ForwardScanDirection))
+		if ((batch = _bt_first_batch(scan, ForwardScanDirection)))
 		{
-			/* Save tuple ID, and continue scanning */
-			heapTid = &scan->xs_heaptid;
+			heapTid = &batch->items[batch->firstItem].heapTid;
 			tbm_add_tuples(tbm, heapTid, 1, false);
 			ntids++;
 
@@ -408,15 +408,19 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 				 * Advance to next tuple within page.  This is the same as the
 				 * easy case in _bt_next().
 				 */
-				if (++so->currPos.itemIndex > so->currPos.lastItem)
+				if (++batch->itemIndex > batch->lastItem)
 				{
+					// if (pos->buf)
+					// 	ReleaseBuffer(pos->buf);
+
 					/* let _bt_next do the heavy lifting */
-					if (!_bt_next(scan, ForwardScanDirection))
+					batch = _bt_next_batch(scan, pos, ForwardScanDirection);
+					if (!batch)
 						break;
 				}
 
 				/* Save tuple ID, and continue scanning */
-				heapTid = &so->currPos.items[so->currPos.itemIndex].heapTid;
+				heapTid = &batch->items[batch->itemIndex].heapTid;
 				tbm_add_tuples(tbm, heapTid, 1, false);
 				ntids++;
 			}
