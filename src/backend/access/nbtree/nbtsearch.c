@@ -44,9 +44,9 @@ static inline void _bt_savepostingitem_batch(IndexScanBatch batch, int itemIndex
 											 ItemPointer heapTid, int tupleOffset);
 static IndexScanBatch _bt_steppage_batch(IndexScanDesc scan, BTBatchScanPos pos,
 										 ScanDirection dir);
-static IndexScanBatch _bt_readfirstpage_batch(IndexScanDesc scan, BTBatchScanPos pos,
-											  OffsetNumber offnum,
-											  ScanDirection dir);
+static IndexScanBatch _bt_readfirstpage(IndexScanDesc scan, BTBatchScanPos pos,
+										OffsetNumber  offnum,
+										ScanDirection dir);
 static IndexScanBatch _bt_readnextpage(IndexScanDesc scan, BTBatchScanPos pos,
 											 BlockNumber blkno, BlockNumber lastcurrblkno,
 											 ScanDirection dir, bool seized);
@@ -1543,7 +1543,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * for the page.  For example, when inskey is both < the leaf page's high
 	 * key and > all of its non-pivot tuples, offnum will be "maxoff + 1".
 	 */
-	return _bt_readfirstpage_batch(scan, &pos, offnum, dir);
+	return _bt_readfirstpage(scan, &pos, offnum, dir);
 }
 
 /*
@@ -2260,8 +2260,32 @@ _bt_steppage_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir)
 	return _bt_readnextpage(scan, pos, blkno, lastcurrblkno, dir, false);
 }
 
+/*
+ *	_bt_readfirstpage() -- Read first page containing valid data for _bt_first
+ *
+ * _bt_first caller passes us an offnum returned by _bt_binsrch, which might
+ * be an out of bounds offnum such as "maxoff + 1" in certain corner cases.
+ * _bt_checkkeys will stop the scan as soon as an equality qual fails (when
+ * its scan key was marked required), so _bt_first _must_ pass us an offnum
+ * exactly at the beginning of where equal tuples are to be found.  When we're
+ * passed an offnum past the end of the page, we might still manage to stop
+ * the scan on this page by calling _bt_checkkeys against the high key.  See
+ * _bt_readpage for full details.
+ *
+ * On entry, so->currPos must be pinned and locked (so offnum stays valid).
+ * Parallel scan callers must have seized the scan before calling here.
+ *
+ * On exit, we'll have updated so->currPos and retained locks and pins
+ * according to the same rules as those laid out for _bt_readnextpage exit.
+ * Like _bt_readnextpage, our return value indicates if there are any matching
+ * records in the given direction.
+ *
+ * We always release the scan for a parallel scan caller, regardless of
+ * success or failure; we'll call _bt_parallel_release as soon as possible.
+ */
 static IndexScanBatch
-_bt_readfirstpage_batch(IndexScanDesc scan, BTBatchScanPos pos, OffsetNumber offnum, ScanDirection dir)
+_bt_readfirstpage(IndexScanDesc scan, BTBatchScanPos pos, OffsetNumber offnum,
+				  ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	IndexScanBatch batch;
@@ -2791,5 +2815,5 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir)
 	/*
 	 * Now load data from the first page of the scan.
 	 */
-	return _bt_readfirstpage_batch(scan, &pos, start, dir);
+	return _bt_readfirstpage(scan, &pos, start, dir);
 }
