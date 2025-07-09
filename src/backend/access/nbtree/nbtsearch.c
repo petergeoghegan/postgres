@@ -873,7 +873,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	BTScanPosInvalidate(pos);
 
 	/* FIXME maybe check there's no active batch yet */
-	/* Assert(!BTScanPosIsValid(so->currPos)); */
 
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the

@@ -1011,7 +1011,7 @@ _bt_parallel_seize(IndexScanDesc scan, BTBatchScanPos pos,
 	 * backend that steps from *last_curr_page to *next_scan_page (unless this
 	 * backend's so->currPos is initialized by _bt_readfirstpage before then).
 	 */
-	BTScanPosInvalidate(so->currPos);
+	BTScanPosInvalidate(*pos);
 	pos->moreLeft = pos->moreRight = true;
 
 	if (first)
