@@ -930,10 +930,10 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		scan->instrument->nsearches++;
 
 	/*----------
-	 * Examine the scan keys to discover where we need to start the scan.  The
-	 * selected scan keys (at most one per index column) are remembered by
+	 * Examine the scan keys to discover where we need to start the scan.
+	 * The selected scan keys (at most one per index column) are remembered by
 	 * storing their addresses into the local startKeys[] array.  The final
-	 * startKeys[] entry's strategy is set in strat_total.  (Actually, there
+	 * startKeys[] entry's strategy is set in strat_total. (Actually, there
 	 * are a couple of cases where we force a less/more restrictive strategy.)
 	 *
 	 * We must use the key that was marked required (in the direction opposite
@@ -1493,6 +1493,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	if (!BufferIsValid(pos.buf))
 	{
+		Assert(!so->needPrimScan);
+
 		/*
 		 * We only get here if the index is completely empty. Lock relation
 		 * because nothing finer to lock exists.  Without a buffer lock, it's
