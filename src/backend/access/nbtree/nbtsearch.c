@@ -2501,6 +2501,7 @@ _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 {
 	BlockNumber origblkno = *blkno; /* detects circular links */
 
+	elog(WARNING, "INJECTION_POINT lock-and-validate-left");
 	INJECTION_POINT("lock-and-validate-left", NULL);
 
 	for (;;)
@@ -2601,6 +2602,7 @@ _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 		/* Start from scratch with new lastcurrblkno's blkno/prev link */
 		*blkno = origblkno = opaque->btpo_prev;
 		_bt_relbuf(rel, buf);
+		elog(WARNING, "INJECTION_POINT lock-and-validate-left");
 		INJECTION_POINT("lock-and-validate-new-lastcurrblkno", NULL);
 	}
 
