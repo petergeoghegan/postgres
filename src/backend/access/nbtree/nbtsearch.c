@@ -2501,13 +2501,7 @@ _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 {
 	BlockNumber origblkno = *blkno; /* detects circular links */
 
-	for (int i = 0; i < 10; i++)
-	{
-		InjectionPointLoad("lock-and-validate-left");
-		InjectionPointLoad("lock-and-validate-new-lastcurrblkno");
-	}
-
-	INJECTION_POINT("lock-and-validate-left", NULL);
+	INJECTION_POINT("nbtree-lock-and-validate-left", NULL);
 
 	for (;;)
 	{
@@ -2607,7 +2601,7 @@ _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 		/* Start from scratch with new lastcurrblkno's blkno/prev link */
 		*blkno = origblkno = opaque->btpo_prev;
 		_bt_relbuf(rel, buf);
-		INJECTION_POINT("lock-and-validate-new-lastcurrblkno", NULL);
+		INJECTION_POINT("nbtree-lock-and-validate-new-lastcurrblkno", NULL);
 	}
 
 	return InvalidBuffer;
