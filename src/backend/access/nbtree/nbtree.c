@@ -400,6 +400,8 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	{
 		if ((batch = _bt_first_batch(scan, ForwardScanDirection)))
 		{
+			memcpy(&pos, batch->opaque, sizeof(BTBatchScanPosData));
+			batch->opaque = &pos;
 			heapTid = &batch->items[batch->firstItem].heapTid;
 			tbm_add_tuples(tbm, heapTid, 1, false);
 			ntids++;
@@ -416,6 +418,8 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 					batch = _bt_next_batch(scan, batch->opaque, ForwardScanDirection);
 					if (!batch)
 						break;
+					memcpy(&pos, batch->opaque, sizeof(BTBatchScanPosData));
+					batch->opaque = &pos;
 				}
 
 				/* Save tuple ID, and continue scanning */
