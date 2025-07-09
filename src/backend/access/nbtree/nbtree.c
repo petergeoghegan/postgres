@@ -418,8 +418,6 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 					batch = _bt_next_batch(scan, batch->opaque, ForwardScanDirection);
 					if (!batch)
 						break;
-					memcpy(&pos, batch->opaque, sizeof(BTBatchScanPosData));
-					batch->opaque = &pos;
 				}
 
 				/* Save tuple ID, and continue scanning */

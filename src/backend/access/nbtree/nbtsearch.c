@@ -2978,8 +2978,8 @@ _bt_readpage_batch(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir, Of
 	pos->prevPage = opaque->btpo_prev;
 	pos->nextPage = opaque->btpo_next;
 	/* delay setting so->currPos.lsn until _bt_drop_lock_and_maybe_pin */
-	so->currPos.dir = dir;
-	so->currPos.nextTupleOffset = 0;
+	pos->dir = dir;
+	pos->nextTupleOffset = 0;
 
 	/* either moreRight or moreLeft should be set now (may be unset later) */
 	Assert(ScanDirectionIsForward(dir) ? pos->moreRight :
