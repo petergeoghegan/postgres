@@ -413,8 +413,8 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 				if (++batch->itemIndex > batch->lastItem)
 				{
 					// btfreebatch(scan, batch);
-					batch = _bt_next_batch(scan, &pos, ForwardScanDirection);
-					if (!batch || so->needPrimScan)
+					batch = _bt_next_batch(scan, batch->opaque, ForwardScanDirection);
+					if (!batch)
 						break;
 				}
 
