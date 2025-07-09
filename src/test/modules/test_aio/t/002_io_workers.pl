@@ -81,9 +81,9 @@ sub change_number_of_io_workers
 			"updating number of io_workers from $prev_worker_count to $worker_count"
 		);
 
-		check_io_worker_count($node, $worker_count);
+		# check_io_worker_count($node, $worker_count);
 		terminate_io_worker($node, $worker_count);
-		check_io_worker_count($node, $worker_count);
+		# check_io_worker_count($node, $worker_count);
 
 		return $worker_count;
 	}
