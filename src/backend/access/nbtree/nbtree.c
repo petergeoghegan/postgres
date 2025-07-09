@@ -414,6 +414,9 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 				 */
 				if (++batch->itemIndex > batch->lastItem)
 				{
+					Buffer buf = ((BTBatchScanPos) batch->opaque)->buf;
+					if (buf)
+						ReleaseBuffer(buf);
 					// btfreebatch(scan, batch);
 					batch = _bt_next_batch(scan, batch->opaque, ForwardScanDirection);
 					if (!batch)
