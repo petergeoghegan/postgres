@@ -269,7 +269,7 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 		 * _bt_first() to get the first item in the scan.
 		 */
 		if (pos == NULL)
-			res = _bt_first_batch(scan, dir);
+			res = _bt_first(scan, dir);
 		else
 		{
 			/*
@@ -398,7 +398,7 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	/* Each loop iteration performs another primitive index scan */
 	do
 	{
-		if ((batch = _bt_first_batch(scan, ForwardScanDirection)))
+		if ((batch = _bt_first(scan, ForwardScanDirection)))
 		{
 			memcpy(&pos, batch->opaque, sizeof(BTBatchScanPosData));
 			batch->opaque = &pos;
