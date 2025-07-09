@@ -2486,7 +2486,7 @@ _bt_kill_batch(IndexScanDesc scan, IndexScanBatch batch)
 	 * the indexam.c directly whenever we think it's appropriate? And not only
 	 * from here when freeing the batch?
 	 */
-	_bt_killitems_batch(scan, batch);
+	_bt_killitems(scan, batch);
 }
 
 /*
@@ -3589,8 +3589,7 @@ _bt_steppage(IndexScanDesc scan, ScanDirection dir)
 	Assert(BTScanPosIsPinned(so->currPos) == !so->dropPin);
 
 	/* Before leaving current page, deal with any killed items */
-	if (so->numKilled > 0)
-		_bt_killitems(scan);
+	Assert(so->numKilled == 0);
 
 	/*
 	 * Before we modify currPos, make a copy of the page data if there was a

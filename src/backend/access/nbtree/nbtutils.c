@@ -3253,189 +3253,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
  * and just give up on it.
  */
 void
-_bt_killitems(IndexScanDesc scan)
-{
-	Relation	rel = scan->indexRelation;
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	Page		page;
-	BTPageOpaque opaque;
-	OffsetNumber minoff;
-	OffsetNumber maxoff;
-	int			numKilled = so->numKilled;
-	bool		killedsomething = false;
-	Buffer		buf;
-
-	Assert(numKilled > 0);
-	Assert(BTScanPosIsValid(so->currPos));
-	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
-
-	/* Always invalidate so->killedItems[] before leaving so->currPos */
-	so->numKilled = 0;
-
-	if (!so->dropPin)
-	{
-		/*
-		 * We have held the pin on this page since we read the index tuples,
-		 * so all we need to do is lock it.  The pin will have prevented
-		 * concurrent VACUUMs from recycling any of the TIDs on the page.
-		 */
-		Assert(BTScanPosIsPinned(so->currPos));
-		buf = so->currPos.buf;
-		_bt_lockbuf(rel, buf, BT_READ);
-	}
-	else
-	{
-		XLogRecPtr	latestlsn;
-
-		Assert(!BTScanPosIsPinned(so->currPos));
-		Assert(RelationNeedsWAL(rel));
-		buf = _bt_getbuf(rel, so->currPos.currPage, BT_READ);
-
-		latestlsn = BufferGetLSNAtomic(buf);
-		Assert(!XLogRecPtrIsInvalid(so->currPos.lsn));
-		Assert(so->currPos.lsn <= latestlsn);
-		if (so->currPos.lsn != latestlsn)
-		{
-			/* Modified, give up on hinting */
-			_bt_relbuf(rel, buf);
-			return;
-		}
-
-		/* Unmodified, hinting is safe */
-	}
-
-	page = BufferGetPage(buf);
-	opaque = BTPageGetOpaque(page);
-	minoff = P_FIRSTDATAKEY(opaque);
-	maxoff = PageGetMaxOffsetNumber(page);
-
-	for (int i = 0; i < numKilled; i++)
-	{
-		int			itemIndex = so->killedItems[i];
-		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
-		OffsetNumber offnum = kitem->indexOffset;
-
-		Assert(itemIndex >= so->currPos.firstItem &&
-			   itemIndex <= so->currPos.lastItem);
-		if (offnum < minoff)
-			continue;			/* pure paranoia */
-		while (offnum <= maxoff)
-		{
-			ItemId		iid = PageGetItemId(page, offnum);
-			IndexTuple	ituple = (IndexTuple) PageGetItem(page, iid);
-			bool		killtuple = false;
-
-			if (BTreeTupleIsPosting(ituple))
-			{
-				int			pi = i + 1;
-				int			nposting = BTreeTupleGetNPosting(ituple);
-				int			j;
-
-				/*
-				 * We rely on the convention that heap TIDs in the scanpos
-				 * items array are stored in ascending heap TID order for a
-				 * group of TIDs that originally came from a posting list
-				 * tuple.  This convention even applies during backwards
-				 * scans, where returning the TIDs in descending order might
-				 * seem more natural.  This is about effectiveness, not
-				 * correctness.
-				 *
-				 * Note that the page may have been modified in almost any way
-				 * since we first read it (in the !so->dropPin case), so it's
-				 * possible that this posting list tuple wasn't a posting list
-				 * tuple when we first encountered its heap TIDs.
-				 */
-				for (j = 0; j < nposting; j++)
-				{
-					ItemPointer item = BTreeTupleGetPostingN(ituple, j);
-
-					if (!ItemPointerEquals(item, &kitem->heapTid))
-						break;	/* out of posting list loop */
-
-					/*
-					 * kitem must have matching offnum when heap TIDs match,
-					 * though only in the common case where the page can't
-					 * have been concurrently modified
-					 */
-					Assert(kitem->indexOffset == offnum || !so->dropPin);
-
-					/*
-					 * Read-ahead to later kitems here.
-					 *
-					 * We rely on the assumption that not advancing kitem here
-					 * will prevent us from considering the posting list tuple
-					 * fully dead by not matching its next heap TID in next
-					 * loop iteration.
-					 *
-					 * If, on the other hand, this is the final heap TID in
-					 * the posting list tuple, then tuple gets killed
-					 * regardless (i.e. we handle the case where the last
-					 * kitem is also the last heap TID in the last index tuple
-					 * correctly -- posting tuple still gets killed).
-					 */
-					if (pi < numKilled)
-						kitem = &so->currPos.items[so->killedItems[pi++]];
-				}
-
-				/*
-				 * Don't bother advancing the outermost loop's int iterator to
-				 * avoid processing killed items that relate to the same
-				 * offnum/posting list tuple.  This micro-optimization hardly
-				 * seems worth it.  (Further iterations of the outermost loop
-				 * will fail to match on this same posting list's first heap
-				 * TID instead, so we'll advance to the next offnum/index
-				 * tuple pretty quickly.)
-				 */
-				if (j == nposting)
-					killtuple = true;
-			}
-			else if (ItemPointerEquals(&ituple->t_tid, &kitem->heapTid))
-				killtuple = true;
-
-			/*
-			 * Mark index item as dead, if it isn't already.  Since this
-			 * happens while holding a buffer lock possibly in shared mode,
-			 * it's possible that multiple processes attempt to do this
-			 * simultaneously, leading to multiple full-page images being sent
-			 * to WAL (if wal_log_hints or data checksums are enabled), which
-			 * is undesirable.
-			 */
-			if (killtuple && !ItemIdIsDead(iid))
-			{
-				/* found the item/all posting list items */
-				ItemIdMarkDead(iid);
-				killedsomething = true;
-				break;			/* out of inner search loop */
-			}
-			offnum = OffsetNumberNext(offnum);
-		}
-	}
-
-	/*
-	 * Since this can be redone later if needed, mark as dirty hint.
-	 *
-	 * Whenever we mark anything LP_DEAD, we also set the page's
-	 * BTP_HAS_GARBAGE flag, which is likewise just a hint.  (Note that we
-	 * only rely on the page-level flag in !heapkeyspace indexes.)
-	 */
-	if (killedsomething)
-	{
-		opaque->btpo_flags |= BTP_HAS_GARBAGE;
-		MarkBufferDirtyHint(buf, true);
-	}
-
-	if (!so->dropPin)
-		_bt_unlockbuf(rel, buf);
-	else
-		_bt_relbuf(rel, buf);
-}
-
-/*
- * _bt_killitems_batch
- *		a variant of _bt_killitems, using the batch-level killedItems
- */
-void
-_bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
+_bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 {
 	Relation	rel = scan->indexRelation;
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
@@ -3451,10 +3269,7 @@ _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 
 	Assert(BTScanPosIsValid(*pos));
 
-	/*
-	 * Always reset the scan state, so we don't look for same items on other
-	 * pages.
-	 */
+	/* Always invalidate so->killedItems[] before leaving so->currPos */
 	batch->numKilled = 0;
 
 	if (!so->dropPin)
@@ -3526,7 +3341,7 @@ _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 				 * correctness.
 				 *
 				 * Note that the page may have been modified in almost any way
-				 * since we first read it (in the !droppedpin case), so it's
+				 * since we first read it (in the !so->dropPin case), so it's
 				 * possible that this posting list tuple wasn't a posting list
 				 * tuple when we first encountered its heap TIDs.
 				 */
@@ -3614,6 +3429,7 @@ _bt_killitems_batch(IndexScanDesc scan, IndexScanBatch batch)
 	else
 		_bt_relbuf(rel, buf);
 }
+
 
 /*
  * The following routines manage a shared-memory area in which we track

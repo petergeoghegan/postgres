@@ -524,8 +524,6 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	 */
 	if (BTScanPosIsValid(so->currPos))
 	{
-		if (so->numKilled > 0)
-			_bt_killitems(scan);
 		if (!so->dropPin)
 			BTScanPosUnpin(so->currPos);
 		BTScanPosInvalidate(so->currPos);
@@ -592,8 +590,6 @@ btendscan(IndexScanDesc scan)
 	 */
 	if (BTScanPosIsValid(so->currPos))
 	{
-		if (so->numKilled > 0)
-			_bt_killitems(scan);
 		if (!so->dropPin)
 			BTScanPosUnpin(so->currPos);
 		BTScanPosInvalidate(so->currPos);	/* unnecessary, but be consistent */
@@ -713,8 +709,6 @@ btrestrpos(IndexScanDesc scan)
 		 */
 		if (BTScanPosIsValid(so->currPos))
 		{
-			if (so->numKilled > 0)
-				_bt_killitems(scan);
 			if (!so->dropPin)
 				BTScanPosUnpin(so->currPos);
 			BTScanPosInvalidate(so->currPos);
