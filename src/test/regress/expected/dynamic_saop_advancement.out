@@ -760,7 +760,7 @@ where bar = any(array[(select array_agg(i) from a)]) order by bar desc limit 50 
                                                          QUERY PLAN                                                         
 ----------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=1885.07..1885.22 rows=1 width=4) (actual rows=50.00 loops=1)
-   Buffers: shared hit=35
+   Buffers: shared hit=37
    InitPlan 1
      ->  Aggregate  (cost=1875.01..1875.02 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..1500.00 rows=150000 width=4) (actual rows=150000.00 loops=1)
@@ -768,7 +768,7 @@ where bar = any(array[(select array_agg(i) from a)]) order by bar desc limit 50 
          Disabled: true
          Index Cond: (bar = ANY (ARRAY[(InitPlan 1).col1]))
          Index Searches: 1
-         Buffers: shared hit=35
+         Buffers: shared hit=37
 (10 rows)
 
 -----------------------------------------------------------------------
@@ -5103,11 +5103,11 @@ limit 10;
                                                                                      QUERY PLAN                                                                                      
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..19.85 rows=10 width=250) (actual rows=10.00 loops=1)
-   Buffers: shared hit=11
+   Buffers: shared hit=12
    ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..66.81 rows=34 width=250) (actual rows=10.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (four = ANY ('{0,1,2}'::integer[])) AND (twenty = ANY ('{0,1,3}'::integer[])) AND (hundred = ANY ('{0,1,5}'::integer[])))
          Index Searches: 1
-         Buffers: shared hit=11
+         Buffers: shared hit=12
 (6 rows)
 
 ---------------------------------
@@ -5417,12 +5417,12 @@ order by ten, unique1 limit 1;
                                                        QUERY PLAN                                                        
 -------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..5.15 rows=1 width=244) (actual rows=1.00 loops=1)
-   Buffers: shared hit=7
+   Buffers: shared hit=8
    ->  Index Scan using rhodium_toad on tenk1_dyn_saop  (cost=0.29..204.57 rows=42 width=244) (actual rows=1.00 loops=1)
          Index Cond: ((ten >= 5) AND (thousand = ANY ('{19,29,39,49,57,66,77,8,90,12,22,32}'::integer[])))
          Filter: ((ten > 5) OR (unique1 > 5000))
          Index Searches: 1
-         Buffers: shared hit=7
+         Buffers: shared hit=8
 (7 rows)
 
 -- Nice demo of importance of work in context of ORDER BY ... LIMIT
@@ -5463,11 +5463,11 @@ order by two, four, twenty limit 20;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..21.03 rows=20 width=18) (actual rows=20.00 loops=1)
-   Buffers: shared hit=13
+   Buffers: shared hit=14
    ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..518.89 rows=500 width=18) (actual rows=20.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (four = ANY ('{1,2}'::integer[])) AND (twenty = ANY ('{1,2}'::integer[])))
          Index Searches: 1
-         Buffers: shared hit=13
+         Buffers: shared hit=14
 (6 rows)
 
 -- (March 12)
@@ -6474,11 +6474,11 @@ order by two, four, twenty limit 20;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..26.72 rows=20 width=22) (actual rows=20.00 loops=1)
-   Buffers: shared hit=13
+   Buffers: shared hit=14
    ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..330.74 rows=250 width=22) (actual rows=20.00 loops=1)
          Index Cond: ((two = 0) AND (four = ANY ('{1,2}'::integer[])) AND (twenty = ANY ('{1,2}'::integer[])))
          Index Searches: 1
-         Buffers: shared hit=13
+         Buffers: shared hit=14
 (6 rows)
 
 -- Same trick should work with middle attribute a non-SAOP:
@@ -6518,11 +6518,11 @@ order by two, four, twenty limit 20;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..26.72 rows=20 width=22) (actual rows=20.00 loops=1)
-   Buffers: shared hit=16
+   Buffers: shared hit=17
    ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..330.74 rows=250 width=22) (actual rows=20.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (four = 1) AND (twenty = ANY ('{1,2}'::integer[])))
          Index Searches: 2
-         Buffers: shared hit=16
+         Buffers: shared hit=17
 (6 rows)
 
 -- Even an inequality on two should work, since we can get through non-matches
@@ -6566,13 +6566,13 @@ order by two, four, twenty limit 20;
                                                                   QUERY PLAN                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..41.77 rows=20 width=22) (actual rows=20.00 loops=1)
-   Buffers: shared hit=287
+   Buffers: shared hit=288
    ->  Index Scan using tenk1_idx_extra_column_in_middle on tenk1_dyn_saop  (cost=0.29..518.90 rows=250 width=22) (actual rows=20.00 loops=1)
          Index Cond: ((four = ANY ('{1,2}'::integer[])) AND (twenty = ANY ('{1,2}'::integer[])))
          Filter: (two <> 0)
          Rows Removed by Filter: 500
          Index Searches: 3
-         Buffers: shared hit=287
+         Buffers: shared hit=288
 (8 rows)
 
 -- Same trick should work with interlaced SOAPs and non-SAOPS:
@@ -6616,11 +6616,11 @@ order by two, four, twenty, hundred limit 20;
                                                              QUERY PLAN                                                              
 -------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..14.65 rows=3 width=22) (actual rows=20.00 loops=1)
-   Buffers: shared hit=21
+   Buffers: shared hit=22
    ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..14.65 rows=3 width=22) (actual rows=20.00 loops=1)
          Index Cond: ((two = ANY ('{0,1}'::integer[])) AND (four = 1) AND (twenty = ANY ('{0,1}'::integer[])) AND (hundred = 1))
          Index Searches: 2
-         Buffers: shared hit=21
+         Buffers: shared hit=22
 (6 rows)
 
 -- Second variant:
@@ -6662,11 +6662,11 @@ order by two, four, twenty, hundred limit 20;
                                                              QUERY PLAN                                                              
 -------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.29..14.65 rows=3 width=22) (actual rows=20.00 loops=1)
-   Buffers: shared hit=19
+   Buffers: shared hit=20
    ->  Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=0.29..14.65 rows=3 width=22) (actual rows=20.00 loops=1)
          Index Cond: ((two = 1) AND (four = ANY ('{1,2}'::integer[])) AND (twenty = 1) AND (hundred = ANY ('{0,1}'::integer[])))
          Index Searches: 1
-         Buffers: shared hit=19
+         Buffers: shared hit=20
 (6 rows)
 
 -- (November 8)
@@ -7660,21 +7660,21 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute qual_on_two_nonarray_contradictory;
                                                                                                                                            QUERY PLAN                                                                                                                                            
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=25.47..145.00 rows=1 width=16) (actual rows=0.00 loops=1)
+ Index Scan using tenk1_dyn_saop_idx_lowcard on tenk1_dyn_saop  (cost=24.29..143.82 rows=1 width=16) (actual rows=0.00 loops=1)
    Index Cond: ((two = ANY ('{-1,0,1}'::integer[])) AND (two = ANY ('{0,1,2}'::integer[])) AND (two = (InitPlan 2).col1) AND (four = ANY ('{1,2,3}'::integer[])) AND (twenty = ANY ('{1,2,5,7,8,11,12,13,14,17}'::integer[])) AND (hundred = ANY ('{1,3,4,9,14,51,90,88,41,39,22}'::integer[])))
    Filter: ((two)::numeric = (InitPlan 1).col1)
    Index Searches: 0
-   Buffers: shared hit=15
+   Buffers: shared hit=14
    InitPlan 1
      ->  Result  (cost=0.00..0.01 rows=1 width=32) (never executed)
    InitPlan 2
-     ->  Limit  (cost=25.16..25.17 rows=1 width=8) (actual rows=1.00 loops=1)
-           Buffers: shared hit=15
-           ->  Aggregate  (cost=25.16..25.17 rows=1 width=8) (actual rows=1.00 loops=1)
-                 Buffers: shared hit=15
-                 ->  Seq Scan on pg_operator  (cost=0.00..23.13 rows=813 width=0) (actual rows=813.00 loops=1)
+     ->  Limit  (cost=23.99..24.00 rows=1 width=8) (actual rows=1.00 loops=1)
+           Buffers: shared hit=14
+           ->  Aggregate  (cost=23.99..24.00 rows=1 width=8) (actual rows=1.00 loops=1)
+                 Buffers: shared hit=14
+                 ->  Seq Scan on pg_operator  (cost=0.00..21.99 rows=799 width=0) (actual rows=799.00 loops=1)
                        Disabled: true
-                       Buffers: shared hit=15
+                       Buffers: shared hit=14
 (15 rows)
 
 deallocate qual_on_two_nonarray_contradictory;
@@ -8000,11 +8000,11 @@ order by a desc, b desc, c desc limit 52;
                                                                    QUERY PLAN                                                                    
 -------------------------------------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.28..8.88 rows=1 width=40) (actual rows=52.00 loops=1)
-   Buffers: shared hit=34
+   Buffers: shared hit=35
    ->  Index Scan Backward using fdeps_abc_idx on functional_dependencies  (cost=0.28..8.88 rows=1 width=40) (actual rows=52.00 loops=1)
          Index Cond: ((a = ANY ('{1,2,26,27,51,52,76,77}'::integer[])) AND (b = ANY ('{1,2,26,27}'::text[])) AND (c = ANY ('{1,2}'::integer[])))
          Index Searches: 1
-         Buffers: shared hit=34
+         Buffers: shared hit=35
 (6 rows)
 
 -- Test case for missing key column in predicate -- simple
@@ -12691,7 +12691,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 -- Move back to the start of the key space:
@@ -12730,7 +12730,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 /* default_scroll_cursor */ commit;
@@ -13053,7 +13053,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 -- Move back to the start of the key space:
@@ -13092,7 +13092,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 /* full_scroll_cursor */ commit;
@@ -13633,7 +13633,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 -- Move back to the start of the key space:
@@ -13672,7 +13672,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 /* default_scroll_cursor */ commit;
@@ -13736,7 +13736,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  3
+  6
 (1 row)
 
 -- This caused an assertion failure at one point, right at the top of _bt_checkkeys:
@@ -13778,7 +13778,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  3
+  1
 (1 row)
 
 fetch backward 5 from default_scroll_cursor;
@@ -13823,7 +13823,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  3
+  1
 (1 row)
 
 -- Move to the end of the key space:
@@ -13872,7 +13872,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
- 25
+ 21
 (1 row)
 
 -- See the first few rows there:
@@ -13901,7 +13901,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  3
+  1
 (1 row)
 
 /* default_scroll_cursor */ commit;
@@ -14007,7 +14007,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
- 10
+ 12
 (1 row)
 
 -- This sets up the backwards primitive scan that ends up getting cancelled
@@ -14051,7 +14051,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  4
+  8
 (1 row)
 
 -- This is the statement that actually cancels a pending primitive index scan
@@ -14096,7 +14096,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  8
+ 10
 (1 row)
 
 -- These are for good luck:
@@ -14140,7 +14140,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  8
+ 12
 (1 row)
 
 fetch forward  31 from cancel_backwards_prim_scan_changedir;
@@ -14184,7 +14184,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  8
+ 10
 (1 row)
 
 fetch backward 32 from cancel_backwards_prim_scan_changedir;
@@ -14229,7 +14229,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
- 10
+ 12
 (1 row)
 
 fetch forward  33 from cancel_backwards_prim_scan_changedir;
@@ -14275,7 +14275,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  8
+ 10
 (1 row)
 
 fetch backward 34 from cancel_backwards_prim_scan_changedir;
@@ -14322,7 +14322,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
- 10
+ 12
 (1 row)
 
 fetch forward  35 from cancel_backwards_prim_scan_changedir;
@@ -14370,7 +14370,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  8
+ 10
 (1 row)
 
 /* cancel_backwards_prim_scan_changedir */ commit;
@@ -14496,7 +14496,7 @@ select pg_stat_get_xact_blocks_hit('backup_wrong_idx'::regclass) as cur_blocks_h
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  7
+ 10
 (1 row)
 
 fetch backward 29 from back_up_terminate_toplevel_wrong;
@@ -14538,7 +14538,7 @@ select pg_stat_get_xact_blocks_hit('backup_wrong_idx'::regclass) as cur_blocks_h
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  4
+  6
 (1 row)
 
 fetch forward 12 from back_up_terminate_toplevel_wrong;
@@ -14888,7 +14888,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  3
 (1 row)
 
 fetch backward 20 from inequalities_orderid;
@@ -14928,7 +14928,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 fetch backward 5 from inequalities_orderid;
@@ -14973,7 +14973,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 move forward 10000 in inequalities_orderid;
@@ -15012,7 +15012,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 move backward 10000 in inequalities_orderid;
@@ -15049,7 +15049,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  2
+  0
 (1 row)
 
 /* inequalities_orderid */ commit;
@@ -16437,7 +16437,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh; -- 2 index hits
  bh 
 ----
-  2
+  0
 (1 row)
 
 fetch backward 270 from korotkov_scroll_cursor;
@@ -16464,7 +16464,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh; -- 5 index hits (back to where we started)
  bh 
 ----
-  5
+  0
 (1 row)
 
 /* korotkov_scroll_cursor */ commit;
@@ -16528,7 +16528,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  3
+  4
 (1 row)
 
 fetch forward 1 from korotkov_scroll_cursor;
@@ -16542,7 +16542,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  1
+  3
 (1 row)
 
 fetch backward 1 from korotkov_scroll_cursor;
@@ -16556,7 +16556,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  1
+  2
 (1 row)
 
 fetch backward 270 from korotkov_scroll_cursor;
@@ -16569,7 +16569,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  1
+  0
 (1 row)
 
 fetch forward 1 from korotkov_scroll_cursor;
@@ -16583,7 +16583,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  3
+  0
 (1 row)
 
 /* korotkov_scroll_cursor */ commit;
@@ -17960,10 +17960,10 @@ group by small_a order by small_a;
 ------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.43..2625.42 rows=1 width=12) (actual rows=1.00 loops=1)
    Group Key: small.a
-   Buffers: shared hit=377
+   Buffers: shared hit=419
    ->  Merge Join  (cost=0.43..2338.69 rows=57344 width=4) (actual rows=57344.00 loops=1)
          Merge Cond: ((small.a = big.a) AND (small.b = big.b))
-         Buffers: shared hit=377
+         Buffers: shared hit=419
          ->  Index Scan using amber_small_idx on amber_small small  (cost=0.14..7.96 rows=104 width=8) (actual rows=104.00 loops=1)
                Index Cond: (a = ANY ('{1,3}'::integer[]))
                Index Searches: 1
@@ -17971,7 +17971,7 @@ group by small_a order by small_a;
          ->  Index Scan using amber_big_idx on amber_big big  (cost=0.29..315.24 rows=12288 width=8) (actual rows=62457.00 loops=1)
                Index Cond: (a = ANY ('{1,3}'::integer[]))
                Index Searches: 1
-               Buffers: shared hit=375
+               Buffers: shared hit=417
 (14 rows)
 
 -- Same again, but this time it's a nestloop join:
@@ -18083,7 +18083,7 @@ execute restore_buggy_primscan_qry;
 -------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.88..33.94 rows=10 width=16) (actual rows=3.00 loops=1)
    Group Key: o.b
-   Buffers: shared hit=32
+   Buffers: shared hit=42
    InitPlan 1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
@@ -18091,15 +18091,15 @@ execute restore_buggy_primscan_qry;
                  Rows Removed by Filter: 18
    ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=21.00 loops=1)
          Merge Cond: (o.b = bug.y)
-         Buffers: shared hit=32
+         Buffers: shared hit=42
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..23.37 rows=584 width=8) (actual rows=395.00 loops=1)
                Index Cond: (a = 1)
                Index Searches: 1
-               Buffers: shared hit=7
+               Buffers: shared hit=8
          ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.50 rows=10 width=8) (actual rows=21.00 loops=1)
                Index Cond: ((x = 1) AND (y = ANY (ARRAY[(InitPlan 1).col1])))
                Index Searches: 2
-               Buffers: shared hit=25
+               Buffers: shared hit=34
 (19 rows)
 
 deallocate restore_buggy_primscan_qry;
@@ -18130,7 +18130,7 @@ execute skip_restore_buggy_primscan_qry;
 -------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.88..33.96 rows=10 width=16) (actual rows=3.00 loops=1)
    Group Key: o.a, o.b
-   Buffers: shared hit=32
+   Buffers: shared hit=42
    InitPlan 1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
@@ -18138,14 +18138,14 @@ execute skip_restore_buggy_primscan_qry;
                  Rows Removed by Filter: 18
    ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=21.00 loops=1)
          Merge Cond: ((o.a = bug.x) AND (o.b = bug.y))
-         Buffers: shared hit=32
+         Buffers: shared hit=42
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..21.91 rows=584 width=8) (actual rows=395.00 loops=1)
                Index Searches: 1
-               Buffers: shared hit=7
+               Buffers: shared hit=8
          ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.47 rows=10 width=8) (actual rows=21.00 loops=1)
                Index Cond: (y = ANY (ARRAY[(InitPlan 1).col1]))
                Index Searches: 2
-               Buffers: shared hit=25
+               Buffers: shared hit=34
 (18 rows)
 
 -- (Jun 6 2024)
@@ -18182,7 +18182,7 @@ execute skip_restore_buggy_primscan_qry;
 -------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.88..33.96 rows=10 width=16) (actual rows=9.00 loops=1)
    Group Key: o.a, o.b
-   Buffers: shared hit=84
+   Buffers: shared hit=112
    InitPlan 1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
@@ -18190,14 +18190,14 @@ execute skip_restore_buggy_primscan_qry;
                  Rows Removed by Filter: 18
    ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=63.00 loops=1)
          Merge Cond: ((o.a = bug.x) AND (o.b = bug.y))
-         Buffers: shared hit=84
+         Buffers: shared hit=112
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..21.91 rows=584 width=8) (actual rows=1563.00 loops=1)
                Index Searches: 1
-               Buffers: shared hit=22
+               Buffers: shared hit=23
          ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.47 rows=10 width=8) (actual rows=63.00 loops=1)
                Index Cond: (y = ANY (ARRAY[(InitPlan 1).col1]))
                Index Searches: 2
-               Buffers: shared hit=62
+               Buffers: shared hit=89
 (18 rows)
 
 deallocate skip_restore_buggy_primscan_qry;

@@ -6360,7 +6360,7 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
          Index Searches: 1
          Buffers: shared hit=104
  Planning:
-   Buffers: shared hit=3
+   Buffers: shared hit=4
 (8 rows)
 
 -- (July 12) One of the last failing test cases when adding support for
