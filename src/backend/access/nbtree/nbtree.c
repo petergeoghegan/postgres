@@ -304,8 +304,6 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 void
 btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 {
-	BTScanOpaque so PG_USED_FOR_ASSERTS_ONLY = (BTScanOpaque) scan->opaque;
-
 	/*
 	 * Check to see if we should kill tuples from the previous batch.
 	 */
@@ -340,6 +338,7 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 
 	if (batch->opaque)
 	{
+		BTScanOpaque so = (BTScanOpaque) scan->opaque;
 		BTScanPos	pos = (BTScanPos) batch->opaque;
 
 		/*
