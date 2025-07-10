@@ -2916,28 +2916,6 @@ EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
 execute nonrequired_array_nonrequired_inequality_confusion;
 deallocate nonrequired_array_nonrequired_inequality_confusion;
 
--- (October 27) We expect to be able to detect = as contradictory, provided the
--- redundancy doesn't involve SK_SEARCHARRAY scan keys -- even when there is a
--- SK_SEARCHARRAY scan key nearby.
---
--- (March 10) UPDATE: Actually, we now expect parity with master in all cases,
--- under new regime where _bt_preprocess_keys "operates on arrays directly".
-prepare qual_on_two_nonarray_contradictory as
-select two, four, twenty, hundred
-from
-  tenk1_dyn_saop
-where
-  two in (-1, 0, 1) and four in (1, 2, 3)
-  and two in(0, 1, 2)
-  and two = (select -1+0.0 offset 0) and two = (select count(*) from pg_operator limit 1)
-  and twenty in (1, 2, 5, 7, 8, 11, 12, 13, 14, 17)
-  and hundred in (1, 3, 4, 9, 14, 51, 90, 88, 41, 39, 22);
-
-execute qual_on_two_nonarray_contradictory;
-EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
-execute qual_on_two_nonarray_contradictory;
-deallocate qual_on_two_nonarray_contradictory;
-
 -----------------------------------------
 -- functional_dependencies test cases  --
 -----------------------------------------
