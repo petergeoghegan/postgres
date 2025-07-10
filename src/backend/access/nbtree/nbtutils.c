@@ -3257,7 +3257,7 @@ _bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 {
 	Relation	rel = scan->indexRelation;
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
+	BTScanPos pos = (BTScanPos) batch->opaque;
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber minoff;

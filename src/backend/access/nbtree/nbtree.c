@@ -235,7 +235,7 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	IndexScanBatch res;
-	BTBatchScanPos pos = NULL;
+	BTScanPos	pos = NULL;
 
 	/* batching does not work with regular scan-level positions */
 	Assert(!ScanDirectionIsNoMovement(dir));
@@ -249,7 +249,7 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 	{
 		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->nextBatch - 1);
 
-		pos = (BTBatchScanPos) batch->opaque;
+		pos = (BTScanPos) batch->opaque;
 
 		if (so->needPrimScan)
 		{
@@ -351,7 +351,7 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 
 	if (batch->opaque)
 	{
-		BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
+		BTScanPos	pos = (BTScanPos) batch->opaque;
 
 		if (!so->dropPin)
 			BTScanPosUnpin(*pos);
@@ -393,7 +393,7 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 				 */
 				if (++batch->itemIndex > batch->lastItem)
 				{
-					Buffer		buf = ((BTBatchScanPos) batch->opaque)->buf;
+					Buffer		buf = ((BTScanPos) batch->opaque)->buf;
 
 					if (buf)
 						ReleaseBuffer(buf);
@@ -545,7 +545,7 @@ btrestrpos(IndexScanDesc scan)
 	if (so->numArrayKeys)
 	{
 		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->markPos.batch);
-		BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
+		BTScanPos	pos = (BTScanPos) batch->opaque;
 
 		_bt_start_array_keys(scan, scan->xs_batches->direction);
 		so->needPrimScan = false;
@@ -786,7 +786,7 @@ btparallelrescan(IndexScanDesc scan)
  * the return value is false.
  */
 bool
-_bt_parallel_seize(IndexScanDesc scan, BTBatchScanPos pos,
+_bt_parallel_seize(IndexScanDesc scan, BTScanPos pos,
 				   BlockNumber *next_scan_page, BlockNumber *last_curr_page,
 				   bool first)
 {

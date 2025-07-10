@@ -959,10 +959,7 @@ typedef struct BTScanPosItem	/* what we remember about each match */
 	LocationIndex tupleOffset;	/* IndexTuple's offset in workspace, if any */
 } BTScanPosItem;
 
-/*
- * Minimal AM-specific concept of "position" for batching.
- */
-typedef struct BTBatchScanPosData
+typedef struct BTScanPosData
 {
 	Buffer		buf;			/* currPage buf (invalid means unpinned) */
 
@@ -970,7 +967,7 @@ typedef struct BTBatchScanPosData
 	BlockNumber currPage;		/* page referenced by items array */
 	BlockNumber prevPage;		/* currPage's left link */
 	BlockNumber nextPage;		/* currPage's right link */
-	XLogRecPtr	lsn;			/* currPage's LSN */
+	XLogRecPtr	lsn;			/* currPage's LSN (when so->dropPin) */
 
 	/* scan direction for the saved position's call to _bt_readpage */
 	ScanDirection dir;
@@ -987,9 +984,9 @@ typedef struct BTBatchScanPosData
 	 */
 	bool		moreLeft;
 	bool		moreRight;
-} BTBatchScanPosData;
+} BTScanPosData;
 
-typedef BTBatchScanPosData *BTBatchScanPos;
+typedef BTScanPosData *BTScanPos;
 
 #define BTScanPosIsPinned(scanpos) \
 ( \
@@ -1052,7 +1049,7 @@ typedef struct BTScanOpaqueData
 	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
 	bool		dropPin;		/* drop leaf pin before btgettuple returns? */
-	BTBatchScanPos pos;
+	BTScanPos	pos;
 } BTScanOpaqueData;
 
 typedef BTScanOpaqueData *BTScanOpaque;
@@ -1176,7 +1173,7 @@ extern StrategyNumber bttranslatecmptype(CompareType cmptype, Oid opfamily);
 /*
  * prototypes for internal functions in nbtree.c
  */
-extern bool _bt_parallel_seize(IndexScanDesc scan, BTBatchScanPos pos,
+extern bool _bt_parallel_seize(IndexScanDesc scan, BTScanPos pos,
 							   BlockNumber *next_scan_page,
 							   BlockNumber *last_curr_page, bool first);
 extern void _bt_parallel_release(IndexScanDesc scan,
@@ -1269,7 +1266,8 @@ extern BTStack _bt_search(Relation rel, Relation heaprel, BTScanInsert key,
 extern OffsetNumber _bt_binsrch_insert(Relation rel, BTInsertState insertstate);
 extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum);
 extern IndexScanBatch _bt_first(IndexScanDesc scan, ScanDirection dir);
-extern IndexScanBatch _bt_next(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir);
+extern IndexScanBatch _bt_next(IndexScanDesc scan, BTScanPos pos,
+							   ScanDirection dir);
 extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
 
 /*
