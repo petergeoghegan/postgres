@@ -35,7 +35,7 @@ static IndexScanBatch _bt_readpage(IndexScanDesc scan, BTBatchScanPos pos,
 								   ScanDirection dir, OffsetNumber offnum,
 								   bool firstpage);
 static void _bt_saveitem(IndexScanBatch batch, int itemIndex,
-							   OffsetNumber offnum, IndexTuple itup);
+						 OffsetNumber offnum, IndexTuple itup);
 static int	_bt_setuppostingitems(IndexScanBatch batch, int itemIndex,
 								  OffsetNumber offnum, ItemPointer heapTid,
 								  IndexTuple itup);
@@ -43,7 +43,7 @@ static inline void _bt_savepostingitem(IndexScanBatch batch, int itemIndex,
 									   OffsetNumber offnum,
 									   ItemPointer heapTid, int tupleOffset);
 static IndexScanBatch _bt_steppage(IndexScanDesc scan, BTBatchScanPos pos,
-										 ScanDirection dir);
+								   ScanDirection dir);
 static IndexScanBatch _bt_readfirstpage(IndexScanDesc scan, BTBatchScanPos pos,
 										OffsetNumber offnum,
 										ScanDirection dir);
@@ -2032,7 +2032,7 @@ _bt_readpage(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir,
 /* Save an index item into so->currPos.items[itemIndex] */
 static void
 _bt_saveitem(IndexScanBatch batch, int itemIndex,
-				   OffsetNumber offnum, IndexTuple itup)
+			 OffsetNumber offnum, IndexTuple itup)
 {
 	BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
 

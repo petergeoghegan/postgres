@@ -249,12 +249,12 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 
 	if (scan->xs_batches->firstBatch < scan->xs_batches->nextBatch)
 	{
-		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->nextBatch-1);
+		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->nextBatch - 1);
+
 		pos = (BTBatchScanPos) batch->opaque;
 
 		if (so->needPrimScan)
 		{
-			// elog(WARNING, "scan->xs_batches->firstBatch: %d, scan->xs_batches->nextBatch: %d", scan->xs_batches->firstBatch, scan->xs_batches->nextBatch);
 			so->scanBehind = so->oppositeDirCheck = false;	/* reset */
 			pos = NULL;
 		}
@@ -282,17 +282,6 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 		if (res)
 			break;
 
-		/*
-		 * XXX we need to invoke _bt_first_batch on the next iteration, to
-		 * advance SAOP keys etc. But indexam.c already does this, but that's
-		 * only after this returns, so maybe this should do this in some other
-		 * way, not sure who should be responsible for setting currentBatch.
-		 *
-		 * XXX Maybe we don't even need that field? What is a current batch
-		 * anyway? There seem to be at least multiple concepts of "current"
-		 * batch, one for the read stream, another for executor ...
-		 */
-		// scan->xs_batches->currentBatch = res;
 
 		/*
 		 * We may do a new scan, depending on what _bt_start_prim_scan says.
@@ -301,16 +290,16 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 		 * because we have just one leaf page for the whole scan, and we
 		 * invalidate it before loading the next one. But with batching that
 		 * doesn't work - we have many leafs, it's not clear which one is
-		 * 'current' (well, it's the last), and we can't invalidate it,
-		 * that's up to amfreebatch(). For now we deduce the position and
-		 * reset it to NULL, to indicate the same thing.
+		 * 'current' (well, it's the last), and we can't invalidate it, that's
+		 * up to amfreebatch(). For now we deduce the position and reset it to
+		 * NULL, to indicate the same thing.
 		 *
 		 * XXX Maybe we should have something like 'currentBatch'? But then
 		 * that probably should be in BTScanOpaque, not in the generic
-		 * indexam.c part? Or it it a sufficiently generic thing? How would
-		 * we keep it in sync with the batch queue? If freeing batches is
-		 * up to indexam, how do we ensure the currentBatch does not point
-		 * to already removed batch?
+		 * indexam.c part? Or it it a sufficiently generic thing? How would we
+		 * keep it in sync with the batch queue? If freeing batches is up to
+		 * indexam, how do we ensure the currentBatch does not point to
+		 * already removed batch?
 		 */
 		pos = NULL;
 
@@ -391,7 +380,6 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	int64		ntids = 0;
 	ItemPointer heapTid;
 	BTBatchScanPosData pos;
-	memset(&pos, 0, sizeof(BTBatchScanPosData));
 
 	Assert(scan->heapRelation == NULL);
 
@@ -414,10 +402,11 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 				 */
 				if (++batch->itemIndex > batch->lastItem)
 				{
-					Buffer buf = ((BTBatchScanPos) batch->opaque)->buf;
+					Buffer		buf = ((BTBatchScanPos) batch->opaque)->buf;
+
 					if (buf)
 						ReleaseBuffer(buf);
-					// btfreebatch(scan, batch);
+					/* btfreebatch(scan, batch); */
 					batch = _bt_next(scan, batch->opaque, ForwardScanDirection);
 					if (!batch)
 						break;
@@ -599,7 +588,7 @@ btrestrpos(IndexScanDesc scan)
 	if (so->numArrayKeys)
 	{
 		IndexScanBatch batch = INDEX_SCAN_BATCH(scan, scan->xs_batches->markPos.batch);
-		BTBatchScanPos pos =  (BTBatchScanPos) batch->opaque;
+		BTBatchScanPos pos = (BTBatchScanPos) batch->opaque;
 
 		_bt_start_array_keys(scan, scan->xs_batches->direction);
 		so->needPrimScan = false;
