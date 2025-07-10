@@ -1557,7 +1557,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 IndexScanBatch
 _bt_next(IndexScanDesc scan, BTScanPos pos, ScanDirection dir)
 {
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	BTScanOpaque so PG_USED_FOR_ASSERTS_ONLY = (BTScanOpaque) scan->opaque;
 	BlockNumber blkno,
 				lastcurrblkno;
 	BTScanPosData tmp;
