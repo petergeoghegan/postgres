@@ -294,8 +294,7 @@ index_beginscan(Relation heapRelation,
 				Relation indexRelation,
 				Snapshot snapshot,
 				IndexScanInstrumentation *instrument,
-				int nkeys, int norderbys,
-				bool enable_batching)
+				int nkeys, int norderbys)
 {
 	ReadStream *rs = NULL;
 	IndexScanDesc scan;
@@ -328,7 +327,6 @@ index_beginscan(Relation heapRelation,
 	 * read stream to it.
 	 */
 	if ((indexRelation->rd_indam->amgetbatch != NULL) &&
-		enable_batching &&
 		enable_indexscan_batching)
 	{
 		/*
@@ -781,8 +779,7 @@ IndexScanDesc
 index_beginscan_parallel(Relation heaprel, Relation indexrel,
 						 IndexScanInstrumentation *instrument,
 						 int nkeys, int norderbys,
-						 ParallelIndexScanDesc pscan,
-						 bool enable_batching)
+						 ParallelIndexScanDesc pscan)
 {
 	Snapshot	snapshot;
 	IndexScanDesc scan;
@@ -822,9 +819,7 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 	 * XXX Pretty duplicate with the code in index_beginscan(), so maybe move
 	 * into a shared function.
 	 */
-	if ((indexrel->rd_indam->amgetbatch != NULL) &&
-		enable_batching &&
-		enable_indexscan_batching)
+	if (indexrel->rd_indam->amgetbatch != NULL && enable_indexscan_batching)
 	{
 		/*
 		 * XXX We do this after index_beginscan_internal(), which means we

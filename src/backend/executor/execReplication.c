@@ -201,13 +201,8 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 	/* Build scan key. */
 	skey_attoff = build_replindex_scan_key(skey, rel, idxrel, searchslot);
 
-	/*
-	 * Start an index scan.
-	 *
-	 * XXX No prefetching for replication identity. We expect to find just one
-	 * row, so prefetching would be pointless.
-	 */
-	scan = index_beginscan(rel, idxrel, &snap, NULL, skey_attoff, 0, true);
+	/* Start an index scan. */
+	scan = index_beginscan(rel, idxrel, &snap, NULL, skey_attoff, 0);
 
 retry:
 	found = false;

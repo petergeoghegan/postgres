@@ -6720,14 +6720,9 @@ get_actual_variable_endpoint(Relation heapRel,
 	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
 							  GlobalVisTestFor(heapRel));
 
-	/*
-	 * XXX I'm not sure about batching/prefetching here. In most cases we
-	 * expect to find the endpoints immediately, but sometimes we have a lot
-	 * of dead tuples - and then prefetching might help.
-	 */
 	index_scan = index_beginscan(heapRel, indexRel,
 								 &SnapshotNonVacuumable, NULL,
-								 1, 0, true);
+								 1, 0);
 	/* Set it up for index-only scan */
 	index_scan->xs_want_itup = true;
 	index_rescan(index_scan, scankeys, 1, NULL, 0);

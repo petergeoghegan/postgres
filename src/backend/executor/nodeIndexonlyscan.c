@@ -49,7 +49,7 @@
 static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node);
 static void StoreIndexTuple(IndexOnlyScanState *node, TupleTableSlot *slot,
 							IndexTuple itup, TupleDesc itupdesc);
-static bool ios_prefetch_block(IndexScanDesc scan, void *data,
+static bool ios_prefetch_block(IndexScanDesc scan, void *arg,
 							   IndexScanBatchPos *pos);
 
 /* values stored in ios_prefetch_block in the batch cache */
@@ -100,10 +100,10 @@ IndexOnlyNext(IndexOnlyScanState *node)
 								   estate->es_snapshot,
 								   &node->ioss_Instrument,
 								   node->ioss_NumScanKeys,
-								   node->ioss_NumOrderByKeys,
-								   node->ioss_CanBatch);
+								   node->ioss_NumOrderByKeys);
 
 		node->ioss_ScanDesc = scandesc;
+
 
 		/* Set it up for index-only scan */
 		node->ioss_ScanDesc->xs_want_itup = true;
@@ -644,20 +644,6 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 		ExecInitQual(node->recheckqual, (PlanState *) indexstate);
 
 	/*
-	 * All index scans can do batching.
-	 *
-	 * XXX Maybe this should check if the index AM supports batching, or even
-	 * call something like "amcanbatch" (does not exist yet). Or check the
-	 * enable_indexscan_batching GUC?
-	 *
-	 * XXX For now we only know if the scan gets to use batching after the
-	 * index_beginscan() returns, so maybe this name is a bit misleading. It's
-	 * more about "allow batching". But maybe this field is unnecessary - we
-	 * check all the interesting stuff in index_beginscan() anyway.
-	 */
-	indexstate->ioss_CanBatch = true;
-
-	/*
 	 * If we are just doing EXPLAIN (ie, aren't going to run the plan), stop
 	 * here.  This allows an index-advisor plugin to EXPLAIN a plan containing
 	 * references to nonexistent indexes.
@@ -857,8 +843,7 @@ ExecIndexOnlyScanInitializeDSM(IndexOnlyScanState *node,
 								 &node->ioss_Instrument,
 								 node->ioss_NumScanKeys,
 								 node->ioss_NumOrderByKeys,
-								 piscan,
-								 node->ioss_CanBatch);
+								 piscan);
 	node->ioss_ScanDesc->xs_want_itup = true;
 	node->ioss_VMBuffer = InvalidBuffer;
 
@@ -925,8 +910,7 @@ ExecIndexOnlyScanInitializeWorker(IndexOnlyScanState *node,
 								 &node->ioss_Instrument,
 								 node->ioss_NumScanKeys,
 								 node->ioss_NumOrderByKeys,
-								 piscan,
-								 node->ioss_CanBatch);
+								 piscan);
 	node->ioss_ScanDesc->xs_want_itup = true;
 
 	/*
