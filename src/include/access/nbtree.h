@@ -959,48 +959,6 @@ typedef struct BTScanPosItem	/* what we remember about each match */
 	LocationIndex tupleOffset;	/* IndexTuple's offset in workspace, if any */
 } BTScanPosItem;
 
-typedef struct BTScanPosData
-{
-	Buffer		buf;			/* currPage buf (invalid means unpinned) */
-
-	/* page details as of the saved position's call to _bt_readpage */
-	BlockNumber currPage;		/* page referenced by items array */
-	BlockNumber prevPage;		/* currPage's left link */
-	BlockNumber nextPage;		/* currPage's right link */
-	XLogRecPtr	lsn;			/* currPage's LSN (when so->dropPin) */
-
-	/* scan direction for the saved position's call to _bt_readpage */
-	ScanDirection dir;
-
-	/*
-	 * If we are doing an index-only scan, nextTupleOffset is the first free
-	 * location in the associated tuple storage workspace.
-	 */
-	int			nextTupleOffset;
-
-	/*
-	 * moreLeft and moreRight track whether we think there may be matching
-	 * index entries to the left and right of the current page, respectively.
-	 */
-	bool		moreLeft;
-	bool		moreRight;
-
-	/*
-	 * The items array is always ordered in index order (ie, increasing
-	 * indexoffset).  When scanning backwards it is convenient to fill the
-	 * array back-to-front, so we start at the last slot and fill downwards.
-	 * Hence we need both a first-valid-entry and a last-valid-entry counter.
-	 * itemIndex is a cursor showing which entry was last returned to caller.
-	 */
-	int			firstItem;		/* first valid index in items[] */
-	int			lastItem;		/* last valid index in items[] */
-	int			itemIndex;		/* current index in items[] */
-
-	BTScanPosItem items[MaxTIDsPerBTreePage];	/* MUST BE LAST */
-} BTScanPosData;
-
-typedef BTScanPosData *BTScanPos;
-
 /*
  * Minimal AM-specific concept of "position" for batching.
  */
