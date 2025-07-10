@@ -157,8 +157,6 @@ typedef struct IndexOrderByDistance
  * generalized index_ interface routines (in indexam.c)
  */
 
-extern PGDLLIMPORT bool enable_indexscan_batching;
-
 /*
  * IndexScanIsValid
  *		True iff the index scan is valid.
@@ -217,6 +215,7 @@ extern bool index_fetch_heap(IndexScanDesc scan, struct TupleTableSlot *slot);
 extern bool index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 							   struct TupleTableSlot *slot);
 extern int64 index_getbitmap(IndexScanDesc scan, TIDBitmap *bitmap);
+
 extern IndexBulkDeleteResult *index_bulk_delete(IndexVacuumInfo *info,
 												IndexBulkDeleteResult *istat,
 												IndexBulkDeleteCallback callback,

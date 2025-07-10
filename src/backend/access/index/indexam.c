@@ -59,9 +59,6 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
-/* enable batching / prefetching during index scans */
-bool		enable_indexscan_batching = false;
-
 /* ----------------------------------------------------------------
  *					macros used in index_ routines
  *
@@ -326,8 +323,7 @@ index_beginscan(Relation heapRelation,
 	 * XXX Do this before initializing xs_heapfetch, so that we can pass the
 	 * read stream to it.
 	 */
-	if ((indexRelation->rd_indam->amgetbatch != NULL) &&
-		enable_indexscan_batching)
+	if (indexRelation->rd_indam->amgetbatch != NULL)
 	{
 		/*
 		 * XXX We do this after index_beginscan_internal(), which means we
@@ -802,7 +798,7 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 	 * XXX Pretty duplicate with the code in index_beginscan(), so maybe move
 	 * into a shared function.
 	 */
-	if (indexrel->rd_indam->amgetbatch != NULL && enable_indexscan_batching)
+	if (indexrel->rd_indam->amgetbatch != NULL)
 	{
 		/*
 		 * XXX We do this after index_beginscan_internal(), which means we
@@ -1439,12 +1435,7 @@ index_opclass_options(Relation indrel, AttrNumber attnum, Datum attoptions,
  * To support batching, the index AM needs to implement two optional
  * callbacks - amgetbatch() and amfreebatch(), which load data from the
  * "next" leaf page, and then free it when the batch is no longer needed.
- *
- * For now the amgettuple() callback is still required even for AMs that
- * support batching, so that we can fall-back to the non-batched scan
- * for cases when batching is not supported (e.g. scans of system tables)
- * or when batching is disabled using the enable_indexscan_batching GUC.
- *
+ * An index AM that supports batching cannot also use amgettuple.
  *
  * batch
  * ----------------------
