@@ -3270,7 +3270,7 @@ _bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 	Assert(BTScanPosIsValid(*pos));
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
 
-	/* Always invalidate so->killedItems[] before leaving so->currPos */
+	/* Always invalidate batch->killedItems[] before freeing batch */
 	batch->numKilled = 0;
 
 	if (!so->dropPin)
@@ -3289,12 +3289,12 @@ _bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 		XLogRecPtr	latestlsn;
 
 		Assert(RelationNeedsWAL(rel));
-		buf = _bt_getbuf(rel, so->pos->currPage, BT_READ);
+		buf = _bt_getbuf(rel, pos->currPage, BT_READ);
 
 		latestlsn = BufferGetLSNAtomic(buf);
-		Assert(!XLogRecPtrIsInvalid(so->pos->lsn));
-		Assert(so->pos->lsn <= latestlsn);
-		if (so->pos->lsn != latestlsn)
+		Assert(!XLogRecPtrIsInvalid(pos->lsn));
+		Assert(pos->lsn <= latestlsn);
+		if (pos->lsn != latestlsn)
 		{
 			/* Modified, give up on hinting */
 			_bt_relbuf(rel, buf);
