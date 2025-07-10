@@ -1657,11 +1657,9 @@ _bt_readpage(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir,
 	{
 		/* allow next/prev page to be read by other worker without delay */
 		if (ScanDirectionIsForward(dir))
-			_bt_parallel_release(scan, pos->nextPage,
-								 pos->currPage);
+			_bt_parallel_release(scan, pos->nextPage, pos->currPage);
 		else
-			_bt_parallel_release(scan, pos->prevPage,
-								 pos->currPage);
+			_bt_parallel_release(scan, pos->prevPage, pos->currPage);
 	}
 
 	PredicateLockPage(rel, pos->currPage, scan->xs_snapshot);
