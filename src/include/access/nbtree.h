@@ -1093,21 +1093,8 @@ typedef struct BTScanOpaqueData
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
 	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
-
-	/* info about killed items if any (killedItems is NULL if never used) */
 	bool		dropPin;		/* drop leaf pin before btgettuple returns? */
-
-	/*
-	 * If we are doing an index-only scan, these are the tuple storage
-	 * workspaces for the currPos and markPos respectively.  Each is of size
-	 * BLCKSZ, so it can hold as much as a full page's worth of tuples.
-	 */
-	char	   *currTuples;		/* tuple storage for currPos */
-	char	   *markTuples;		/* tuple storage for markPos */
-
-	/* TODO Get rid of currPos + markPos */
-	BTScanPosData currPos;		/* current position data */
-	BTScanPosData markPos;		/* marked position, if any */
+	BTBatchScanPos pos;
 } BTScanOpaqueData;
 
 typedef BTScanOpaqueData *BTScanOpaque;

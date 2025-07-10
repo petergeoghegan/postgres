@@ -1392,7 +1392,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
-	ScanDirection dir = so->currPos.dir;
+	ScanDirection dir = so->pos->dir;
 	int			arrayidx = 0;
 	bool		beyond_end_advance = false,
 				skip_array_advanced = false,
@@ -2037,7 +2037,7 @@ new_prim_scan:
 	so->needPrimScan = true;	/* ...but call _bt_first again */
 
 	if (scan->parallel_scan)
-		_bt_parallel_primscan_schedule(scan, so->currPos.currPage);
+		_bt_parallel_primscan_schedule(scan, so->pos->currPage);
 
 	/* Caller's tuple doesn't match the new qual */
 	return false;
@@ -2150,7 +2150,7 @@ _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
 {
 	TupleDesc	tupdesc = RelationGetDescr(scan->indexRelation);
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	ScanDirection dir = so->currPos.dir;
+	ScanDirection dir = so->pos->dir;
 	int			ikey = pstate->startikey;
 	bool		res;
 
@@ -3157,7 +3157,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 						 int tupnatts, TupleDesc tupdesc)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	ScanDirection dir = so->currPos.dir;
+	ScanDirection dir = so->pos->dir;
 	OffsetNumber aheadoffnum;
 	IndexTuple	ahead;
 
@@ -3288,14 +3288,13 @@ _bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 	{
 		XLogRecPtr	latestlsn;
 
-		Assert(!BTScanPosIsPinned(so->currPos));
 		Assert(RelationNeedsWAL(rel));
-		buf = _bt_getbuf(rel, so->currPos.currPage, BT_READ);
+		buf = _bt_getbuf(rel, so->pos->currPage, BT_READ);
 
 		latestlsn = BufferGetLSNAtomic(buf);
-		Assert(!XLogRecPtrIsInvalid(so->currPos.lsn));
-		Assert(so->currPos.lsn <= latestlsn);
-		if (so->currPos.lsn != latestlsn)
+		Assert(!XLogRecPtrIsInvalid(so->pos->lsn));
+		Assert(so->pos->lsn <= latestlsn);
+		if (so->pos->lsn != latestlsn)
 		{
 			/* Modified, give up on hinting */
 			_bt_relbuf(rel, buf);

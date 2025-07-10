@@ -238,8 +238,6 @@ btgetbatch(IndexScanDesc scan, ScanDirection dir)
 	BTBatchScanPos pos = NULL;
 
 	/* batching does not work with regular scan-level positions */
-	Assert(!BTScanPosIsValid(so->currPos));
-	Assert(!BTScanPosIsValid(so->markPos));
 	Assert(!ScanDirectionIsNoMovement(dir));
 	Assert(dir == scan->xs_batches->direction);
 
@@ -319,10 +317,6 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 {
 	BTScanOpaque so PG_USED_FOR_ASSERTS_ONLY = (BTScanOpaque) scan->opaque;
 
-	/* batching does not work with regular scan-level positions */
-	Assert(!BTScanPosIsValid(so->currPos));
-	Assert(!BTScanPosIsValid(so->markPos));
-
 	/*
 	 * Check to see if we should kill tuples from the previous batch.
 	 */
@@ -379,7 +373,6 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	IndexScanBatch batch;
 	int64		ntids = 0;
 	ItemPointer heapTid;
-	BTBatchScanPosData pos;
 
 	Assert(scan->heapRelation == NULL);
 
@@ -388,8 +381,6 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	{
 		if ((batch = _bt_first(scan, ForwardScanDirection)))
 		{
-			memcpy(&pos, batch->opaque, sizeof(BTBatchScanPosData));
-			batch->opaque = &pos;
 			heapTid = &batch->items[batch->firstItem].heapTid;
 			tbm_add_tuples(tbm, heapTid, 1, false);
 			ntids++;
@@ -441,8 +432,6 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 
 	/* allocate private workspace */
 	so = (BTScanOpaque) palloc(sizeof(BTScanOpaqueData));
-	BTScanPosInvalidate(so->currPos);
-	BTScanPosInvalidate(so->markPos);
 	if (scan->numberOfKeys > 0)
 		so->keyData = (ScanKey) palloc(scan->numberOfKeys * sizeof(ScanKeyData));
 	else
@@ -455,13 +444,6 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 	so->arrayKeys = NULL;
 	so->orderProcs = NULL;
 	so->arrayContext = NULL;
-
-	/*
-	 * We don't know yet whether the scan will be index-only, so we do not
-	 * allocate the tuple workspace arrays until btrescan.  However, we set up
-	 * scan->xs_itupdesc whether we'll need it or not, since that's so cheap.
-	 */
-	so->currTuples = so->markTuples = NULL;
 
 	scan->xs_itupdesc = RelationGetDescr(rel);
 
@@ -513,28 +495,6 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 				   !scan->xs_batches);
 
 	/*
-	 * Allocate tuple workspace arrays, if needed for an index-only scan and
-	 * not already done in a previous rescan call.  To save on palloc
-	 * overhead, both workspaces are allocated as one palloc block; only this
-	 * function and btendscan know that.
-	 *
-	 * NOTE: this data structure also makes it safe to return data from a
-	 * "name" column, even though btree name_ops uses an underlying storage
-	 * datatype of cstring.  The risk there is that "name" is supposed to be
-	 * padded to NAMEDATALEN, but the actual index tuple is probably shorter.
-	 * However, since we only return data out of tuples sitting in the
-	 * currTuples array, a fetch of NAMEDATALEN bytes can at worst pull some
-	 * data out of the markTuples array --- running off the end of memory for
-	 * a SIGSEGV is not possible.  Yeah, this is ugly as sin, but it beats
-	 * adding special-case treatment for name_ops elsewhere.
-	 */
-	if (scan->xs_want_itup && so->currTuples == NULL)
-	{
-		so->currTuples = (char *) palloc(BLCKSZ * 2);
-		so->markTuples = so->currTuples + BLCKSZ;
-	}
-
-	/*
 	 * Reset the scan keys
 	 */
 	if (scankey && scan->numberOfKeys > 0)
@@ -564,9 +524,6 @@ btendscan(IndexScanDesc scan)
 	/* so->arrayKeys and so->orderProcs are in arrayContext */
 	if (so->arrayContext != NULL)
 		MemoryContextDelete(so->arrayContext);
-	if (so->currTuples != NULL)
-		pfree(so->currTuples);
-	/* so->markTuples should not be pfree'd, see btrescan */
 	pfree(so);
 }
 
@@ -1001,8 +958,6 @@ _bt_parallel_done(IndexScanDesc scan)
 	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
 	BTParallelScanDesc btscan;
 	bool		status_changed = false;
-
-	Assert(!BTScanPosIsValid(so->currPos));
 
 	/* Do nothing, for non-parallel scans */
 	if (parallel_scan == NULL)

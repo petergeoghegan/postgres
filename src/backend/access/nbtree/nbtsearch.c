@@ -1611,21 +1611,8 @@ _bt_readpage(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir,
 	bool		arrayKeys;
 	int			itemIndex,
 				indnatts;
-
-	/* result */
-	/* IndexScanBatch batch = ddd; */
 	IndexScanBatch batch;
 
-	/*
-	 * XXX we shouldn't be passing this info through currPos but directly, I
-	 * guess.  We need to totally get rid of currPos.
-	 */
-	so->currPos.dir = dir;
-
-	/*
-	 * XXX We can pass the exact number if items from this page, by using
-	 * maxoff
-	 */
 	batch = index_batch_alloc(MaxTIDsPerBTreePage, scan->xs_want_itup);
 
 	/* FIXME but we don't copy the contents until the end */
@@ -1642,9 +1629,11 @@ _bt_readpage(IndexScanDesc scan, BTBatchScanPos pos, ScanDirection dir,
 	pos->currPage = BufferGetBlockNumber(pos->buf);
 	pos->prevPage = opaque->btpo_prev;
 	pos->nextPage = opaque->btpo_next;
-	/* delay setting so->currPos.lsn until _bt_drop_lock_and_maybe_pin */
+	/* XXX no more _bt_drop_lock_and_maybe_pin, so might need to set LSN */
 	pos->dir = dir;
 	pos->nextTupleOffset = 0;
+
+	so->pos = pos; /* _bt_checkkeys needs this */
 
 	/* either moreRight or moreLeft should be set now (may be unset later) */
 	Assert(ScanDirectionIsForward(dir) ? pos->moreRight :
