@@ -2426,7 +2426,7 @@ index_batch_alloc(int maxitems, bool want_itup)
 	 * XXX Maybe don't size to MaxTIDsPerBTreePage? We don't reuse batches
 	 * (unlike currPos), so we can size it for just what we need.
 	 */
-	batch->items = palloc0(sizeof(IndexScanBatchPosItem) * maxitems);
+	batch->items = palloc(sizeof(IndexScanBatchPosItem) * maxitems);
 
 	/*
 	 * batch contents (TIDs, index tuples, kill bitmap, ...)
