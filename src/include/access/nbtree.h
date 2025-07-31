@@ -1297,6 +1297,8 @@ extern void _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate);
  * prototypes for functions in nbtpreprocesskeys.c
  */
 extern void _bt_preprocess_keys(IndexScanDesc scan);
+extern Datum _bt_presort_const_array(Datum scanvalue, Oid opno, Oid opfamily,
+									 Oid collation, bool reverse);
 
 /*
  * prototypes for functions in nbtsearch.c

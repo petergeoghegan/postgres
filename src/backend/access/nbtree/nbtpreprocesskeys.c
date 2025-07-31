@@ -2017,11 +2017,16 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 		 * all btree operators are strict.
 		 */
 		num_nonnulls = 0;
-		for (int j = 0; j < num_elems; j++)
+		if (!(cur->sk_flags & SK_PRESORTED))
 		{
-			if (!elem_nulls[j])
-				elem_values[num_nonnulls++] = elem_values[j];
+			for (int j = 0; j < num_elems; j++)
+			{
+				if (!elem_nulls[j])
+					elem_values[num_nonnulls++] = elem_values[j];
+			}
 		}
+		else
+			num_nonnulls = num_elems;
 
 		/* We could pfree(elem_nulls) now, but not worth the cycles */
 
@@ -2092,8 +2097,9 @@ _bt_preprocess_array_keys(IndexScanDesc scan, int *new_numberOfKeys)
 		 * the index's key space.
 		 */
 		reverse = (indoption[cur->sk_attno - 1] & INDOPTION_DESC) != 0;
-		num_elems = _bt_sort_array_elements(cur, sortprocp, reverse,
-											elem_values, num_nonnulls);
+		if (!(cur->sk_flags & SK_PRESORTED))
+			num_elems = _bt_sort_array_elements(cur, sortprocp, reverse,
+												elem_values, num_nonnulls);
 
 		if (origarrayatt == cur->sk_attno)
 		{
@@ -2831,4 +2837,89 @@ _bt_compare_array_elements(const void *a, const void *b, void *arg)
 	if (cxt->reverse)
 		INVERT_COMPARE_RESULT(compare);
 	return compare;
+}
+
+/*
+ *	_bt_presort_const_array() -- presort ScalarArrarOp array.
+ *
+ * We return a sorted and deduplicated copy of caller's scanvalue array.  This
+ * enables the executor to mark the array's input scan key SK_PRESORTED later.
+ *
+ * This is used by the planner when it encounters a ScalarArrayOp whose array
+ * arg is a constant.  This optimization is important with large arrays that
+ * are used when there are many rescans (we don't want to have to sort the
+ * array at the start of every btrescan/_bt_preprocess_keys).
+ */
+extern Datum
+_bt_presort_const_array(Datum scanvalue, Oid opno, Oid opfamily,
+						Oid collation, bool reverse)
+{
+	ArrayType  *arrayval;
+	int16		elmlen;
+	bool		elmbyval;
+	char		elmalign;
+	int			op_strategy;	/* operator's strategy number */
+	Oid			op_lefttype;	/* operator's declared input types */
+	Oid			op_righttype;
+	Datum	   *elem_values;
+	bool	   *elem_nulls;
+	int			num_elems,
+				num_nonnulls;
+	RegProcedure cmp_proc;
+	FmgrInfo	sortproc;
+
+	/*
+	 * Deconstruct the array into elements
+	 */
+	arrayval = DatumGetArrayTypeP(scanvalue);
+	/* We could cache this data, but not clear it's worth it */
+	get_typlenbyvalalign(ARR_ELEMTYPE(arrayval), &elmlen, &elmbyval, &elmalign);
+	deconstruct_array(arrayval, ARR_ELEMTYPE(arrayval),
+					  elmlen, elmbyval, elmalign,
+					  &elem_values, &elem_nulls, &num_elems);
+
+	/*
+	 * Compress out any null elements.  We can ignore them since we assume all
+	 * btree operators are strict.
+	 */
+	num_nonnulls = 0;
+	for (int j = 0; j < num_elems; j++)
+	{
+		if (!elem_nulls[j])
+			elem_values[num_nonnulls++] = elem_values[j];
+	}
+
+	/* Look up the appropriate same-type comparison function in the opfamily */
+	get_op_opfamily_properties(opno, opfamily, false, &op_strategy,
+							   &op_lefttype, &op_righttype);
+	cmp_proc = get_opfamily_proc(opfamily, op_righttype, op_righttype,
+								 BTORDER_PROC);
+	if (!RegProcedureIsValid(cmp_proc))
+		elog(ERROR, "missing support function %d(%u,%u)",
+			 BTORDER_PROC, op_righttype, op_righttype);
+
+	/* Set same-type ORDER proc for caller */
+	fmgr_info(cmp_proc, &sortproc);
+
+	/* Sort the non-null elements and eliminate any duplicates */
+	if (num_nonnulls > 1)
+	{
+		BTSortArrayContext cxt;
+
+		/* Sort the array elements */
+		cxt.sortproc = &sortproc;
+		cxt.collation = collation;
+		cxt.reverse = reverse;
+		qsort_arg(elem_values, num_nonnulls, sizeof(Datum),
+				  _bt_compare_array_elements, &cxt);
+
+		/* Now scan the sorted elements and remove duplicates */
+		num_nonnulls = qunique_arg(elem_values, num_nonnulls, sizeof(Datum),
+								   _bt_compare_array_elements, &cxt);
+	}
+
+	return PointerGetDatum(construct_array(elem_values, num_nonnulls,
+										   ARR_ELEMTYPE(arrayval),
+										   elmlen, elmbyval, elmalign));
+
 }

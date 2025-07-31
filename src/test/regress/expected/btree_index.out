@@ -296,7 +296,7 @@ ORDER BY proname, proargtypes, pronamespace;
                                                                                                      QUERY PLAN                                                                                                     
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Index Only Scan using pg_proc_proname_args_nsp_index on pg_proc
-   Index Cond: ((ROW(proname, proargtypes) > ROW('abs'::name, NULL::oidvector)) AND (proname = 'zzzzzz'::name) AND (proargtypes = ANY ('{"26 23",5077}'::oidvector[])) AND (pronamespace = ANY ('{1,2,3}'::oid[])))
+   Index Cond: ((ROW(proname, proargtypes) > ROW('abs'::name, NULL::oidvector)) AND (proname = 'zzzzzz'::name) AND (proargtypes = ANY ('{5077,"26 23"}'::oidvector[])) AND (pronamespace = ANY ('{1,2,3}'::oid[])))
 (2 rows)
 
 SELECT proname, proargtypes, pronamespace

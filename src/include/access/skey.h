@@ -38,7 +38,9 @@
  * "column op ANY(ARRAY[...])".  This is signaled by the SK_SEARCHARRAY
  * flag bit.  The sk_argument is not a value of the operator's right-hand
  * argument type, but rather an array of such values, and the per-element
- * comparisons are to be ORed together.
+ * comparisons are to be ORed together.  Index AMs with native support for
+ * SAOP scans have their scan key marked SK_PRESORTED, indicating that the
+ * array has been sorted and deduplicated (and has had all NULLs removed).
  *
  * A ScanKey can also represent a condition "column IS NULL" or "column
  * IS NOT NULL"; these cases are signaled by the SK_SEARCHNULL and
@@ -121,6 +123,7 @@ typedef ScanKeyData *ScanKey;
 #define SK_SEARCHNULL		0x0040	/* scankey represents "col IS NULL" */
 #define SK_SEARCHNOTNULL	0x0080	/* scankey represents "col IS NOT NULL" */
 #define SK_ORDER_BY			0x0100	/* scankey is for ORDER BY op */
+#define SK_PRESORTED		0x0200	/* constant/presorted SAOP array */
 
 
 /*

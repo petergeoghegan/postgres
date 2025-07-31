@@ -2287,7 +2287,7 @@ ORDER BY unique1;
                       QUERY PLAN                       
 -------------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: (unique1 = ANY ('{1,42,7}'::integer[]))
+   Index Cond: (unique1 = ANY ('{1,7,42}'::integer[]))
 (2 rows)
 
 SELECT unique1 FROM tenk1
@@ -2367,7 +2367,7 @@ SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = ANY('{7, 8, 
                                              QUERY PLAN                                             
 ----------------------------------------------------------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: ((unique1 = ANY ('{1,42,7}'::integer[])) AND (unique1 = ANY ('{7,8,9}'::integer[])))
+   Index Cond: ((unique1 = ANY ('{1,7,42}'::integer[])) AND (unique1 = ANY ('{7,8,9}'::integer[])))
 (2 rows)
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = ANY('{7, 8, 9}');
@@ -2404,10 +2404,10 @@ SELECT unique1 FROM tenk1 WHERE unique1 = ANY(NULL);
 
 explain (costs off)
 SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{NULL,NULL,NULL}');
-                          QUERY PLAN                           
----------------------------------------------------------------
+                   QUERY PLAN                    
+-------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: (unique1 = ANY ('{NULL,NULL,NULL}'::integer[]))
+   Index Cond: (unique1 = ANY ('{}'::integer[]))
 (2 rows)
 
 SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{NULL,NULL,NULL}');
@@ -2433,7 +2433,7 @@ SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 1;
                                 QUERY PLAN                                 
 ---------------------------------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: ((unique1 = ANY ('{1,42,7}'::integer[])) AND (unique1 = 1))
+   Index Cond: ((unique1 = ANY ('{1,7,42}'::integer[])) AND (unique1 = 1))
 (2 rows)
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 1;
@@ -2447,7 +2447,7 @@ SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 12345;
                                   QUERY PLAN                                   
 -------------------------------------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: ((unique1 = ANY ('{1,42,7}'::integer[])) AND (unique1 = 12345))
+   Index Cond: ((unique1 = ANY ('{1,7,42}'::integer[])) AND (unique1 = 12345))
 (2 rows)
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 12345;
@@ -2460,7 +2460,7 @@ SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 >= 42;
                                  QUERY PLAN                                  
 -----------------------------------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: ((unique1 = ANY ('{1,42,7}'::integer[])) AND (unique1 >= 42))
+   Index Cond: ((unique1 = ANY ('{1,7,42}'::integer[])) AND (unique1 >= 42))
 (2 rows)
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 >= 42;
@@ -2474,7 +2474,7 @@ SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 > 42;
                                  QUERY PLAN                                 
 ----------------------------------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: ((unique1 = ANY ('{1,42,7}'::integer[])) AND (unique1 > 42))
+   Index Cond: ((unique1 = ANY ('{1,7,42}'::integer[])) AND (unique1 > 42))
 (2 rows)
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 > 42;
@@ -2530,7 +2530,7 @@ SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 < (-1)::bigint
                                       QUERY PLAN                                      
 --------------------------------------------------------------------------------------
  Index Only Scan using tenk1_unique1 on tenk1
-   Index Cond: ((unique1 = ANY ('{1,42,7}'::integer[])) AND (unique1 < '-1'::bigint))
+   Index Cond: ((unique1 = ANY ('{1,7,42}'::integer[])) AND (unique1 < '-1'::bigint))
 (2 rows)
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 < (-1)::bigint;
