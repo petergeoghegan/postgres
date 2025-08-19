@@ -396,6 +396,41 @@ index_rescan(IndexScanDesc scan,
 											orderbys, norderbys);
 }
 
+/*
+ * index_get_prefetch_stats
+ *		collect prefetch statistics from the read_stream
+ *
+ * If the index scan does not use a read_stream (yet), the counters are
+ * initialized to 0.
+ */
+extern void
+index_get_prefetch_stats(IndexScanDesc scan,
+						 uint64 *prefetch_count, uint64 *prefetch_accum,
+						 uint64 *prefetch_stalls, uint64 *reset_count,
+						 uint64 *skip_count, uint64 *unget_count,
+						 uint64 *forwarded_count, uint64 *histogram)
+{
+	/* reset everything, in case there's no read stream */
+	*prefetch_count = 0;
+	*prefetch_accum = 0;
+	*prefetch_stalls = 0;
+	*reset_count = 0;
+	*skip_count = 0;
+	*unget_count = 0;
+	*forwarded_count = 0;
+
+	memset(histogram, 0, sizeof(uint64) * PREFETCH_HISTOGRAM_SIZE);
+
+	if (scan && scan->xs_heapfetch->rs != NULL)
+	{
+		read_stream_prefetch_stats(scan->xs_heapfetch->rs,
+								   prefetch_count, prefetch_accum,
+								   prefetch_stalls, reset_count,
+								   skip_count, unget_count,
+								   forwarded_count, histogram);
+	}
+}
+
 /* ----------------
  *		index_endscan - end a scan
  * ----------------
