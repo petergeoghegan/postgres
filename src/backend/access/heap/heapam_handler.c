@@ -831,7 +831,10 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 
 			/* item is known to be all-visible; prefetching isn't required */
 			if (item->allVisible)
+			{
+				read_stream_skip_block(stream);
 				continue;
+			}
 		}
 
 		if (prefetchBlock == batchringbuf->currentPrefetchBlock)
@@ -841,6 +844,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			 * block number; we must not return the same prefetchBlock twice
 			 * (twice in succession)
 			 */
+			read_stream_skip_block(stream);
 			continue;
 		}
 
