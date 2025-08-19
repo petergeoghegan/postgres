@@ -807,11 +807,16 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		 * it is, we won't need the block and can skip it too.
 		 */
 		if (scan->xs_want_itup && item->allVisible)
+		{
+			read_stream_skip_block(stream);
 			continue;
+		}
 
 		/* same block as before, don't need to read it */
 		if (ringbuf->currentPrefetchBlock == ItemPointerGetBlockNumber(tid))
 		{
+			/* update count of skipped blocks */
+			read_stream_skip_block(stream);
 			DEBUG_LOG("heapam_getnext_stream: skip block (currentPrefetchBlock)");
 			continue;
 		}
