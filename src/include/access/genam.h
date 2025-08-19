@@ -294,4 +294,11 @@ extern BatchIndexScan indexam_util_batch_alloc(IndexScanDesc scan,
 											   int maxitems, bool want_itup);
 extern void indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch);
 
+/* DEBUG only, will be removed */
+extern void index_get_prefetch_stats(IndexScanDesc scan, int64 *accum,
+									 int64 *count, int64 *stalls,
+									 int64 *resets, int64 *skips,
+									 int64 *ungets, int64 *forwarded,
+									 int64 *merged, int64 *histogram);
+
 #endif							/* GENAM_H */

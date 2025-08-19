@@ -102,4 +102,11 @@ extern ReadStream *read_stream_begin_smgr_relation(int flags,
 extern void read_stream_reset(ReadStream *stream);
 extern void read_stream_end(ReadStream *stream);
 
+extern void read_stream_prefetch_stats(ReadStream *stream, int64 *accum,
+									   int64 *count, int64 *stalls,
+									   int64 *resets, int64 *skips,
+									   int64 *ungets, int64 *forwarded,
+									   int64 *merged, int64 *histogram);
+extern void read_stream_skip_block(ReadStream *stream);
+
 #endif							/* READ_STREAM_H */
