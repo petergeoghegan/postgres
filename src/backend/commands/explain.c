@@ -136,6 +136,7 @@ static void show_memoize_info(MemoizeState *mstate, List *ancestors,
 							  ExplainState *es);
 static void show_hashagg_info(AggState *aggstate, ExplainState *es);
 static void show_indexsearches_info(PlanState *planstate, ExplainState *es);
+static void show_indexprefetch_info(PlanState *planstate, ExplainState *es);
 static void show_tidbitmap_info(BitmapHeapScanState *planstate,
 								ExplainState *es);
 static void show_instrumentation_count(const char *qlabel, int which,
@@ -1966,6 +1967,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			show_indexsearches_info(planstate, es);
+			show_indexprefetch_info(planstate, es);
 			break;
 		case T_IndexOnlyScan:
 			show_scan_qual(((IndexOnlyScan *) plan)->indexqual,
@@ -1983,6 +1985,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				ExplainPropertyFloat("Heap Fetches", NULL,
 									 planstate->instrument->ntuples2, 0, es);
 			show_indexsearches_info(planstate, es);
+			show_indexprefetch_info(planstate, es);
 			break;
 		case T_BitmapIndexScan:
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
@@ -3906,6 +3909,79 @@ show_indexsearches_info(PlanState *planstate, ExplainState *es)
 	}
 
 	ExplainPropertyUInteger("Index Searches", NULL, nsearches, es);
+}
+
+static void
+show_indexprefetch_info(PlanState *planstate, ExplainState *es)
+{
+	Plan	   *plan = planstate->plan;
+
+	int64		count = 0,
+				accum = 0,
+				stalls = 0,
+				resets = 0,
+				skips = 0,
+				ungets = 0,
+				forwarded = 0,
+				merged = 0;
+	int64	   *hist = NULL;
+
+	if (!es->analyze)
+		return;
+
+	/* Initialize counters with stats from the local process first */
+	switch (nodeTag(plan))
+	{
+		case T_IndexScan:
+			{
+				IndexScanState *indexstate = ((IndexScanState *) planstate);
+
+				count = indexstate->iss_PrefetchCount;
+				accum = indexstate->iss_PrefetchAccum;
+				stalls = indexstate->iss_PrefetchStalls;
+				resets = indexstate->iss_ResetCount;
+				skips = indexstate->iss_SkipCount;
+				ungets = indexstate->iss_UngetCount;
+				forwarded = indexstate->iss_ForwardedCount;
+				merged = indexstate->iss_MergedCount;
+				hist = indexstate->iss_PrefetchHistogram;
+
+				break;
+			}
+		default:
+			break;
+	}
+
+	if (count > 0)
+	{
+		bool		first = true;
+
+		ExplainPropertyFloat("Prefetch Distance", NULL, (accum * 1.0 / count), 3, es);
+		ExplainPropertyUInteger("Prefetch Count", NULL, count, es);
+		ExplainPropertyUInteger("Prefetch Stalls", NULL, stalls, es);
+		ExplainPropertyUInteger("Prefetch Skips", NULL, skips, es);
+		ExplainPropertyUInteger("Prefetch Resets", NULL, resets, es);
+		ExplainPropertyUInteger("Stream Ungets", NULL, ungets, es);
+		ExplainPropertyUInteger("Stream Forwarded", NULL, forwarded, es);
+		ExplainPropertyUInteger("Stream Merges", NULL, merged, es);
+
+		ExplainIndentText(es);
+		appendStringInfoString(es->str, "Prefetch Histogram: ");
+		for (int i = 0; i < 16; i++)
+		{
+			if (hist[i] == 0)
+				continue;
+
+			if (!first)
+				appendStringInfoString(es->str, ", ");
+
+			appendStringInfo(es->str, "[%d,%d) => " INT64_FORMAT, (1 << i), (1 << (i + 1)), hist[i]);
+
+			first = false;
+		}
+		appendStringInfoString(es->str, "\n");
+
+	}
 }
 
 /*

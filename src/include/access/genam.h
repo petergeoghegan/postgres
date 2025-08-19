@@ -237,6 +237,11 @@ extern IndexScanBatch index_batch_alloc(IndexScanDesc scan, int maxitems, bool w
 extern void index_batch_release(IndexScanDesc scan, IndexScanBatch batch);
 extern void index_batch_unlock(Relation rel, bool dropPin, IndexScanBatch batch);
 
+extern void index_get_prefetch_stats(IndexScanDesc scan, int64 *accum,
+									 int64 *count, int64 *stalls,
+									 int64 *resets, int64 *skips,
+									 int64 *ungets, int64 *forwarded,
+									 int64 *merged, int64 *histogram);
 
 /*
  * index access method support routines (in genam.c)
