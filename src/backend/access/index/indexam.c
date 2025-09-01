@@ -172,6 +172,14 @@ static void AssertCheckBatches(IndexScanDesc scan);
  */
 #define INDEX_SCAN_MAX_BATCHES	64
 
+/*
+ * Threshold controlling when we cancel use of a read stream to do prefetching
+ *
+ * XXX This is still literally the first value that I tried.  The heuristics
+ * likely need quite a bit more work.
+ */
+#define INDEX_SCAN_MIN_TUPLE_DISTANCE	20
+
 #define INDEX_SCAN_BATCH_COUNT(scan) \
 	((scan)->batchState->nextBatch - (scan)->batchState->firstBatch)
 
@@ -881,6 +889,17 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/* Initialize direction on first call */
 	if (batchState->direction == NoMovementScanDirection)
 		batchState->direction = direction;
+
+	/*
+	 * Handle cancelling the use of the read stream for prefetching
+	 */
+	else if (unlikely(batchState->disabled && scan->xs_heapfetch->rs))
+	{
+		index_batch_pos_reset(scan, &batchState->streamPos);
+
+		read_stream_reset(scan->xs_heapfetch->rs);
+		scan->xs_heapfetch->rs = NULL;
+	}
 
 	/*
 	 * Handle change of scan direction (reset stream, ...).
@@ -1868,6 +1887,36 @@ index_scan_stream_read_next(ReadStream *stream,
 		 */
 		if (!index_batch_getnext(scan, direction))
 			break;
+
+		/*
+		 * Consider disabling prefetching when we can't keep a sufficiently
+		 * large "index tuple distance" between readPos and streamPos.
+		 *
+		 * Only consider doing this when we're not on the very first batch,
+		 * when readPos and streamPos share the same batch.
+		 */
+		if (!batchState->finished && streamPos->batch != 0 &&
+			batchState->readPos.batch == streamPos->batch)
+		{
+			IndexScanBatchPos *readPos = &batchState->readPos;
+			int			indexdiff;
+
+			if (ScanDirectionIsForward(direction))
+				indexdiff = streamPos->index - readPos->index;
+			else
+			{
+				IndexScanBatch readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
+
+				indexdiff = (readPos->index - readBatch->firstItem) -
+					(streamPos->index - readBatch->firstItem);
+			}
+
+			if (indexdiff < INDEX_SCAN_MIN_TUPLE_DISTANCE)
+			{
+				batchState->disabled = true;
+				return InvalidBlockNumber;
+			}
+		}
 	}
 
 	/* no more items in this scan */
@@ -1958,7 +2007,8 @@ index_batch_getnext(IndexScanDesc scan, ScanDirection direction)
 				  batchState->firstBatch, batchState->nextBatch, batch);
 
 		/* Delay initializing stream until reading from scan's second batch */
-		if (priorbatch && !scan->xs_heapfetch->rs && enable_indexscan_prefetch)
+		if (priorbatch && !scan->xs_heapfetch->rs && !batchState->disabled &&
+			enable_indexscan_prefetch)
 			scan->xs_heapfetch->rs =
 				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
 										   scan->heapRelation, MAIN_FORKNUM,
@@ -2010,6 +2060,7 @@ index_batch_init(IndexScanDesc scan)
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
 	scan->batchState->finished = false;
+	scan->batchState->disabled = false;
 	scan->batchState->lastBlock = InvalidBlockNumber;
 	scan->batchState->direction = NoMovementScanDirection;
 	/* positions in the queue of batches */

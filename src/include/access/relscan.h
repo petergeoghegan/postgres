@@ -223,6 +223,12 @@ typedef struct IndexScanBatchState
 	 */
 	bool		finished;
 
+	/*
+	 * Did we disable prefetching/use of a read stream because it didn't pay
+	 * for itself?
+	 */
+	bool		disabled;
+
 	BlockNumber lastBlock;
 
 	/*
