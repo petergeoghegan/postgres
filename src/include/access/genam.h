@@ -115,6 +115,7 @@ typedef bool (*IndexBulkDeleteCallback) (ItemPointer itemptr, void *state);
 
 /* struct definitions appear in relscan.h */
 typedef struct IndexScanDescData *IndexScanDesc;
+typedef struct BatchIndexScanData *BatchIndexScan;
 typedef struct SysScanDescData *SysScanDesc;
 
 typedef struct ParallelIndexScanDescData *ParallelIndexScanDesc;
@@ -271,5 +272,25 @@ extern void systable_inplace_update_begin(Relation relation,
 										  void **state);
 extern void systable_inplace_update_finish(void *state, HeapTuple tuple);
 extern void systable_inplace_update_cancel(void *state);
+
+/*
+ * amgetbatch utilities called by indexam.c (in indexbatch.c)
+ */
+extern void index_batch_init(IndexScanDesc scan);
+extern ItemPointer index_batch_getnext_tid(IndexScanDesc scan,
+										   ScanDirection direction);
+extern void index_batch_reset(IndexScanDesc scan, bool complete);
+extern void index_batch_mark_pos(IndexScanDesc scan);
+extern void index_batch_restore_pos(IndexScanDesc scan);
+extern void index_batch_kill_item(IndexScanDesc scan);
+extern void index_batch_end(IndexScanDesc scan);
+
+/*
+ * amgetbatch utilities called by index AMs (in indexbatch.c)
+ */
+extern void indexam_util_batch_unlock(IndexScanDesc scan, BatchIndexScan batch);
+extern BatchIndexScan indexam_util_batch_alloc(IndexScanDesc scan,
+											   int maxitems, bool want_itup);
+extern void indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch);
 
 #endif							/* GENAM_H */
