@@ -471,7 +471,7 @@ proper.  A plain index scan will even recognize LP_UNUSED items in the
 heap (items that could be recycled but haven't been just yet) as "not
 visible" -- even when the heap page is generally considered all-visible.
 
-LP_DEAD setting of index tuples by the kill_prior_tuple optimization
+Opportunistic LP_DEAD setting of known-dead index tuples during index scans
 (described in full in simple deletion, below) is also more complicated for
 index scans that drop their leaf page pins.  We must be careful to avoid
 LP_DEAD-marking any new index tuple that looks like a known-dead index
@@ -481,7 +481,7 @@ new, unrelated index tuple, on the same leaf page, which has the same
 original TID.  It would be totally wrong to LP_DEAD-set this new,
 unrelated index tuple.
 
-We handle this kill_prior_tuple race condition by having affected index
+We handle this LP_DEAD setting race condition by having affected index
 scans conservatively assume that any change to the leaf page at all
 implies that it was reached by btbulkdelete in the interim period when no
 buffer pin was held.  This is implemented by not setting any LP_DEAD bits
@@ -735,7 +735,7 @@ of readers could still move right to recover if we didn't couple
 same-level locks), but we prefer to be conservative here.
 
 During recovery all index scans start with ignore_killed_tuples = false
-and we never set kill_prior_tuple. We do this because the oldest xmin
+and we never LP_DEAD-mark tuples. We do this because the oldest xmin
 on the standby server can be older than the oldest xmin on the primary
 server, which means tuples can be marked LP_DEAD even when they are
 still visible on the standby. We don't WAL log tuple LP_DEAD bits, but
