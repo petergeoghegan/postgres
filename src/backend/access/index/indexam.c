@@ -107,6 +107,7 @@ do { \
 static IndexScanDesc index_beginscan_internal(Relation indexRelation,
 											  int nkeys, int norderbys, Snapshot snapshot,
 											  ParallelIndexScanDesc pscan, bool temp_snap);
+static ItemPointer getnext_tid(IndexScanDesc scan, ScanDirection direction);
 static inline void validate_relation_kind(Relation r);
 
 
@@ -283,6 +284,9 @@ index_beginscan(Relation heapRelation,
 	scan->xs_snapshot = snapshot;
 	scan->instrument = instrument;
 
+	if (indexRelation->rd_indam->amgetbatch != NULL)
+		index_batch_init(scan);
+
 	/* prepare to fetch index matches from table */
 	scan->xs_heapfetch = table_index_fetch_begin(heapRelation);
 
@@ -380,6 +384,12 @@ index_rescan(IndexScanDesc scan,
 	scan->kill_prior_tuple = false; /* for safety */
 	scan->xs_heap_continue = false;
 
+	/*
+	 * Reset the batching. This makes it look like there are no batches,
+	 * discards reads already scheduled within the read stream, etc.
+	 */
+	index_batch_reset(scan, true);
+
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
 											orderbys, norderbys);
 }
@@ -393,6 +403,9 @@ index_endscan(IndexScanDesc scan)
 {
 	SCAN_CHECKS;
 	CHECK_SCAN_PROCEDURE(amendscan);
+
+	/* Cleanup batching, so that the AM can release pins and so on. */
+	index_batch_end(scan);
 
 	/* Release resources (like buffer pins) from table accesses */
 	if (scan->xs_heapfetch)
@@ -422,9 +435,10 @@ void
 index_markpos(IndexScanDesc scan)
 {
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(ammarkpos);
+	CHECK_SCAN_PROCEDURE(amposreset);
 
-	scan->indexRelation->rd_indam->ammarkpos(scan);
+	/* Only amgetbatch index AMs support mark and restore */
+	return index_batch_mark_pos(scan);
 }
 
 /* ----------------
@@ -448,16 +462,25 @@ index_restrpos(IndexScanDesc scan)
 	Assert(IsMVCCSnapshot(scan->xs_snapshot));
 
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(amrestrpos);
+	CHECK_SCAN_PROCEDURE(amgetbatch);
+	CHECK_SCAN_PROCEDURE(amposreset);
 
-	/* release resources (like buffer pins) from table accesses */
+	/*
+	 * release resources (like buffer pins) from table accesses
+	 *
+	 * XXX: Currently, the distance is always remembered across any
+	 * read_stream_reset calls (to work around the scan->batchState->reset
+	 * behavior of resetting the stream to deal with running out of batches).
+	 * We probably _should_ be forgetting the distance when we reset the
+	 * stream here (through our table_index_fetch_reset call), though.
+	 */
 	if (scan->xs_heapfetch)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
 	scan->kill_prior_tuple = false; /* for safety */
 	scan->xs_heap_continue = false;
 
-	scan->indexRelation->rd_indam->amrestrpos(scan);
+	index_batch_restore_pos(scan);
 }
 
 /*
@@ -579,6 +602,17 @@ index_parallelrescan(IndexScanDesc scan)
 	if (scan->xs_heapfetch)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
+	/*
+	 * Reset the batching. This makes it look like there are no batches,
+	 * discards reads already scheduled to the read stream, etc.
+	 *
+	 * XXX We do this before calling amparallelrescan, so that it could
+	 * reinitialize everything (this probably does not matter very much, now
+	 * that we've moved all the batching logic to indexam.c, it was more
+	 * important when the index AM was responsible for more of it).
+	 */
+	index_batch_reset(scan, true);
+
 	/* amparallelrescan is optional; assume no-op if not provided by AM */
 	if (scan->indexRelation->rd_indam->amparallelrescan != NULL)
 		scan->indexRelation->rd_indam->amparallelrescan(scan);
@@ -614,6 +648,9 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 	scan->xs_snapshot = snapshot;
 	scan->instrument = instrument;
 
+	if (indexrel->rd_indam->amgetbatch != NULL)
+		index_batch_init(scan);
+
 	/* prepare to fetch index matches from table */
 	scan->xs_heapfetch = table_index_fetch_begin(heaprel);
 
@@ -630,13 +667,42 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 ItemPointer
 index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 {
-	bool		found;
-
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(amgettuple);
 
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
+
+	/*
+	 * Index AMs that support plain index scans must provide exactly one of
+	 * either the amgetbatch or amgettuple callbacks
+	 */
+	Assert(!(scan->indexRelation->rd_indam->amgettuple != NULL &&
+			 scan->indexRelation->rd_indam->amgetbatch != NULL));
+
+	if (scan->batchState != NULL)
+	{
+		CHECK_SCAN_PROCEDURE(amgetbatch);
+
+		return index_batch_getnext_tid(scan, direction);
+	}
+	else
+	{
+		CHECK_SCAN_PROCEDURE(amgettuple);
+
+		return getnext_tid(scan, direction);
+	}
+}
+
+/* ----------------
+ *		getnext_tid - amgettuple index_getnext_tid implementation
+ *
+ * Returns the first/next TID, or NULL if no more items.
+ * ----------------
+ */
+static ItemPointer
+getnext_tid(IndexScanDesc scan, ScanDirection direction)
+{
+	bool		found;
 
 	/*
 	 * The AM's amgettuple proc finds the next index entry matching the scan
@@ -704,9 +770,18 @@ index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
 	 * amgettuple call, in index_getnext_tid).  We do not do this when in
 	 * recovery because it may violate MVCC to do so.  See comments in
 	 * RelationGetIndexScan().
+	 *
+	 * XXX For scans using batching, record the flag in the batch (we will
+	 * pass it to the AM later, when freeing it). Otherwise just pass it to
+	 * the AM using the kill_prior_tuple field.
 	 */
 	if (!scan->xactStartedInRecovery)
-		scan->kill_prior_tuple = all_dead;
+	{
+		if (scan->batchState == NULL)
+			scan->kill_prior_tuple = all_dead;
+		else if (all_dead)
+			index_batch_kill_item(scan);
+	}
 
 	return found;
 }
