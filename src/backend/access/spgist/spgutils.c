@@ -90,8 +90,7 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amgettuple = spggettuple;
 	amroutine->amgetbitmap = spggetbitmap;
 	amroutine->amendscan = spgendscan;
-	amroutine->ammarkpos = NULL;
-	amroutine->amrestrpos = NULL;
+	amroutine->amposreset = NULL;
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
 	amroutine->amparallelrescan = NULL;
