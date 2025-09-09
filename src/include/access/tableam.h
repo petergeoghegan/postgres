@@ -434,9 +434,40 @@ typedef struct TableAmRoutine
 	void		(*index_fetch_end) (struct IndexFetchTableData *data);
 
 	/*
+	 * Initialize table AM's per-batch opaque area within a batch allocation.
+	 *
+	 * Called by indexam_util_batch_alloc for each new or recycled batch.
+	 * Table AMs should set up its opaque area (at a negative offset from the
+	 * batch pointer) and any trailing per-item data (e.g. visibility flags).
+	 *
+	 * 'new_alloc' is true for freshly palloc'd batches, false for batches
+	 * recycled from the cache.
+	 */
+	void		(*index_batch_init) (IndexScanDesc scan, IndexScanBatch batch,
+									 bool new_alloc);
+
+	/*
+	 * Fetch the next tuple from an index scan into slot, scanning in the
+	 * specified direction, and return true if a tuple was found, false
+	 * otherwise.
+	 *
+	 * This callback allows the table AM to directly manage the scan process,
+	 * including interfacing with the index AM. The caller simply specifies
+	 * the direction of the scan; the table AM takes care of retrieving TIDs
+	 * from the index, performing visibility checks, and returning tuples in
+	 * the slot.
+	 */
+	bool		(*index_getnext_slot) (IndexScanDesc scan,
+									   ScanDirection direction,
+									   TupleTableSlot *slot);
+
+	/*
 	 * Fetch tuple at `tid` into `slot`, after doing a visibility test
 	 * according to `snapshot`. If a tuple was found and passed the visibility
 	 * test, return true, false otherwise.
+	 *
+	 * This is a lower-level callback that takes a TID from the caller.
+	 * Callers should favor the index_getnext_slot callback whenever possible.
 	 *
 	 * Note that AMs that do not necessarily update indexes when indexed
 	 * columns do not change, need to return the current/correct version of
@@ -1208,6 +1239,37 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
 }
 
 /*
+ * Initialize table AM's per-batch opaque area within a batch allocation.
+ *
+ * Called by indexam_util_batch_alloc for each new or recycled batch.
+ */
+static inline void
+table_index_batch_init(IndexScanDesc scan, IndexScanBatch batch, bool new_alloc)
+{
+	scan->heapRelation->rd_tableam->index_batch_init(scan, batch, new_alloc);
+}
+
+/*
+ * Fetch the next tuple from an index scan into `slot`, scanning in the
+ * specified direction. Returns true if a tuple was found, false otherwise.
+ *
+ * The index scan should have been started via table_index_fetch_begin().
+ * Callers must check scan->xs_recheck and recheck scan keys if required.
+ *
+ * Index-only scan callers (that pass xs_want_itup=true to index_beginscan)
+ * can consume index tuple results by examining IndexScanDescData fields such
+ * as xs_itup and xs_hitup.  The table AM won't usually fetch a heap tuple
+ * into the provided slot in the case of xs_want_itup=true callers.
+ */
+static inline bool
+table_index_getnext_slot(IndexScanDesc iscan, ScanDirection direction,
+						 TupleTableSlot *slot)
+{
+	return iscan->heapRelation->rd_tableam->index_getnext_slot(iscan,
+															   direction, slot);
+}
+
+/*
  * Fetches, as part of an index scan, tuple at `tid` into `slot`, after doing
  * a visibility test according to `snapshot`. If a tuple was found and passed
  * the visibility test, returns true, false otherwise. Note that *tid may be
@@ -1230,6 +1292,9 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
  * entry (like heap's HOT). Whereas table_tuple_fetch_row_version() only
  * evaluates the tuple exactly at `tid`. Outside of index entry ->table tuple
  * lookups, table_tuple_fetch_row_version() is what's usually needed.
+ *
+ * This is a lower-level interface that takes a TID from the caller.  Callers
+ * should favor the table_index_getnext_slot interface whenever possible.
  */
 static inline bool
 table_index_fetch_tuple(struct IndexFetchTableData *scan,
