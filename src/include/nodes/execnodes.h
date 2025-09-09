@@ -1774,7 +1774,6 @@ typedef struct IndexOnlyScanState
 	IndexScanInstrumentation ioss_Instrument;
 	SharedIndexScanInstrumentation *ioss_SharedInfo;
 	TupleTableSlot *ioss_TableSlot;
-	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
 	AttrNumber *ioss_NameCStringAttNums;
 	int			ioss_NameCStringCount;

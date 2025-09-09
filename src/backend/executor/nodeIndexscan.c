@@ -108,6 +108,7 @@ IndexNext(IndexScanState *node)
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
+								   NULL,
 								   estate->es_snapshot,
 								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
@@ -204,6 +205,7 @@ IndexNextWithReorder(IndexScanState *node)
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
+								   NULL,
 								   estate->es_snapshot,
 								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
@@ -1722,6 +1724,7 @@ ExecIndexScanInitializeDSM(IndexScanState *node,
 	node->iss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
 								 node->iss_RelationDesc,
+								 NULL,
 								 &node->iss_Instrument,
 								 node->iss_NumScanKeys,
 								 node->iss_NumOrderByKeys,
@@ -1786,6 +1789,7 @@ ExecIndexScanInitializeWorker(IndexScanState *node,
 	node->iss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
 								 node->iss_RelationDesc,
+								 NULL,
 								 &node->iss_Instrument,
 								 node->iss_NumScanKeys,
 								 node->iss_NumOrderByKeys,

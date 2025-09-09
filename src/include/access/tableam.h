@@ -420,7 +420,8 @@ typedef struct TableAmRoutine
 	 *
 	 * Tuples for an index scan can then be fetched via index_fetch_tuple.
 	 */
-	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel);
+	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel,
+													  TupleTableSlot *ios_tableslot);
 
 	/*
 	 * Reset index fetch. Typically this will release cross index fetch
@@ -1149,14 +1150,15 @@ table_parallelscan_reinitialize(Relation rel, ParallelTableScanDesc pscan)
 
 /*
  * Prepare to fetch tuples from the relation, as needed when fetching tuples
- * for an index scan.
+ * for an index scan.  Index-only scan callers must provide ios_tableslot,
+ * which is a slot for holding tuples fetched from the table.
  *
  * Tuples for an index scan can then be fetched via table_index_fetch_tuple().
  */
 static inline IndexFetchTableData *
-table_index_fetch_begin(Relation rel)
+table_index_fetch_begin(Relation rel, TupleTableSlot *ios_tableslot)
 {
-	return rel->rd_tableam->index_fetch_begin(rel);
+	return rel->rd_tableam->index_fetch_begin(rel, ios_tableslot);
 }
 
 /*
@@ -2058,5 +2060,8 @@ extern const TableAmRoutine *GetTableAmRoutine(Oid amhandler);
  */
 
 extern const TableAmRoutine *GetHeapamTableAmRoutine(void);
+extern bool index_getnext_slot(IndexScanDesc scan,
+							   ScanDirection direction,
+							   TupleTableSlot *slot);
 
 #endif							/* TABLEAM_H */
