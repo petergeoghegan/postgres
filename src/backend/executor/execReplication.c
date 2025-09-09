@@ -204,7 +204,7 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 	skey_attoff = build_replindex_scan_key(skey, rel, idxrel, searchslot);
 
 	/* Start an index scan. */
-	scan = index_beginscan(rel, idxrel, &snap, NULL, skey_attoff, 0);
+	scan = index_beginscan(rel, idxrel, false, &snap, NULL, skey_attoff, 0);
 
 retry:
 	found = false;
@@ -212,7 +212,7 @@ retry:
 	index_rescan(scan, skey, skey_attoff, NULL, 0);
 
 	/* Try to find the tuple */
-	while (index_getnext_slot(scan, ForwardScanDirection, outslot))
+	while (table_index_getnext_slot(scan, ForwardScanDirection, outslot))
 	{
 		/*
 		 * Avoid expensive equality check if the index is primary key or
@@ -665,12 +665,12 @@ RelationFindDeletedTupleInfoByIndex(Relation rel, Oid idxoid,
 	 * not yet committed or those just committed prior to the scan are
 	 * excluded in update_most_recent_deletion_info().
 	 */
-	scan = index_beginscan(rel, idxrel, SnapshotAny, NULL, skey_attoff, 0);
+	scan = index_beginscan(rel, idxrel, false, SnapshotAny, NULL, skey_attoff, 0);
 
 	index_rescan(scan, skey, skey_attoff, NULL, 0);
 
 	/* Try to find the tuple */
-	while (index_getnext_slot(scan, ForwardScanDirection, scanslot))
+	while (table_index_getnext_slot(scan, ForwardScanDirection, scanslot))
 	{
 		/*
 		 * Avoid expensive equality check if the index is primary key or
