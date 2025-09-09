@@ -16,6 +16,7 @@
 
 #include "access/htup_details.h"
 #include "access/itup.h"
+#include "access/sdir.h"
 #include "nodes/tidbitmap.h"
 #include "port/atomics.h"
 #include "storage/buf.h"
@@ -123,6 +124,142 @@ typedef struct IndexFetchTableData
 	Relation	rel;
 } IndexFetchTableData;
 
+/*
+ * Queue-wise location of a BatchMatchingItem that appears in a BatchIndexScan
+ * returned by (and subsequently passed to) an amgetbatch routine
+ */
+typedef struct BatchQueueItemPos
+{
+	/* BatchQueue.batches[]-wise index to relevant BatchIndexScan */
+	int			batch;
+
+	/* BatchIndexScan.items[]-wise index to relevant BatchMatchingItem */
+	int			item;
+} BatchQueueItemPos;
+
+/*
+ * Matching item returned by amgetbatch (in returned BatchIndexScan) during an
+ * index scan.  Used by table AM to locate relevant matching table tuple.
+ */
+typedef struct BatchMatchingItem
+{
+	ItemPointerData heapTid;	/* TID of referenced heap item */
+	OffsetNumber indexOffset;	/* index item's location within page */
+	LocationIndex tupleOffset;	/* IndexTuple's offset in workspace, if any */
+} BatchMatchingItem;
+
+/*
+ * Data about one batch of items returned by (and passed to) amgetbatch during
+ * index scans
+ */
+typedef struct BatchIndexScanData
+{
+	/*
+	 * Information output by amgetbatch index AMs upon returning a batch with
+	 * one or more matching items, describing details of the index page where
+	 * matches were located.
+	 *
+	 * Used in the next amgetbatch call to determine which index page to read
+	 * next (or to determine if there's no further matches in current scan
+	 * direction).
+	 */
+	BlockNumber currPage;		/* Index page with matching items */
+	BlockNumber prevPage;		/* currPage's left link */
+	BlockNumber nextPage;		/* currPage's right link */
+
+	Buffer		buf;			/* currPage buf (invalid means unpinned) */
+	XLogRecPtr	lsn;			/* currPage's LSN (when dropPin) */
+
+	/* scan direction when the index page was read */
+	ScanDirection dir;
+
+	/*
+	 * moreLeft and moreRight track whether we think there may be matching
+	 * index entries to the left and right of the current page, respectively
+	 */
+	bool		moreLeft;
+	bool		moreRight;
+
+	/*
+	 * The items array is always ordered in index order (ie, increasing
+	 * indexoffset).  When scanning backwards it is convenient to fill the
+	 * array back-to-front, so we start at the last slot and fill downwards.
+	 * Hence we need both a first-valid-entry and a last-valid-entry counter.
+	 */
+	int			firstItem;		/* first valid index in items[] */
+	int			lastItem;		/* last valid index in items[] */
+
+	/* info about killed items if any (killedItems is NULL if never used) */
+	int		   *killedItems;	/* indexes of killed items */
+	int			numKilled;		/* number of currently stored items */
+
+	/*
+	 * Matching items state for this batch.
+	 *
+	 * If we are doing an index-only scan, these are the tuple storage
+	 * workspaces for the matching tuples (tuples referenced by items[]). Each
+	 * is of size BLCKSZ, so it can hold as much as a full page's worth of
+	 * tuples.
+	 */
+	char	   *currTuples;		/* tuple storage for items[] */
+	int			maxitems;		/* allocated size of items[] */
+	BatchMatchingItem items[FLEXIBLE_ARRAY_MEMBER];
+} BatchIndexScanData;
+
+typedef struct BatchIndexScanData *BatchIndexScan;
+
+/*
+ * State used by amgetbatch index AMs to manage a queue of batches of items
+ * with matching index tuples.  Also used by indexbatch.c to store information
+ * about the progress of an index scan.
+ */
+typedef struct BatchQueue
+{
+	/* Index AM drops leaf pin before amgetbatch returns? */
+	bool		dropPin;
+
+	/*
+	 * Did we read the final batch in this scan direction? The batches may be
+	 * loaded from multiple places, and we need to remember when we fail to
+	 * load the next batch in a given scan (which means "no more batches").
+	 * amgetbatch may restart the scan on the get call, so we need to remember
+	 * it's over.
+	 */
+	bool		finished;
+
+	/*
+	 * Current scan direction, for the currently loaded batches. This is used
+	 * to load data in the read stream API callback, etc.
+	 */
+	ScanDirection direction;
+
+	/* current positions in batches[] for scan */
+	BatchQueueItemPos readPos;	/* read position */
+	BatchQueueItemPos markPos;	/* mark/restore position */
+
+	BatchIndexScan markBatch;
+
+	/*
+	 * Array of batches returned by the AM. The array has a capacity (but can
+	 * be resized if needed). The headBatch is an index of the batch we're
+	 * currently reading from (this needs to be translated by modulo
+	 * maxBatches into index in the batches array).
+	 */
+	int			maxBatches;		/* size of the batches array */
+	int			headBatch;		/* head batch slot */
+	int			nextBatch;		/* next empty batch slot */
+
+	/* small cache of unused batches, to reduce malloc/free traffic */
+	struct
+	{
+		int			maxbatches;
+		BatchIndexScan *batches;
+	}			cache;
+
+	BatchIndexScan *batches;
+
+} BatchQueue;
+
 struct IndexScanInstrumentation;
 
 /*
@@ -138,6 +275,8 @@ typedef struct IndexScanDescData
 	struct SnapshotData *xs_snapshot;	/* snapshot to see */
 	int			numberOfKeys;	/* number of index qualifier conditions */
 	int			numberOfOrderBys;	/* number of ordering operators */
+	BatchQueue *batchqueue;		/* amgetbatch related state */
+
 	struct ScanKeyData *keyData;	/* array of index qualifier descriptors */
 	struct ScanKeyData *orderByData;	/* array of ordering op descriptors */
 	bool		xs_want_itup;	/* caller requests index tuples */
