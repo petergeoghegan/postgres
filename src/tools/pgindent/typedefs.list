@@ -226,8 +226,6 @@ BTScanInsertData
 BTScanKeyPreproc
 BTScanOpaque
 BTScanOpaqueData
-BTScanPosData
-BTScanPosItem
 BTShared
 BTSortArrayContext
 BTSpool
@@ -3470,12 +3468,10 @@ amgettuple_function
 aminitparallelscan_function
 aminsert_function
 aminsertcleanup_function
-ammarkpos_function
 amoptions_function
 amparallelrescan_function
 amproperty_function
 amrescan_function
-amrestrpos_function
 amtranslate_cmptype_function
 amtranslate_strategy_function
 amvacuumcleanup_function
