@@ -1033,6 +1033,9 @@ _bt_relbuf(Relation rel, Buffer buf)
  * Lock is acquired without acquiring another pin.  This is like a raw
  * LockBuffer() call, but performs extra steps needed by Valgrind.
  *
+ * Note: indexam_util_batch_unlock has similar Valgrind buffer lock
+ * instrumentation, which we rely on here.
+ *
  * Note: Caller may need to call _bt_checkpage() with buf when pin on buf
  * wasn't originally acquired in _bt_getbuf() or _bt_relandgetbuf().
  */
