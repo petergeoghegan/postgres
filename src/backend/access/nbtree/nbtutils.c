@@ -21,15 +21,12 @@
 #include "access/reloptions.h"
 #include "access/relscan.h"
 #include "commands/progress.h"
-#include "common/int.h"
-#include "lib/qunique.h"
 #include "miscadmin.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 
 
-static int	_bt_compare_int(const void *va, const void *vb);
 static int	_bt_keep_natts(Relation rel, IndexTuple lastleft,
 						   IndexTuple firstright, BTScanInsert itup_key);
 
@@ -161,103 +158,68 @@ _bt_freestack(BTStack stack)
 }
 
 /*
- * qsort comparison function for int arrays
- */
-static int
-_bt_compare_int(const void *va, const void *vb)
-{
-	int			a = *((const int *) va);
-	int			b = *((const int *) vb);
-
-	return pg_cmp_s32(a, b);
-}
-
-/*
  * _bt_killitems - set LP_DEAD state for items an indexscan caller has
  * told us were killed
  *
- * scan->opaque, referenced locally through so, contains information about the
- * current page and killed tuples thereon (generally, this should only be
- * called if so->numKilled > 0).
+ * The batch parameter contains information about the current page and killed
+ * tuples thereon (this should only be called if batch->numKilled > 0).
  *
- * Caller should not have a lock on the so->currPos page, but must hold a
- * buffer pin when !so->dropPin.  When we return, it still won't be locked.
- * It'll continue to hold whatever pins were held before calling here.
+ * Caller should not have a lock on the batch position's page, but must hold a
+ * buffer pin when !dropPin.  When we return, it still won't be locked.  It'll
+ * continue to hold whatever pins were held before calling here.
  *
  * We match items by heap TID before assuming they are the right ones to set
  * LP_DEAD.  If the scan is one that holds a buffer pin on the target page
  * continuously from initially reading the items until applying this function
- * (if it is a !so->dropPin scan), VACUUM cannot have deleted any items on the
+ * (if it is a !dropPin scan), VACUUM cannot have deleted any items on the
  * page, so the page's TIDs can't have been recycled by now.  There's no risk
  * that we'll confuse a new index tuple that happens to use a recycled TID
  * with a now-removed tuple with the same TID (that used to be on this same
  * page).  We can't rely on that during scans that drop buffer pins eagerly
- * (so->dropPin scans), though, so we must condition setting LP_DEAD bits on
+ * (i.e. dropPin scans), though, so we must condition setting LP_DEAD bits on
  * the page LSN having not changed since back when _bt_readpage saw the page.
  * We totally give up on setting LP_DEAD bits when the page LSN changed.
  *
- * We give up much less often during !so->dropPin scans, but it still happens.
+ * We tend to give up less often during !dropPin scans, but it still happens.
  * We cope with cases where items have moved right due to insertions.  If an
  * item has moved off the current page due to a split, we'll fail to find it
  * and just give up on it.
  */
 void
-_bt_killitems(IndexScanDesc scan)
+_bt_killitems(IndexScanDesc scan, BatchIndexScan batch)
 {
 	Relation	rel = scan->indexRelation;
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber minoff;
 	OffsetNumber maxoff;
-	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
 	Buffer		buf;
 
-	Assert(numKilled > 0);
-	Assert(BTScanPosIsValid(so->currPos));
+	Assert(batch->numKilled > 0);
+	Assert(BlockNumberIsValid(batch->currPage));
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
 
-	/* Always invalidate so->killedItems[] before leaving so->currPos */
-	so->numKilled = 0;
-
-	/*
-	 * We need to iterate through so->killedItems[] in leaf page order; the
-	 * loop below expects this (when marking posting list tuples, at least).
-	 * so->killedItems[] is now in whatever order the scan returned items in.
-	 * Scrollable cursor scans might have even saved the same item/TID twice.
-	 *
-	 * Sort and unique-ify so->killedItems[] to deal with all this.
-	 */
-	if (numKilled > 1)
-	{
-		qsort(so->killedItems, numKilled, sizeof(int), _bt_compare_int);
-		numKilled = qunique(so->killedItems, numKilled, sizeof(int),
-							_bt_compare_int);
-	}
-
-	if (!so->dropPin)
+	if (!scan->dropPin)
 	{
 		/*
 		 * We have held the pin on this page since we read the index tuples,
 		 * so all we need to do is lock it.  The pin will have prevented
 		 * concurrent VACUUMs from recycling any of the TIDs on the page.
 		 */
-		Assert(BTScanPosIsPinned(so->currPos));
-		buf = so->currPos.buf;
+		buf = batch->buf;
 		_bt_lockbuf(rel, buf, BT_READ);
 	}
 	else
 	{
 		XLogRecPtr	latestlsn;
 
-		Assert(!BTScanPosIsPinned(so->currPos));
 		Assert(RelationNeedsWAL(rel));
-		buf = _bt_getbuf(rel, so->currPos.currPage, BT_READ);
+		buf = _bt_getbuf(rel, batch->currPage, BT_READ);
 
 		latestlsn = BufferGetLSNAtomic(buf);
-		Assert(so->currPos.lsn <= latestlsn);
-		if (so->currPos.lsn != latestlsn)
+		Assert(batch->lsn <= latestlsn);
+		if (batch->lsn != latestlsn)
 		{
 			/* Modified, give up on hinting */
 			_bt_relbuf(rel, buf);
@@ -272,17 +234,16 @@ _bt_killitems(IndexScanDesc scan)
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
 
-	/* Iterate through so->killedItems[] in leaf page order */
-	for (int i = 0; i < numKilled; i++)
+	/* Iterate through batch->killedItems[] in leaf page order */
+	for (int i = 0; i < batch->numKilled; i++)
 	{
-		int			itemIndex = so->killedItems[i];
-		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
+		int			itemIndex = batch->killedItems[i];
+		BatchMatchingItem *kitem = &batch->items[itemIndex];
 		OffsetNumber offnum = kitem->indexOffset;
 
-		Assert(itemIndex >= so->currPos.firstItem &&
-			   itemIndex <= so->currPos.lastItem);
+		Assert(itemIndex >= batch->firstItem && itemIndex <= batch->lastItem);
 		Assert(i == 0 ||
-			   offnum >= so->currPos.items[so->killedItems[i - 1]].indexOffset);
+			   offnum >= batch->items[batch->killedItems[i - 1]].indexOffset);
 
 		if (offnum < minoff)
 			continue;			/* pure paranoia */
@@ -300,7 +261,7 @@ _bt_killitems(IndexScanDesc scan)
 
 				/*
 				 * Note that the page may have been modified in almost any way
-				 * since we first read it (in the !so->dropPin case), so it's
+				 * since we first read it (in the !dropPin case), so it's
 				 * possible that this posting list tuple wasn't a posting list
 				 * tuple when we first encountered its heap TIDs.
 				 */
@@ -316,7 +277,7 @@ _bt_killitems(IndexScanDesc scan)
 					 * though only in the common case where the page can't
 					 * have been concurrently modified
 					 */
-					Assert(kitem->indexOffset == offnum || !so->dropPin);
+					Assert(kitem->indexOffset == offnum || !scan->dropPin);
 
 					/*
 					 * Read-ahead to later kitems here.
@@ -332,8 +293,8 @@ _bt_killitems(IndexScanDesc scan)
 					 * kitem is also the last heap TID in the last index tuple
 					 * correctly -- posting tuple still gets killed).
 					 */
-					if (pi < numKilled)
-						kitem = &so->currPos.items[so->killedItems[pi++]];
+					if (pi < batch->numKilled)
+						kitem = &batch->items[batch->killedItems[pi++]];
 				}
 
 				/*
@@ -383,7 +344,7 @@ _bt_killitems(IndexScanDesc scan)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	if (!so->dropPin)
+	if (!scan->dropPin)
 		_bt_unlockbuf(rel, buf);
 	else
 		_bt_relbuf(rel, buf);
