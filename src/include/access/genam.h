@@ -290,6 +290,8 @@ extern void index_batch_end(IndexScanDesc scan);
  */
 extern void indexam_util_batch_unlock(Relation rel, bool dropPin,
 									  IndexScanBatch batch);
-extern IndexScanBatch indexam_util_batch_alloc(int maxitems, bool want_itup);
+extern IndexScanBatch indexam_util_batch_alloc(IndexScanDesc scan,
+											   int maxitems, bool want_itup);
+extern void indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch);
 
 #endif							/* GENAM_H */

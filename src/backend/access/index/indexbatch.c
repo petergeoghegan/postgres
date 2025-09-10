@@ -145,6 +145,10 @@ index_batch_init(IndexScanDesc scan)
 	scan->batchState->headBatch = 0;	/* initial head batch */
 	scan->batchState->nextBatch = 0;	/* initial batch starts empty */
 
+	/* XXX init the cache of batches, capacity 16 is arbitrary */
+	scan->batchState->cache.maxbatches = 16;
+	scan->batchState->cache.batches = NULL;
+
 	scan->batchState->batches =
 		palloc(sizeof(IndexScanBatchData *) * scan->batchState->maxBatches);
 
@@ -1030,6 +1034,30 @@ void
 index_batch_end(IndexScanDesc scan)
 {
 	index_batch_reset(scan, true);
+
+	/* bail out without batching */
+	if (!scan->batchState)
+		return;
+
+	/* we can simply free batches thanks to the earlier reset */
+	if (scan->batchState->batches)
+		pfree(scan->batchState->batches);
+
+	/* also walk the cache of batches, if any */
+	if (scan->batchState->cache.batches)
+	{
+		for (int i = 0; i < scan->batchState->cache.maxbatches; i++)
+		{
+			if (scan->batchState->cache.batches[i] == NULL)
+				continue;
+
+			pfree(scan->batchState->cache.batches[i]);
+		}
+
+		pfree(scan->batchState->cache.batches);
+	}
+
+	pfree(scan->batchState);
 }
 
 /* ----------------------------------------------------------------
@@ -1076,7 +1104,8 @@ indexam_util_batch_unlock(Relation rel, bool dropPin, IndexScanBatch batch)
  *		Allocate a batch that can fit maxitems index tuples.
  *
  * Returns a IndexScanBatch struct with capacity sufficient for maxitems index
- * tuples.
+ * tuples.  It's either newly allocated or loaded from a small cache
+ * maintained for individual scans.
  *
  * maxitems determines the minimum size of the batch (it may be larger)
  * want_itup determines whether the bach allocates space for currTuples
@@ -1084,33 +1113,168 @@ indexam_util_batch_unlock(Relation rel, bool dropPin, IndexScanBatch batch)
  * XXX Both index_batch_alloc() calls in btree use MaxTIDsPerBTreePage,
  * which seems unfortunate - it increases the allocation sizes, even if
  * the index would be fine with smaller arrays. This means all batches
- * exceed ALLOC_CHUNK_LIMIT, forcing a separate malloc (expensive).
+ * exceed ALLOC_CHUNK_LIMIT, forcing a separate malloc (expensive). The
+ * cache helps for longer queries, not for queries that only create a
+ * single batch, etc.
  */
 IndexScanBatch
-indexam_util_batch_alloc(int maxitems, bool want_itup)
+indexam_util_batch_alloc(IndexScanDesc scan, int maxitems, bool want_itup)
 {
-	IndexScanBatch batch = palloc(offsetof(IndexScanBatchData, items) +
-								  sizeof(IndexScanBatchPosItem) * maxitems);
+	IndexScanBatch batch = NULL;
 
+	/*
+	 * Try to find a sufficiently large batch in the cache.
+	 *
+	 * Use the first batch that can fit the requested number of items. We
+	 * could be smarter and look for the smallest of such batches. But that
+	 * probably won't help very much. We expect batches to be mostly uniform,
+	 * with about the same size. And index_batch_release() prefers larger
+	 * batches, so we should end up with mostly larger batches in the cache.
+	 *
+	 * XXX We can get here with batchState==NULL for bitmapscans. Could that
+	 * mean bitmapscans have issues with malloc/free on batches too? But the
+	 * cache can't help with that, when it's in batchState (because bitmap
+	 * scans don't have that).
+	 */
+	if (scan->batchState != NULL && scan->batchState->cache.batches != NULL)
+	{
+		/*
+		 * try to find a batch in the cache, with maxitems high enough
+		 *
+		 * XXX Maybe should look for a batch with lowest maxitems? That should
+		 * increase probability of cache hits in the future?
+		 */
+		for (int i = 0; i < scan->batchState->cache.maxbatches; i++)
+		{
+			if (scan->batchState->cache.batches[i] != NULL &&
+				scan->batchState->cache.batches[i]->maxitems >= maxitems)
+			{
+				batch = scan->batchState->cache.batches[i];
+				scan->batchState->cache.batches[i] = NULL;
+				break;
+			}
+		}
+	}
+
+	/* found a batch in the cache? */
+	if (batch)
+	{
+		/* for IOS, we expect to already have the currTuples */
+		Assert(!(want_itup && (batch->currTuples == NULL)));
+
+		/* XXX maybe we could keep these allocations too */
+		Assert(batch->pos == NULL);
+		Assert(batch->itemsvisibility == NULL);
+	}
+	else
+	{
+		batch = palloc(offsetof(IndexScanBatchData, items) +
+					   sizeof(IndexScanBatchPosItem) * maxitems);
+
+		batch->maxitems = maxitems;
+
+		/*
+		 * If we are doing an index-only scan, we need a tuple storage
+		 * workspace. We allocate BLCKSZ for this, which should always give
+		 * the index AM enough space to fit a full page's worth of tuples.
+		 */
+		batch->currTuples = NULL;
+		if (want_itup)
+			batch->currTuples = palloc(BLCKSZ);
+	}
+
+	/* shared initialization */
 	batch->firstItem = -1;
 	batch->lastItem = -1;
 	batch->killedItems = NULL;
 	batch->numKilled = 0;
-
-	/*
-	 * If we are doing an index-only scan, we need a tuple storage workspace.
-	 * We allocate BLCKSZ for this, which should always give the index AM
-	 * enough space to fit a full page's worth of tuples.
-	 */
-	batch->currTuples = NULL;
-	if (want_itup)
-		batch->currTuples = palloc(BLCKSZ);
 
 	batch->buf = InvalidBuffer;
 	batch->pos = NULL;
 	batch->itemsvisibility = NULL;	/* per-batch IOS visibility */
 
 	return batch;
+}
+
+/*
+ * indexam_util_batch_release
+ *		Either stash the batch info a small cache for reuse, or free it.
+ */
+void
+indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
+{
+	/* custom fields should have been cleaned by amfreebatch */
+	Assert(batch->pos == NULL);
+	Assert(batch->buf == InvalidBuffer);
+
+	/*
+	 * free killedItems / itemsvisibility
+	 *
+	 * XXX We could keep/reuse those too, I guess.
+	 */
+
+	if (batch->killedItems != NULL)
+	{
+		pfree(batch->killedItems);
+		batch->killedItems = NULL;
+	}
+
+	if (batch->itemsvisibility != NULL)
+	{
+		pfree(batch->itemsvisibility);
+		batch->itemsvisibility = NULL;
+	}
+
+	/*
+	 * Try adding the batch to the small cache - find a slot that's either
+	 * empty or used by a smaller batch (with smallest maxitems value), and
+	 * replace that batch.
+	 *
+	 * XXX There may be ways to improve this. We could track the number of
+	 * empty slots, and minimum maxitems value, which would allow skipping
+	 * pointless searches (in cases when should just discard the batch).
+	 */
+	if (scan->batchState != NULL)
+	{
+		/* lowest maxitems we found in the cache (to replace with this batch) */
+		int			maxitems = batch->maxitems;
+		int			slot = scan->batchState->cache.maxbatches;
+
+		/* first time through, initialize the cache */
+		if (scan->batchState->cache.batches == NULL)
+			scan->batchState->cache.batches
+				= palloc0_array(IndexScanBatch,
+								scan->batchState->cache.maxbatches);
+
+		/* find am empty or sufficiently large batch */
+		for (int i = 0; i < scan->batchState->cache.maxbatches; i++)
+		{
+			/* found empty slot, we're done */
+			if (scan->batchState->cache.batches[i] == NULL)
+			{
+				scan->batchState->cache.batches[i] = batch;
+				return;
+			}
+
+			/* found a smaller slot, remember it */
+			if (scan->batchState->cache.batches[i]->maxitems < maxitems)
+			{
+				maxitems = scan->batchState->cache.batches[i]->maxitems;
+				slot = i;
+			}
+		}
+
+		/* found a slot for this batch? */
+		if (maxitems < batch->maxitems)
+		{
+			pfree(scan->batchState->cache.batches[slot]);
+			scan->batchState->cache.batches[slot] = batch;
+			return;
+		}
+	}
+
+	/* either no cache or no slot for this batch */
+	pfree(batch);
 }
 
 /*

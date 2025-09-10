@@ -1200,7 +1200,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	}
 
 	/* Allocate space for first batch */
-	firstbatch = indexam_util_batch_alloc(MaxTIDsPerBTreePage,
+	firstbatch = indexam_util_batch_alloc(scan, MaxTIDsPerBTreePage,
 										  scan->xs_want_itup);
 	firstbatch->pos = palloc(sizeof(BTScanPosData));
 
@@ -2238,7 +2238,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 	BTScanPos	newpos;
 
 	/* Allocate space for next batch */
-	newbatch = indexam_util_batch_alloc(MaxTIDsPerBTreePage,
+	newbatch = indexam_util_batch_alloc(scan, MaxTIDsPerBTreePage,
 										scan->xs_want_itup);
 	newbatch->pos = palloc(sizeof(BTScanPosData));
 	newpos = newbatch->pos;

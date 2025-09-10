@@ -187,6 +187,8 @@ typedef struct IndexScanBatchData
 	 */
 	char	   *itemsvisibility;	/* Index-only scan visibility cache */
 
+	/* capacity of the batch (size of the items array) */
+	int			maxitems;
 	IndexScanBatchPosItem items[FLEXIBLE_ARRAY_MEMBER];
 } IndexScanBatchData;
 
@@ -265,6 +267,13 @@ typedef struct IndexScanBatchState
 	int			maxBatches;		/* size of the batches array */
 	int			headBatch;		/* head batch slot */
 	int			nextBatch;		/* next empty batch slot */
+
+	/* small cache of unused batches, to reduce malloc/free traffic */
+	struct
+	{
+		int			maxbatches;
+		IndexScanBatchData **batches;
+	}			cache;
 
 	IndexScanBatchData **batches;
 
