@@ -74,11 +74,16 @@ index_batch_init(IndexScanDesc scan)
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
 	scan->finished = false;
+	scan->batchqueue->reset = false;
+	scan->batchqueue->prefetchingLockedIn = false;
+	scan->batchqueue->disabled = false;
+	scan->batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchqueue->direction = NoMovementScanDirection;
 
 	/* positions in the queue of batches */
 	batch_reset_pos(&scan->batchqueue->readPos);
 	batch_reset_pos(&scan->batchqueue->markPos);
+	batch_reset_pos(&scan->batchqueue->streamPos);
 
 	scan->batchqueue->markBatch = NULL;
 	scan->batchqueue->headBatch = 0;	/* initial head batch */
@@ -107,9 +112,12 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batch_assert_batches_valid(scan);
 	batch_debug_print_batches("index_batch_reset", scan);
 	Assert(scan->xs_heapfetch);
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
 
 	/* reset the positions */
 	batch_reset_pos(&batchqueue->readPos);
+	batch_reset_pos(&batchqueue->streamPos);
 
 	/*
 	 * With "complete" reset, make sure to also free the marked batch, either
@@ -155,6 +163,8 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batchqueue->nextBatch = 0;	/* initial batch is empty */
 
 	scan->finished = false;
+	batchqueue->reset = false;
+	batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 
 	batch_assert_batches_valid(scan);
 }
@@ -218,9 +228,13 @@ index_batch_restore_pos(IndexScanDesc scan)
 {
 	BatchQueue *batchqueue = scan->batchqueue;
 	BatchQueueItemPos *markPos = &batchqueue->markPos;
-	BatchQueueItemPos *readPos = &batchqueue->readPos;
 	BatchIndexScan markBatch = batchqueue->markBatch;
 
+	/*
+	 * XXX Disable this optimization when I/O prefetching is in use, at least
+	 * until the possible interactions with streamPos are fully understood.
+	 */
+#if 0
 	if (readPos->batch == markPos->batch &&
 		readPos->batch == batchqueue->headBatch)
 	{
@@ -231,6 +245,7 @@ index_batch_restore_pos(IndexScanDesc scan)
 		readPos->item = markPos->item;
 		return;
 	}
+#endif
 
 	/*
 	 * Call amposreset to let index AM know to invalidate any private state

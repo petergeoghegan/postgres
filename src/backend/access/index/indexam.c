@@ -467,7 +467,15 @@ index_restrpos(IndexScanDesc scan)
 	CHECK_SCAN_PROCEDURE(amgetbatch);
 	CHECK_SCAN_PROCEDURE(amposreset);
 
-	/* release resources (like buffer pins) from table accesses */
+	/*
+	 * release resources (like buffer pins) from table accesses
+	 *
+	 * XXX: Currently, the distance is always remembered across any
+	 * read_stream_reset calls (to work around the scan->batchqueue->reset
+	 * behavior of resetting the stream to deal with running out of batches).
+	 * We probably _should_ be forgetting the distance when we reset the
+	 * stream here (through our table_index_fetch_reset call), though.
+	 */
 	if (scan->xs_heapfetch)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
