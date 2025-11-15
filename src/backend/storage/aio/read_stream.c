@@ -1083,6 +1083,18 @@ read_stream_yield(ReadStream *stream)
 }
 
 /*
+ * Does caller's read stream currently use the fast path?
+ *
+ * The read stream uses the fast path during all-cached scans (as well as
+ * during subsets of a scan where all buffers/pages returned are cached).
+ */
+bool
+read_stream_uses_fast_path(ReadStream *stream)
+{
+	return stream->fast_path;
+}
+
+/*
  * Reset a read stream by releasing any queued up buffers, allowing the stream
  * to be used again for different blocks.  This can be used to clear an
  * end-of-stream condition and start again, or to throw away blocks that were

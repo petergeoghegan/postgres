@@ -5668,6 +5668,27 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-enable-indexscan-prefetch" xreflabel="enable_indexscan_prefetch">
+      <term><varname>enable_indexscan_prefetch</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>enable_indexscan_prefetch</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables or disables prefetching for index-scan and index-only-scan
+        plan types.  Prefetching can improve performance by reading table AM
+        pages ahead of when they are needed during index scans.  The default
+        is <literal>on</literal>.
+       </para>
+       <para>
+        Index prefetching is always disabled when
+        <xref linkend="guc-io-method"/> is set to <literal>sync</literal>,
+        regardless of this setting.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-enable-material" xreflabel="enable_material">
       <term><varname>enable_material</varname> (<type>boolean</type>)
       <indexterm>
