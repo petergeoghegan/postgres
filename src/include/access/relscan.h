@@ -20,6 +20,7 @@
 #include "nodes/tidbitmap.h"
 #include "port/atomics.h"
 #include "storage/buf.h"
+#include "storage/read_stream.h"
 #include "storage/relfilelocator.h"
 #include "storage/spin.h"
 #include "utils/relcache.h"
@@ -123,6 +124,7 @@ struct TupleTableSlot;
 typedef struct IndexFetchTableData
 {
 	Relation	rel;			/* heap relation being scanned */
+	ReadStream *rs;
 	Buffer		vmbuf;			/* visibility map buffer */
 	struct TupleTableSlot *ioss_TableSlot;	/* transient slot for fetching
 											 * tuples to check visibility
@@ -214,6 +216,10 @@ typedef struct BatchIndexScanData
 } BatchIndexScanData;
 
 typedef struct BatchIndexScanData *BatchIndexScan;
+typedef struct IndexScanDescData IndexScanDescData;
+typedef bool (*IndexPrefetchCallback) (IndexScanDescData * scan,
+									   void *arg,
+									   BatchQueueItemPos *pos);
 
 /*
  * State used by amgetbatch index AMs to manage a queue of batches of items
@@ -233,6 +239,27 @@ typedef struct BatchQueue
 	 * it's over.
 	 */
 	bool		finished;
+	bool		reset;
+
+	/*
+	 * Did we disable prefetching/use of a read stream because it didn't pay
+	 * for itself?
+	 */
+	bool		prefetchingLockedIn;
+	bool		disabled;
+
+	/*
+	 * During prefetching, currentPrefetchBlock is the table AM block number
+	 * that was returned by our read stream callback most recently.  Used to
+	 * suppress duplicate successive read stream block requests.
+	 *
+	 * Prefetching can still perform non-successive requests for the same
+	 * block number (in general we're prefetching in exactly the same order
+	 * that the scan will return table AM TIDs in).  We need to avoid
+	 * duplicate successive requests because table AMs expect to be able to
+	 * hang on to buffer pins across table_index_fetch_tuple calls.
+	 */
+	BlockNumber currentPrefetchBlock;
 
 	/*
 	 * Current scan direction, for the currently loaded batches. This is used
@@ -243,6 +270,7 @@ typedef struct BatchQueue
 	/* current positions in batches[] for scan */
 	BatchQueueItemPos readPos;	/* read position */
 	BatchQueueItemPos markPos;	/* mark/restore position */
+	BatchQueueItemPos streamPos;	/* stream position (for prefetching) */
 
 	BatchIndexScan markBatch;
 

@@ -111,7 +111,9 @@ heapam_index_fetch_begin(Relation rel)
 	IndexFetchHeapData *hscan = palloc0(sizeof(IndexFetchHeapData));
 
 	hscan->xs_base.rel = rel;
+	hscan->xs_base.rs = NULL;
 	hscan->xs_cbuf = InvalidBuffer;
+	hscan->xs_blk = InvalidBlockNumber;
 	hscan->xs_base.vmbuf = InvalidBuffer;
 	hscan->xs_base.ioss_TableSlot = NULL;
 	hscan->xs_base.nheapaccesses = 0;
@@ -124,10 +126,14 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
 
+	if (scan->rs)
+		read_stream_reset(scan->rs);
+
 	if (BufferIsValid(hscan->xs_cbuf))
 	{
 		ReleaseBuffer(hscan->xs_cbuf);
 		hscan->xs_cbuf = InvalidBuffer;
+		hscan->xs_blk = InvalidBlockNumber;
 	}
 }
 
@@ -145,6 +151,9 @@ heapam_index_fetch_end(IndexFetchTableData *scan)
 		scan->vmbuf = InvalidBuffer;
 	}
 
+	if (scan->rs)
+		read_stream_end(scan->rs);
+
 	pfree(hscan);
 }
 
@@ -161,22 +170,36 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 
 	Assert(TTS_IS_BUFFERTUPLE(slot));
 
-	/* We can skip the buffer-switching logic if we're in mid-HOT chain. */
-	if (!*call_again)
+	/*
+	 * Switch to correct buffer if we don't have it already (we can skip this
+	 * if we're in mid-HOT chain)
+	 */
+	if (!*call_again && hscan->xs_blk != ItemPointerGetBlockNumber(tid))
 	{
-		/* Switch to correct buffer if we don't have it already */
-		Buffer		prev_buf = hscan->xs_cbuf;
+		/* Remember this buffer's block number for next time */
+		hscan->xs_blk = ItemPointerGetBlockNumber(tid);
 
-		hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
-											  hscan->xs_base.rel,
-											  ItemPointerGetBlockNumber(tid));
+		if (BufferIsValid(hscan->xs_cbuf))
+			ReleaseBuffer(hscan->xs_cbuf);
 
 		/*
-		 * Prune page, but only if we weren't already on this page
+		 * When using a read stream, the stream will already know which block
+		 * number comes next (though an assertion will verify a match below)
 		 */
-		if (prev_buf != hscan->xs_cbuf)
-			heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
+		if (scan->rs)
+			hscan->xs_cbuf = read_stream_next_buffer(scan->rs, NULL);
+		else
+			hscan->xs_cbuf = ReadBuffer(hscan->xs_base.rel, hscan->xs_blk);
+
+		/*
+		 * Prune page when it is pinned for the first time
+		 */
+		heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
 	}
+
+	/* Assert that the TID's block number's buffer is now pinned */
+	Assert(BufferIsValid(hscan->xs_cbuf));
+	Assert(BufferGetBlockNumber(hscan->xs_cbuf) == hscan->xs_blk);
 
 	/* Obtain share-lock on the buffer so we can examine visibility */
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);
@@ -210,7 +233,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	return got_heap_tuple;
 }
 
-#define INDEX_SCAN_MAX_BATCHES	2
+#define INDEX_SCAN_MAX_BATCHES	64
 
 #define INDEX_SCAN_BATCH_COUNT(scan) \
 	((scan)->batchqueue->nextBatch - (scan)->batchqueue->headBatch)
@@ -317,6 +340,17 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		batchqueue->direction = direction;
 
 	/*
+	 * Handle cancelling the use of the read stream for prefetching
+	 */
+	else if (unlikely(batchqueue->disabled && scan->xs_heapfetch->rs))
+	{
+		batch_reset_pos(scan, &batchqueue->streamPos);
+
+		read_stream_reset(scan->xs_heapfetch->rs);
+		scan->xs_heapfetch->rs = NULL;
+	}
+
+	/*
 	 * Handle change of scan direction (reset stream, ...).
 	 *
 	 * Release future batches properly, to make it look like the current batch
@@ -344,6 +378,10 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		 */
 		batchqueue->direction = direction;
 		batchqueue->finished = false;
+		batch_reset_pos(scan, &batchqueue->streamPos);
+
+		if (scan->xs_heapfetch->rs)
+			read_stream_reset(scan->xs_heapfetch->rs);
 	}
 
 	/* shortcut for the read position, for convenience */
@@ -386,6 +424,37 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 				BatchIndexScan headBatch = INDEX_SCAN_BATCH(scan,
 															batchqueue->headBatch);
 
+				/*
+				 * XXX When advancing readPos, the streamPos may get behind as
+				 * we're only advancing it when actually requesting heap
+				 * blocks. But we may not do that often enough - e.g. IOS may
+				 * not need to access all-visible heap blocks, so the
+				 * read_next callback does not get invoked for a long time.
+				 * It's possible the stream gets so far behind the position
+				 * that is becomes invalid, as we already removed the batch.
+				 * But that means we don't need any heap blocks until the
+				 * current read position -- if we did, we would not be in this
+				 * situation (or it's a sign of a bug, as those two places are
+				 * expected to be in sync). So if the streamPos still points
+				 * at the batch we're about to free, reset the position --
+				 * we'll set it to readPos in the read_next callback later on.
+				 *
+				 * XXX This can happen after the queue gets full, we "pause"
+				 * the stream, and then reset it to continue. But I think that
+				 * just increases the probability of hitting the issue, it's
+				 * just more chance to to not advance the streamPos, which
+				 * depends on when we try to fetch the first heap block after
+				 * calling read_stream_reset().
+				 *
+				 * FIXME Simplify/clarify/shorten this comment. Can it
+				 * actually happen, if we never pull from the stream in IOS?
+				 * We probably don't look ahead for the first call.
+				 */
+				if (unlikely(batchqueue->streamPos.batch == batchqueue->headBatch))
+				{
+					batch_reset_pos(scan, &batchqueue->streamPos);
+				}
+
 				/* Free the head batch (except when it's markBatch) */
 				batch_free(scan, headBatch);
 
@@ -404,8 +473,38 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		}
 
 		/*
-		 * Failed to advance the read position.  Have indexbatch.c utility
-		 * routine load another batch into our queue (next in this direction).
+		 * We failed to advance, i.e. we ran out of currently loaded batches.
+		 * So if we filled the queue, this is a good time to reset the stream
+		 * (before we try loading the next batch).
+		 */
+		if (unlikely(batchqueue->reset))
+		{
+			batchqueue->reset = false;
+			batchqueue->currentPrefetchBlock = InvalidBlockNumber;
+
+			/*
+			 * Need to reset the stream position, it might be too far behind.
+			 * Ultimately we want to set it to readPos, but we can't do that
+			 * yet - readPos still point sat the old batch, so just reset it
+			 * and we'll init it to readPos later in the callback.
+			 */
+			batch_reset_pos(scan, &batchqueue->streamPos);
+
+			if (scan->xs_heapfetch->rs)
+				read_stream_reset(scan->xs_heapfetch->rs);
+		}
+
+		/*
+		 * Failed to advance the read position, so try reading the next batch.
+		 * If this fails, we're done - there's nothing more to load.
+		 *
+		 * Most of the batches should be loaded from read_stream_next_buffer,
+		 * but we need to call batch_getnext here too, for two reasons. First,
+		 * the read_stream only gets working after we try fetching the first
+		 * heap tuple, so we need to load the initial batch (the head).
+		 * Second, while most batches will be preloaded by the stream thanks
+		 * to prefetching, it's possible to set effective_io_concurrency=0,
+		 * and in that case all the batches get loaded from here.
 		 */
 		if (!batch_getnext(scan, direction))
 		{
