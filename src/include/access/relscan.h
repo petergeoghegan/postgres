@@ -233,8 +233,14 @@ typedef struct IndexScanBatchData *IndexScanBatch;
  * Maximum number of batches (leaf pages) we can keep in memory.  We need a
  * minimum of two, since we'll only consider releasing one batch when another
  * is read.
+ *
+ * The choice of 64 batches is arbitrary.  It's about 1MB of data with 8KB
+ * pages (512kB for pages, and then a bit of overhead). We should not really
+ * need this many batches in most cases, though. The read stream looks ahead
+ * just enough to queue enough IOs, adjusting the distance (TIDs, but
+ * ultimately the number of future batches) to meet that.
  */
-#define INDEX_SCAN_MAX_BATCHES		2
+#define INDEX_SCAN_MAX_BATCHES		64
 #define INDEX_SCAN_CACHE_BATCHES	2
 
 /*
@@ -246,12 +252,21 @@ typedef struct IndexScanBatchData *IndexScanBatch;
  * matches in.  However, table AMs are free to fetch table tuples in whatever
  * order is most convenient/efficient -- provided that such reordering cannot
  * affect the order that table_index_getnext_slot later returns tuples in.
+ *
+ * This data structure also provides table AMs with a way to read ahead of the
+ * current read position by _multiple_ batches/index pages.  The further out
+ * the table AM reads ahead like this, the further it can see into the future.
+ * That way the table AM is able to reorder work as aggressively as desired.
+ * For example, index scans sometimes need to readahead by as many as a few
+ * dozen amgetbatch batches in order to maintain an optimal I/O prefetch
+ * distance (distance for reading table blocks/fetching table tuples).
  */
 typedef struct BatchRingBuffer
 {
 	/* current positions in batches[] for scan */
 	BatchRingItemPos scanPos;	/* scan's read position */
 	BatchRingItemPos markPos;	/* mark/restore position */
+	BatchRingItemPos prefetchPos;	/* prefetching position */
 
 	IndexScanBatch markBatch;
 
@@ -439,6 +454,39 @@ index_scan_batch_append(IndexScanDescData *scan, IndexScanBatch batch)
 
 	ringbuf->batches[nextBatch & (INDEX_SCAN_MAX_BATCHES - 1)] = batch;
 	ringbuf->nextBatch++;
+}
+
+/*
+ * Compare two batch ring positions in the given scan direction.
+ *
+ * Returns negative if pos1 is behind pos2, 0 if equal, positive if pos1 is
+ * ahead of pos2.
+ */
+static inline int
+index_scan_pos_cmp(BatchRingItemPos *pos1, BatchRingItemPos *pos2,
+				   ScanDirection direction)
+{
+	int8		batchdiff = (int8) (pos1->batch - pos2->batch);
+
+	if (batchdiff != 0)
+		return batchdiff;
+
+	/* Same batch, compare items */
+	if (ScanDirectionIsForward(direction))
+		return pos1->item - pos2->item;
+	else
+		return pos2->item - pos1->item;
+}
+
+/*
+ * Return the signed distance in batches between two positions.
+ *
+ * Positive means pos1 is ahead of pos2 by that many batches.
+ */
+static inline int8
+index_scan_pos_batch_distance(BatchRingItemPos *pos1, BatchRingItemPos *pos2)
+{
+	return (int8) (pos1->batch - pos2->batch);
 }
 
 /*
