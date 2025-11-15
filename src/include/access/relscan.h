@@ -123,6 +123,7 @@ typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 typedef struct IndexFetchTableData
 {
 	Relation	rel;
+	ReadStream *rs;
 } IndexFetchTableData;
 
 struct IndexScanInstrumentation;
@@ -184,6 +185,8 @@ typedef struct IndexScanBatchData
 	 * we don't need ... e.g. if we don't need heap tuples, we don't allocate
 	 * that. We couldn't do that with everything in one struct.
 	 */
+	char	   *itemsvisibility;	/* Index-only scan visibility cache */
+
 	IndexScanBatchPosItem items[FLEXIBLE_ARRAY_MEMBER];
 } IndexScanBatchData;
 
@@ -197,6 +200,9 @@ typedef struct IndexScanBatchPos
 } IndexScanBatchPos;
 
 typedef struct IndexScanDescData IndexScanDescData;
+typedef bool (*IndexPrefetchCallback) (IndexScanDescData * scan,
+									   void *arg,
+									   IndexScanBatchPos *pos);
 
 /*
  * State used by amgetbatch index AMs, which manage per-page batches of items
@@ -218,6 +224,26 @@ typedef struct IndexScanBatchState
 	bool		reset;
 
 	/*
+	 * Did we disable prefetching/use of a read stream because it didn't pay
+	 * for itself?
+	 */
+	bool		prefetchingLockedIn;
+	bool		disabled;
+
+	/*
+	 * During prefetching, currentPrefetchBlock is the table AM block number
+	 * that was returned by our read stream callback most recently.  Used to
+	 * suppress duplicate successive read stream block requests.
+	 *
+	 * Prefetching can still perform non-successive requests for the same
+	 * block number (in general we're prefetching in exactly the same order
+	 * that the scan will return table AM TIDs in).  We need to avoid
+	 * duplicate successive requests because table AMs expect to be able to
+	 * hang on to buffer pins across table_index_fetch_tuple calls.
+	 */
+	BlockNumber currentPrefetchBlock;
+
+	/*
 	 * Current scan direction, for the currently loaded batches. This is used
 	 * to load data in the read stream API callback, etc.
 	 */
@@ -225,6 +251,7 @@ typedef struct IndexScanBatchState
 
 	/* positions in the queue of batches (batch + item) */
 	IndexScanBatchPos readPos;	/* read position */
+	IndexScanBatchPos streamPos;	/* prefetch position (for read stream API) */
 	IndexScanBatchPos markPos;	/* mark/restore position */
 
 	IndexScanBatchData *markBatch;
@@ -241,6 +268,9 @@ typedef struct IndexScanBatchState
 
 	IndexScanBatchData **batches;
 
+	/* callback to skip prefetching in IOS etc. */
+	IndexPrefetchCallback prefetch;
+	void	   *prefetchArg;
 } IndexScanBatchState;
 
 /*

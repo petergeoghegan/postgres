@@ -382,6 +382,9 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 	if (batch->numKilled > 0)
 		_bt_killitems(scan, batch);
 
+	if (batch->itemsvisibility)
+		pfree(batch->itemsvisibility);
+
 	if (batch->currTuples)
 		pfree(batch->currTuples);
 
