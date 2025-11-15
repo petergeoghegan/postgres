@@ -51,13 +51,19 @@ index_batchscan_init(IndexScanDesc scan)
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
 	Assert(scan->indexRelation->rd_indam->amfreebatch != NULL);
 
+	/* Tracks scan direction used to return last item */
+	scan->batchringbuf.direction = NoMovementScanDirection;
+
 	index_scan_pos_invalidate(&scan->batchringbuf.scanPos);
 	index_scan_pos_invalidate(&scan->batchringbuf.markPos);
+	index_scan_pos_invalidate(&scan->batchringbuf.prefetchPos);
 
 	scan->batchringbuf.markBatch = NULL;
 	scan->batchringbuf.headBatch = 0;	/* initial head batch */
 	scan->batchringbuf.nextBatch = 0;	/* initial batch starts empty */
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
+	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
+	scan->batchringbuf.paused = false;
 
 	/*
 	 * Start by resolving visibility for just one item, then gradually ramp up
@@ -85,7 +91,11 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 
 	Assert(scan->xs_heapfetch);
 
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
+
 	index_scan_pos_invalidate(&batchringbuf->scanPos);
+	index_scan_pos_invalidate(&batchringbuf->prefetchPos);
 
 	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
@@ -134,6 +144,9 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	/* reset relevant batch state fields */
 	batchringbuf->headBatch = 0;	/* initial batch */
 	batchringbuf->nextBatch = 0;	/* initial batch is empty */
+
+	batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
+	batchringbuf->paused = false;
 
 	/* reset the visibility check batch size */
 	batchringbuf->vmItems = 1;
@@ -268,6 +281,19 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 	IndexScanBatch markBatch = batchringbuf->markBatch;
 	IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);
 
+	/*
+	 * Restoring a mark always required stopping prefetching/that we stop
+	 * using scan's read stream.  This is similar to the handling table AMs
+	 * implement to deal with a tuple-level change in the scan's direction.
+	 */
+	if (scan->xs_heapfetch->rs)
+	{
+		read_stream_end(scan->xs_heapfetch->rs);
+		scan->xs_heapfetch->rs = NULL;
+	}
+	index_scan_pos_invalidate(&batchringbuf->prefetchPos);
+	batchringbuf->paused = false;
+
 	if (scanBatch == markBatch)
 	{
 		/* markBatch is already scanBatch; needn't change batchringbuf */
@@ -327,6 +353,13 @@ index_batchscan_restore_pos(IndexScanDesc scan)
  * point on batchringbuf will look as if our new scan direction had been used
  * from the start.  This approach isn't particularly efficient, but it works
  * well enough for what ought to be a relatively rare occurrence.
+ *
+ * Caller must have invalidated the scan's read stream before calling here.
+ * That needs to happen as soon as the scan requests a tuple in whatever scan
+ * direction is opposite-to-current.  We only deal with the case where the
+ * scan backs up by enough items to cross a batch boundary (when the scan
+ * resumes scanning in its original direction/ends before crossing a boundary,
+ * there isn't any need to call here).
  */
 void
 tableam_util_batch_dirchange(IndexScanDesc scan)
