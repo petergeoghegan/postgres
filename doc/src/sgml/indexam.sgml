@@ -808,9 +808,12 @@ amgetbatch (IndexScanDesc scan,
   <para>
    The <function>amgetbatch</function> interface is an alternative to
    <function>amgettuple</function> that returns matching index entries in batches
-   rather than one at a time.  By returning all matching index entries from a
-   single index page together, the table AM gains visibility into which table
-   blocks will be needed in the near future.
+   rather than one at a time. This enables the table access method to
+   optimize table block access patterns and perform I/O prefetching.
+   By returning all matching index entries from a single index page together,
+   the table AM can readahead through the index and identify which table
+   blocks will be needed, allowing prefetching of table AM pages during
+   ordered index scans.
   </para>
 
   <para>
@@ -1341,6 +1344,60 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
    or vice versa, if its internal implementation is unsuited to one API or the other.
   </para>
 
+  <sect2 id="index-scanning-batches">
+   <title>Table AM Considerations for Batch Scanning</title>
+
+   <para>
+    This section is primarily relevant to
+    <link linkend="tableam">table access method</link> authors.
+    When an index scan uses the <function>amgetbatch</function> interface,
+    the table AM is responsible for managing position state within the
+    <structname>IndexScanDesc</structname>'s
+    <structfield>batchringbuf</structfield> and for controlling when
+    buffer pins on index pages are released.
+   </para>
+
+   <para>
+    The <structfield>scanPos</structfield> field within
+    <structfield>batchringbuf</structfield> tracks which batch and item within
+    that batch will be returned next to the executor.  The table AM must advance
+    <structfield>scanPos</structfield> as tuples are returned by
+    <function>table_index_getnext_slot</function>.  The core code may also
+    modify this field during operations such as mark/restore.
+   </para>
+
+   <para>
+    The <structfield>prefetchPos</structfield> field tracks the position used
+    for I/O prefetching.  It is generally advanced by initializing it from
+    <structfield>scanPos</structfield> within a read stream callback, allowing
+    the table AM to prefetch table blocks pointed to by items that are well
+    ahead of the current scan position.  Initially
+    <structfield>prefetchPos</structfield> starts at
+    <structfield>scanPos</structfield>, but as the read stream ramps up it can
+    get far ahead &mdash; spanning multiple index pages if necessary to
+    maintain an optimal I/O prefetch distance for table block reads.  A major
+    goal of the <function>amgetbatch</function> interface is to allow the
+    table AM to prefetch without being limited to items from the current
+    <structfield>scanPos</structfield> batch's index leaf page.
+   </para>
+
+   <para>
+    Both <structfield>scanPos</structfield> and
+    <structfield>prefetchPos</structfield> are controlled by the table AM and
+    core code; index access methods should not access or manipulate these
+    fields.  See the <filename>src/backend/access/heap/</filename>
+    implementation for a reference example.
+   </para>
+
+   <para>
+    Buffer pins on index pages returned by <function>amgetbatch</function> are
+    managed by the table AM.  See the <function>amgetbatch</function> and
+    <function>amkillitemsbatch</function> descriptions in <xref linkend="index-functions"/>
+    for details.
+   </para>
+
+  </sect2>
+
  </sect1>
 
  <sect1 id="index-locking">
@@ -1434,31 +1491,39 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
    This solution requires that <function>amgettuple</function> index scans be
    <quote>synchronous</quote>: the table AM must fetch each heap tuple
    immediately after scanning the corresponding index entry.  This is
-   expensive for a number of reasons.  An
-   <quote>asynchronous</quote> scan in which we collect many TIDs from the
-   index, and only visit the heap tuples sometime later, requires much less
-   index locking overhead and can allow a more efficient heap access pattern.
+   expensive for a number of reasons.  The
+   <function>amgetbatch</function> interface, by contrast, was designed to
+   allow scans to be <quote>asynchronous</quote>: by collecting batches of
+   TIDs from multiple index pages, the table AM can prefetch the corresponding
+   table blocks well ahead of the current scan position (using asynchronous
+   I/O when available), requiring much less index locking overhead and allowing
+   a more efficient heap access pattern.  Not all scans end up being
+   asynchronous in practice, but the interface is designed to allow it.
    Per the above analysis, we must use the synchronous approach for
    non-MVCC-compliant snapshots, but an asynchronous scan is workable
    for a query using an MVCC snapshot.
   </para>
 
   <para>
-   With <function>amgetbatch</function> scans, the table AM controls when
-   buffer pins on index pages are dropped rather than the index AM.
-   In practice, the heap table AM (and any table AM with similar concurrency
-   rules) usually drops pins eagerly for MVCC snapshot scans, but retains
-   pins for non-MVCC snapshot scans.  Index-only scans may retain pins in
-   some cases, while plain index scans that use an MVCC snapshot always drop
-   their pins eagerly.  Index access methods that implement
-   <function>amgetbatch</function> do not control when pins are dropped; that
-   decision is delegated to the table AM.
+   Because the table AM reads multiple index leaf pages ahead via
+   <function>amgetbatch</function> to facilitate this prefetching, it cannot
+   practically hold pins on all those pages simultaneously.  Therefore,
+   I/O prefetching with
+   <function>amgetbatch</function> is only possible when an MVCC-compliant
+   snapshot is in use.  In practice, the heap table AM (and any table AM
+   with similar concurrency rules) usually drops pins eagerly for MVCC
+   snapshot scans, but retains pins for non-MVCC snapshot scans.  Index-only
+   scans may retain pins in some cases, while plain index scans that use an
+   MVCC snapshot always drop their pins eagerly.  Index access methods that
+   implement <function>amgetbatch</function> do not control when pins are
+   dropped; that decision is delegated to the table AM.
   </para>
 
   <para>
-   In an <function>amgetbitmap</function> index scan, the access method does
-   not keep an index pin on any of the returned tuples.  Therefore
-   it is only safe to use such scans with MVCC-compliant snapshots.
+   Similarly, an <function>amgetbitmap</function> index scan is inherently
+   asynchronous: all matching TIDs are collected into a bitmap before any heap
+   access begins.  Such scans therefore require an MVCC-compliant snapshot,
+   and there is no need for the access method to hold index page pins.
   </para>
 
   <para>

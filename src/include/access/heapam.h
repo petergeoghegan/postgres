@@ -123,6 +123,19 @@ typedef struct IndexFetchHeapData
 	Buffer		xs_vmbuf;		/* visibility map buffer */
 	int			xs_vm_items;	/* # items to resolve visibility info for */
 
+	/* For batch index scans that use read stream for prefetching */
+	ReadStream *xs_read_stream;
+
+	/*
+	 * The read stream is allocated at the beginning of the scan and reset on
+	 * rescan or when the scan direction changes. The scan direction is saved
+	 * each time a new tuple is requested. If the scan direction changes from
+	 * one tuple to the next, the read stream releases all previously pinned
+	 * buffers and resets the prefetch block.
+	 */
+	ScanDirection xs_read_stream_dir;	/* index scan direction */
+	BlockNumber xs_prefetch_block;	/* last block returned to xs_read_stream */
+	bool		xs_paused;		/* paused until next batch is read? */
 	bool		xs_lastinblock; /* last TID on this block in current batch? */
 
 	/* NB: if xs_cbuf or vmbuf are not InvalidBuffer, we hold a pin */
