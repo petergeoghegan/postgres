@@ -74,11 +74,16 @@ index_batch_init(IndexScanDesc scan)
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
 	scan->finished = false;
+	scan->ringbuf->reset = false;
+	scan->ringbuf->prefetchingLockedIn = false;
+	scan->ringbuf->disabled = false;
+	scan->ringbuf->currentPrefetchBlock = InvalidBlockNumber;
 	scan->ringbuf->direction = NoMovementScanDirection;
 
 	/* positions in the ring buffer of batches */
 	batch_reset_pos(&scan->ringbuf->scanPos);
 	batch_reset_pos(&scan->ringbuf->markPos);
+	batch_reset_pos(&scan->ringbuf->prefetchPos);
 
 	scan->ringbuf->markBatch = NULL;
 	scan->ringbuf->headBatch = 0;	/* initial head batch */
@@ -107,9 +112,12 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batch_assert_batches_valid(scan);
 	batch_debug_print_batches("index_batch_reset", scan);
 	Assert(scan->xs_heapfetch);
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
 
 	/* reset the positions */
 	batch_reset_pos(&ringbuf->scanPos);
+	batch_reset_pos(&ringbuf->prefetchPos);
 
 	/*
 	 * With "complete" reset, make sure to also free the marked batch, either
@@ -153,6 +161,8 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	ringbuf->nextBatch = 0;		/* initial batch is empty */
 
 	scan->finished = false;
+	ringbuf->reset = false;
+	ringbuf->currentPrefetchBlock = InvalidBlockNumber;
 
 	batch_assert_batches_valid(scan);
 }
@@ -213,9 +223,13 @@ index_batch_restore_pos(IndexScanDesc scan)
 {
 	BatchRingBuffer *ringbuf = scan->ringbuf;
 	BatchRingItemPos *markPos = &ringbuf->markPos;
-	BatchRingItemPos *scanPos = &ringbuf->scanPos ;
 	BatchIndexScan markBatch = ringbuf->markBatch;
 
+	/*
+	 * XXX Disable this optimization when I/O prefetching is in use, at least
+	 * until the possible interactions with prefetchPos are fully understood.
+	 */
+#if 0
 	if (scanPos->batch == markPos->batch &&
 		scanPos->batch == ringbuf->headBatch)
 	{
@@ -226,6 +240,7 @@ index_batch_restore_pos(IndexScanDesc scan)
 		scanPos->item = markPos->item;
 		return;
 	}
+#endif
 
 	/*
 	 * Call amposreset to let index AM know to invalidate any private state

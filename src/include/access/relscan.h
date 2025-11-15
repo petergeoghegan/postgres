@@ -20,6 +20,7 @@
 #include "nodes/tidbitmap.h"
 #include "port/atomics.h"
 #include "storage/buf.h"
+#include "storage/read_stream.h"
 #include "storage/relfilelocator.h"
 #include "storage/spin.h"
 #include "utils/relcache.h"
@@ -124,6 +125,7 @@ typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 typedef struct IndexFetchTableData
 {
 	Relation	rel;
+	ReadStream *rs;
 } IndexFetchTableData;
 
 /*
@@ -221,8 +223,14 @@ typedef struct BatchIndexScanData *BatchIndexScan;
  * Maximum number of batches (leaf pages) we can keep in memory.  We need a
  * minimum of two, since we'll only consider releasing one batch when another
  * is read.
+ *
+ * The choice of 64 batches is arbitrary.  It's about 1MB of data with 8KB
+ * pages (512kB for pages, and then a bit of overhead). We should not really
+ * need this many batches in most cases, though. The read stream looks ahead
+ * just enough to queue enough IOs, adjusting the distance (TIDs, but
+ * ultimately the number of future batches) to meet that.
  */
-#define INDEX_SCAN_MAX_BATCHES		2
+#define INDEX_SCAN_MAX_BATCHES		64
 #define INDEX_SCAN_CACHE_BATCHES	2
 #define INDEX_SCAN_BATCH_COUNT(scan) \
 	((scan)->ringbuf->nextBatch - (scan)->ringbuf->headBatch)
@@ -270,15 +278,46 @@ typedef struct BatchIndexScanData *BatchIndexScan;
  * matches in.  However, table AMs are free to fetch table tuples in whatever
  * order is most convenient/efficient -- provided that such reordering cannot
  * affect the order that table_index_getnext_slot later returns tuples in.
+ *
+ * This data structure also provides table AMs with a way to read ahead of the
+ * current read position by _multiple_ batches/index pages.  The further out
+ * the table AM reads ahead like this, the further it can see into the future.
+ * That way the table AM is able to reorder work as aggressively as desired.
+ * For example, index scans sometimes need to readahead by as many as a few
+ * dozen amgetbatch batches in order to maintain an optimal I/O prefetch
+ * distance (distance for reading table blocks/fetching table tuples).
  */
 typedef struct BatchRingBuffer
 {
+	bool		reset;
+
+	/*
+	 * Did we disable prefetching/use of a read stream because it didn't pay
+	 * for itself?
+	 */
+	bool		prefetchingLockedIn;
+	bool		disabled;
+
+	/*
+	 * During prefetching, currentPrefetchBlock is the table AM block number
+	 * that was returned by our read stream callback most recently.  Used to
+	 * suppress duplicate successive read stream block requests.
+	 *
+	 * Prefetching can still perform non-successive requests for the same
+	 * block number (in general we're prefetching in exactly the same order
+	 * that the scan will return table AM TIDs in).  We need to avoid
+	 * duplicate successive requests because table AMs expect to be able to
+	 * hang on to buffer pins across table_index_fetch_tuple calls.
+	 */
+	BlockNumber currentPrefetchBlock;
+
 	/* Current scan direction, for the currently loaded batches */
 	ScanDirection direction;
 
 	/* current positions in batches[] for scan */
 	BatchRingItemPos scanPos;	/* scan's read position */
 	BatchRingItemPos markPos;	/* mark/restore position */
+	BatchRingItemPos prefetchPos;	/* prefetching position */
 
 	BatchIndexScan markBatch;
 
