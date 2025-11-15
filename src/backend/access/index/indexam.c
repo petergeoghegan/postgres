@@ -468,7 +468,7 @@ index_restrpos(IndexScanDesc scan)
 	CHECK_SCAN_PROCEDURE(amgetbatch);
 	CHECK_SCAN_PROCEDURE(amposreset);
 
-	/* release resources (like buffer pins) from table accesses */
+	/* release resources (like read stream/buffer pins) from table accesses */
 	if (scan->xs_heapfetch)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
