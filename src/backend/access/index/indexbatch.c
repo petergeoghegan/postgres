@@ -36,6 +36,9 @@
 
 /* private batching utility functions */
 static bool batch_getnext(IndexScanDesc scan, ScanDirection direction);
+static BlockNumber batch_getnext_stream(ReadStream *stream,
+										void *callback_private_data,
+										void *per_buffer_data);
 static pg_attribute_always_inline bool batch_advance_pos(IndexScanDesc scan,
 														 BatchQueueItemPos *pos,
 														 ScanDirection direction);
@@ -52,8 +55,14 @@ static void batch_debug_print_batches(const char *label, IndexScanDesc scan);
  * Maximum number of batches (leaf pages) we can keep in memory.  We need a
  * minimum of two, since we'll only consider releasing one batch when another
  * is read.
+ *
+ * The choice of 64 batches is arbitrary.  It's about 1MB of data with 8KB
+ * pages (512kB for pages, and then a bit of overhead). We should not really
+ * need this many batches in most cases, though. The read stream looks ahead
+ * just enough to queue enough IOs, adjusting the distance (TIDs, but
+ * ultimately the number of future batches) to meet that.
  */
-#define INDEX_SCAN_MAX_BATCHES	2
+#define INDEX_SCAN_MAX_BATCHES	64
 
 #define INDEX_SCAN_BATCH_COUNT(scan) \
 	((scan)->batchqueue->nextBatch - (scan)->batchqueue->headBatch)
@@ -73,6 +82,12 @@ static void batch_debug_print_batches(const char *label, IndexScanDesc scan);
 /* Is the position invalid/undefined? */
 #define INDEX_SCAN_POS_INVALID(pos) \
 		(((pos)->batch == -1) && ((pos)->item == -1))
+
+/*
+ * Controls when we cancel use of a read stream to do prefetching
+ */
+#define INDEX_SCAN_MIN_DISTANCE_NBATCHES	20
+#define INDEX_SCAN_MIN_TUPLE_DISTANCE		7
 
 #ifdef INDEXAM_DEBUG
 #define DEBUG_LOG(...) elog(AmRegularBackendProcess() ? NOTICE : DEBUG2, __VA_ARGS__)
@@ -122,10 +137,16 @@ index_batch_init(IndexScanDesc scan)
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
 	scan->batchqueue->finished = false;
+	scan->batchqueue->reset = false;
+	scan->batchqueue->prefetchingLockedIn = false;
+	scan->batchqueue->disabled = false;
+	scan->batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchqueue->direction = NoMovementScanDirection;
+
 	/* positions in the queue of batches */
 	batch_reset_pos(scan, &scan->batchqueue->readPos);
 	batch_reset_pos(scan, &scan->batchqueue->markPos);
+	batch_reset_pos(scan, &scan->batchqueue->streamPos);
 
 	scan->batchqueue->markBatch = NULL;
 	scan->batchqueue->maxBatches = INDEX_SCAN_MAX_BATCHES;
@@ -138,6 +159,8 @@ index_batch_init(IndexScanDesc scan)
 
 	scan->batchqueue->batches = palloc(sizeof(BatchIndexScan) *
 									   scan->batchqueue->maxBatches);
+	scan->batchqueue->prefetch = NULL;
+	scan->batchqueue->prefetchArg = NULL;
 }
 
 /* ----------------
@@ -164,6 +187,17 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/* Initialize direction on first call */
 	if (batchqueue->direction == NoMovementScanDirection)
 		batchqueue->direction = direction;
+
+	/*
+	 * Handle cancelling the use of the read stream for prefetching
+	 */
+	else if (unlikely(batchqueue->disabled && scan->xs_heapfetch->rs))
+	{
+		batch_reset_pos(scan, &batchqueue->streamPos);
+
+		read_stream_reset(scan->xs_heapfetch->rs);
+		scan->xs_heapfetch->rs = NULL;
+	}
 
 	/*
 	 * Handle change of scan direction (reset stream, ...).
@@ -193,6 +227,11 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		 */
 		batchqueue->direction = direction;
 		batchqueue->finished = false;
+		batchqueue->currentPrefetchBlock = InvalidBlockNumber;
+
+		batch_reset_pos(scan, &batchqueue->streamPos);
+		if (scan->xs_heapfetch->rs)
+			read_stream_reset(scan->xs_heapfetch->rs);
 	}
 
 	/* shortcut for the read position, for convenience */
@@ -244,6 +283,38 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 				BatchIndexScan headBatch = INDEX_SCAN_BATCH(scan,
 															batchqueue->headBatch);
 
+				/*
+				 * XXX When advancing readPos, the streamPos may get behind as
+				 * we're only advancing it when actually requesting heap
+				 * blocks. But we may not do that often enough - e.g. IOS may
+				 * not need to access all-visible heap blocks, so the
+				 * read_next callback does not get invoked for a long time.
+				 * It's possible the stream gets so far behind the position
+				 * that is becomes invalid, as we already removed the batch.
+				 * But that means we don't need any heap blocks until the
+				 * current read position -- if we did, we would not be in this
+				 * situation (or it's a sign of a bug, as those two places are
+				 * expected to be in sync). So if the streamPos still points
+				 * at the batch we're about to free, reset the position --
+				 * we'll set it to readPos in the read_next callback later on.
+				 *
+				 * XXX This can happen after the queue gets full, we "pause"
+				 * the stream, and then reset it to continue. But I think that
+				 * just increases the probability of hitting the issue, it's
+				 * just more chance to to not advance the streamPos, which
+				 * depends on when we try to fetch the first heap block after
+				 * calling read_stream_reset().
+				 *
+				 * FIXME Simplify/clarify/shorten this comment. Can it
+				 * actually happen, if we never pull from the stream in IOS?
+				 * We probably don't look ahead for the first call.
+				 */
+				if (unlikely(batchqueue->streamPos.batch == batchqueue->headBatch))
+				{
+					DEBUG_LOG("batch_pos_reset called early (streamPos.batch == headBatch)");
+					batch_reset_pos(scan, &batchqueue->streamPos);
+				}
+
 				DEBUG_LOG("batch_getnext_tid free headBatch %p headBatch %d nextBatch %d",
 						  headBatch, batchqueue->headBatch, batchqueue->nextBatch);
 
@@ -270,8 +341,41 @@ index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		}
 
 		/*
+		 * We failed to advance, i.e. we ran out of currently loaded batches.
+		 * So if we filled the queue, this is a good time to reset the stream
+		 * (before we try loading the next batch).
+		 */
+		if (unlikely(batchqueue->reset))
+		{
+			DEBUG_LOG("resetting read stream readPos %d,%d",
+					  readPos->batch, readPos->index);
+
+			batchqueue->reset = false;
+			batchqueue->currentPrefetchBlock = InvalidBlockNumber;
+
+			/*
+			 * Need to reset the stream position, it might be too far behind.
+			 * Ultimately we want to set it to readPos, but we can't do that
+			 * yet - readPos still point sat the old batch, so just reset it
+			 * and we'll init it to readPos later in the callback.
+			 */
+			batch_reset_pos(scan, &batchqueue->streamPos);
+
+			if (scan->xs_heapfetch->rs)
+				read_stream_reset(scan->xs_heapfetch->rs);
+		}
+
+		/*
 		 * Failed to advance the read position, so try reading the next batch.
 		 * If this fails, we're done - there's nothing more to load.
+		 *
+		 * Most of the batches should be loaded from read_stream_next_buffer,
+		 * but we need to call batch_getnext here too, for two reasons. First,
+		 * the read_stream only gets working after we try fetching the first
+		 * heap tuple, so we need to load the initial batch (the head).
+		 * Second, while most batches will be preloaded by the stream thanks
+		 * to prefetching, it's possible to set effective_io_concurrency=0,
+		 * and in that case all the batches get loaded from here.
 		 */
 		if (!batch_getnext(scan, direction))
 			break;
@@ -337,7 +441,23 @@ batch_getnext(IndexScanDesc scan, ScanDirection direction)
 	if (batchqueue->finished)
 		return false;
 
-	Assert(!INDEX_SCAN_BATCH_FULL(scan));
+	/*
+	 * If we already used the maximum number of batch slots available, it's
+	 * pointless to try loading another one. This can happen for various
+	 * reasons, e.g. for index-only scans on all-visible table, or skipping
+	 * duplicate blocks on perfectly correlated indexes, etc.
+	 *
+	 * We could enlarge the array to allow more batches, but that's futile, we
+	 * can always construct a case using more memory. Not only it would risk
+	 * OOM, it'd also be inefficient because this happens early in the scan
+	 * (so it'd interfere with LIMIT queries).
+	 */
+	if (INDEX_SCAN_BATCH_FULL(scan))
+	{
+		DEBUG_LOG("batch_getnext: ran out of space for batches");
+		scan->batchqueue->reset = true;
+		return false;
+	}
 
 	batch_debug_print_batches("batch_getnext / start", scan);
 
@@ -362,6 +482,14 @@ batch_getnext(IndexScanDesc scan, ScanDirection direction)
 
 		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
 				  batchqueue->headBatch, batchqueue->nextBatch, batch);
+
+		/* Delay initializing stream until reading from scan's second batch */
+		if (priorbatch && !scan->xs_heapfetch->rs && !batchqueue->disabled &&
+			enable_indexscan_prefetch)
+			scan->xs_heapfetch->rs =
+				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
+										   scan->heapRelation, MAIN_FORKNUM,
+										   batch_getnext_stream, scan, 0);
 	}
 	else
 		batchqueue->finished = true;
@@ -371,6 +499,210 @@ batch_getnext(IndexScanDesc scan, ScanDirection direction)
 	batch_debug_print_batches("batch_getnext / end", scan);
 
 	return (batch != NULL);
+}
+
+/*
+ * batch_getnext_stream
+ *		return the next block to pass to the read stream
+ *
+ * This assumes the "current" scan direction, requested by the caller.
+ *
+ * If the direction changes before consuming all blocks, we'll reset the stream
+ * and start from scratch. The scan direction change is handled elsewhere.
+ * Here we rely on having the correct value in batchqueue->direction.
+ *
+ * The position of the read_stream is stored in streamPos, which may be ahead of
+ * the current readPos (which is what got consumed by the scan).
+ *
+ * The streamPos can however also get behind readPos too, when some blocks are
+ * skipped and not returned to the read_stream. An example is an index scan on
+ * a correlated index, with many duplicate blocks are skipped, or an IOS where
+ * all-visible blocks are skipped.
+ *
+ * The initial batch is always loaded from batch_getnext_tid(). We don't
+ * get here until the first read_stream_next_buffer() call, when pulling the
+ * first heap tuple from the stream. After that, most batches should be loaded
+ * by this callback, driven by the read_stream look-ahead distance. However,
+ * with disabled prefetching (that is, with effective_io_concurrency=0), all
+ * batches will be loaded in batch_getnext_tid.
+ *
+ * It's possible we got here only fairly late in the scan, e.g. if many tuples
+ * got skipped in the index-only scan, etc. In this case just use the read
+ * position as a streamPos starting point.
+ *
+ * XXX It seems the readPos/streamPos comments should be placed elsewhere. The
+ * read_stream callback does not seem like the right place.
+ */
+static BlockNumber
+batch_getnext_stream(ReadStream *stream, void *callback_private_data,
+					 void *per_buffer_data)
+{
+	IndexScanDesc scan = (IndexScanDesc) callback_private_data;
+	BatchQueue  *batchqueue = scan->batchqueue;
+	BatchQueueItemPos  *streamPos = &batchqueue->streamPos;
+	ScanDirection direction = batchqueue->direction;
+
+	/* By now we should know the direction of the scan. */
+	Assert(direction != NoMovementScanDirection);
+
+	/*
+	 * The read position (readPos) has to be valid.
+	 *
+	 * We initialize/advance it before even attempting to read the heap tuple,
+	 * and it gets invalidated when we reach the end of the scan (but then we
+	 * don't invoke the callback again).
+	 *
+	 * XXX This applies to the readPos. We'll use streamPos to determine which
+	 * blocks to pass to the stream, and readPos may be used to initialize it.
+	 */
+	batch_assert_pos_valid(scan, &batchqueue->readPos);
+
+	/*
+	 * Try to advance the streamPos to the next item, and if that doesn't
+	 * succeed (if there are no more items in loaded batches), try loading the
+	 * next one.
+	 *
+	 * FIXME Unlike batch_getnext_tid, this can loop more than twice. If many
+	 * blocks get skipped due to currentPrefetchBlock or all-visibility (per
+	 * the "prefetch" callback), we get to load additional batches. In the
+	 * worst case we hit the INDEX_SCAN_MAX_BATCHES limit and have to "pause"
+	 * the stream.
+	 */
+	while (true)
+	{
+		bool		advanced = false;
+
+		/*
+		 * If the stream position has not been initialized yet, set it to the
+		 * current read position. This is the item the caller is trying to
+		 * read, so it's what we should return to the stream.
+		 */
+		if (INDEX_SCAN_POS_INVALID(streamPos))
+		{
+			*streamPos = batchqueue->readPos;
+			advanced = true;
+		}
+		else if (batch_advance_pos(scan, streamPos, direction))
+		{
+			advanced = true;
+		}
+
+		/*
+		 * FIXME Maybe check the streamPos is not behind readPos?
+		 *
+		 * FIXME Actually, could streamPos get stale/lagging behind readPos,
+		 * and if yes how much. Could it get so far behind to not be valid,
+		 * pointing at a freed batch? In that case we can't even advance it,
+		 * and we should just initialize it to readPos. We might do that
+		 * anyway, I guess, just to save on "pointless" advances (it must
+		 * agree with readPos, we can't allow "retroactively" changing the
+		 * block sequence).
+		 */
+
+		/*
+		 * If we advanced the position, either return the block for the TID,
+		 * or skip it (and then try advancing again).
+		 *
+		 * The block may be "skipped" for two reasons. First, the caller may
+		 * define a "prefetch" callback that tells us to skip items (IOS does
+		 * this to skip all-visible pages). Second, currentPrefetchBlock is
+		 * used to skip duplicate block numbers (a sequence of TIDS for the
+		 * same block).
+		 */
+		if (advanced)
+		{
+			BatchIndexScan streamBatch = INDEX_SCAN_BATCH(scan, streamPos->batch);
+			ItemPointer tid = &streamBatch->items[streamPos->item].heapTid;
+
+			DEBUG_LOG("batch_getnext_stream: index %d TID (%u,%u)",
+					  streamPos->index,
+					  ItemPointerGetBlockNumber(tid),
+					  ItemPointerGetOffsetNumber(tid));
+
+			/*
+			 * If there's a prefetch callback, use it to decide if we need to
+			 * read the next block.
+			 *
+			 * We need to do this before checking currentPrefetchBlock; it's
+			 * essential that the VM cache used by index-only scans is
+			 * initialized here.
+			 */
+			if (batchqueue->prefetch &&
+				!batchqueue->prefetch(scan, batchqueue->prefetchArg, streamPos))
+			{
+				DEBUG_LOG("batch_getnext_stream: skip block (callback)");
+				continue;
+			}
+
+			/* same block as before, don't need to read it */
+			if (batchqueue->currentPrefetchBlock == ItemPointerGetBlockNumber(tid))
+			{
+				DEBUG_LOG("batch_getnext_stream: skip block (currentPrefetchBlock)");
+				continue;
+			}
+
+			batchqueue->currentPrefetchBlock = ItemPointerGetBlockNumber(tid);
+
+			return batchqueue->currentPrefetchBlock;
+		}
+
+		/*
+		 * Couldn't advance the position, no more items in the loaded batches.
+		 * Try loading the next batch - if that succeeds, try advancing again
+		 * (this time the advance should work, but we may skip all the items).
+		 *
+		 * If we fail to load the next batch, we're done.
+		 */
+		if (!batch_getnext(scan, direction))
+			break;
+
+		/*
+		 * Consider disabling prefetching when we can't keep a sufficiently
+		 * large "index tuple distance" between readPos and streamPos.
+		 *
+		 * Only consider doing this when we're not on the scan's initial
+		 * batch, when readPos and streamPos share the same batch.
+		 */
+		if (!batchqueue->finished && !batchqueue->prefetchingLockedIn)
+		{
+			int			indexdiff;
+
+			if (streamPos->batch <= INDEX_SCAN_MIN_DISTANCE_NBATCHES)
+			{
+				/* Too early to check if prefetching should be disabled */
+			}
+			else if (batchqueue->readPos.batch == streamPos->batch)
+			{
+				BatchQueueItemPos *readPos = &batchqueue->readPos;
+
+				if (ScanDirectionIsForward(direction))
+					indexdiff = streamPos->item - readPos->item;
+				else
+				{
+					BatchIndexScan readBatch =
+						INDEX_SCAN_BATCH(scan, readPos->batch);
+
+					indexdiff = (readPos->item - readBatch->firstItem) -
+						(streamPos->item - readBatch->firstItem);
+				}
+
+				if (indexdiff < INDEX_SCAN_MIN_TUPLE_DISTANCE)
+				{
+					batchqueue->disabled = true;
+					return InvalidBlockNumber;
+				}
+				else
+				{
+					batchqueue->prefetchingLockedIn = true;
+				}
+			}
+			else
+				batchqueue->prefetchingLockedIn = true;
+		}
+	}
+
+	/* no more items in this scan */
+	return InvalidBlockNumber;
 }
 
 /* ----------------
@@ -397,9 +729,12 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 
 	/* With batching enabled, we should have a read stream. Reset it. */
 	Assert(scan->xs_heapfetch);
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
 
 	/* reset the positions */
 	batch_reset_pos(scan, &batchqueue->readPos);
+	batch_reset_pos(scan, &batchqueue->streamPos);
 
 	/*
 	 * With "complete" reset, make sure to also free the marked batch, either
@@ -446,6 +781,8 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batchqueue->nextBatch = 0;	/* initial batch is empty */
 
 	batchqueue->finished = false;
+	batchqueue->reset = false;
+	batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 
 	batch_assert_batches_valid(scan);
 }
@@ -887,6 +1224,7 @@ indexam_util_batch_alloc(IndexScanDesc scan, int maxitems, bool want_itup)
 		 * batches keep their killedItems allocation when recycled)
 		 */
 		batch->killedItems = NULL;
+		batch->itemsvisibility = NULL;	/* per-batch IOS visibility */
 	}
 
 	/* want_itup callers must get a currTuples space */
@@ -941,6 +1279,12 @@ indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch)
 			{
 				/* found empty slot, we're done */
 				scan->batchqueue->cache.batches[i] = batch;
+				if (batch->itemsvisibility)
+				{
+					/* Don't try to reuse item visibility cache */
+					pfree(batch->itemsvisibility);
+					batch->itemsvisibility = NULL;
+				}
 				return;
 			}
 		}
@@ -951,6 +1295,8 @@ indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch)
 		 */
 		if (batch->killedItems)
 			pfree(batch->killedItems);
+		if (batch->itemsvisibility)
+			pfree(batch->itemsvisibility);
 		if (batch->currTuples)
 			pfree(batch->currTuples);
 	}
@@ -959,6 +1305,7 @@ indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch)
 		/* amgetbitmap scan caller */
 		Assert(scan->heapRelation == NULL);
 		Assert(batch->killedItems == NULL);
+		Assert(batch->itemsvisibility == NULL);
 		Assert(batch->currTuples == NULL);
 	}
 
