@@ -455,6 +455,21 @@ typedef struct TableAmRoutine
 									   TupleTableSlot *slot);
 
 	/*
+	 * Read stream callback, used to perform I/O prefetching of table AM pages
+	 * during `index_getnext_slot` index scans.
+	 *
+	 * This callback is directly passed to read_stream_begin_relation, from
+	 * batch_getnext routine.  It will only be used during scans whose index
+	 * AM uses the amgetbatch interface.  (Scans with amgettuple-based index
+	 * AMs cannot reasonably be used for I/O prefetching, since its opaque
+	 * tuple-at-a-time interface makes it impossible to schedule index scan
+	 * work sensibly.)
+	 */
+	BlockNumber (*index_getnext_stream) (ReadStream *stream,
+										 void *callback_private_data,
+										 void *per_buffer_data);
+
+	/*
 	 * Fetch tuple at `tid` into `slot`, after doing a visibility test
 	 * according to `snapshot`. If a tuple was found and passed the visibility
 	 * test, return true, false otherwise.
