@@ -186,7 +186,7 @@ interface.  (See also, doc/src/sgml/indexam.sgml).
 Blocking VACUUM like this can be disruptive, so table AMs avoid it whenever
 possible.  The heap table AM usually drops leaf page pins right away, though
 not during scans that use a non-MVCC snapshot.  Index-only scans may also
-retain pins in some cases.
+retain pins in some cases, though prefetching requires dropping them.
 
 Opportunistic index tuple deletion performs the same page-level
 modifications as VACUUM, while only holding an exclusive lock.  This is
