@@ -59,11 +59,14 @@ index_batchscan_init(IndexScanDesc scan)
 	/* positions in the ring buffer of batches */
 	batch_reset_pos(&scan->batchringbuf->scanPos);
 	batch_reset_pos(&scan->batchringbuf->markPos);
+	batch_reset_pos(&scan->batchringbuf->prefetchPos);
 
 	scan->batchringbuf->markBatch = NULL;
 	scan->batchringbuf->headBatch = 0;	/* initial head batch */
 	scan->batchringbuf->nextBatch = 0;	/* initial batch starts empty */
 	memset(&scan->batchringbuf->cache, 0, sizeof(scan->batchringbuf->cache));
+	scan->batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
+	scan->batchringbuf->paused = false;
 }
 
 /*
@@ -82,8 +85,12 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	batch_assert_batches_valid(scan);
 	Assert(scan->xs_heapfetch);
 
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
+
 	/* reset the positions */
 	batch_reset_pos(&batchringbuf->scanPos);
+	batch_reset_pos(&batchringbuf->prefetchPos);
 
 	/*
 	 * With "complete" reset, make sure to also free the marked batch, either
@@ -126,6 +133,8 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	batchringbuf->nextBatch = 0;	/* initial batch is empty */
 
 	scan->finished = false;
+	batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
+	batchringbuf->paused = false;
 
 	batch_assert_batches_valid(scan);
 }
@@ -215,9 +224,13 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 {
 	BatchRingBuffer *batchringbuf = scan->batchringbuf;
 	BatchRingItemPos *markPos = &batchringbuf->markPos;
-	BatchRingItemPos *scanPos = &batchringbuf->scanPos ;
 	IndexScanBatch markBatch = batchringbuf->markBatch;
 
+	/*
+	 * XXX Disable this optimization when I/O prefetching is in use, at least
+	 * until the possible interactions with prefetchPos are fully understood.
+	 */
+#if 0
 	if (scanPos->batch == markPos->batch &&
 		scanPos->batch == batchringbuf->headBatch)
 	{
@@ -228,6 +241,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 		scanPos->item = markPos->item;
 		return;
 	}
+#endif
 
 	/*
 	 * Call amposreset to let index AM know to invalidate any private state
