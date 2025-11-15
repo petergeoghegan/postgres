@@ -292,8 +292,14 @@ extern void index_batch_end(IndexScanDesc scan);
  * Maximum number of batches (leaf pages) we can keep in memory.  We need a
  * minimum of two, since we'll only consider releasing one batch when another
  * is read.
+ *
+ * The choice of 64 batches is arbitrary.  It's about 1MB of data with 8KB
+ * pages (512kB for pages, and then a bit of overhead). We should not really
+ * need this many batches in most cases, though. The read stream looks ahead
+ * just enough to queue enough IOs, adjusting the distance (TIDs, but
+ * ultimately the number of future batches) to meet that.
  */
-#define INDEX_SCAN_MAX_BATCHES	2
+#define INDEX_SCAN_MAX_BATCHES	64
 
 #define INDEX_SCAN_BATCH_COUNT(scan) \
 	((scan)->batchqueue->nextBatch - (scan)->batchqueue->headBatch)

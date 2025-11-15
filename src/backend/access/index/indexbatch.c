@@ -77,11 +77,16 @@ index_batch_init(IndexScanDesc scan)
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
 	scan->batchqueue->finished = false;
+	scan->batchqueue->reset = false;
+	scan->batchqueue->prefetchingLockedIn = false;
+	scan->batchqueue->disabled = false;
+	scan->batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchqueue->direction = NoMovementScanDirection;
 
 	/* positions in the queue of batches */
 	batch_reset_pos(&scan->batchqueue->readPos);
 	batch_reset_pos(&scan->batchqueue->markPos);
+	batch_reset_pos(&scan->batchqueue->streamPos);
 
 	scan->batchqueue->markBatch = NULL;
 	scan->batchqueue->maxBatches = INDEX_SCAN_MAX_BATCHES;
@@ -132,7 +137,23 @@ batch_getnext(IndexScanDesc scan, ScanDirection direction)
 	if (batchqueue->finished)
 		return false;
 
-	Assert(!INDEX_SCAN_BATCH_FULL(scan));
+	/*
+	 * If we already used the maximum number of batch slots available, it's
+	 * pointless to try loading another one. This can happen for various
+	 * reasons, e.g. for index-only scans on all-visible table, or skipping
+	 * duplicate blocks on perfectly correlated indexes, etc.
+	 *
+	 * We could enlarge the array to allow more batches, but that's futile, we
+	 * can always construct a case using more memory. Not only it would risk
+	 * OOM, it'd also be inefficient because this happens early in the scan
+	 * (so it'd interfere with LIMIT queries).
+	 */
+	if (INDEX_SCAN_BATCH_FULL(scan))
+	{
+		DEBUG_LOG("batch_getnext: ran out of space for batches");
+		scan->batchqueue->reset = true;
+		return false;
+	}
 
 	batch_debug_print_batches("batch_getnext / start", scan);
 
@@ -157,6 +178,16 @@ batch_getnext(IndexScanDesc scan, ScanDirection direction)
 
 		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
 				  batchqueue->headBatch, batchqueue->nextBatch, batch);
+
+		/* Delay initializing stream until reading from scan's second batch */
+		if (priorbatch && !scan->xs_heapfetch->rs && !batchqueue->disabled &&
+			!scan->xs_want_itup && /* XXX prefetching disabled for IoS, for now */
+			enable_indexscan_prefetch)
+			scan->xs_heapfetch->rs =
+				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
+										   scan->heapRelation, MAIN_FORKNUM,
+										   scan->xs_heapfetch->batch_getnext_stream,
+										   scan, 0);
 	}
 	else
 		batchqueue->finished = true;
@@ -192,9 +223,12 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 
 	/* With batching enabled, we should have a read stream. Reset it. */
 	Assert(scan->xs_heapfetch);
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
 
 	/* reset the positions */
 	batch_reset_pos(&batchqueue->readPos);
+	batch_reset_pos(&batchqueue->streamPos);
 
 	/*
 	 * With "complete" reset, make sure to also free the marked batch, either
@@ -241,6 +275,8 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batchqueue->nextBatch = 0;	/* initial batch is empty */
 
 	batchqueue->finished = false;
+	batchqueue->reset = false;
+	batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 
 	batch_assert_batches_valid(scan);
 }
@@ -434,9 +470,13 @@ index_batch_restore_pos(IndexScanDesc scan)
 {
 	BatchQueue *batchqueue = scan->batchqueue;
 	BatchQueueItemPos *markPos = &batchqueue->markPos;
-	BatchQueueItemPos *readPos = &batchqueue->readPos;
 	BatchIndexScan markBatch = batchqueue->markBatch;
 
+	/*
+	 * XXX Disable this optimization when I/O prefetching is in use, at least
+	 * until the possible interactions with streamPos are fully understood.
+	 */
+#if 0
 	if (readPos->batch == markPos->batch &&
 		readPos->batch == batchqueue->headBatch)
 	{
@@ -447,6 +487,7 @@ index_batch_restore_pos(IndexScanDesc scan)
 		readPos->item = markPos->item;
 		return;
 	}
+#endif
 
 	/*
 	 * Call amposreset to let index AM know to invalidate any private state
