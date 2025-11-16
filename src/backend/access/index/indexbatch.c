@@ -370,7 +370,6 @@ batch_getnext_stream(ReadStream *stream, void *callback_private_data,
 			/* same block as before, don't need to read it */
 			if (batchqueue->currentPrefetchBlock == ItemPointerGetBlockNumber(tid))
 			{
-				read_stream_skip_block(stream);
 				DEBUG_LOG("batch_getnext_stream: skip block (currentPrefetchBlock)");
 				continue;
 			}
@@ -1147,23 +1146,4 @@ batch_debug_print_batches(const char *label, IndexScanDesc scan)
 				  batch->lastItem, batch->numKilled);
 	}
 #endif
-}
-
-/*
- * fetch explain stats from the associated read stream (if any)
- *
- * XXX not pretty, but good enough for development
- */
-void
-index_get_prefetch_stats(IndexScanDesc scan, int64 *accum, int64 *count,
-						 int64 *stalls, int64 *resets, int64 *skips,
-						 int64 *ungets, int64 *forwarded, int64 *merged,
-						 int64 *histogram)
-{
-	if (scan->xs_heapfetch->rs == NULL)
-		return;
-
-	read_stream_prefetch_stats(scan->xs_heapfetch->rs,
-							   accum, count, stalls, resets, skips, ungets,
-							   forwarded, merged, histogram);
 }
