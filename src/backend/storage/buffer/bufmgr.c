@@ -4626,13 +4626,18 @@ BufferIsPermanent(Buffer buffer)
 
 /*
  * BufferGetLSNAtomic
- *		Retrieves the LSN of the buffer atomically using a buffer header lock.
- *		This is necessary for some callers who may not have an exclusive lock
- *		on the buffer.
+ *		Retrieves the LSN of the buffer atomically.
+ *
+ *		On platforms without 8 byte atomic reads/write we need to take a
+ *		header lock. This is necessary for some callers who may not have an
+ *		exclusive lock on the buffer.
  */
 XLogRecPtr
 BufferGetLSNAtomic(Buffer buffer)
 {
+#ifdef PG_HAVE_8BYTE_SINGLE_COPY_ATOMICITY
+	return PageGetLSN(BufferGetPage(buffer));
+#else
 	char	   *page = BufferGetPage(buffer);
 	BufferDesc *bufHdr;
 	XLogRecPtr	lsn;
@@ -4653,6 +4658,7 @@ BufferGetLSNAtomic(Buffer buffer)
 	UnlockBufHdr(bufHdr);
 
 	return lsn;
+#endif
 }
 
 /* ---------------------------------------------------------------------
