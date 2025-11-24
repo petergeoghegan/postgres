@@ -119,9 +119,16 @@ typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
  * for such scans, which needs to be embedded in the respective struct for
  * individual AMs.
  */
+struct TupleTableSlot;
 typedef struct IndexFetchTableData
 {
-	Relation	rel;
+	Relation	rel;			/* heap relation being scanned */
+	Buffer		vmbuf;			/* visibility map buffer */
+	struct TupleTableSlot *ioss_TableSlot;	/* transient slot for fetching
+											 * tuples to check visibility
+											 * during index-only scans */
+	int			nheapaccesses;	/* number of heap accesses, for
+								 * instrumentation/metrics */
 } IndexFetchTableData;
 
 /*
