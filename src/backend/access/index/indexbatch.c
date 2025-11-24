@@ -35,12 +35,7 @@
 #include "utils/memdebug.h"
 
 /* private batching utility functions */
-static bool batch_getnext(IndexScanDesc scan, ScanDirection direction);
-static pg_attribute_always_inline bool batch_advance_pos(IndexScanDesc scan,
-														 BatchQueueItemPos *pos,
-														 ScanDirection direction);
 static void batch_reset_pos(IndexScanDesc scan, BatchQueueItemPos *pos);
-static void batch_free(IndexScanDesc scan, BatchIndexScan batch);
 
 /* batch debug functions */
 static void batch_assert_pos_valid(IndexScanDesc scan, BatchQueueItemPos *pos);
@@ -138,178 +133,33 @@ index_batch_init(IndexScanDesc scan)
 }
 
 /* ----------------
- *		index_batch_getnext_tid - amgetbatch index_getnext_tid implementation
- *
- * If we advance to the next batch, we release the previous one (unless it's
- * tracked for mark/restore).
- *
- * If the scan direction changes, we release all batches except the current
- * one (per readPos), to make it look like the only batch we loaded.
- *
- * Returns the first/next TID, or NULL if no more items.
- * ----------------
- */
-ItemPointer
-index_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
-{
-	BatchQueue *batchqueue = scan->batchqueue;
-	BatchQueueItemPos *readPos;
-
-	/* shouldn't get here without batching */
-	batch_assert_batches_valid(scan);
-
-	/* Initialize direction on first call */
-	if (batchqueue->direction == NoMovementScanDirection)
-		batchqueue->direction = direction;
-
-	/*
-	 * Handle change of scan direction (reset stream, ...).
-	 *
-	 * Release future batches properly, to make it look like the current batch
-	 * is the only one we loaded. Also reset the stream position, as if we are
-	 * just starting the scan.
-	 */
-	else if (unlikely(batchqueue->direction != direction))
-	{
-		/* release "future" batches in the wrong direction */
-		while (batchqueue->nextBatch > batchqueue->headBatch + 1)
-		{
-			BatchIndexScan fbatch;
-
-			batchqueue->nextBatch--;
-			fbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch);
-			batch_free(scan, fbatch);
-		}
-
-		/*
-		 * Remember the new direction, and make sure the scan is not marked as
-		 * "finished" (we might have already read the last batch, but now we
-		 * need to start over). Do this before resetting the stream - it
-		 * should not invoke the callback until the first read, but it may
-		 * seem a bit confusing otherwise.
-		 */
-		batchqueue->direction = direction;
-		batchqueue->finished = false;
-	}
-
-	/* shortcut for the read position, for convenience */
-	readPos = &batchqueue->readPos;
-
-	DEBUG_LOG("batch_getnext_tid readPos %d %d direction %d",
-			  readPos->batch, readPos->item, direction);
-
-	/*
-	 * Try advancing the batch position. If that doesn't succeed, it means we
-	 * don't have more items in the current batch, and there's no future batch
-	 * loaded. So try loading another batch, and retry if needed.
-	 */
-	while (true)
-	{
-		/*
-		 * If we manage to advance to the next items, return it and we're
-		 * done. Otherwise try loading another batch.
-		 */
-		if (batch_advance_pos(scan, readPos, direction))
-		{
-			BatchIndexScan readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
-
-			/* set the TID / itup for the scan */
-			scan->xs_heaptid = readBatch->items[readPos->item].heapTid;
-
-			/*
-			 * XXX Only xs_itup is used during index-only scans among
-			 * supported index AMs.  xs_hitup is not set/supported right now.
-			 */
-			if (scan->xs_want_itup)
-				scan->xs_itup =
-					(IndexTuple) (readBatch->currTuples +
-								  readBatch->items[readPos->item].tupleOffset);
-
-			DEBUG_LOG("readBatch %p firstItem %d lastItem %d readPos %d/%d TID (%u,%u)",
-					  readBatch, readBatch->firstItem, readBatch->lastItem,
-					  readPos->batch, readPos->item,
-					  ItemPointerGetBlockNumber(&scan->xs_heaptid),
-					  ItemPointerGetOffsetNumber(&scan->xs_heaptid));
-
-			/*
-			 * If we advanced to the next batch, release the batch we no
-			 * longer need. The positions is the "read" position, and we can
-			 * compare it to headBatch.
-			 */
-			if (unlikely(readPos->batch != batchqueue->headBatch))
-			{
-				BatchIndexScan headBatch = INDEX_SCAN_BATCH(scan,
-															batchqueue->headBatch);
-
-				DEBUG_LOG("batch_getnext_tid free headBatch %p headBatch %d nextBatch %d",
-						  headBatch, batchqueue->headBatch, batchqueue->nextBatch);
-
-				/* Free the head batch (except when it's markBatch) */
-				batch_free(scan, headBatch);
-
-				/*
-				 * In any case, remove the batch from the regular queue, even
-				 * if we kept it for mark/restore.
-				 */
-				batchqueue->headBatch++;
-
-				DEBUG_LOG("batch_getnext_tid batch freed headBatch %d nextBatch %d",
-						  batchqueue->headBatch, batchqueue->nextBatch);
-
-				batch_debug_print_batches("batch_getnext_tid / free old batch", scan);
-
-				/* we can't skip any batches */
-				Assert(batchqueue->headBatch == readPos->batch);
-			}
-
-			pgstat_count_index_tuples(scan->indexRelation, 1);
-			return &scan->xs_heaptid;
-		}
-
-		/*
-		 * Failed to advance the read position, so try reading the next batch.
-		 * If this fails, we're done - there's nothing more to load.
-		 */
-		if (!batch_getnext(scan, direction))
-			break;
-
-		DEBUG_LOG("loaded next batch, retry to advance position");
-	}
-
-	DEBUG_LOG("no more batches to process");
-
-	/*
-	 * If we get here, we failed to advance the position and there are no more
-	 * batches to be loaded (in the current scan direction), so we're done.
-	 *
-	 * Reset the position - we must not keep the last valid position, in case
-	 * we change direction of the scan and start scanning again. If we kept
-	 * the position, we'd skip the first item.
-	 *
-	 * XXX This is a bit strange. Do we really need to reset the position
-	 * after returning the last item?
-	 */
-	batch_reset_pos(scan, readPos);
-
-	return NULL;
-}
-
-/* ----------------
  *		batch_getnext - get the next batch of TIDs from a scan
  *
- * Returns true if we managed to read a batch of TIDs, or false if there are no
- * more TIDs in the scan. The load may also return false if we used the maximum
- * number of batches (INDEX_SCAN_MAX_BATCHES), in which case we'll reset the
- * stream and continue the scan later.
+ * Called by table AM's ordered index scan implementation when it needs to
+ * load the next batch of index entries to process in the given direction.
  *
- * Returns true if the batch was loaded successfully, false otherwise.
+ * The table AM controls the overall progress of the scan, deciding when to
+ * request new batches.  This division of labor gives the table AM the ability
+ * to reorder fetches of nearby table tuples (from the same batch, or from
+ * adjacent batches) based on its own considerations.  Importantly, table AMs
+ * are _not_ required to free a batch before loading the next batch during an
+ * index scan of an index that uses the amgetbatch/amfreebatch interface.
+ * (This isn't possible during scans that use the legacy index_getnext_tid
+ * interface for amgettuple index AMs, since that gives the index AM direct
+ * control over the progress of the index scan.  amgettuple index scans
+ * perform the work that we perform in batch_free as the scan progresses, and
+ * without notifying the table AM, which makes it impossible to safely reorder
+ * work in the way that our callers can.)
+ *
+ * Returns true if we managed to read a batch of TIDs, or false if there are
+ * no more TIDs in the scan.
  *
  * This only loads the TIDs and resets the various batch fields to fresh
  * state. It does not set xs_heaptid/xs_itup/xs_hitup, that's the
- * responsibility of the following batch_getnext_tid() calls.
+ * responsibility of the following batch_getnext_tid() calls (in table AM).
  * ----------------
  */
-static bool
+bool
 batch_getnext(IndexScanDesc scan, ScanDirection direction)
 {
 	BatchQueue *batchqueue = scan->batchqueue;
@@ -439,6 +289,10 @@ index_batch_reset(IndexScanDesc scan, bool complete)
  * batch_advance_pos
  *		Advance the position to the next item, depending on scan direction.
  *
+ * Called by table AM's ordered index scan implementation when it needs to
+ * move to the next item within the batch pointed to by caller's pos.  This is
+ * usually readPos.
+ *
  * Advance the position to the next item, either in the same batch or the
  * following one (if already available).
  *
@@ -452,8 +306,8 @@ index_batch_reset(IndexScanDesc scan, bool complete)
  * Returns true if the position was advanced, false otherwise. The position is
  * guaranteed to be valid only after a successful advance.
  */
-static pg_attribute_always_inline bool
-batch_advance_pos(IndexScanDesc scan, BatchQueueItemPos *pos,
+bool
+batch_advance_pos(IndexScanDesc scan, struct BatchQueueItemPos *pos,
 				  ScanDirection direction)
 {
 	BatchIndexScan batch;
@@ -631,7 +485,20 @@ index_batch_restore_pos(IndexScanDesc scan)
 	batchqueue->markBatch = markBatch;	/* also remember this */
 }
 
-static void
+/*
+ * batch_free
+ *		Release resources associated with a batch returned by the index AM.
+ *
+ * Called by table AM's ordered index scan implementation when it is finished
+ * with a batch and wishes to release its resources.
+ *
+ * This calls the index AM's amfreebatch callback to release AM-specific
+ * resources, and to set LP_DEAD bits on the batch's index page.  It isn't
+ * safe for table AMs to fetch table tuples using TIDs saved from a batch that
+ * was already freed: 'dropPin' scans need the index AM to retain a pin on the
+ * TID's index page, as an interlock against concurrent TID recycling.
+ */
+void
 batch_free(IndexScanDesc scan, BatchIndexScan batch)
 {
 	batch_assert_batch_valid(scan, batch);
