@@ -24,9 +24,7 @@
  *		index_parallelscan_initialize - initialize parallel scan
  *		index_parallelrescan  - (re)start a parallel scan of an index
  *		index_beginscan_parallel - join parallel index scan
- *		index_getnext_tid	- get the next TID from a scan
- *		index_fetch_heap		- get the scan's next heap tuple
- *		index_getnext_slot	- get the next tuple from a scan
+ *		index_getnext_tid	- amgettuple table AM helper routine
  *		index_getbitmap - get all tuples from a scan
  *		index_bulk_delete	- bulk deletion of index tuples
  *		index_vacuum_cleanup	- post-deletion cleanup of an index
@@ -107,7 +105,6 @@ do { \
 static IndexScanDesc index_beginscan_internal(Relation indexRelation,
 											  int nkeys, int norderbys, Snapshot snapshot,
 											  ParallelIndexScanDesc pscan, bool temp_snap);
-static ItemPointer getnext_tid(IndexScanDesc scan, ScanDirection direction);
 static inline void validate_relation_kind(Relation r);
 
 
@@ -641,51 +638,25 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 }
 
 /* ----------------
- * index_getnext_tid - get the next TID from a scan
+ * index_getnext_tid - amgettuple interface
  *
  * The result is the next TID satisfying the scan keys,
  * or NULL if no more matching tuples exist.
+ *
+ * This should only be called by table AM's index_getnext_slot implementation,
+ * and only given an index AM that supports the legacy amgettuple interface.
  * ----------------
  */
 ItemPointer
 index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 {
+	bool		found;
+
 	SCAN_CHECKS;
+	CHECK_SCAN_PROCEDURE(amgettuple);
 
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
-
-	/*
-	 * Index AMs that support plain index scans must provide exactly one of
-	 * either the amgetbatch or amgettuple callbacks
-	 */
-	Assert(!(scan->indexRelation->rd_indam->amgettuple != NULL &&
-			 scan->indexRelation->rd_indam->amgetbatch != NULL));
-
-	if (scan->batchqueue != NULL)
-	{
-		CHECK_SCAN_PROCEDURE(amgetbatch);
-
-		return index_batch_getnext_tid(scan, direction);
-	}
-	else
-	{
-		CHECK_SCAN_PROCEDURE(amgettuple);
-
-		return getnext_tid(scan, direction);
-	}
-}
-
-/* ----------------
- *		getnext_tid - amgettuple index_getnext_tid implementation
- *
- * Returns the first/next TID, or NULL if no more items.
- * ----------------
- */
-static ItemPointer
-getnext_tid(IndexScanDesc scan, ScanDirection direction)
-{
-	bool		found;
 
 	/*
 	 * The AM's amgettuple proc finds the next index entry matching the scan
@@ -714,106 +685,6 @@ getnext_tid(IndexScanDesc scan, ScanDirection direction)
 
 	/* Return the TID of the tuple we found. */
 	return &scan->xs_heaptid;
-}
-
-/* ----------------
- *		index_fetch_heap - get the scan's next heap tuple
- *
- * The result is a visible heap tuple associated with the index TID most
- * recently fetched by index_getnext_tid, or NULL if no more matching tuples
- * exist.  (There can be more than one matching tuple because of HOT chains,
- * although when using an MVCC snapshot it should be impossible for more than
- * one such tuple to exist.)
- *
- * On success, the buffer containing the heap tup is pinned (the pin will be
- * dropped in a future index_getnext_tid, index_fetch_heap or index_endscan
- * call).
- *
- * Note: caller must check scan->xs_recheck, and perform rechecking of the
- * scan keys if required.  We do not do that here because we don't have
- * enough information to do it efficiently in the general case.
- * ----------------
- */
-bool
-index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
-{
-	bool		all_dead = false;
-	bool		found;
-
-	found = table_index_fetch_tuple(scan->xs_heapfetch, &scan->xs_heaptid,
-									scan->xs_snapshot, slot,
-									&scan->xs_heap_continue, &all_dead);
-
-	if (found)
-		pgstat_count_heap_fetch(scan->indexRelation);
-
-	/*
-	 * If we scanned a whole HOT chain and found only dead tuples, tell index
-	 * AM to kill its entry for that TID (this will take effect in the next
-	 * amgettuple call, in index_getnext_tid).  We do not do this when in
-	 * recovery because it may violate MVCC to do so.  See comments in
-	 * RelationGetIndexScan().
-	 *
-	 * XXX For scans using batching, record the flag in the batch (we will
-	 * pass it to the AM later, when freeing it). Otherwise just pass it to
-	 * the AM using the kill_prior_tuple field.
-	 */
-	if (!scan->xactStartedInRecovery)
-	{
-		if (scan->batchqueue == NULL)
-			scan->kill_prior_tuple = all_dead;
-		else if (all_dead)
-			index_batch_kill_item(scan);
-	}
-
-	return found;
-}
-
-/* ----------------
- *		index_getnext_slot - get the next tuple from a scan
- *
- * The result is true if a tuple satisfying the scan keys and the snapshot was
- * found, false otherwise.  The tuple is stored in the specified slot.
- *
- * On success, resources (like buffer pins) are likely to be held, and will be
- * dropped by a future index_getnext_tid, index_fetch_heap or index_endscan
- * call).
- *
- * Note: caller must check scan->xs_recheck, and perform rechecking of the
- * scan keys if required.  We do not do that here because we don't have
- * enough information to do it efficiently in the general case.
- * ----------------
- */
-bool
-index_getnext_slot(IndexScanDesc scan, ScanDirection direction, TupleTableSlot *slot)
-{
-	for (;;)
-	{
-		if (!scan->xs_heap_continue)
-		{
-			ItemPointer tid;
-
-			/* Time to fetch the next TID from the index */
-			tid = index_getnext_tid(scan, direction);
-
-			/* If we're out of index entries, we're done */
-			if (tid == NULL)
-				break;
-
-			Assert(ItemPointerEquals(tid, &scan->xs_heaptid));
-		}
-
-		/*
-		 * Fetch the next (or only) visible heap tuple for this index entry.
-		 * If we don't find anything, loop around and grab the next TID from
-		 * the index.
-		 */
-		Assert(ItemPointerIsValid(&scan->xs_heaptid));
-		if (index_fetch_heap(scan, slot))
-			return true;
-	}
-
-	return false;
 }
 
 /* ----------------

@@ -207,9 +207,6 @@ extern IndexScanDesc index_beginscan_parallel(Relation heaprel,
 											  ParallelIndexScanDesc pscan);
 extern ItemPointer index_getnext_tid(IndexScanDesc scan,
 									 ScanDirection direction);
-extern bool index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot);
-extern bool index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
-							   TupleTableSlot *slot);
 extern int64 index_getbitmap(IndexScanDesc scan, TIDBitmap *bitmap);
 
 extern IndexBulkDeleteResult *index_bulk_delete(IndexVacuumInfo *info,
@@ -276,9 +273,13 @@ extern void systable_inplace_update_cancel(void *state);
 /*
  * amgetbatch utilities called by indexam.c (in indexbatch.c)
  */
+struct BatchQueueItemPos;
 extern void index_batch_init(IndexScanDesc scan);
-extern ItemPointer index_batch_getnext_tid(IndexScanDesc scan,
-										   ScanDirection direction);
+extern bool batch_getnext(IndexScanDesc scan, ScanDirection direction);
+extern void batch_free(IndexScanDesc scan, BatchIndexScan batch);
+extern bool batch_advance_pos(IndexScanDesc scan,
+							  struct BatchQueueItemPos *pos,
+							  ScanDirection direction);
 extern void index_batch_reset(IndexScanDesc scan, bool complete);
 extern void index_batch_mark_pos(IndexScanDesc scan);
 extern void index_batch_restore_pos(IndexScanDesc scan);
