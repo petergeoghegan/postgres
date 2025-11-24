@@ -2058,5 +2058,8 @@ extern const TableAmRoutine *GetTableAmRoutine(Oid amhandler);
  */
 
 extern const TableAmRoutine *GetHeapamTableAmRoutine(void);
+extern bool index_getnext_slot(IndexScanDesc scan,
+							   ScanDirection direction,
+							   TupleTableSlot *slot);
 
 #endif							/* TABLEAM_H */
