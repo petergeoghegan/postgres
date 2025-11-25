@@ -35,6 +35,7 @@
 #include "port/pg_bitutils.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
+#include "utils/memdebug.h"
 #include "utils/rel.h"
 
 static bool _hash_alloc_buckets(Relation rel, BlockNumber firstblock,
@@ -79,6 +80,9 @@ _hash_getbuf(Relation rel, BlockNumber blkno, int access, int flags)
 	if (access != HASH_NOLOCK)
 		LockBuffer(buf, access);
 
+	if (!RelationUsesLocalBuffers(rel))
+		VALGRIND_MAKE_MEM_DEFINED(BufferGetPage(buf), BLCKSZ);
+
 	/* ref count and lock type are correct */
 
 	_hash_checkpage(rel, buf, flags);
@@ -107,6 +111,9 @@ _hash_getbuf_with_condlock_cleanup(Relation rel, BlockNumber blkno, int flags)
 		ReleaseBuffer(buf);
 		return InvalidBuffer;
 	}
+
+	if (!RelationUsesLocalBuffers(rel))
+		VALGRIND_MAKE_MEM_DEFINED(BufferGetPage(buf), BLCKSZ);
 
 	/* ref count and lock type are correct */
 
@@ -280,30 +287,23 @@ _hash_dropbuf(Relation rel, Buffer buf)
 }
 
 /*
- *	_hash_dropscanbuf() -- release buffers used in scan.
+ *	_hash_dropscanbuf() -- release buffers owned by scan.
  *
- * This routine unpins the buffers used during scan on which we
- * hold no lock.
+ * This routine unpins the buffers for the primary bucket page and for the
+ * bucket page of a bucket being split as needed.
  */
 void
 _hash_dropscanbuf(Relation rel, HashScanOpaque so)
 {
 	/* release pin we hold on primary bucket page */
-	if (BufferIsValid(so->hashso_bucket_buf) &&
-		so->hashso_bucket_buf != so->currPos.buf)
+	if (BufferIsValid(so->hashso_bucket_buf))
 		_hash_dropbuf(rel, so->hashso_bucket_buf);
 	so->hashso_bucket_buf = InvalidBuffer;
 
-	/* release pin we hold on primary bucket page  of bucket being split */
-	if (BufferIsValid(so->hashso_split_bucket_buf) &&
-		so->hashso_split_bucket_buf != so->currPos.buf)
+	/* release pin held on primary bucket page of bucket being split */
+	if (BufferIsValid(so->hashso_split_bucket_buf))
 		_hash_dropbuf(rel, so->hashso_split_bucket_buf);
 	so->hashso_split_bucket_buf = InvalidBuffer;
-
-	/* release any pin we still hold */
-	if (BufferIsValid(so->currPos.buf))
-		_hash_dropbuf(rel, so->currPos.buf);
-	so->currPos.buf = InvalidBuffer;
 
 	/* reset split scan */
 	so->hashso_buc_populated = false;
