@@ -101,9 +101,9 @@ hashhandler(PG_FUNCTION_ARGS)
 		.amadjustmembers = hashadjustmembers,
 		.ambeginscan = hashbeginscan,
 		.amrescan = hashrescan,
-		.amgettuple = hashgettuple,
-		.amgetbatch = NULL,
-		.amfreebatch = NULL,
+		.amgettuple = NULL,
+		.amgetbatch = hashgetbatch,
+		.amfreebatch = hashfreebatch,
 		.amgetbitmap = hashgetbitmap,
 		.amendscan = hashendscan,
 		.amposreset = NULL,
@@ -286,53 +286,22 @@ hashinsert(Relation rel, Datum *values, bool *isnull,
 
 
 /*
- *	hashgettuple() -- Get the next tuple in the scan.
+ *	hashgetbatch() -- Get the first or next batch of tuples in the scan
  */
-bool
-hashgettuple(IndexScanDesc scan, ScanDirection dir)
+BatchIndexScan
+hashgetbatch(IndexScanDesc scan, BatchIndexScan priorbatch, ScanDirection dir)
 {
-	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-	bool		res;
-
 	/* Hash indexes are always lossy since we store only the hash code */
 	scan->xs_recheck = true;
 
-	/*
-	 * If we've already initialized this scan, we can just advance it in the
-	 * appropriate direction.  If we haven't done so yet, we call a routine to
-	 * get the first item in the scan.
-	 */
-	if (!HashScanPosIsValid(so->currPos))
-		res = _hash_first(scan, dir);
-	else
+	if (priorbatch == NULL)
 	{
-		/*
-		 * Check to see if we should kill the previously-fetched tuple.
-		 */
-		if (scan->kill_prior_tuple)
-		{
-			/*
-			 * Yes, so remember it for later. (We'll deal with all such tuples
-			 * at once right after leaving the index page or at end of scan.)
-			 * In case if caller reverses the indexscan direction it is quite
-			 * possible that the same item might get entered multiple times.
-			 * But, we don't detect that; instead, we just forget any excess
-			 * entries.
-			 */
-			if (so->killedItems == NULL)
-				so->killedItems = palloc_array(int, MaxIndexTuplesPerPage);
-
-			if (so->numKilled < MaxIndexTuplesPerPage)
-				so->killedItems[so->numKilled++] = so->currPos.itemIndex;
-		}
-
-		/*
-		 * Now continue the scan.
-		 */
-		res = _hash_next(scan, dir);
+		/* Initialize the scan, and return first batch of matching items */
+		return _hash_first(scan, dir);
 	}
 
-	return res;
+	/* Return batch positioned after caller's batch (in direction 'dir') */
+	return _hash_next(scan, dir, priorbatch);
 }
 
 
@@ -342,26 +311,23 @@ hashgettuple(IndexScanDesc scan, ScanDirection dir)
 int64
 hashgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 {
-	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-	bool		res;
+	BatchIndexScan batch;
 	int64		ntids = 0;
-	HashScanPosItem *currItem;
+	int			itemIndex;
 
-	res = _hash_first(scan, ForwardScanDirection);
+	batch = _hash_first(scan, ForwardScanDirection);
 
-	while (res)
+	while (batch != NULL)
 	{
-		currItem = &so->currPos.items[so->currPos.itemIndex];
+		for (itemIndex = batch->firstItem;
+			 itemIndex <= batch->lastItem;
+			 itemIndex++)
+		{
+			tbm_add_tuples(tbm, &batch->items[itemIndex].heapTid, 1, true);
+			ntids++;
+		}
 
-		/*
-		 * _hash_first and _hash_next handle eliminate dead index entries
-		 * whenever scan->ignore_killed_tuples is true.  Therefore, there's
-		 * nothing to do here except add the results to the TIDBitmap.
-		 */
-		tbm_add_tuples(tbm, &(currItem->heapTid), 1, true);
-		ntids++;
-
-		res = _hash_next(scan, ForwardScanDirection);
+		batch = _hash_next(scan, ForwardScanDirection, batch);
 	}
 
 	return ntids;
@@ -383,17 +349,14 @@ hashbeginscan(Relation rel, int nkeys, int norderbys)
 	scan = RelationGetIndexScan(rel, nkeys, norderbys);
 
 	so = (HashScanOpaque) palloc_object(HashScanOpaqueData);
-	HashScanPosInvalidate(so->currPos);
 	so->hashso_bucket_buf = InvalidBuffer;
 	so->hashso_split_bucket_buf = InvalidBuffer;
 
 	so->hashso_buc_populated = false;
 	so->hashso_buc_split = false;
 
-	so->killedItems = NULL;
-	so->numKilled = 0;
-
 	scan->opaque = so;
+	scan->maxitemsbatch = MaxIndexTuplesPerPage;
 
 	return scan;
 }
@@ -408,17 +371,7 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 
-	if (HashScanPosIsValid(so->currPos))
-	{
-		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
-			_hash_kill_items(scan);
-	}
-
 	_hash_dropscanbuf(rel, so);
-
-	/* set position invalid (this will cause _hash_first call) */
-	HashScanPosInvalidate(so->currPos);
 
 	/* Update scan key, if a new one is given */
 	if (scankey && scan->numberOfKeys > 0)
@@ -426,6 +379,25 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 
 	so->hashso_buc_populated = false;
 	so->hashso_buc_split = false;
+}
+
+/*
+ *	hashfreebatch() -- Free batch resources, including its buffer pin
+ */
+void
+hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
+{
+	if (batch->numKilled > 0)
+		_hash_kill_items(scan, batch);
+
+	if (!scan->dropPin)
+	{
+		/* indexam_util_batch_unlock didn't unpin page earlier, do it now */
+		ReleaseBuffer(batch->buf);
+		batch->buf = InvalidBuffer;
+	}
+
+	indexam_util_batch_release(scan, batch);
 }
 
 /*
@@ -437,17 +409,8 @@ hashendscan(IndexScanDesc scan)
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 
-	if (HashScanPosIsValid(so->currPos))
-	{
-		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
-			_hash_kill_items(scan);
-	}
-
 	_hash_dropscanbuf(rel, so);
 
-	if (so->killedItems != NULL)
-		pfree(so->killedItems);
 	pfree(so);
 	scan->opaque = NULL;
 }
