@@ -735,7 +735,8 @@ ambeginscan (Relation indexRelation,
    <literal>scan-&gt;xs_recheck</literal> here, in
    <function>ambeginscan</function>, since the value applies to every item the
    scan returns.  The value set here persists across any subsequent
-   <function>amrescan</function> calls.  B-tree (always false) work this way.
+   <function>amrescan</function> calls.  B-tree (always false) and hash (always
+   true) work this way.
   </para>
 
   <para>
@@ -873,7 +874,8 @@ amgetbatch (IndexScanDesc scan,
    It is up to the table AM caller to decide when it should be released.  Note
    also that <function>amgetbatch</function> functions must never modify the
    <structfield>priorbatch</structfield> parameter.  The core
-   <filename>src/backend/access/nbtree/</filename> implementation provides a
+   <filename>src/backend/access/nbtree/</filename> and
+   <filename>src/backend/access/hash/</filename> implementations provide
    reference examples of the <function>amgetbatch</function> interface.
   </para>
 
@@ -928,12 +930,12 @@ amunguardbatch (IndexScanDesc scan,
    leaf page, which prevents concurrent TID recycling by
    <command>VACUUM</command>.
    Formally, an index AM may hold a different kind of interlock, or multiple
-   interlocks, in its per-batch opaque area, but in practice the built-in
-   index AM that supports <function>amgetbatch</function> &mdash; B-tree
-   &mdash; holds a single buffer pin.  See <xref linkend="index-locking"/> for
-   details on buffer pin management during index scans.  This function will be
-   called at most once for each guarded batch; it is not called when the index
-   AM has already unguarded the batch itself (as it does when
+   interlocks, in its per-batch opaque area, but in practice both built-in
+   index AMs that support <function>amgetbatch</function> &mdash; B-tree and
+   hash &mdash; hold a single buffer pin.  See <xref linkend="index-locking"/>
+   for details on buffer pin management during index scans.  This function
+   will be called at most once for each guarded batch; it is not called when
+   the index AM has already unguarded the batch itself (as it does when
    <structfield>batchImmediateUnguard</structfield> is true, which is the
    common case).
   </para>
@@ -973,8 +975,8 @@ amkillitemsbatch (IndexScanDesc scan,
    <function>amgetbatch</function> index AMs (those that don't can leave
    the field set to <literal>NULL</literal>), but doing so is recommended for
    performance, as it allows future scans to skip known-dead index entries.
-   The core index access method that currently supports
-   <function>amgetbatch</function> (B-tree) implements
+   Both core index access methods that currently support
+   <function>amgetbatch</function> (B-tree and hash) implement
    <literal>LP_DEAD</literal> marking, though third-party index access methods
    are free to choose whether to implement this feature.  The table AM may
    call <function>tableam_util_scanpos_killitem</function> to mark dead items as
@@ -1014,7 +1016,8 @@ amkillitemsbatch (IndexScanDesc scan,
    <command>VACUUM</command> recycling table TIDs &mdash; so it would be
    unsafe to assume that index entries still point to the same heap/table
    tuples.  Since <literal>LP_DEAD</literal> marking is only an optimization
-   hint, it is always safe to skip it.  B-tree uses this approach.
+   hint, it is always safe to skip it.  Both B-tree and hash use this
+   approach.
   </para>
 
   <warning>
@@ -1104,8 +1107,8 @@ amgetbitmap (IndexScanDesc scan,
    <function>amgetbitmap</function> scans; during
    <function>amgetbatch</function> scans the <literal>priorbatch</literal>
    is strictly owned by the caller (the table AM), and the index AM must
-   never release it.  See <function>_bt_next</function> for a reference
-   example.
+   never release it.  See <function>_bt_next</function> and
+   <function>_hash_next</function> for reference examples.
   </para>
 
   <para>
