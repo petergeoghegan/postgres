@@ -466,7 +466,6 @@ index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 	{
 		if (!scan->xs_heap_continue)
 		{
-
 			if (scan->batchqueue != NULL)
 				tid = heapam_batch_getnext_tid(scan, direction);
 			else
