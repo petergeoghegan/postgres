@@ -30,6 +30,7 @@
 
 #include "access/hash.h"
 #include "access/hash_xlog.h"
+#include "access/relscan.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
 #include "port/pg_bitutils.h"
@@ -286,24 +287,20 @@ _hash_dropbuf(Relation rel, Buffer buf)
  * hold no lock.
  */
 void
-_hash_dropscanbuf(Relation rel, HashScanOpaque so)
+_hash_dropscanbuf(IndexScanDesc scan)
 {
+	Relation	rel = scan->indexRelation;
+	HashScanOpaque so = (HashScanOpaque) scan->opaque;
+
 	/* release pin we hold on primary bucket page */
-	if (BufferIsValid(so->hashso_bucket_buf) &&
-		so->hashso_bucket_buf != so->currPos.buf)
+	if (BufferIsValid(so->hashso_bucket_buf))
 		_hash_dropbuf(rel, so->hashso_bucket_buf);
 	so->hashso_bucket_buf = InvalidBuffer;
 
-	/* release pin we hold on primary bucket page  of bucket being split */
-	if (BufferIsValid(so->hashso_split_bucket_buf) &&
-		so->hashso_split_bucket_buf != so->currPos.buf)
+	/* release pin held on primary bucket page of bucket being split */
+	if (BufferIsValid(so->hashso_split_bucket_buf))
 		_hash_dropbuf(rel, so->hashso_split_bucket_buf);
 	so->hashso_split_bucket_buf = InvalidBuffer;
-
-	/* release any pin we still hold */
-	if (BufferIsValid(so->currPos.buf))
-		_hash_dropbuf(rel, so->currPos.buf);
-	so->currPos.buf = InvalidBuffer;
 
 	/* reset split scan */
 	so->hashso_buc_populated = false;
