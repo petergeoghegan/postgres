@@ -1194,8 +1194,6 @@ HashPageStat
 HashPath
 HashScanOpaque
 HashScanOpaqueData
-HashScanPosData
-HashScanPosItem
 HashSkewBucket
 HashState
 HashValueFunc
