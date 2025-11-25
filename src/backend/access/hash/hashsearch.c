@@ -64,9 +64,6 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 	{
 		if (++so->currPos.itemIndex > so->currPos.lastItem)
 		{
-			if (so->numKilled > 0)
-				_hash_kill_items(scan);
-
 			blkno = so->currPos.nextPage;
 			if (BlockNumberIsValid(blkno))
 			{
@@ -82,9 +79,6 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 	{
 		if (--so->currPos.itemIndex < so->currPos.firstItem)
 		{
-			if (so->numKilled > 0)
-				_hash_kill_items(scan);
-
 			blkno = so->currPos.prevPage;
 			if (BlockNumberIsValid(blkno))
 			{
@@ -110,7 +104,7 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 
 	if (end_of_scan)
 	{
-		_hash_dropscanbuf(rel, so);
+		_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL));
 		HashScanPosInvalidate(so->currPos);
 		return false;
 	}
@@ -480,11 +474,8 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 
 			/*
 			 * Could not find any matching tuples in the current page, move to
-			 * the next page. Before leaving the current page, deal with any
-			 * killed items.
+			 * the next page
 			 */
-			if (so->numKilled > 0)
-				_hash_kill_items(scan);
 
 			/*
 			 * If this is a primary bucket page, hasho_prevblkno is not a real
@@ -539,11 +530,8 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 
 			/*
 			 * Could not find any matching tuples in the current page, move to
-			 * the previous page. Before leaving the current page, deal with
-			 * any killed items.
+			 * the previous page
 			 */
-			if (so->numKilled > 0)
-				_hash_kill_items(scan);
 
 			if (so->currPos.buf == so->hashso_bucket_buf ||
 				so->currPos.buf == so->hashso_split_bucket_buf)
@@ -560,11 +548,9 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 				/*
 				 * Remember next and previous block numbers for scrollable
 				 * cursors to know the start position and return false
-				 * indicating that no more matching tuples were found. Also,
-				 * don't reset currPage or lsn, because we expect
-				 * _hash_kill_items to be called for the old page after this
-				 * function returns.
+				 * indicating that no more matching tuples were found.
 				 */
+				/* XXX What to do about currPage now? */
 				so->currPos.prevPage = InvalidBlockNumber;
 				so->currPos.nextPage = next_blkno;
 				so->currPos.buf = buf;

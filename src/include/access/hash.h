@@ -178,15 +178,13 @@ typedef struct HashScanOpaqueData
 	 * referred only when hashso_buc_populated is true.
 	 */
 	bool		hashso_buc_split;
-	/* info about killed items if any (killedItems is NULL if never used) */
-	int		   *killedItems;	/* currPos.items indexes of killed items */
-	int			numKilled;		/* number of currently stored items */
 
 	/*
-	 * Identify all the matching items on a page and save them in
-	 * HashScanPosData
+	 * Temporary position state used during batch operations via hashgetbatch().
+	 * This is reset between batch calls.
 	 */
-	HashScanPosData currPos;	/* current position data */
+	HashScanPosData currPos;
+
 } HashScanOpaqueData;
 
 typedef HashScanOpaqueData *HashScanOpaque;
@@ -368,7 +366,9 @@ extern bool hashinsert(Relation rel, Datum *values, bool *isnull,
 					   IndexUniqueCheck checkUnique,
 					   bool indexUnchanged,
 					   struct IndexInfo *indexInfo);
-extern bool hashgettuple(IndexScanDesc scan, ScanDirection dir);
+extern BatchIndexScan hashgetbatch(IndexScanDesc scan, BatchIndexScan batch,
+								  ScanDirection dir);
+extern void hashfreebatch(IndexScanDesc scan, BatchIndexScan batch);
 extern int64 hashgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 extern IndexScanDesc hashbeginscan(Relation rel, int nkeys, int norderbys);
 extern void hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
@@ -433,7 +433,7 @@ extern Buffer _hash_getbuf_with_strategy(Relation rel, BlockNumber blkno,
 										 BufferAccessStrategy bstrategy);
 extern void _hash_relbuf(Relation rel, Buffer buf);
 extern void _hash_dropbuf(Relation rel, Buffer buf);
-extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so);
+extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool end);
 extern uint32 _hash_init(Relation rel, double num_tuples,
 						 ForkNumber forkNum);
 extern void _hash_init_metabuffer(Buffer buf, double num_tuples,
@@ -476,7 +476,7 @@ extern BlockNumber _hash_get_oldblock_from_newbucket(Relation rel, Bucket new_bu
 extern BlockNumber _hash_get_newblock_from_oldbucket(Relation rel, Bucket old_bucket);
 extern Bucket _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
 												 uint32 lowmask, uint32 maxbucket);
-extern void _hash_kill_items(IndexScanDesc scan);
+extern void _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch);
 
 /* hash.c */
 extern void hashbucketcleanup(Relation rel, Bucket cur_bucket,

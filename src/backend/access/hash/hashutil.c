@@ -510,16 +510,15 @@ _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
  * _hash_kill_items - set LP_DEAD state for items an indexscan caller has
  * told us were killed.
  *
- * scan->opaque, referenced locally through so, contains information about the
- * current page and killed tuples thereon (generally, this should only be
- * called if so->numKilled > 0).
+ * The batch parameter contains information about the page and killed tuples
+ * thereon (this should only be called if batch->numKilled > 0).
  *
  * The caller does not have a lock on the page and may or may not have the
  * page pinned in a buffer.  Note that read-lock is sufficient for setting
  * LP_DEAD status (which is only a hint).
  *
  * The caller must have pin on bucket buffer, but may or may not have pin
- * on overflow buffer, as indicated by HashScanPosIsPinned(so->currPos).
+ * on overflow buffer, as indicated by BufferIsValid(batch->buf).
  *
  * We match items by heap TID before assuming they are the right ones to
  * delete.
@@ -533,44 +532,29 @@ _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
  * killing a TID that has been reused for an unrelated tuple.
  */
 void
-_hash_kill_items(IndexScanDesc scan)
+_hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 {
-	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-	Relation	rel = scan->indexRelation;
-	BlockNumber blkno;
 	Buffer		buf;
 	Page		page;
 	HashPageOpaque opaque;
 	OffsetNumber offnum,
 				maxoff;
-	int			numKilled = so->numKilled;
+	int			numKilled = batch->numKilled;
 	int			i;
 	bool		killedsomething = false;
-	bool		havePin = false;
 
-	Assert(so->numKilled > 0);
-	Assert(so->killedItems != NULL);
-	Assert(HashScanPosIsValid(so->currPos));
+	Assert(numKilled > 0);
+	Assert(batch->killedItems != NULL);
+	Assert(BlockNumberIsValid(batch->currPage));
 
 	/*
-	 * Always reset the scan state, so we don't look for same items on other
+	 * Always reset the batch state, so we don't look for same items on other
 	 * pages.
 	 */
-	so->numKilled = 0;
+	batch->numKilled = 0;
 
-	blkno = so->currPos.currPage;
-	if (HashScanPosIsPinned(so->currPos))
-	{
-		/*
-		 * We already have pin on this buffer, so, all we need to do is
-		 * acquire lock on it.
-		 */
-		havePin = true;
-		buf = so->currPos.buf;
-		LockBuffer(buf, BUFFER_LOCK_SHARE);
-	}
-	else
-		buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
+	buf = batch->buf;
+	LockBuffer(buf, BUFFER_LOCK_SHARE);
 
 	page = BufferGetPage(buf);
 	opaque = HashPageGetOpaque(page);
@@ -578,13 +562,13 @@ _hash_kill_items(IndexScanDesc scan)
 
 	for (i = 0; i < numKilled; i++)
 	{
-		int			itemIndex = so->killedItems[i];
-		HashScanPosItem *currItem = &so->currPos.items[itemIndex];
+		int			itemIndex = batch->killedItems[i];
+		BatchMatchingItem *currItem = &batch->items[itemIndex];
 
 		offnum = currItem->indexOffset;
 
-		Assert(itemIndex >= so->currPos.firstItem &&
-			   itemIndex <= so->currPos.lastItem);
+		Assert(itemIndex >= batch->firstItem &&
+			   itemIndex <= batch->lastItem);
 
 		while (offnum <= maxoff)
 		{
@@ -613,9 +597,5 @@ _hash_kill_items(IndexScanDesc scan)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	if (so->hashso_bucket_buf == so->currPos.buf ||
-		havePin)
-		LockBuffer(so->currPos.buf, BUFFER_LOCK_UNLOCK);
-	else
-		_hash_relbuf(rel, buf);
+	LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
 }
