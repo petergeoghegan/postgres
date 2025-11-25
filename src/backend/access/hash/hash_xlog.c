@@ -1141,7 +1141,7 @@ hash_mask(char *pagedata, BlockNumber blkno)
 		/*
 		 * In hash bucket and overflow pages, it is possible to modify the
 		 * LP_FLAGS without emitting any WAL record. Hence, mask the line
-		 * pointer flags. See hashgettuple(), _hash_kill_items() for details.
+		 * pointer flags. See _hash_kill_items() for details.
 		 */
 		mask_lp_flags(page);
 	}
