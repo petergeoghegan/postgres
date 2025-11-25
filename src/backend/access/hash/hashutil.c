@@ -510,81 +510,84 @@ _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
  * _hash_kill_items - set LP_DEAD state for items an indexscan caller has
  * told us were killed.
  *
- * scan->opaque, referenced locally through so, contains information about the
- * current page and killed tuples thereon (generally, this should only be
- * called if so->numKilled > 0).
+ * The batch parameter contains information about the current page and killed
+ * tuples thereon (this should only be called if batch->numKilled > 0).
  *
- * The caller does not have a lock on the page and may or may not have the
- * page pinned in a buffer.  Note that read-lock is sufficient for setting
- * LP_DEAD status (which is only a hint).
+ * Caller should not have a lock on the batch position's page, but must hold a
+ * buffer pin when !dropPin.  When we return, it still won't be locked.  It'll
+ * continue to hold whatever pins were held before calling here.
  *
- * The caller must have pin on bucket buffer, but may or may not have pin
- * on overflow buffer, as indicated by HashScanPosIsPinned(so->currPos).
- *
- * We match items by heap TID before assuming they are the right ones to
- * delete.
- *
- * There are never any scans active in a bucket at the time VACUUM begins,
- * because VACUUM takes a cleanup lock on the primary bucket page and scans
- * hold a pin.  A scan can begin after VACUUM leaves the primary bucket page
- * but before it finishes the entire bucket, but it can never pass VACUUM,
- * because VACUUM always locks the next page before releasing the lock on
- * the previous one.  Therefore, we don't have to worry about accidentally
- * killing a TID that has been reused for an unrelated tuple.
+ * We match items by heap TID before assuming they are the right ones to set
+ * LP_DEAD.  If the scan is one that holds a buffer pin on the target page
+ * continuously from initially reading the items until applying this function
+ * (if it is a !dropPin scan), VACUUM cannot have deleted any items on the
+ * page, so the page's TIDs can't have been recycled by now.  There's no risk
+ * that we'll confuse a new index tuple that happens to use a recycled TID
+ * with a now-removed tuple with the same TID (that used to be on this same
+ * page).  We can't rely on that during scans that drop buffer pins eagerly
+ * (i.e. dropPin scans), though, so we must condition setting LP_DEAD bits on
+ * the page LSN having not changed since back when _hash_readpage saw the page.
+ * We totally give up on setting LP_DEAD bits when the page LSN changed.
  */
 void
-_hash_kill_items(IndexScanDesc scan)
+_hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 {
-	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
-	BlockNumber blkno;
 	Buffer		buf;
 	Page		page;
 	HashPageOpaque opaque;
 	OffsetNumber offnum,
 				maxoff;
-	int			numKilled = so->numKilled;
-	int			i;
 	bool		killedsomething = false;
-	bool		havePin = false;
 
-	Assert(so->numKilled > 0);
-	Assert(so->killedItems != NULL);
-	Assert(HashScanPosIsValid(so->currPos));
+	Assert(batch->numKilled > 0);
+	Assert(batch->killedItems != NULL);
+	Assert(BlockNumberIsValid(batch->currPage));
 
-	/*
-	 * Always reset the scan state, so we don't look for same items on other
-	 * pages.
-	 */
-	so->numKilled = 0;
-
-	blkno = so->currPos.currPage;
-	if (HashScanPosIsPinned(so->currPos))
+	if (!scan->dropPin)
 	{
 		/*
-		 * We already have pin on this buffer, so, all we need to do is
-		 * acquire lock on it.
+		 * We have held the pin on this page since we read the index tuples,
+		 * so all we need to do is lock it.  The pin will have prevented
+		 * concurrent VACUUMs from recycling any of the TIDs on the page.
 		 */
-		havePin = true;
-		buf = so->currPos.buf;
+		buf = batch->buf;
 		LockBuffer(buf, BUFFER_LOCK_SHARE);
 	}
 	else
-		buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
+	{
+		XLogRecPtr	latestlsn;
+
+		Assert(RelationNeedsWAL(rel));
+		buf = _hash_getbuf(rel, batch->currPage, HASH_READ,
+						   LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
+
+		latestlsn = BufferGetLSNAtomic(buf);
+		Assert(batch->lsn <= latestlsn);
+		if (batch->lsn != latestlsn)
+		{
+			/* Modified, give up on hinting */
+			_hash_relbuf(rel, buf);
+			return;
+		}
+
+		/* Unmodified, hinting is safe */
+	}
 
 	page = BufferGetPage(buf);
 	opaque = HashPageGetOpaque(page);
 	maxoff = PageGetMaxOffsetNumber(page);
 
-	for (i = 0; i < numKilled; i++)
+	/* Iterate through batch->killedItems[] in index page order */
+	for (int i = 0; i < batch->numKilled; i++)
 	{
-		int			itemIndex = so->killedItems[i];
-		HashScanPosItem *currItem = &so->currPos.items[itemIndex];
+		int			itemIndex = batch->killedItems[i];
+		BatchMatchingItem *currItem = &batch->items[itemIndex];
 
 		offnum = currItem->indexOffset;
 
-		Assert(itemIndex >= so->currPos.firstItem &&
-			   itemIndex <= so->currPos.lastItem);
+		Assert(itemIndex >= batch->firstItem &&
+			   itemIndex <= batch->lastItem);
 
 		while (offnum <= maxoff)
 		{
@@ -613,9 +616,8 @@ _hash_kill_items(IndexScanDesc scan)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	if (so->hashso_bucket_buf == so->currPos.buf ||
-		havePin)
-		LockBuffer(so->currPos.buf, BUFFER_LOCK_UNLOCK);
+	if (!scan->dropPin)
+		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 	else
 		_hash_relbuf(rel, buf);
 }
