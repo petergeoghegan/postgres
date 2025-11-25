@@ -100,12 +100,14 @@ typedef HashPageOpaqueData *HashPageOpaque;
  */
 #define HASHO_PAGE_ID		0xFF80
 
+/* TODO: Remove HashScanPosItem */
 typedef struct HashScanPosItem	/* what we remember about each match */
 {
 	ItemPointerData heapTid;	/* TID of referenced heap item */
 	OffsetNumber indexOffset;	/* index item's location within page */
 } HashScanPosItem;
 
+/* TODO: Remove HashScanPosData */
 typedef struct HashScanPosData
 {
 	Buffer		buf;			/* if valid, the buffer is pinned */
@@ -126,31 +128,6 @@ typedef struct HashScanPosData
 
 	HashScanPosItem items[MaxIndexTuplesPerPage];	/* MUST BE LAST */
 } HashScanPosData;
-
-#define HashScanPosIsPinned(scanpos) \
-( \
-	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
-				!BufferIsValid((scanpos).buf)), \
-	BufferIsValid((scanpos).buf) \
-)
-
-#define HashScanPosIsValid(scanpos) \
-( \
-	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
-				!BufferIsValid((scanpos).buf)), \
-	BlockNumberIsValid((scanpos).currPage) \
-)
-
-#define HashScanPosInvalidate(scanpos) \
-	do { \
-		(scanpos).buf = InvalidBuffer; \
-		(scanpos).currPage = InvalidBlockNumber; \
-		(scanpos).nextPage = InvalidBlockNumber; \
-		(scanpos).prevPage = InvalidBlockNumber; \
-		(scanpos).firstItem = 0; \
-		(scanpos).lastItem = 0; \
-		(scanpos).itemIndex = 0; \
-	} while (0)
 
 /*
  *	HashScanOpaqueData is private state for a hash index scan.
@@ -178,13 +155,13 @@ typedef struct HashScanOpaqueData
 	 * referred only when hashso_buc_populated is true.
 	 */
 	bool		hashso_buc_split;
-	/* info about killed items if any (killedItems is NULL if never used) */
-	int		   *killedItems;	/* currPos.items indexes of killed items */
-	int			numKilled;		/* number of currently stored items */
 
 	/*
 	 * Identify all the matching items on a page and save them in
 	 * HashScanPosData
+	 *
+	 * TODO Fully get rid of this, by switching over hashgetbitmap to using
+	 * batches (by making _hash_first and _hash_next return batches)
 	 */
 	HashScanPosData currPos;	/* current position data */
 } HashScanOpaqueData;
@@ -368,7 +345,9 @@ extern bool hashinsert(Relation rel, Datum *values, bool *isnull,
 					   IndexUniqueCheck checkUnique,
 					   bool indexUnchanged,
 					   struct IndexInfo *indexInfo);
-extern bool hashgettuple(IndexScanDesc scan, ScanDirection dir);
+extern BatchIndexScan hashgetbatch(IndexScanDesc scan, BatchIndexScan batch,
+								  ScanDirection dir);
+extern void hashfreebatch(IndexScanDesc scan, BatchIndexScan batch);
 extern int64 hashgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 extern IndexScanDesc hashbeginscan(Relation rel, int nkeys, int norderbys);
 extern void hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
@@ -433,7 +412,8 @@ extern Buffer _hash_getbuf_with_strategy(Relation rel, BlockNumber blkno,
 										 BufferAccessStrategy bstrategy);
 extern void _hash_relbuf(Relation rel, Buffer buf);
 extern void _hash_dropbuf(Relation rel, Buffer buf);
-extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so);
+extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap,
+							  bool start_or_end);
 extern uint32 _hash_init(Relation rel, double num_tuples,
 						 ForkNumber forkNum);
 extern void _hash_init_metabuffer(Buffer buf, double num_tuples,
@@ -476,7 +456,7 @@ extern BlockNumber _hash_get_oldblock_from_newbucket(Relation rel, Bucket new_bu
 extern BlockNumber _hash_get_newblock_from_oldbucket(Relation rel, Bucket old_bucket);
 extern Bucket _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
 												 uint32 lowmask, uint32 maxbucket);
-extern void _hash_kill_items(IndexScanDesc scan);
+extern void _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch);
 
 /* hash.c */
 extern void hashbucketcleanup(Relation rel, Bucket cur_bucket,

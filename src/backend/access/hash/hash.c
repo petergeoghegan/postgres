@@ -101,9 +101,9 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->amadjustmembers = hashadjustmembers;
 	amroutine->ambeginscan = hashbeginscan;
 	amroutine->amrescan = hashrescan;
-	amroutine->amgettuple = hashgettuple;
-	amroutine->amgetbatch = NULL;
-	amroutine->amfreebatch = NULL;
+	amroutine->amgettuple = NULL;
+	amroutine->amgetbatch = hashgetbatch;
+	amroutine->amfreebatch = hashfreebatch;
 	amroutine->amgetbitmap = hashgetbitmap;
 	amroutine->amendscan = hashendscan;
 	amroutine->amposreset = NULL;
@@ -285,54 +285,178 @@ hashinsert(Relation rel, Datum *values, bool *isnull,
 
 
 /*
- *	hashgettuple() -- Get the next tuple in the scan.
+ *	hashgetbatch() -- Get the next batch of tuples in the scan.
  */
-bool
-hashgettuple(IndexScanDesc scan, ScanDirection dir)
+BatchIndexScan
+hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 {
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-	bool		res;
+	BatchIndexScan newbatch = NULL;
+	int			itemCount;
+	int			i;
 
 	/* Hash indexes are always lossy since we store only the hash code */
 	scan->xs_recheck = true;
 
 	/*
-	 * If we've already initialized this scan, we can just advance it in the
-	 * appropriate direction.  If we haven't done so yet, we call a routine to
-	 * get the first item in the scan.
+	 * If this is the first call, initialize the scan
 	 */
-	if (!HashScanPosIsValid(so->currPos))
-		res = _hash_first(scan, dir);
+	if (batch == NULL)
+	{
+		if (_hash_first(scan, dir))
+		{
+			/* Allocate and fill batch structure from currPos */
+			HashScanPosItem *items = so->currPos.items;
+
+			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
+			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage,
+												false);
+
+			Assert(BufferIsValid(so->currPos.buf));
+			if (scan->batchqueue && scan->batchqueue->dropPin)
+			{
+				/*
+				 * XXX We should be using indexam_util_batch_unlock to perform
+				 * these steps for us.  That requires teaching _hash_first to
+				 * return the next batch/fully getting rid of so->currPos.
+				 */
+				newbatch->lsn = BufferGetLSNAtomic(so->currPos.buf);
+				ReleaseBuffer(so->currPos.buf);
+				so->currPos.buf = InvalidBuffer;
+			}
+			else
+				newbatch->buf = so->currPos.buf;
+
+			newbatch->currPage = so->currPos.currPage;
+			newbatch->nextPage = so->currPos.nextPage;
+			newbatch->prevPage = so->currPos.prevPage;
+			newbatch->firstItem = so->currPos.firstItem;
+			newbatch->lastItem = so->currPos.lastItem;
+			newbatch->dir = dir;
+
+			/* Determine if there may be more entries left and right */
+			if (ScanDirectionIsForward(dir))
+			{
+				newbatch->moreLeft = false;	/* We came from the left */
+				newbatch->moreRight = BlockNumberIsValid(newbatch->nextPage);
+			}
+			else
+			{
+				newbatch->moreLeft = BlockNumberIsValid(newbatch->prevPage);
+				newbatch->moreRight = false;	/* We came from the right */
+			}
+
+			/* Copy the items array */
+			Assert(itemCount > 0);
+			for (i = 0; i < itemCount; i++)
+			{
+				int			srcIdx = so->currPos.firstItem + i;
+
+				newbatch->items[i].heapTid = items[srcIdx].heapTid;
+				newbatch->items[i].indexOffset = items[srcIdx].indexOffset;
+
+				/* Hash doesn't support index-only scans, but be tidy: */
+				newbatch->items[i].tupleOffset = 0;
+			}
+		}
+		/* else: No tuples found, return NULL */
+	}
 	else
 	{
 		/*
-		 * Check to see if we should kill the previously-fetched tuple.
+		 * For subsequent calls, we need to advance to the next page. Since
+		 * _hash_next() is designed for the item-at-a-time interface where it
+		 * increments itemIndex, we need to set up the cursor state to
+		 * indicate we're at the end of the current page so that _hash_next()
+		 * will advance to the next page.
 		 */
-		if (scan->kill_prior_tuple)
+		if (ScanDirectionIsForward(dir))
+			so->currPos.itemIndex = so->currPos.lastItem;
+		else
+			so->currPos.itemIndex = so->currPos.firstItem;
+
+		if (_hash_next(scan, dir))
 		{
-			/*
-			 * Yes, so remember it for later. (We'll deal with all such tuples
-			 * at once right after leaving the index page or at end of scan.)
-			 * In case if caller reverses the indexscan direction it is quite
-			 * possible that the same item might get entered multiple times.
-			 * But, we don't detect that; instead, we just forget any excess
-			 * entries.
-			 */
-			if (so->killedItems == NULL)
-				so->killedItems = (int *)
-					palloc(MaxIndexTuplesPerPage * sizeof(int));
+			/* Allocate and fill batch structure from currPos */
+			HashScanPosItem *items = so->currPos.items;
 
-			if (so->numKilled < MaxIndexTuplesPerPage)
-				so->killedItems[so->numKilled++] = so->currPos.itemIndex;
+			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
+			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage,
+												false);
+
+			Assert(BufferIsValid(so->currPos.buf));
+			if (scan->batchqueue && scan->batchqueue->dropPin)
+			{
+				/*
+				 * XXX We should be using indexam_util_batch_unlock to perform
+				 * these steps for us.  That requires teaching _hash_next to
+				 * return the next batch/fully getting rid of so->currPos.
+				 */
+				newbatch->lsn = BufferGetLSNAtomic(so->currPos.buf);
+				ReleaseBuffer(so->currPos.buf);
+				so->currPos.buf = InvalidBuffer;
+			}
+			else
+				newbatch->buf = so->currPos.buf;
+
+			newbatch->currPage = so->currPos.currPage;
+			newbatch->nextPage = so->currPos.nextPage;
+			newbatch->prevPage = so->currPos.prevPage;
+			newbatch->firstItem = so->currPos.firstItem;
+			newbatch->lastItem = so->currPos.lastItem;
+			newbatch->dir = dir;
+
+			/* Determine if there may be more entries left and right */
+			if (ScanDirectionIsForward(dir))
+			{
+				newbatch->moreLeft = false;	/* We came from the left */
+				newbatch->moreRight = BlockNumberIsValid(newbatch->nextPage);
+			}
+			else
+			{
+				newbatch->moreLeft = BlockNumberIsValid(newbatch->prevPage);
+				newbatch->moreRight = false;	/* We came from the right */
+			}
+
+			/* Copy the items array */
+			Assert(itemCount > 0);
+			for (i = 0; i < itemCount; i++)
+			{
+				int			srcIdx = so->currPos.firstItem + i;
+
+				newbatch->items[i].heapTid = items[srcIdx].heapTid;
+				newbatch->items[i].indexOffset = items[srcIdx].indexOffset;
+
+				/* Hash doesn't support index-only scans, but be tidy: */
+				newbatch->items[i].tupleOffset = 0;
+			}
 		}
-
-		/*
-		 * Now continue the scan.
-		 */
-		res = _hash_next(scan, dir);
+		/* else: No more tuples, return NULL */
 	}
 
-	return res;
+	return newbatch;
+}
+
+/*
+ * hashfreebatch() -- Release a batch returned by hashgetbatch
+ */
+void
+hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
+{
+	/*
+	 * Check if there are tuples to kill from this batch (that weren't already
+	 * killed earlier on)
+	 */
+	if (batch->numKilled > 0)
+		_hash_kill_items(scan, batch);
+
+	if (scan->batchqueue && !scan->batchqueue->dropPin)
+	{
+		ReleaseBuffer(batch->buf);
+		batch->buf = InvalidBuffer;
+	}
+
+	indexam_util_batch_release(scan, batch);
 }
 
 
@@ -383,15 +507,13 @@ hashbeginscan(Relation rel, int nkeys, int norderbys)
 	scan = RelationGetIndexScan(rel, nkeys, norderbys);
 
 	so = (HashScanOpaque) palloc(sizeof(HashScanOpaqueData));
-	HashScanPosInvalidate(so->currPos);
+	so->currPos.buf = InvalidBuffer;
+	so->currPos.currPage = InvalidBlockNumber;
 	so->hashso_bucket_buf = InvalidBuffer;
 	so->hashso_split_bucket_buf = InvalidBuffer;
 
 	so->hashso_buc_populated = false;
 	so->hashso_buc_split = false;
-
-	so->killedItems = NULL;
-	so->numKilled = 0;
 
 	scan->opaque = so;
 
@@ -408,17 +530,10 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 
-	if (HashScanPosIsValid(so->currPos))
-	{
-		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
-			_hash_kill_items(scan);
-	}
+	_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), true);
 
-	_hash_dropscanbuf(rel, so);
-
-	/* set position invalid (this will cause _hash_first call) */
-	HashScanPosInvalidate(so->currPos);
+	so->currPos.buf = InvalidBuffer;
+	so->currPos.currPage = InvalidBlockNumber;
 
 	/* Update scan key, if a new one is given */
 	if (scankey && scan->numberOfKeys > 0)
@@ -437,17 +552,8 @@ hashendscan(IndexScanDesc scan)
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 
-	if (HashScanPosIsValid(so->currPos))
-	{
-		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
-			_hash_kill_items(scan);
-	}
+	_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), true);
 
-	_hash_dropscanbuf(rel, so);
-
-	if (so->killedItems != NULL)
-		pfree(so->killedItems);
 	pfree(so);
 	scan->opaque = NULL;
 }
