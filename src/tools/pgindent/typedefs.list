@@ -1204,6 +1204,7 @@ Hash
 HashAggBatch
 HashAggSpill
 HashAllocFunc
+HashBatchData
 HashBuildState
 HashBulkDeleteStreamPrivate
 HashCompareFunc
@@ -1225,8 +1226,6 @@ HashPageStat
 HashPath
 HashScanOpaque
 HashScanOpaqueData
-HashScanPosData
-HashScanPosItem
 HashSkewBucket
 HashState
 HashValueFunc
