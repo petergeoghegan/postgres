@@ -426,26 +426,6 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 void
 hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
 {
-	Page		page = (Page) BufferGetPage(batch->buf);
-	HashPageOpaque opaque;
-	int			pagetype;
-	char       *pagetypestr;
-	opaque = HashPageGetOpaque(page);
-	pagetype = opaque->hasho_flag & LH_PAGE_TYPE;
-	if (pagetype == LH_META_PAGE)
-		pagetypestr = "metapage";
-	else if (pagetype == LH_OVERFLOW_PAGE)
-		pagetypestr  = "overflow";
-	else if (pagetype == LH_BUCKET_PAGE)
-		pagetypestr  = "bucket";
-	else if (pagetype == LH_BITMAP_PAGE)
-		pagetypestr  = "bitmap";
-	else
-		pagetypestr  = "unused";
-
-	elog(WARNING, "hashfreebatch for buf %d of type %s blknum %u", batch->buf,
-		 pagetypestr, BufferGetBlockNumber(batch->buf));
-
 	/*
 	 * Check if there are tuples to kill from this batch (that weren't already
 	 * killed earlier on)
