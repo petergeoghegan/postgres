@@ -328,7 +328,8 @@ _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap, bool start_or_en
 {
 	/* release pin we hold on primary bucket page */
 	if (BufferIsValid(so->hashso_bucket_buf) &&
-		so->hashso_bucket_buf != so->currPos.buf && (BufferIsValid(so->currPos.buf) || start_or_end))
+		so->hashso_bucket_buf != so->currPos.buf &&
+		(BufferIsValid(so->currPos.buf) || start_or_end))
 		_hash_dropbuf(rel, so->hashso_bucket_buf);
 	so->hashso_bucket_buf = InvalidBuffer;
 
