@@ -286,13 +286,6 @@ hashinsert(Relation rel, Datum *values, bool *isnull,
 
 /*
  *	hashgetbatch() -- Get the next batch of tuples in the scan.
- *
- * Returns a batch of matching tuples from the current page, or NULL if the
- * scan is exhausted. The returned batch may contain multiple tuples from a
- * single hash index page.
- *
- * For hash indexes, we don't need to handle array keys like btree does since
- * hash only supports equality scans on a single hash value.
  */
 BatchIndexScan
 hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
@@ -319,6 +312,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
 
 			/* Copy page navigation information */
+			Assert(BufferIsValid(so->currPos.buf));
 			newbatch->buf = so->currPos.buf;
 			newbatch->currPage = so->currPos.currPage;
 			newbatch->nextPage = so->currPos.nextPage;
@@ -377,8 +371,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
 
 			/* Copy page navigation information */
-			if (!BufferIsValid(so->currPos.buf))
-				elog(ERROR, "_hash_next returned invalid so->currPos.buf");
+			Assert(BufferIsValid(so->currPos.buf));
 			newbatch->buf = so->currPos.buf;
 			newbatch->currPage = so->currPos.currPage;
 			newbatch->nextPage = so->currPos.nextPage;
@@ -418,10 +411,6 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 /*
  * hashfreebatch() -- Release a batch returned by hashgetbatch
- *
- * For hash indexes, this handles any remaining killed items from the batch,
- * releases the buffer pin, and releases the batch structure allocated by
- * indexam_util_batch_alloc.
  */
 void
 hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
@@ -435,13 +424,10 @@ hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
 
 	if (scan->batchqueue && !scan->batchqueue->dropPin)
 	{
-		if (!BufferIsValid(batch->buf))
-			elog(ERROR, "!BufferIsValid(batch->buf) in hashfreebatch");
 		ReleaseBuffer(batch->buf);
 		batch->buf = InvalidBuffer;
 	}
 
-	/* Release batch allocated by indexam_util_batch_alloc */
 	indexam_util_batch_release(scan, batch);
 }
 
