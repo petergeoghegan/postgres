@@ -286,7 +286,7 @@ _hash_dropbuf(Relation rel, Buffer buf)
  * hold no lock.
  */
 void
-_hash_dropscanbuf(Relation rel, HashScanOpaque so, bool end)
+_hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap)
 {
 	/* release pin we hold on primary bucket page */
 	// if (BufferIsValid(so->hashso_bucket_buf) &&
@@ -301,7 +301,7 @@ _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool end)
 	so->hashso_split_bucket_buf = InvalidBuffer;
 
 	/* release any pin we still hold */
-	if (end && BufferIsValid(so->currPos.buf))
+	if (bitmap && BufferIsValid(so->currPos.buf))
 		_hash_dropbuf(rel, so->currPos.buf);
 	so->currPos.buf = InvalidBuffer;
 
