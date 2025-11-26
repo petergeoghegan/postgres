@@ -141,17 +141,6 @@ typedef struct HashScanPosData
 	BlockNumberIsValid((scanpos).currPage) \
 )
 
-#define HashScanPosInvalidate(scanpos) \
-	do { \
-		(scanpos).buf = InvalidBuffer; \
-		(scanpos).currPage = InvalidBlockNumber; \
-		(scanpos).nextPage = InvalidBlockNumber; \
-		(scanpos).prevPage = InvalidBlockNumber; \
-		(scanpos).firstItem = 0; \
-		(scanpos).lastItem = 0; \
-		(scanpos).itemIndex = 0; \
-	} while (0)
-
 /*
  *	HashScanOpaqueData is private state for a hash index scan.
  */

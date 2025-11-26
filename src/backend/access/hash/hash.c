@@ -487,7 +487,8 @@ hashbeginscan(Relation rel, int nkeys, int norderbys)
 	scan = RelationGetIndexScan(rel, nkeys, norderbys);
 
 	so = (HashScanOpaque) palloc(sizeof(HashScanOpaqueData));
-	HashScanPosInvalidate(so->currPos);
+	so->currPos.buf = InvalidBuffer;
+	so->currPos.currPage = InvalidBlockNumber;
 	so->hashso_bucket_buf = InvalidBuffer;
 	so->hashso_split_bucket_buf = InvalidBuffer;
 
@@ -511,8 +512,8 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 
 	_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), true);
 
-	/* set position invalid (this will cause _hash_first call) */
-	HashScanPosInvalidate(so->currPos);
+	so->currPos.buf = InvalidBuffer;
+	so->currPos.currPage = InvalidBlockNumber;
 
 	/* Update scan key, if a new one is given */
 	if (scankey && scan->numberOfKeys > 0)
