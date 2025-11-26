@@ -359,8 +359,6 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 		 * indicate we're at the end of the current page so that _hash_next()
 		 * will advance to the next page.
 		 */
-
-
 		if (ScanDirectionIsForward(dir))
 			so->currPos.itemIndex = so->currPos.lastItem;
 		else
