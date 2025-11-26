@@ -305,15 +305,13 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 	{
 		if (_hash_first(scan, dir))
 		{
+			/* Allocate and fill batch structure from currPos */
 			HashScanPosItem *items = so->currPos.items;
 
-			/* Allocate and fill batch structure from currPos */
 			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
-			/* Allocate with MaxIndexTuplesPerPage capacity for batch reuse */
 			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage,
 												false);
 
-			/* Copy page navigation information */
 			Assert(BufferIsValid(so->currPos.buf));
 			if (scan->batchqueue && scan->batchqueue->dropPin)
 			{
@@ -328,6 +326,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			}
 			else
 				newbatch->buf = so->currPos.buf;
+
 			newbatch->currPage = so->currPos.currPage;
 			newbatch->nextPage = so->currPos.nextPage;
 			newbatch->prevPage = so->currPos.prevPage;
@@ -378,17 +377,14 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 		if (_hash_next(scan, dir))
 		{
+			/* Allocate and fill batch structure from currPos */
 			HashScanPosItem *items = so->currPos.items;
 
-			/* Allocate and fill batch structure from currPos */
 			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
-			/* Allocate with MaxIndexTuplesPerPage capacity for batch reuse */
 			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage,
 												false);
 
-			/* Copy page navigation information */
 			Assert(BufferIsValid(so->currPos.buf));
-
 			if (scan->batchqueue && scan->batchqueue->dropPin)
 			{
 				/*
