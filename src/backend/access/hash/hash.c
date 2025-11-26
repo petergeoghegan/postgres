@@ -308,10 +308,10 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			HashScanPosItem *items = so->currPos.items;
 
 			/* Allocate and fill batch structure from currPos */
-			itemCount = so->currPos.lastItem - so->currPos.firstItem + 1;
-			Assert(itemCount > 0);
+			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
 			/* Allocate with MaxIndexTuplesPerPage capacity for batch reuse */
-			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
+			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage,
+												false);
 
 			/* Copy page navigation information */
 			Assert(BufferIsValid(so->currPos.buf));
@@ -337,6 +337,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			}
 
 			/* Copy the items array */
+			Assert(itemCount > 0);
 			for (i = 0; i < itemCount; i++)
 			{
 				int			srcIdx = so->currPos.firstItem + i;
@@ -370,9 +371,9 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 			/* Allocate and fill batch structure from currPos */
 			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
-			Assert(itemCount > 0);
 			/* Allocate with MaxIndexTuplesPerPage capacity for batch reuse */
-			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
+			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage,
+												false);
 
 			/* Copy page navigation information */
 			Assert(BufferIsValid(so->currPos.buf));
@@ -398,6 +399,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			}
 
 			/* Copy the items array */
+			Assert(itemCount > 0);
 			for (i = 0; i < itemCount; i++)
 			{
 				int			srcIdx = so->currPos.firstItem + i;
