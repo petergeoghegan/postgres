@@ -327,9 +327,9 @@ void
 _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap, bool start_or_end)
 {
 	/* release pin we hold on primary bucket page */
-	// if (BufferIsValid(so->hashso_bucket_buf) &&
-	// 	so->hashso_bucket_buf != so->currPos.buf)
-	// 	_hash_dropbuf(rel, so->hashso_bucket_buf);
+	if (BufferIsValid(so->hashso_bucket_buf) &&
+		so->hashso_bucket_buf != so->currPos.buf)
+		_hash_dropbuf(rel, so->hashso_bucket_buf);
 	so->hashso_bucket_buf = InvalidBuffer;
 
 	/* release pin we hold on primary bucket page  of bucket being split */

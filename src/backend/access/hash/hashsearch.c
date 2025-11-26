@@ -105,7 +105,7 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 	if (end_of_scan)
 	{
 		_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), false);
-		HashScanPosInvalidate(so->currPos);
+		// HashScanPosInvalidate(so->currPos);
 		return false;
 	}
 

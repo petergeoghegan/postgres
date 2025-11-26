@@ -443,8 +443,8 @@ hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
 	else
 		pagetypestr  = "unused";
 
-	elog(WARNING, "hashfreebatch for buf %d of type %s blknum %u", batch->buf,
-		 pagetypestr, BufferGetBlockNumber(batch->buf));
+	elog(WARNING, "hashfreebatch for buf %d of type %s", batch->buf,
+		 pagetypestr);
 
 	/*
 	 * Check if there are tuples to kill from this batch (that weren't already
