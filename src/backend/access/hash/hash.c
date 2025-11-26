@@ -314,6 +314,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 		{
 			/* Allocate and fill batch structure from currPos */
 			itemCount = so->currPos.lastItem - so->currPos.firstItem + 1;
+			Assert(itemCount > 0);
 			/* Allocate with MaxIndexTuplesPerPage capacity for batch reuse */
 			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
 
@@ -371,6 +372,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 		{
 			/* Allocate and fill batch structure from currPos */
 			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
+			Assert(itemCount > 0);
 			/* Allocate with MaxIndexTuplesPerPage capacity for batch reuse */
 			newbatch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
 
