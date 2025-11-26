@@ -2131,6 +2131,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	 */
 	*foundPtr = false;
 
+	elog(DEBUG1, "victim_buf_hdr->buf_id + 1: %d", victim_buf_hdr->buf_id + 1);
 	return victim_buf_hdr;
 }
 
@@ -3149,6 +3150,7 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy,
 		ref->refcount++;
 		ResourceOwnerRememberBuffer(CurrentResourceOwner, b);
 	}
+	elog(DEBUG1, "pinning buffer + 1: %d", buf->buf_id + 1);
 
 	return result;
 }
@@ -3248,6 +3250,7 @@ UnpinBuffer(BufferDesc *buf)
 {
 	Buffer		b = BufferDescriptorGetBuffer(buf);
 
+	elog(DEBUG1, "unpinning buffer + 1: %d", buf->buf_id + 1);
 	ResourceOwnerForgetBuffer(CurrentResourceOwner, b);
 	UnpinBufferNoOwner(buf);
 }

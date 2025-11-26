@@ -51,7 +51,7 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	HashScanPosItem *currItem;
 	BlockNumber blkno;
-	Buffer		buf;
+	Buffer		buf = InvalidBuffer;
 	bool		end_of_scan = false;
 
 	/*
