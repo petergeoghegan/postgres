@@ -576,6 +576,7 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 		so->currPos.nextPage = opaque->hasho_nextblkno;
 		_hash_relbuf(rel, so->currPos.buf);
 		so->currPos.buf = InvalidBuffer;
+		return false;
 	}
 
 	Assert(so->currPos.firstItem <= so->currPos.lastItem);
