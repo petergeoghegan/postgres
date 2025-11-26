@@ -51,7 +51,7 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	HashScanPosItem *currItem;
 	BlockNumber blkno;
-	Buffer		buf = InvalidBuffer;
+	Buffer		buf;
 	bool		end_of_scan = false;
 
 	/*
@@ -105,7 +105,7 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 	if (end_of_scan)
 	{
 		_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), false);
-		// HashScanPosInvalidate(so->currPos);
+		HashScanPosInvalidate(so->currPos);
 		return false;
 	}
 
@@ -550,7 +550,6 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 				 * cursors to know the start position and return false
 				 * indicating that no more matching tuples were found.
 				 */
-				/* XXX What to do about currPage now? */
 				so->currPos.prevPage = InvalidBlockNumber;
 				so->currPos.nextPage = next_blkno;
 				so->currPos.buf = buf;
