@@ -180,11 +180,13 @@ typedef struct HashScanOpaqueData
 	bool		hashso_buc_split;
 
 	/*
-	 * Temporary position state used during batch operations via hashgetbatch().
-	 * This is reset between batch calls.
+	 * Identify all the matching items on a page and save them in
+	 * HashScanPosData
+	 *
+	 * TODO Fully get rid of this, by switching over hashgetbitmap to using
+	 * batches (by making _hash_first and _hash_next return batches)
 	 */
-	HashScanPosData currPos;
-
+	HashScanPosData currPos;	/* current position data */
 } HashScanOpaqueData;
 
 typedef HashScanOpaqueData *HashScanOpaque;
@@ -433,7 +435,8 @@ extern Buffer _hash_getbuf_with_strategy(Relation rel, BlockNumber blkno,
 										 BufferAccessStrategy bstrategy);
 extern void _hash_relbuf(Relation rel, Buffer buf);
 extern void _hash_dropbuf(Relation rel, Buffer buf);
-extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap, bool start_or_end);
+extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap,
+							  bool start_or_end);
 extern uint32 _hash_init(Relation rel, double num_tuples,
 						 ForkNumber forkNum);
 extern void _hash_init_metabuffer(Buffer buf, double num_tuples,
