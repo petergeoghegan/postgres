@@ -100,12 +100,14 @@ typedef HashPageOpaqueData *HashPageOpaque;
  */
 #define HASHO_PAGE_ID		0xFF80
 
+/* TODO: Remove HashScanPosItem */
 typedef struct HashScanPosItem	/* what we remember about each match */
 {
 	ItemPointerData heapTid;	/* TID of referenced heap item */
 	OffsetNumber indexOffset;	/* index item's location within page */
 } HashScanPosItem;
 
+/* TODO: Remove HashScanPosData */
 typedef struct HashScanPosData
 {
 	Buffer		buf;			/* if valid, the buffer is pinned */
@@ -126,20 +128,6 @@ typedef struct HashScanPosData
 
 	HashScanPosItem items[MaxIndexTuplesPerPage];	/* MUST BE LAST */
 } HashScanPosData;
-
-#define HashScanPosIsPinned(scanpos) \
-( \
-	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
-				!BufferIsValid((scanpos).buf)), \
-	BufferIsValid((scanpos).buf) \
-)
-
-#define HashScanPosIsValid(scanpos) \
-( \
-	AssertMacro(BlockNumberIsValid((scanpos).currPage) || \
-				!BufferIsValid((scanpos).buf)), \
-	BlockNumberIsValid((scanpos).currPage) \
-)
 
 /*
  *	HashScanOpaqueData is private state for a hash index scan.
