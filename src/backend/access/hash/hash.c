@@ -515,7 +515,7 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 
-	_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL));
+	_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), true);
 
 	/* set position invalid (this will cause _hash_first call) */
 	HashScanPosInvalidate(so->currPos);
@@ -537,7 +537,7 @@ hashendscan(IndexScanDesc scan)
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 
-	_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL));
+	_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), true);
 
 	pfree(so);
 	scan->opaque = NULL;

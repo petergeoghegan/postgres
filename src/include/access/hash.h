@@ -433,7 +433,7 @@ extern Buffer _hash_getbuf_with_strategy(Relation rel, BlockNumber blkno,
 										 BufferAccessStrategy bstrategy);
 extern void _hash_relbuf(Relation rel, Buffer buf);
 extern void _hash_dropbuf(Relation rel, Buffer buf);
-extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap);
+extern void _hash_dropscanbuf(Relation rel, HashScanOpaque so, bool bitmap, bool start_or_end);
 extern uint32 _hash_init(Relation rel, double num_tuples,
 						 ForkNumber forkNum);
 extern void _hash_init_metabuffer(Buffer buf, double num_tuples,
