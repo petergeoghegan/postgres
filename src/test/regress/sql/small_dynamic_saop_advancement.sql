@@ -3,7 +3,10 @@
 --
 
 -- directory paths are passed to us in environment variables
+set client_min_messages=error;
 drop table if exists hash_i4_heap;
+reset client_min_messages;
+
 CREATE TABLE hash_i4_heap (
 	seqno 		int4,
 	random 		int4
@@ -26,17 +29,25 @@ CREATE INDEX hash_i4_index ON hash_i4_heap USING hash (random int4_ops);
 
 SELECT * FROM hash_i4_heap
    WHERE hash_i4_heap.random = 843938989;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+SELECT * FROM hash_i4_heap
+   WHERE hash_i4_heap.random = 843938989;
 
 --
 -- leak
 --
 SELECT * FROM hash_i4_heap
    WHERE hash_i4_heap.random = 66766766;
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)
+SELECT * FROM hash_i4_heap
+   WHERE hash_i4_heap.random = 66766766;
 
 --
 -- doublefree.
 --
+set client_min_messages=error;
 drop table if exists hash_split_heap;
+reset client_min_messages;
 CREATE TABLE hash_split_heap (keycol INT);
 INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 500) a;
 CREATE INDEX hash_split_index on hash_split_heap USING HASH (keycol);
