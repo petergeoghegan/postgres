@@ -317,6 +317,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			Assert(BufferIsValid(so->currPos.buf));
 			if (scan->batchqueue && scan->batchqueue->dropPin)
 			{
+				newbatch->lsn = BufferGetLSNAtomic(so->currPos.buf);
 				ReleaseBuffer(so->currPos.buf);
 				so->currPos.buf = InvalidBuffer;
 			}
@@ -327,7 +328,6 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			newbatch->prevPage = so->currPos.prevPage;
 			newbatch->firstItem = so->currPos.firstItem;
 			newbatch->lastItem = so->currPos.lastItem;
-			newbatch->lsn = 0;	/* Not used for hash indexes */
 			newbatch->dir = dir;
 
 			/* Determine if there may be more entries left and right */
@@ -386,6 +386,7 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 			if (scan->batchqueue && scan->batchqueue->dropPin)
 			{
+				newbatch->lsn = BufferGetLSNAtomic(so->currPos.buf);
 				ReleaseBuffer(so->currPos.buf);
 				so->currPos.buf = InvalidBuffer;
 			}
@@ -397,7 +398,6 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			newbatch->prevPage = so->currPos.prevPage;
 			newbatch->firstItem = so->currPos.firstItem;
 			newbatch->lastItem = so->currPos.lastItem;
-			newbatch->lsn = 0;	/* Not used for hash indexes */
 			newbatch->dir = dir;
 
 			/* Determine if there may be more entries left and right */
