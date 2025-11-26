@@ -341,7 +341,9 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 				newbatch->items[i].heapTid = so->currPos.items[srcIdx].heapTid;
 				newbatch->items[i].indexOffset = so->currPos.items[srcIdx].indexOffset;
-				newbatch->items[i].tupleOffset = 0;	/* Hash doesn't support index-only scans */
+
+				/* Hash doesn't support index-only scans, but be tidy: */
+				newbatch->items[i].tupleOffset = 0;
 			}
 		}
 		/* else: No tuples found, return NULL */
@@ -400,7 +402,9 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 				newbatch->items[i].heapTid = so->currPos.items[srcIdx].heapTid;
 				newbatch->items[i].indexOffset = so->currPos.items[srcIdx].indexOffset;
-				newbatch->items[i].tupleOffset = 0;	/* Hash doesn't support index-only scans */
+
+				/* Hash doesn't support index-only scans, but be tidy: */
+				newbatch->items[i].tupleOffset = 0;
 			}
 		}
 		/* else: No more tuples, return NULL */
