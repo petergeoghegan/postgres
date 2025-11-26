@@ -265,6 +265,25 @@ _hash_getbuf_with_strategy(Relation rel, BlockNumber blkno,
 void
 _hash_relbuf(Relation rel, Buffer buf)
 {
+	Page		page = (Page) BufferGetPage(buf);
+	HashPageOpaque opaque;
+	int			pagetype;
+	char       *pagetypestr;
+	opaque = HashPageGetOpaque(page);
+	pagetype = opaque->hasho_flag & LH_PAGE_TYPE;
+	if (pagetype == LH_META_PAGE)
+		pagetypestr = "metapage";
+	else if (pagetype == LH_OVERFLOW_PAGE)
+		pagetypestr  = "overflow";
+	else if (pagetype == LH_BUCKET_PAGE)
+		pagetypestr  = "bucket";
+	else if (pagetype == LH_BITMAP_PAGE)
+		pagetypestr  = "bitmap";
+	else
+		pagetypestr  = "unused";
+
+	elog(WARNING, "_hash_relbuf for buf %d of type %s blknum %u", buf,
+		 pagetypestr, BufferGetBlockNumber(buf));
 	UnlockReleaseBuffer(buf);
 }
 
@@ -276,6 +295,25 @@ _hash_relbuf(Relation rel, Buffer buf)
 void
 _hash_dropbuf(Relation rel, Buffer buf)
 {
+	Page		page = (Page) BufferGetPage(buf);
+	HashPageOpaque opaque;
+	int			pagetype;
+	char       *pagetypestr;
+	opaque = HashPageGetOpaque(page);
+	pagetype = opaque->hasho_flag & LH_PAGE_TYPE;
+	if (pagetype == LH_META_PAGE)
+		pagetypestr = "metapage";
+	else if (pagetype == LH_OVERFLOW_PAGE)
+		pagetypestr  = "overflow";
+	else if (pagetype == LH_BUCKET_PAGE)
+		pagetypestr  = "bucket";
+	else if (pagetype == LH_BITMAP_PAGE)
+		pagetypestr  = "bitmap";
+	else
+		pagetypestr  = "unused";
+
+	elog(WARNING, "_hash_dropbuf for buf %d of type %s blknum %u", buf,
+		 pagetypestr, BufferGetBlockNumber(buf));
 	ReleaseBuffer(buf);
 }
 
