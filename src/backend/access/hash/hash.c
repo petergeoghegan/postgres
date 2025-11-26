@@ -305,6 +305,8 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 	{
 		if (_hash_first(scan, dir))
 		{
+			HashScanPosItem *items = so->currPos.items;
+
 			/* Allocate and fill batch structure from currPos */
 			itemCount = so->currPos.lastItem - so->currPos.firstItem + 1;
 			Assert(itemCount > 0);
@@ -339,8 +341,8 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			{
 				int			srcIdx = so->currPos.firstItem + i;
 
-				newbatch->items[i].heapTid = so->currPos.items[srcIdx].heapTid;
-				newbatch->items[i].indexOffset = so->currPos.items[srcIdx].indexOffset;
+				newbatch->items[i].heapTid = items[srcIdx].heapTid;
+				newbatch->items[i].indexOffset = items[srcIdx].indexOffset;
 
 				/* Hash doesn't support index-only scans, but be tidy: */
 				newbatch->items[i].tupleOffset = 0;
@@ -366,6 +368,8 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 		if (_hash_next(scan, dir))
 		{
+			HashScanPosItem *items = so->currPos.items;
+
 			/* Allocate and fill batch structure from currPos */
 			itemCount = (so->currPos.lastItem - so->currPos.firstItem) + 1;
 			Assert(itemCount > 0);
@@ -400,8 +404,8 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			{
 				int			srcIdx = so->currPos.firstItem + i;
 
-				newbatch->items[i].heapTid = so->currPos.items[srcIdx].heapTid;
-				newbatch->items[i].indexOffset = so->currPos.items[srcIdx].indexOffset;
+				newbatch->items[i].heapTid = items[srcIdx].heapTid;
+				newbatch->items[i].indexOffset = items[srcIdx].indexOffset;
 
 				/* Hash doesn't support index-only scans, but be tidy: */
 				newbatch->items[i].tupleOffset = 0;
