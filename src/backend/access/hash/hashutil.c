@@ -534,6 +534,7 @@ _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
 void
 _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 {
+	Relation	rel = scan->indexRelation;
 	Buffer		buf;
 	Page		page;
 	HashPageOpaque opaque;
@@ -553,8 +554,34 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	 */
 	batch->numKilled = 0;
 
-	buf = batch->buf;
-	LockBuffer(buf, BUFFER_LOCK_SHARE);
+	if (!scan->batchqueue->dropPin)
+	{
+		/*
+		 * We have held the pin on this page since we read the index tuples,
+		 * so all we need to do is lock it.  The pin will have prevented
+		 * concurrent VACUUMs from recycling any of the TIDs on the page.
+		 */
+		buf = batch->buf;
+		LockBuffer(buf, BUFFER_LOCK_SHARE);
+	}
+	else
+	{
+		XLogRecPtr	latestlsn;
+
+		Assert(RelationNeedsWAL(rel));
+		buf = _hash_getbuf(rel, batch->currPage, HASH_READ, LH_OVERFLOW_PAGE);
+
+		latestlsn = BufferGetLSNAtomic(buf);
+		Assert(batch->lsn <= latestlsn);
+		if (batch->lsn != latestlsn)
+		{
+			/* Modified, give up on hinting */
+			_hash_relbuf(rel, buf);
+			return;
+		}
+
+		/* Unmodified, hinting is safe */
+	}
 
 	page = BufferGetPage(buf);
 	opaque = HashPageGetOpaque(page);
@@ -597,5 +624,8 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
+	if (!scan->batchqueue->dropPin)
+		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
+	else
+		_hash_relbuf(rel, buf);
 }
