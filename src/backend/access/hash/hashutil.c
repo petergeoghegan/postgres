@@ -569,7 +569,8 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 		XLogRecPtr	latestlsn;
 
 		Assert(RelationNeedsWAL(rel));
-		buf = _hash_getbuf(rel, batch->currPage, HASH_READ, LH_OVERFLOW_PAGE);
+		buf = _hash_getbuf(rel, batch->currPage, HASH_READ,
+						   LH_BUCKET_PAGE |	LH_OVERFLOW_PAGE);
 
 		latestlsn = BufferGetLSNAtomic(buf);
 		Assert(batch->lsn <= latestlsn);
