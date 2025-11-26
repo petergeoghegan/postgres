@@ -315,7 +315,13 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 			/* Copy page navigation information */
 			Assert(BufferIsValid(so->currPos.buf));
-			newbatch->buf = so->currPos.buf;
+			if (scan->batchqueue && scan->batchqueue->dropPin)
+			{
+				ReleaseBuffer(so->currPos.buf);
+				so->currPos.buf = InvalidBuffer;
+			}
+			else
+				newbatch->buf = so->currPos.buf;
 			newbatch->currPage = so->currPos.currPage;
 			newbatch->nextPage = so->currPos.nextPage;
 			newbatch->prevPage = so->currPos.prevPage;
@@ -377,7 +383,15 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 			/* Copy page navigation information */
 			Assert(BufferIsValid(so->currPos.buf));
-			newbatch->buf = so->currPos.buf;
+
+			if (scan->batchqueue && scan->batchqueue->dropPin)
+			{
+				ReleaseBuffer(so->currPos.buf);
+				so->currPos.buf = InvalidBuffer;
+			}
+			else
+				newbatch->buf = so->currPos.buf;
+
 			newbatch->currPage = so->currPos.currPage;
 			newbatch->nextPage = so->currPos.nextPage;
 			newbatch->prevPage = so->currPos.prevPage;

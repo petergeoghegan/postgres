@@ -30,7 +30,6 @@
 
 #include "access/amapi.h"
 #include "access/tableam.h"
-#include "catalog/pg_am_d.h"
 #include "optimizer/cost.h"
 #include "pgstat.h"
 #include "utils/memdebug.h"
@@ -113,7 +112,6 @@ index_batch_init(IndexScanDesc scan)
 	 */
 	scan->batchqueue->dropPin =
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
-		 (scan->heapRelation->rd_rel->relam == BTREE_AM_OID) &&
 		 RelationNeedsWAL(scan->indexRelation));
 	scan->batchqueue->finished = false;
 	scan->batchqueue->direction = NoMovementScanDirection;
