@@ -317,6 +317,11 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 			Assert(BufferIsValid(so->currPos.buf));
 			if (scan->batchqueue && scan->batchqueue->dropPin)
 			{
+				/*
+				 * XXX We should be using indexam_util_batch_unlock to perform
+				 * these steps for us.  That requires teaching _hash_first to
+				 * return the next batch/fully getting rid of so->currPos.
+				 */
 				newbatch->lsn = BufferGetLSNAtomic(so->currPos.buf);
 				ReleaseBuffer(so->currPos.buf);
 				so->currPos.buf = InvalidBuffer;
@@ -386,6 +391,11 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 
 			if (scan->batchqueue && scan->batchqueue->dropPin)
 			{
+				/*
+				 * XXX We should be using indexam_util_batch_unlock to perform
+				 * these steps for us.  That requires teaching _hash_next to
+				 * return the next batch/fully getting rid of so->currPos.
+				 */
 				newbatch->lsn = BufferGetLSNAtomic(so->currPos.buf);
 				ReleaseBuffer(so->currPos.buf);
 				so->currPos.buf = InvalidBuffer;
