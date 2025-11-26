@@ -282,7 +282,7 @@ _hash_relbuf(Relation rel, Buffer buf)
 	else
 		pagetypestr  = "unused";
 
-	elog(WARNING, "_hash_relbuf for buf %d of type %s blknum %u", buf,
+	elog(DEBUG1, "_hash_relbuf for buf %d of type %s blknum %u", buf,
 		 pagetypestr, BufferGetBlockNumber(buf));
 	UnlockReleaseBuffer(buf);
 }
@@ -312,7 +312,7 @@ _hash_dropbuf(Relation rel, Buffer buf)
 	else
 		pagetypestr  = "unused";
 
-	elog(WARNING, "_hash_dropbuf for buf %d of type %s blknum %u", buf,
+	elog(DEBUG1, "_hash_dropbuf for buf %d of type %s blknum %u", buf,
 		 pagetypestr, BufferGetBlockNumber(buf));
 	ReleaseBuffer(buf);
 }

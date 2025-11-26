@@ -443,7 +443,7 @@ hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
 	else
 		pagetypestr  = "unused";
 
-	elog(WARNING, "hashfreebatch for buf %d of type %s", batch->buf,
+	elog(DEBUG1, "hashfreebatch for buf %d of type %s", batch->buf,
 		 pagetypestr);
 
 	/*
