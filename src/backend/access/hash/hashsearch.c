@@ -22,10 +22,11 @@
 #include "utils/rel.h"
 
 static bool _hash_readpage(IndexScanDesc scan, Buffer *bufP,
-						   ScanDirection dir);
+						   ScanDirection dir, BatchIndexScan batch);
 static int	_hash_load_qualified_items(IndexScanDesc scan, Page page,
-									   OffsetNumber offnum, ScanDirection dir);
-static inline void _hash_saveitem(HashScanOpaque so, int itemIndex,
+									   OffsetNumber offnum, ScanDirection dir,
+									   BatchIndexScan batch);
+static inline void _hash_saveitem(BatchIndexScan batch, int itemIndex,
 								  OffsetNumber offnum, IndexTuple itup);
 static void _hash_readnext(IndexScanDesc scan, Buffer *bufp,
 						   Page *pagep, HashPageOpaque *opaquep);
@@ -44,75 +45,60 @@ static void _hash_readnext(IndexScanDesc scan, Buffer *bufp,
  *		held on bucket page but no pins or locks held on overflow
  *		page.
  */
-bool
-_hash_next(IndexScanDesc scan, ScanDirection dir)
+BatchIndexScan
+_hash_next(IndexScanDesc scan, ScanDirection dir, BatchIndexScan priorbatch)
 {
 	Relation	rel = scan->indexRelation;
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-	HashScanPosItem *currItem;
 	BlockNumber blkno;
 	Buffer		buf;
-	bool		end_of_scan = false;
+	BatchIndexScan batch;
 
 	/*
-	 * Advance to the next tuple on the current page; or if done, try to read
-	 * data from the next or previous page based on the scan direction. Before
-	 * moving to the next or previous page make sure that we deal with all the
-	 * killed items.
+	 * Determine which page to read next based on scan direction and
+	 * prior batch navigation information.
 	 */
 	if (ScanDirectionIsForward(dir))
 	{
-		if (++so->currPos.itemIndex > so->currPos.lastItem)
+		blkno = priorbatch->nextPage;
+		if (!BlockNumberIsValid(blkno) || !priorbatch->moreRight)
 		{
-			blkno = so->currPos.nextPage;
-			if (BlockNumberIsValid(blkno))
-			{
-				buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
-				if (!_hash_readpage(scan, &buf, dir))
-					end_of_scan = true;
-			}
-			else
-				end_of_scan = true;
+			_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), false);
+			return NULL;
 		}
 	}
 	else
 	{
-		if (--so->currPos.itemIndex < so->currPos.firstItem)
+		blkno = priorbatch->prevPage;
+		if (!BlockNumberIsValid(blkno) || !priorbatch->moreLeft)
 		{
-			blkno = so->currPos.prevPage;
-			if (BlockNumberIsValid(blkno))
-			{
-				buf = _hash_getbuf(rel, blkno, HASH_READ,
-								   LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
-
-				/*
-				 * We always maintain the pin on bucket page for whole scan
-				 * operation, so releasing the additional pin we have acquired
-				 * here.
-				 */
-				if (buf == so->hashso_bucket_buf ||
-					buf == so->hashso_split_bucket_buf)
-					_hash_dropbuf(rel, buf);
-
-				if (!_hash_readpage(scan, &buf, dir))
-					end_of_scan = true;
-			}
-			else
-				end_of_scan = true;
+			_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), false);
+			return NULL;
 		}
 	}
 
-	if (end_of_scan)
+	/* Get the next buffer */
+	buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
+
+	/*
+	 * We always maintain the pin on bucket page for whole scan operation, so
+	 * release the additional pin we have acquired here if it's a bucket page.
+	 */
+	if (buf == so->hashso_bucket_buf || buf == so->hashso_split_bucket_buf)
+		_hash_dropbuf(rel, buf);
+
+	/* Allocate batch for the next page */
+	batch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
+
+	/* Read the next page and load items into batch */
+	if (!_hash_readpage(scan, &buf, dir, batch))
 	{
-		_hash_dropscanbuf(rel, so, (scan->heapRelation == NULL), false);
-		return false;
+		indexam_util_batch_release(scan, batch);
+		return NULL;
 	}
 
-	/* OK, itemIndex says what to return */
-	currItem = &so->currPos.items[so->currPos.itemIndex];
-	scan->xs_heaptid = currItem->heapTid;
-
-	return true;
+	/* Return the batch containing matched items from next page */
+	return batch;
 }
 
 /*
@@ -274,10 +260,10 @@ _hash_readprev(IndexScanDesc scan,
  *		tuple(s) on the page has been loaded into so->currPos,
  *		scan->xs_heaptid is set to the heap TID of the current tuple.
  *
- *		On failure exit (no more tuples), we return false, with pin held on
+ *		On failure exit (no more tuples), we return NULL, with pin held on
  *		bucket page but no pins or locks held on overflow page.
  */
-bool
+BatchIndexScan
 _hash_first(IndexScanDesc scan, ScanDirection dir)
 {
 	Relation	rel = scan->indexRelation;
@@ -288,7 +274,7 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
 	Buffer		buf;
 	Page		page;
 	HashPageOpaque opaque;
-	HashScanPosItem *currItem;
+	BatchIndexScan batch;
 
 	pgstat_count_index_scan(rel);
 	if (scan->instrument)
@@ -318,7 +304,7 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
 	 * items in the index.
 	 */
 	if (cur->sk_flags & SK_ISNULL)
-		return false;
+		return NULL;
 
 	/*
 	 * Okay to compute the hash key.  We want to do this before acquiring any
@@ -411,20 +397,18 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
 			_hash_readnext(scan, &buf, &page, &opaque);
 	}
 
-	/* remember which buffer we have pinned, if any */
-	Assert(BufferIsInvalid(so->currPos.buf));
-	so->currPos.buf = buf;
+	/* Allocate batch for this scan */
+	batch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
 
 	/* Now find all the tuples satisfying the qualification from a page */
-	if (!_hash_readpage(scan, &buf, dir))
-		return false;
+	if (!_hash_readpage(scan, &buf, dir, batch))
+	{
+		indexam_util_batch_release(scan, batch);
+		return NULL;
+	}
 
-	/* OK, itemIndex says what to return */
-	currItem = &so->currPos.items[so->currPos.itemIndex];
-	scan->xs_heaptid = currItem->heapTid;
-
-	/* if we're here, _hash_readpage found a valid tuples */
-	return true;
+	/* Return the batch containing matched items */
+	return batch;
 }
 
 /*
@@ -438,7 +422,8 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
  *	Return true if any matching items are found else return false.
  */
 static bool
-_hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
+_hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
+			   BatchIndexScan batch)
 {
 	Relation	rel = scan->indexRelation;
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
@@ -454,8 +439,8 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 	page = BufferGetPage(buf);
 	opaque = HashPageGetOpaque(page);
 
-	so->currPos.buf = buf;
-	so->currPos.currPage = BufferGetBlockNumber(buf);
+	batch->buf = buf;
+	batch->currPage = BufferGetBlockNumber(buf);
 
 	if (ScanDirectionIsForward(dir))
 	{
@@ -466,7 +451,7 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 			/* new page, locate starting position by binary search */
 			offnum = _hash_binsearch(page, so->hashso_sk_hash);
 
-			itemIndex = _hash_load_qualified_items(scan, page, offnum, dir);
+			itemIndex = _hash_load_qualified_items(scan, page, offnum, dir, batch);
 
 			if (itemIndex != 0)
 				break;
@@ -480,8 +465,8 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 			 * If this is a primary bucket page, hasho_prevblkno is not a real
 			 * block number.
 			 */
-			if (so->currPos.buf == so->hashso_bucket_buf ||
-				so->currPos.buf == so->hashso_split_bucket_buf)
+			if (batch->buf == so->hashso_bucket_buf ||
+				batch->buf == so->hashso_split_bucket_buf)
 				prev_blkno = InvalidBlockNumber;
 			else
 				prev_blkno = opaque->hasho_prevblkno;
@@ -489,8 +474,8 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 			_hash_readnext(scan, &buf, &page, &opaque);
 			if (BufferIsValid(buf))
 			{
-				so->currPos.buf = buf;
-				so->currPos.currPage = BufferGetBlockNumber(buf);
+				batch->buf = buf;
+				batch->currPage = BufferGetBlockNumber(buf);
 			}
 			else
 			{
@@ -499,16 +484,15 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 				 * cursors to know the start position and return false
 				 * indicating that no more matching tuples were found.
 				 */
-				so->currPos.prevPage = prev_blkno;
-				so->currPos.nextPage = InvalidBlockNumber;
-				so->currPos.buf = buf;
+				batch->prevPage = prev_blkno;
+				batch->nextPage = InvalidBlockNumber;
+				batch->buf = buf;
 				return false;
 			}
 		}
 
-		so->currPos.firstItem = 0;
-		so->currPos.lastItem = itemIndex - 1;
-		so->currPos.itemIndex = 0;
+		batch->firstItem = 0;
+		batch->lastItem = itemIndex - 1;
 	}
 	else
 	{
@@ -519,7 +503,7 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 			/* new page, locate starting position by binary search */
 			offnum = _hash_binsearch_last(page, so->hashso_sk_hash);
 
-			itemIndex = _hash_load_qualified_items(scan, page, offnum, dir);
+			itemIndex = _hash_load_qualified_items(scan, page, offnum, dir, batch);
 
 			if (itemIndex != MaxIndexTuplesPerPage)
 				break;
@@ -529,15 +513,15 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 			 * the previous page
 			 */
 
-			if (so->currPos.buf == so->hashso_bucket_buf ||
-				so->currPos.buf == so->hashso_split_bucket_buf)
+			if (batch->buf == so->hashso_bucket_buf ||
+				batch->buf == so->hashso_split_bucket_buf)
 				next_blkno = opaque->hasho_nextblkno;
 
 			_hash_readprev(scan, &buf, &page, &opaque);
 			if (BufferIsValid(buf))
 			{
-				so->currPos.buf = buf;
-				so->currPos.currPage = BufferGetBlockNumber(buf);
+				batch->buf = buf;
+				batch->currPage = BufferGetBlockNumber(buf);
 			}
 			else
 			{
@@ -546,45 +530,53 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 				 * cursors to know the start position and return false
 				 * indicating that no more matching tuples were found.
 				 */
-				so->currPos.prevPage = InvalidBlockNumber;
-				so->currPos.nextPage = next_blkno;
-				so->currPos.buf = buf;
+				batch->prevPage = InvalidBlockNumber;
+				batch->nextPage = next_blkno;
+				batch->buf = buf;
 				return false;
 			}
 		}
 
-		so->currPos.firstItem = itemIndex;
-		so->currPos.lastItem = MaxIndexTuplesPerPage - 1;
-		so->currPos.itemIndex = MaxIndexTuplesPerPage - 1;
+		batch->firstItem = itemIndex;
+		batch->lastItem = MaxIndexTuplesPerPage - 1;
 	}
 
-	if (so->currPos.buf == so->hashso_bucket_buf ||
-		so->currPos.buf == so->hashso_split_bucket_buf)
+	if (batch->buf == so->hashso_bucket_buf ||
+		batch->buf == so->hashso_split_bucket_buf)
 	{
-		so->currPos.prevPage = InvalidBlockNumber;
-		so->currPos.nextPage = opaque->hasho_nextblkno;
-		LockBuffer(so->currPos.buf, BUFFER_LOCK_UNLOCK);
+		batch->prevPage = InvalidBlockNumber;
+		batch->nextPage = opaque->hasho_nextblkno;
+		batch->moreLeft = (ScanDirectionIsBackward(dir) &&
+						  BlockNumberIsValid(batch->prevPage));
+		batch->moreRight = (ScanDirectionIsForward(dir) &&
+						   BlockNumberIsValid(batch->nextPage));
+		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
 	}
 	else
 	{
-		so->currPos.prevPage = opaque->hasho_prevblkno;
-		so->currPos.nextPage = opaque->hasho_nextblkno;
-		_hash_relbuf(rel, so->currPos.buf);
-		so->currPos.buf = InvalidBuffer;
+		batch->prevPage = opaque->hasho_prevblkno;
+		batch->nextPage = opaque->hasho_nextblkno;
+		batch->moreLeft = (ScanDirectionIsBackward(dir) &&
+						  BlockNumberIsValid(batch->prevPage));
+		batch->moreRight = (ScanDirectionIsForward(dir) &&
+						   BlockNumberIsValid(batch->nextPage));
+		_hash_relbuf(rel, batch->buf);
+		batch->buf = InvalidBuffer;
 		return false;
 	}
 
-	Assert(so->currPos.firstItem <= so->currPos.lastItem);
+	Assert(batch->firstItem <= batch->lastItem);
 	return true;
 }
 
 /*
  * Load all the qualified items from a current index page
- * into so->currPos. Helper function for _hash_readpage.
+ * into batch. Helper function for _hash_readpage.
  */
 static int
 _hash_load_qualified_items(IndexScanDesc scan, Page page,
-						   OffsetNumber offnum, ScanDirection dir)
+						   OffsetNumber offnum, ScanDirection dir,
+						   BatchIndexScan batch)
 {
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	IndexTuple	itup;
@@ -621,7 +613,7 @@ _hash_load_qualified_items(IndexScanDesc scan, Page page,
 				_hash_checkqual(scan, itup))
 			{
 				/* tuple is qualified, so remember it */
-				_hash_saveitem(so, itemIndex, offnum, itup);
+				_hash_saveitem(batch, itemIndex, offnum, itup);
 				itemIndex++;
 			}
 			else
@@ -668,7 +660,7 @@ _hash_load_qualified_items(IndexScanDesc scan, Page page,
 			{
 				itemIndex--;
 				/* tuple is qualified, so remember it */
-				_hash_saveitem(so, itemIndex, offnum, itup);
+				_hash_saveitem(batch, itemIndex, offnum, itup);
 			}
 			else
 			{
@@ -687,13 +679,14 @@ _hash_load_qualified_items(IndexScanDesc scan, Page page,
 	}
 }
 
-/* Save an index item into so->currPos.items[itemIndex] */
+/* Save an index item into batch->items[itemIndex] */
 static inline void
-_hash_saveitem(HashScanOpaque so, int itemIndex,
+_hash_saveitem(BatchIndexScan batch, int itemIndex,
 			   OffsetNumber offnum, IndexTuple itup)
 {
-	HashScanPosItem *currItem = &so->currPos.items[itemIndex];
+	BatchMatchingItem *currItem = &batch->items[itemIndex];
 
 	currItem->heapTid = itup->t_tid;
 	currItem->indexOffset = offnum;
+	currItem->tupleOffset = 0;	/* Hash doesn't support index-only scans */
 }

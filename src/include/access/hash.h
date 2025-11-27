@@ -100,34 +100,6 @@ typedef HashPageOpaqueData *HashPageOpaque;
  */
 #define HASHO_PAGE_ID		0xFF80
 
-/* TODO: Remove HashScanPosItem */
-typedef struct HashScanPosItem	/* what we remember about each match */
-{
-	ItemPointerData heapTid;	/* TID of referenced heap item */
-	OffsetNumber indexOffset;	/* index item's location within page */
-} HashScanPosItem;
-
-/* TODO: Remove HashScanPosData */
-typedef struct HashScanPosData
-{
-	Buffer		buf;			/* if valid, the buffer is pinned */
-	BlockNumber currPage;		/* current hash index page */
-	BlockNumber nextPage;		/* next overflow page */
-	BlockNumber prevPage;		/* prev overflow or bucket page */
-
-	/*
-	 * The items array is always ordered in index order (ie, increasing
-	 * indexoffset).  When scanning backwards it is convenient to fill the
-	 * array back-to-front, so we start at the last slot and fill downwards.
-	 * Hence we need both a first-valid-entry and a last-valid-entry counter.
-	 * itemIndex is a cursor showing which entry was last returned to caller.
-	 */
-	int			firstItem;		/* first valid index in items[] */
-	int			lastItem;		/* last valid index in items[] */
-	int			itemIndex;		/* current index in items[] */
-
-	HashScanPosItem items[MaxIndexTuplesPerPage];	/* MUST BE LAST */
-} HashScanPosData;
 
 /*
  *	HashScanOpaqueData is private state for a hash index scan.
@@ -155,15 +127,6 @@ typedef struct HashScanOpaqueData
 	 * referred only when hashso_buc_populated is true.
 	 */
 	bool		hashso_buc_split;
-
-	/*
-	 * Identify all the matching items on a page and save them in
-	 * HashScanPosData
-	 *
-	 * TODO Fully get rid of this, by switching over hashgetbitmap to using
-	 * batches (by making _hash_first and _hash_next return batches)
-	 */
-	HashScanPosData currPos;	/* current position data */
 } HashScanOpaqueData;
 
 typedef HashScanOpaqueData *HashScanOpaque;
@@ -425,8 +388,8 @@ extern void _hash_finish_split(Relation rel, Buffer metabuf, Buffer obuf,
 							   uint32 lowmask);
 
 /* hashsearch.c */
-extern bool _hash_next(IndexScanDesc scan, ScanDirection dir);
-extern bool _hash_first(IndexScanDesc scan, ScanDirection dir);
+extern BatchIndexScan _hash_next(IndexScanDesc scan, ScanDirection dir, BatchIndexScan priorbatch);
+extern BatchIndexScan _hash_first(IndexScanDesc scan, ScanDirection dir);
 
 /* hashsort.c */
 typedef struct HSpool HSpool;	/* opaque struct in hashsort.c */
