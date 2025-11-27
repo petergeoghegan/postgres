@@ -385,36 +385,12 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 void
 hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
 {
-	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-
 	/*
 	 * Check if there are tuples to kill from this batch (that weren't already
 	 * killed earlier on)
 	 */
 	if (batch->numKilled > 0)
 		_hash_kill_items(scan, batch);
-
-	/*
-	 * Release the buffer if it's not a bucket page. Bucket pages are managed
-	 * by the opaque state and should not be released here.
-	 */
-	if (BufferIsValid(batch->buf) &&
-		batch->buf != so->hashso_bucket_buf &&
-		batch->buf != so->hashso_split_bucket_buf)
-	{
-		ReleaseBuffer(batch->buf);
-		batch->buf = InvalidBuffer;
-	}
-	else if (!BufferIsValid(batch->buf) ||
-			 batch->buf == so->hashso_bucket_buf ||
-			 batch->buf == so->hashso_split_bucket_buf)
-	{
-		/*
-		 * Bucket pages must have buf set to InvalidBuffer for
-		 * indexam_util_batch_release
-		 */
-		batch->buf = InvalidBuffer;
-	}
 
 	indexam_util_batch_release(scan, batch);
 }

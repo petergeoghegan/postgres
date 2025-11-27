@@ -532,7 +532,6 @@ _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
 void
 _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 {
-	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 	Buffer		buf;
 	Page		page;
@@ -546,7 +545,6 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	Assert(numKilled > 0);
 	Assert(batch->killedItems != NULL);
 	Assert(BlockNumberIsValid(batch->currPage));
-	Assert(BufferIsValid(batch->buf) || scan->batchqueue->dropPin);
 
 	/*
 	 * Always reset the batch state, so we don't look for same items on other
@@ -554,10 +552,7 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	 */
 	batch->numKilled = 0;
 
-	if (BufferIsValid(batch->buf) &&
-		(so->hashso_bucket_buf == batch->buf ||
-		 so->hashso_split_bucket_buf == batch->buf ||
-		 !scan->batchqueue->dropPin))
+	if (!scan->batchqueue->dropPin)
 	{
 		/*
 		 * We have held the pin on this page since we read the index tuples,
@@ -572,7 +567,8 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 		XLogRecPtr	latestlsn;
 
 		Assert(RelationNeedsWAL(rel));
-		buf = _hash_getbuf(rel, batch->currPage, HASH_READ, LH_OVERFLOW_PAGE);
+		buf = _hash_getbuf(rel, batch->currPage, HASH_READ,
+						   LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
 
 		latestlsn = BufferGetLSNAtomic(buf);
 		Assert(batch->lsn <= latestlsn);
@@ -627,9 +623,7 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	if (so->hashso_bucket_buf == buf ||
-		so->hashso_split_bucket_buf == buf ||
-		!scan->batchqueue->dropPin)
+	if (!scan->batchqueue->dropPin)
 		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 	else
 		_hash_relbuf(rel, buf);
