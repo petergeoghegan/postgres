@@ -554,6 +554,7 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	batch->numKilled = 0;
 
 	if (so->hashso_bucket_buf == batch->buf ||
+		so->hashso_split_bucket_buf == batch->buf ||
 		!scan->batchqueue->dropPin)
 	{
 		/*
@@ -626,6 +627,7 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	}
 
 	if (so->hashso_bucket_buf == buf ||
+		so->hashso_split_bucket_buf == buf ||
 		!scan->batchqueue->dropPin)
 		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 	else
