@@ -554,10 +554,14 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 							BlockNumberIsValid(batch->nextPage));
 
 		/*
-		 * Cannot call indexam_util_batch_unlock here
+		 * Cannot call indexam_util_batch_unlock to unlock here, because it
+		 * might release a pin that the scan itself still requires.
+		 *
+		 * Note: hashfreebatch also deal with this as a special case; when it
+		 * calls _hash_kill_items it'll still be able to set LP_DEAD bits.
 		 */
 		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
-		batch->lsn = InvalidXLogRecPtr;
+		batch->lsn = InvalidXLogRecPtr; /* defensive */
 	}
 	else
 	{
@@ -568,7 +572,7 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 		batch->moreRight = (ScanDirectionIsForward(dir) &&
 							BlockNumberIsValid(batch->nextPage));
 
-		/* Unlock (and likely unpin) as required by amgetbatch contract */
+		/* Unlock (and likely unpin) buffer, per amgetbatch contract */
 		indexam_util_batch_unlock(scan, batch);
 	}
 
