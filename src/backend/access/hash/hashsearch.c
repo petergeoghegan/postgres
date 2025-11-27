@@ -547,6 +547,9 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 						   BlockNumberIsValid(batch->prevPage));
 		batch->moreRight = (ScanDirectionIsForward(dir) &&
 							BlockNumberIsValid(batch->nextPage));
+		/*
+		 * Cannot call indexam_util_batch_unlock here.
+		 */
 		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
 	}
 	else
@@ -559,7 +562,6 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 							BlockNumberIsValid(batch->nextPage));
 		_hash_relbuf(rel, batch->buf);
 		batch->buf = InvalidBuffer;
-		return false;
 	}
 
 	Assert(batch->firstItem <= batch->lastItem);

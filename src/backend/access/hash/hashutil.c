@@ -532,6 +532,7 @@ _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
 void
 _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 {
+	HashScanOpaque so = (HashScanOpaque) scan->opaque;
 	Relation	rel = scan->indexRelation;
 	Buffer		buf;
 	Page		page;
@@ -623,7 +624,8 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	if (!scan->batchqueue->dropPin)
+	if (so->hashso_bucket_buf == buf || so->hashso_split_bucket_buf == buf ||
+		!scan->batchqueue->dropPin)
 		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 	else
 		_hash_relbuf(rel, buf);
