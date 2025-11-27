@@ -392,6 +392,12 @@ hashfreebatch(IndexScanDesc scan, BatchIndexScan batch)
 	if (batch->numKilled > 0)
 		_hash_kill_items(scan, batch);
 
+	if (scan->batchqueue && !scan->batchqueue->dropPin)
+	{
+		ReleaseBuffer(batch->buf);
+		batch->buf = InvalidBuffer;
+	}
+
 	indexam_util_batch_release(scan, batch);
 }
 
