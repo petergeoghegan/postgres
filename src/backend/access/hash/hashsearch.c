@@ -541,6 +541,10 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 	if (batch->buf == so->hashso_bucket_buf ||
 		batch->buf == so->hashso_split_bucket_buf)
 	{
+		/*
+		 * Batch's buffer is either the primary bucket, or a bucket being
+		 * populated due to a split
+		 */
 		batch->prevPage = InvalidBlockNumber;
 		batch->nextPage = opaque->hasho_nextblkno;
 		batch->moreLeft = (ScanDirectionIsBackward(dir) &&
