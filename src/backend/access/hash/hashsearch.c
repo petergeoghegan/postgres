@@ -76,18 +76,11 @@ _hash_next(IndexScanDesc scan, ScanDirection dir, BatchIndexScan priorbatch)
 		}
 	}
 
-	/* Get the next buffer */
-	buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
-
-	/*
-	 * We always maintain the pin on bucket page for whole scan operation, so
-	 * release the additional pin we have acquired here if it's a bucket page.
-	 */
-	if (buf == so->hashso_bucket_buf || buf == so->hashso_split_bucket_buf)
-		_hash_dropbuf(rel, buf);
-
 	/* Allocate space for next batch */
 	batch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
+
+	/* Get the buffer for next batch */
+	buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
 
 	/* Read the next page and load items into allocated batch */
 	if (!_hash_readpage(scan, &buf, dir, batch))
@@ -538,7 +531,7 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 		batch->lastItem = MaxIndexTuplesPerPage - 1;
 	}
 
-	/* We saved one or more matches in batch.items[] */
+	/* Saved at least one match in batch.items[], so prepare to return it */
 	if (batch->buf == so->hashso_bucket_buf ||
 		batch->buf == so->hashso_split_bucket_buf)
 	{
@@ -554,14 +547,14 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 							BlockNumberIsValid(batch->nextPage));
 
 		/*
-		 * Cannot call indexam_util_batch_unlock to unlock here, because it
-		 * might release a pin that the scan itself still requires.
+		 * We're about to call indexam_util_batch_unlock to unlock and
+		 * possibly unpin batch's buffer.  Increment local reference count;
+		 * scan must independently manage bucket refs in scan's opaque state.
 		 *
 		 * Note: hashfreebatch also deals with this as a special case; when it
-		 * calls _hash_kill_items, it'll still set LP_DEAD bits on the page.
+		 * calls _hash_kill_items, it can still set LP_DEAD bits on the page.
 		 */
-		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
-		batch->lsn = InvalidXLogRecPtr; /* defensive */
+		IncrBufferRefCount(batch->buf);
 	}
 	else
 	{
@@ -571,10 +564,10 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 						   BlockNumberIsValid(batch->prevPage));
 		batch->moreRight = (ScanDirectionIsForward(dir) &&
 							BlockNumberIsValid(batch->nextPage));
-
-		/* Unlock (and likely unpin) buffer, per amgetbatch contract */
-		indexam_util_batch_unlock(scan, batch);
 	}
+
+	/* Unlock (and likely unpin) buffer, per amgetbatch contract */
+	indexam_util_batch_unlock(scan, batch);
 
 	Assert(batch->firstItem <= batch->lastItem);
 	return true;

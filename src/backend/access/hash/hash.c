@@ -302,9 +302,6 @@ hashgetbatch(IndexScanDesc scan, BatchIndexScan batch, ScanDirection dir)
 		newbatch = _hash_first(scan, dir);
 	else
 	{
-		/* Free the previous batch */
-		hashfreebatch(scan, batch);
-
 		/* Get the next batch */
 		newbatch = _hash_next(scan, dir, batch);
 	}
