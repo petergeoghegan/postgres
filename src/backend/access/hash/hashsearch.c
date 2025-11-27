@@ -560,8 +560,7 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 						   BlockNumberIsValid(batch->prevPage));
 		batch->moreRight = (ScanDirectionIsForward(dir) &&
 							BlockNumberIsValid(batch->nextPage));
-		_hash_relbuf(rel, batch->buf);
-		batch->buf = InvalidBuffer;
+		indexam_util_batch_unlock(scan, batch);
 	}
 
 	Assert(batch->firstItem <= batch->lastItem);
