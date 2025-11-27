@@ -546,6 +546,7 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	Assert(numKilled > 0);
 	Assert(batch->killedItems != NULL);
 	Assert(BlockNumberIsValid(batch->currPage));
+	Assert(BufferIsValid(batch->buf) || scan->batchqueue->dropPin);
 
 	/*
 	 * Always reset the batch state, so we don't look for same items on other
@@ -553,9 +554,10 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	 */
 	batch->numKilled = 0;
 
-	if (so->hashso_bucket_buf == batch->buf ||
-		so->hashso_split_bucket_buf == batch->buf ||
-		!scan->batchqueue->dropPin)
+	if (BufferIsValid(batch->buf) &&
+		(so->hashso_bucket_buf == batch->buf ||
+		 so->hashso_split_bucket_buf == batch->buf ||
+		 !scan->batchqueue->dropPin))
 	{
 		/*
 		 * We have held the pin on this page since we read the index tuples,
