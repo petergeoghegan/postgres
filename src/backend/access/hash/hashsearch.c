@@ -547,12 +547,9 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 							BlockNumberIsValid(batch->nextPage));
 
 		/*
-		 * We're about to call indexam_util_batch_unlock to unlock and
-		 * possibly unpin batch's buffer.  Increment local reference count;
-		 * scan must independently manage bucket refs in scan's opaque state.
-		 *
-		 * Note: hashfreebatch also deals with this as a special case; when it
-		 * calls _hash_kill_items, it can still set LP_DEAD bits on the page.
+		 * Increment local reference count so that batch gets an independent
+		 * buffer reference that can be released (by hashfreebatch) before the
+		 * hashso_bucket_buf/hashso_split_bucket_buf references are released
 		 */
 		IncrBufferRefCount(batch->buf);
 	}
