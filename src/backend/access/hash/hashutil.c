@@ -553,7 +553,8 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	 */
 	batch->numKilled = 0;
 
-	if (!scan->batchqueue->dropPin)
+	if (so->hashso_bucket_buf == batch->buf ||
+		!scan->batchqueue->dropPin)
 	{
 		/*
 		 * We have held the pin on this page since we read the index tuples,
@@ -624,7 +625,7 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 		MarkBufferDirtyHint(buf, true);
 	}
 
-	if (so->hashso_bucket_buf == buf || so->hashso_split_bucket_buf == buf ||
+	if (so->hashso_bucket_buf == buf ||
 		!scan->batchqueue->dropPin)
 		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 	else

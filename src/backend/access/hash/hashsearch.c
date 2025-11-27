@@ -538,6 +538,7 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 		batch->lastItem = MaxIndexTuplesPerPage - 1;
 	}
 
+	/* We saved one or more matches in batch.items[] */
 	if (batch->buf == so->hashso_bucket_buf ||
 		batch->buf == so->hashso_split_bucket_buf)
 	{
@@ -551,10 +552,12 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 						   BlockNumberIsValid(batch->prevPage));
 		batch->moreRight = (ScanDirectionIsForward(dir) &&
 							BlockNumberIsValid(batch->nextPage));
+
 		/*
-		 * Cannot call indexam_util_batch_unlock here.
+		 * Cannot call indexam_util_batch_unlock here
 		 */
 		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
+		batch->lsn = InvalidXLogRecPtr;
 	}
 	else
 	{
@@ -564,6 +567,8 @@ _hash_readpage(IndexScanDesc scan, Buffer *bufP, ScanDirection dir,
 						   BlockNumberIsValid(batch->prevPage));
 		batch->moreRight = (ScanDirectionIsForward(dir) &&
 							BlockNumberIsValid(batch->nextPage));
+
+		/* Unlock (and likely unpin) as required by amgetbatch contract */
 		indexam_util_batch_unlock(scan, batch);
 	}
 
