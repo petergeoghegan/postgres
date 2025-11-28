@@ -801,8 +801,8 @@ batch_getnext_stream(ReadStream *stream, void *callback_private_data,
 			BatchIndexScan streamBatch = INDEX_SCAN_BATCH(scan, streamPos->batch);
 			ItemPointer tid = &streamBatch->items[streamPos->item].heapTid;
 
-			DEBUG_LOG("batch_getnext_stream: index %d TID (%u,%u)",
-					  streamPos->index,
+			DEBUG_LOG("batch_getnext_stream: item %d, TID (%u,%u)",
+					  streamPos->item,
 					  ItemPointerGetBlockNumber(tid),
 					  ItemPointerGetOffsetNumber(tid));
 
