@@ -20,6 +20,7 @@
 #include "nodes/tidbitmap.h"
 #include "port/atomics.h"
 #include "storage/buf.h"
+#include "storage/read_stream.h"
 #include "storage/relfilelocator.h"
 #include "storage/spin.h"
 #include "utils/relcache.h"
@@ -124,6 +125,7 @@ typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 typedef struct IndexFetchTableData
 {
 	Relation	rel;
+	ReadStream *rs;
 
 	int			nheapaccesses;	/* number of heap accesses, for
 								 * instrumentation/metrics */
@@ -224,8 +226,14 @@ typedef struct BatchIndexScanData *BatchIndexScan;
  * Maximum number of batches (leaf pages) we can keep in memory.  We need a
  * minimum of two, since we'll only consider releasing one batch when another
  * is read.
+ *
+ * The choice of 64 batches is arbitrary.  It's about 1MB of data with 8KB
+ * pages (512kB for pages, and then a bit of overhead). We should not really
+ * need this many batches in most cases, though. The read stream looks ahead
+ * just enough to queue enough IOs, adjusting the distance (TIDs, but
+ * ultimately the number of future batches) to meet that.
  */
-#define INDEX_SCAN_MAX_BATCHES		2
+#define INDEX_SCAN_MAX_BATCHES		64
 #define INDEX_SCAN_CACHE_BATCHES	2
 #define INDEX_SCAN_BATCH_COUNT(scan) \
 	((scan)->batchqueue->nextBatch - (scan)->batchqueue->headBatch)
@@ -270,6 +278,27 @@ typedef struct BatchQueue
 	 * it's over.
 	 */
 	bool		finished;
+	bool		reset;
+
+	/*
+	 * Did we disable prefetching/use of a read stream because it didn't pay
+	 * for itself?
+	 */
+	bool		prefetchingLockedIn;
+	bool		disabled;
+
+	/*
+	 * During prefetching, currentPrefetchBlock is the table AM block number
+	 * that was returned by our read stream callback most recently.  Used to
+	 * suppress duplicate successive read stream block requests.
+	 *
+	 * Prefetching can still perform non-successive requests for the same
+	 * block number (in general we're prefetching in exactly the same order
+	 * that the scan will return table AM TIDs in).  We need to avoid
+	 * duplicate successive requests because table AMs expect to be able to
+	 * hang on to buffer pins across table_index_fetch_tuple calls.
+	 */
+	BlockNumber currentPrefetchBlock;
 
 	/* Current scan direction, for the currently loaded batches */
 	ScanDirection direction;
@@ -277,6 +306,7 @@ typedef struct BatchQueue
 	/* current positions in batches[] for scan */
 	BatchQueueItemPos readPos;	/* read position */
 	BatchQueueItemPos markPos;	/* mark/restore position */
+	BatchQueueItemPos streamPos;	/* stream position (for prefetching) */
 
 	BatchIndexScan markBatch;
 
