@@ -768,16 +768,16 @@ amgetbatch (IndexScanDesc scan,
   </para>
 
   <para>
-   The <structfield>priorbatch</structfield> parameter passes the batch
-   previously returned by an earlier <function>amgetbatch</function> call (or
+   The <literal>priorbatch</literal> parameter passes the batch previously
+   returned by an earlier <function>amgetbatch</function> call (or
    <literal>NULL</literal> on the first call).  The index AM uses
-   <structfield>priorbatch</structfield> to determine which index page to read
-   next, typically by following page links found in <structfield>priorbatch</structfield>.
+   <literal>priorbatch</literal> to determine which index page to read next,
+   typically by following page links found in <literal>priorbatch</literal>.
    The returned batch contains matching items immediately adjacent to those
-   from <structfield>priorbatch</structfield> in the common case where
-   <structfield>priorbatch</structfield> is the batch that was returned by the
-   most recent call to <function>amgetbatch</function> call (though not when
-   the most recent call used the opposite scan direction to this call, and not
+   from <literal>priorbatch</literal> in the common case where
+   <literal>priorbatch</literal> is the batch that was returned by the most
+   recent call to <function>amgetbatch</function> call (though not when the
+   most recent call used the opposite scan direction to this call, and not
    when a mark has been restored).
   </para>
 
@@ -794,13 +794,13 @@ amgetbatch (IndexScanDesc scan,
    The <function>amgetbatch</function> interface does not support index-only
    scans that return data via the <literal>xs_hitup</literal> mechanism.
    Index-only scans are supported through the <literal>xs_itup</literal>
-   mechanism.
+   mechanism only.
   </para>
 
   <para>
    The <function>amgetbatch</function> function need only be provided if the
    access method supports <quote>plain</quote> index scans.  If it doesn't,
-   the <structfield>amgetbatch</structfield> field in its
+   the <function>amgetbatch</function> field in its
    <structname>IndexAmRoutine</structname> struct must be set to NULL.
   </para>
 
@@ -815,9 +815,9 @@ amgetbatch (IndexScanDesc scan,
 
   <para>
    The access method may provide only one of <function>amgettuple</function>
-   and <function>amgetbatch</function> callbacks, not both. When the access
-   method provides <function>amgetbatch</function>, it must also provide
-   <function>amfreebatch</function>.
+   and <function>amgetbatch</function> callbacks, not both (XXX uncertain).
+   When the access method provides <function>amgetbatch</function>, it must
+   also provide <function>amfreebatch</function>.
   </para>
 
   <para>
@@ -931,8 +931,8 @@ amposreset (IndexScanDesc scan);
   </para>
 
   <para>
-   The <function>amposreset</function> function need only be provided if the access
-   method supports ordered scans through the <function>amgetbatch</function>
+   The <function>amposreset</function> function can only be provided if the
+   access method supports ordered scans through the <function>amgetbatch</function>
    interface.  If it doesn't, the <structfield>amposreset</structfield> field
    in its <structname>IndexAmRoutine</structname> struct should be set to
    NULL.  Index AMs that don't have any private state that might need to be
