@@ -81,6 +81,9 @@ index_batch_init(IndexScanDesc scan, bool xs_want_itup)
 	scan->batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchqueue->direction = NoMovementScanDirection;
 
+	/* used by index-only scans */
+	scan->batchqueue->vmBuffer = InvalidBuffer;
+
 	/* positions in the queue of batches */
 	batch_reset_pos(&scan->batchqueue->readPos);
 	batch_reset_pos(&scan->batchqueue->markPos);
@@ -172,8 +175,6 @@ batch_getnext(IndexScanDesc scan, ScanDirection direction)
 
 		/* Delay initializing stream until reading from scan's second batch */
 		if (priorbatch && !scan->xs_heapfetch->rs && !batchqueue->disabled &&
-			!scan->xs_want_itup &&	/* XXX prefetching disabled for IoS, for
-									 * now */
 			enable_indexscan_prefetch)
 			scan->xs_heapfetch->rs =
 				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
@@ -265,6 +266,12 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batchqueue->finished = false;
 	batchqueue->reset = false;
 	batchqueue->currentPrefetchBlock = InvalidBlockNumber;
+
+	if (batchqueue->vmBuffer != InvalidBuffer)
+	{
+		ReleaseBuffer(batchqueue->vmBuffer);
+		batchqueue->vmBuffer = InvalidBuffer;
+	}
 
 	batch_assert_batches_valid(scan);
 }
