@@ -1037,6 +1037,8 @@ _bt_saveitem(BatchIndexScan newbatch, int itemIndex, OffsetNumber offnum,
 	/* copy the populated part of the items array */
 	newbatch->items[itemIndex].heapTid = itup->t_tid;
 	newbatch->items[itemIndex].indexOffset = offnum;
+	newbatch->items[itemIndex].visible = false;
+	newbatch->items[itemIndex].visible_valid = false;
 
 	if (newbatch->currTuples)
 	{
@@ -1070,6 +1072,8 @@ _bt_setuppostingitems(BatchIndexScan newbatch, int itemIndex,
 	/* copy the populated part of the items array */
 	item->heapTid = *heapTid;
 	item->indexOffset = offnum;
+	item->visible = false;
+	item->visible_valid = false;
 
 	if (newbatch->currTuples)
 	{
@@ -1107,6 +1111,8 @@ _bt_savepostingitem(BatchIndexScan newbatch, int itemIndex, OffsetNumber offnum,
 
 	item->heapTid = *heapTid;
 	item->indexOffset = offnum;
+	item->visible = false;
+	item->visible_valid = false;
 
 	/*
 	 * Have index-only scans return the same base IndexTuple for every TID
