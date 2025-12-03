@@ -480,8 +480,7 @@ btendscan(IndexScanDesc scan)
 	/* so->arrayKeys and so->orderProcs are in arrayContext */
 	if (so->arrayContext != NULL)
 		MemoryContextDelete(so->arrayContext);
-	if (so->killedItems != NULL)
-		bms_free(so->killedItems);
+	Assert(bms_is_empty(so->killedItems));
 	if (so->currTuples != NULL)
 		pfree(so->currTuples);
 	/* so->markTuples should not be pfree'd, see btrescan */
