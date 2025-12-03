@@ -3476,11 +3476,6 @@ _bt_killitems(IndexScanDesc scan)
 				int			j;
 
 				/*
-				 * We rely on the convention that heap TIDs in the scanpos
-				 * items array are stored in ascending heap TID order for a
-				 * group of TIDs that originally came from a posting list
-				 * tuple.
-				 *
 				 * Note that the page may have been modified in almost any way
 				 * since we first read it (in the !so->dropPin case), so it's
 				 * possible that this posting list tuple wasn't a posting list
@@ -3489,10 +3484,15 @@ _bt_killitems(IndexScanDesc scan)
 				for (j = 0; j < nposting; j++)
 				{
 					ItemPointer item = BTreeTupleGetPostingN(ituple, j);
-					int			prosNextIndex;
 
 					if (!ItemPointerEquals(item, &kitem->heapTid))
 						break;	/* out of posting list loop */
+
+					/*
+					 * kitem has a matching TID from posting list.  Remember
+					 * this to a useless iteration of outermost loop.
+					 */
+					itemIndex = nextIndex;
 
 					/*
 					 * kitem must have matching offnum when heap TIDs match,
@@ -3515,21 +3515,11 @@ _bt_killitems(IndexScanDesc scan)
 					 * kitem is also the last heap TID in the last index tuple
 					 * correctly -- posting tuple still gets killed).
 					 */
-					prosNextIndex = bms_next_member(so->killedItems, nextIndex);
-					if (prosNextIndex >= 0)
-					{
-						kitem = &so->currPos.items[prosNextIndex];
-						itemIndex = nextIndex;
-						nextIndex = prosNextIndex;
-					}
+					nextIndex = bms_next_member(so->killedItems, nextIndex);
+					if (nextIndex >= 0)
+						kitem = &so->currPos.items[nextIndex];
 				}
 
-				/*
-				 * Don't advance itemIndex for outermost loop, no matter how
-				 * nextIndex was advanced.  It's possible that items whose
-				 * TIDs weren't matched in posting list can still be killed
-				 * (there might be a later tuple whose TID is a match).
-				 */
 				if (j == nposting)
 					killtuple = true;
 			}
