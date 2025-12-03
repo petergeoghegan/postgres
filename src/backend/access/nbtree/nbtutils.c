@@ -3490,7 +3490,8 @@ _bt_killitems(IndexScanDesc scan)
 
 					/*
 					 * kitem has a matching TID from posting list.  Remember
-					 * this to a useless iteration of outermost loop.
+					 * that the item offset for this kitem definitely doesn't
+					 * need to be considered again in outermost loop.
 					 */
 					itemIndex = nextIndex;
 
