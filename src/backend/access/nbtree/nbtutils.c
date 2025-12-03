@@ -3531,12 +3531,7 @@ _bt_killitems(IndexScanDesc scan)
 				 * (there might be a later tuple whose TID is a match).
 				 */
 				if (j == nposting)
-				{
 					killtuple = true;
-					elog(WARNING, "\"%s\" block %u killing posting list with %d items at page offset number %u",
-						 RelationGetRelationName(rel), so->currPos.currPage,
-						 nposting, offnum);
-				}
 			}
 			else if (ItemPointerEquals(&ituple->t_tid, &kitem->heapTid))
 				killtuple = true;
