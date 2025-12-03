@@ -3489,6 +3489,7 @@ _bt_killitems(IndexScanDesc scan)
 				for (j = 0; j < nposting; j++)
 				{
 					ItemPointer item = BTreeTupleGetPostingN(ituple, j);
+					int			prosNextIndex;
 
 					if (!ItemPointerEquals(item, &kitem->heapTid))
 						break;	/* out of posting list loop */
@@ -3514,11 +3515,12 @@ _bt_killitems(IndexScanDesc scan)
 					 * kitem is also the last heap TID in the last index tuple
 					 * correctly -- posting tuple still gets killed).
 					 */
-					nextIndex = bms_next_member(so->killedItems, nextIndex);
-					if (nextIndex >= 0)
+					prosNextIndex = bms_next_member(so->killedItems, nextIndex);
+					if (prosNextIndex >= 0)
 					{
-						kitem = &so->currPos.items[nextIndex];
+						kitem = &so->currPos.items[prosNextIndex];
 						itemIndex = nextIndex;
+						nextIndex = prosNextIndex;
 					}
 				}
 
