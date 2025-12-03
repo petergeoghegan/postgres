@@ -3490,8 +3490,11 @@ _bt_killitems(IndexScanDesc scan)
 
 					/*
 					 * kitem has a matching TID from posting list.  Remember
-					 * that the item offset for this kitem definitely doesn't
-					 * need to be considered again in outermost loop.
+					 * that kitem definitely doesn't need to be considered
+					 * again once in the next iteration of the outermost loop
+					 * (it'll pass kitem's so->currPos.items[]-wise offset and
+					 * get to next item after that, regardless of whether we
+					 * get to the end of this posting list).
 					 */
 					itemIndex = nextIndex;
 
