@@ -160,8 +160,6 @@ typedef struct BatchMatchingItem
 	ItemPointerData heapTid;	/* TID of referenced heap item */
 	OffsetNumber indexOffset;	/* index item's location within page */
 	LocationIndex tupleOffset;	/* IndexTuple's offset in workspace, if any */
-	bool		visible;		/* visibility (for IOS) */
-	bool		visible_valid;	/* visibility set/valid (for IOS) */
 } BatchMatchingItem;
 
 /*
@@ -302,10 +300,6 @@ typedef struct BatchQueue
 	bool		prefetchingLockedIn;
 	bool		disabled;
 
-	/* Buffer for vm checks in index-only scans. Invalid means unused. */
-	/* XXX not sure if BatchQueue is the best place for this, but ... */
-	Buffer		vmBuffer;
-
 	/*
 	 * During prefetching, currentPrefetchBlock is the table AM block number
 	 * that was returned by our read stream callback most recently.  Used to
@@ -400,7 +394,6 @@ typedef struct IndexScanDescData
 	IndexFetchTableData *xs_heapfetch;
 
 	bool		xs_recheck;		/* T means scan keys must be rechecked */
-	bool		xs_visible;		/* T means the heap page is all-visible */
 
 	/*
 	 * When fetching with an ordering operator, the values of the ORDER BY
