@@ -383,6 +383,7 @@ heap_batch_advance_pos(IndexScanDesc scan, struct BatchQueueItemPos *pos,
 static ItemPointer
 heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 {
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	BatchQueue *batchqueue = scan->batchqueue;
 	BatchQueueItemPos *readPos;
 
@@ -460,10 +461,10 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 
 			if (readBatch->items[readPos->item].visible_valid)
 				scan->xs_visible = readBatch->items[readPos->item].visible;
-			else
+			else if (scan->xs_want_itup)
 				scan->xs_visible = VM_ALL_VISIBLE(scan->heapRelation,
 												  ItemPointerGetBlockNumber(&scan->xs_heaptid),
-												  &batchqueue->vmBuffer);
+												  &hscan->vmbuf);
 
 			/* xs_hitup is not supported by amgetbatch scans */
 			Assert(!scan->xs_hitup);
@@ -623,6 +624,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 					  void *per_buffer_data)
 {
 	IndexScanDesc scan = (IndexScanDesc) callback_private_data;
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	BatchQueue *batchqueue = scan->batchqueue;
 	BatchQueueItemPos *streamPos = &batchqueue->streamPos;
 	ScanDirection direction = batchqueue->direction;
@@ -716,7 +718,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				item->visible_valid = true;
 				item->visible = VM_ALL_VISIBLE(scan->heapRelation,
 											   ItemPointerGetBlockNumber(tid),
-											   &batchqueue->vmBuffer);
+											   &hscan->vmbuf);
 				if (item->visible)
 				{
 					/* update count of skipped blocks */

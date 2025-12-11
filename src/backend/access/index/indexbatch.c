@@ -81,9 +81,6 @@ index_batch_init(IndexScanDesc scan, bool xs_want_itup)
 	scan->batchqueue->currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchqueue->direction = NoMovementScanDirection;
 
-	/* used by index-only scans */
-	scan->batchqueue->vmBuffer = InvalidBuffer;
-
 	/* positions in the queue of batches */
 	batch_reset_pos(&scan->batchqueue->readPos);
 	batch_reset_pos(&scan->batchqueue->markPos);
@@ -266,12 +263,6 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	batchqueue->finished = false;
 	batchqueue->reset = false;
 	batchqueue->currentPrefetchBlock = InvalidBlockNumber;
-
-	if (batchqueue->vmBuffer != InvalidBuffer)
-	{
-		ReleaseBuffer(batchqueue->vmBuffer);
-		batchqueue->vmBuffer = InvalidBuffer;
-	}
 
 	batch_assert_batches_valid(scan);
 }
