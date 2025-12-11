@@ -222,11 +222,12 @@ _bt_killitems(IndexScanDesc scan)
 	so->numKilled = 0;
 
 	/*
-	 * so->killedItems[] is in whatever order the scan returned items in.
-	 * Items will appear in descending order during backwards scans.  And
-	 * scrollable cursor scans might have duplicate items.
+	 * We need to iterate through so->killedItems[] in leaf page order; the
+	 * loop below expects this (when marking posting list tuples, at least).
+	 * so->killedItems[] is now in whatever order the scan returned items in.
+	 * Scrollable cursor scans might even have duplicate dead items/TID, too.
 	 *
-	 * Sort and uniqueify so->killedItems[] to deal with all this.
+	 * Sort and unique-ify so->killedItems[] to deal with all this.
 	 */
 	if (numKilled > 1)
 	{
@@ -271,14 +272,22 @@ _bt_killitems(IndexScanDesc scan)
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
 
+	/* Iterate through so->killedItems[] in leaf page order */
 	for (int i = 0; i < numKilled; i++)
 	{
 		int			itemIndex = so->killedItems[i];
 		BTScanPosItem *kitem = &so->currPos.items[itemIndex];
 		OffsetNumber offnum = kitem->indexOffset;
 
+		/*
+		 * Assert that this kitem's offnum is >= the prior kitem's offnum, and
+		 * that its itemIndex is within the bounds of so->currPos.items[]
+		 */
+		Assert(i == 0 ||
+			   offnum >= so->currPos.items[so->killedItems[i - 1]].indexOffset);
 		Assert(itemIndex >= so->currPos.firstItem &&
 			   itemIndex <= so->currPos.lastItem);
+
 		if (offnum < minoff)
 			continue;			/* pure paranoia */
 		while (offnum <= maxoff)
