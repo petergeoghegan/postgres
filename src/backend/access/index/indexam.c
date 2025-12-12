@@ -382,6 +382,14 @@ index_rescan(IndexScanDesc scan,
 	scan->kill_prior_tuple = false; /* for safety */
 	scan->xs_heap_continue = false;
 
+	/*
+	 * batchqueue shouldn't be marked finished (must make sure that
+	 * index_batch_reset doesn't see this, since indexam_util_batch_release
+	 * will be affected)
+	 */
+	if (scan->batchqueue)
+		scan->batchqueue->finished = false;
+
 	index_batch_reset(scan, true);
 
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
