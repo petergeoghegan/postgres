@@ -1023,19 +1023,21 @@ static void
 _bt_saveitem(BatchIndexScan newbatch, int itemIndex, OffsetNumber offnum,
 			 IndexTuple itup, int *tupleOffset)
 {
+	BatchMatchingItem *item = &newbatch->items[itemIndex];
+
 	Assert(!BTreeTupleIsPivot(itup) && !BTreeTupleIsPosting(itup));
 
 	/* copy the populated part of the items array */
-	newbatch->items[itemIndex].heapTid = itup->t_tid;
-	newbatch->items[itemIndex].indexOffset = offnum;
+	item->heapTid = itup->t_tid;
+	item->indexOffset = offnum;
 
 	if (newbatch->currTuples)
 	{
 		Size		itupsz = IndexTupleSize(itup);
 
-		newbatch->items[itemIndex].tupleOffset = *tupleOffset;
-		memcpy(newbatch->currTuples + *tupleOffset, itup, itupsz);
-		*tupleOffset += MAXALIGN(itupsz);
+		item->tupleOffset = *tupleOffset;
+		memcpy(newbatch->currTuples + item->tupleOffset, itup, itupsz);
+		*tupleOffset = item->tupleOffset + itupsz;
 	}
 }
 

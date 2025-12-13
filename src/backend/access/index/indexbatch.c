@@ -441,7 +441,7 @@ void
 indexam_util_batch_unlock(IndexScanDesc scan, BatchIndexScan batch)
 {
 	Relation	rel = scan->indexRelation;
-	bool		dropPin = !scan->batchqueue || scan->batchqueue->dropPin;
+	bool		dropPin = !scan->xs_want_itup && (!scan->batchqueue || scan->xs_want_itup || scan->batchqueue->dropPin);
 
 	/* batch must have one or more matching items returned by index AM */
 	Assert(batch->firstItem >= 0 && batch->firstItem <= batch->lastItem);
