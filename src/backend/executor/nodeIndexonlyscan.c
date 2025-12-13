@@ -119,8 +119,11 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	{
 		CHECK_FOR_INTERRUPTS();
 
-		InstrCountTuples2(node, scandesc->xs_heapfetch->nheapaccesses);
-		scandesc->xs_heapfetch->nheapaccesses = 0;
+		if (((PlanState *)(node))->instrument)
+		{
+			InstrCountTuples2(node, scandesc->xs_heapfetch->nheapaccesses);
+			scandesc->xs_heapfetch->nheapaccesses = 0;
+		}
 
 		/*
 		 * Fill the scan tuple slot with data from the index.  This might be
@@ -174,8 +177,11 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	}
 
 	/* XXX This is ugly, but not clear how to do better */
-	InstrCountTuples2(node, scandesc->xs_heapfetch->nheapaccesses);
-	scandesc->xs_heapfetch->nheapaccesses = 0;
+	if (((PlanState *)(node))->instrument)
+	{
+		InstrCountTuples2(node, scandesc->xs_heapfetch->nheapaccesses);
+		scandesc->xs_heapfetch->nheapaccesses = 0;
+	}
 
 	/*
 	 * if we get here it means the index scan failed so we are at the end of
