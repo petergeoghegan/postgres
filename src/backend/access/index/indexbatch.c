@@ -391,10 +391,16 @@ index_batch_end(IndexScanDesc scan)
 
 	for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
 	{
-		if (scan->batchqueue->cache[i] == NULL)
+		BatchIndexScan cached = scan->batchqueue->cache[i];
+
+		if (cached == NULL)
 			continue;
 
-		pfree(scan->batchqueue->cache[i]);
+		if (cached->killedItems)
+			pfree(cached->killedItems);
+		if (cached->currTuples)
+			pfree(cached->currTuples);
+		pfree(cached);
 	}
 
 	pfree(scan->batchqueue);
@@ -572,21 +578,21 @@ indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch)
 		if (scan->batchqueue->finished)
 		{
 			/* Don't bother using cache when scan is ending */
-			pfree(batch);
-			return;
 		}
-
-		/*
-		 * Use cache.  This is generally only beneficial when there are many
-		 * small rescans of an index.
-		 */
-		for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
+		else
 		{
-			if (scan->batchqueue->cache[i] == NULL)
+			/*
+			 * Use cache.  This is generally only beneficial when there are
+			 * many small rescans of an index.
+			 */
+			for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
 			{
-				/* found empty slot, we're done */
-				scan->batchqueue->cache[i] = batch;
-				return;
+				if (scan->batchqueue->cache[i] == NULL)
+				{
+					/* found empty slot, we're done */
+					scan->batchqueue->cache[i] = batch;
+					return;
+				}
 			}
 		}
 
