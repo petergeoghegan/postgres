@@ -112,9 +112,12 @@ heapam_index_fetch_begin(Relation rel, TupleTableSlot *ios_tableslot)
 
 	hscan->xs_base.rel = rel;
 	hscan->xs_base.nheapaccesses = 0;
+	hscan->xs_base.tidindex = 0;
+	hscan->xs_base.ntidsnext = 0;
 
 	/* heapam specific fields */
 	hscan->xs_cbuf = InvalidBuffer;
+	hscan->xs_blk = InvalidBlockNumber;
 	hscan->vmbuf = InvalidBuffer;
 	hscan->ios_tableslot = ios_tableslot;
 
@@ -127,10 +130,13 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
 
 	/* deliberately don't drop VM buffer pin here */
+	hscan->xs_base.tidindex = 0;
+	hscan->xs_base.ntidsnext = 0;
 	if (BufferIsValid(hscan->xs_cbuf))
 	{
 		ReleaseBuffer(hscan->xs_cbuf);
 		hscan->xs_cbuf = InvalidBuffer;
+		hscan->xs_blk = InvalidBlockNumber;
 	}
 }
 
@@ -207,6 +213,210 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	{
 		/* We've reached the end of the HOT chain. */
 		*call_again = false;
+	}
+
+	return got_heap_tuple;
+}
+
+#if 0
+#define DEBUG_BATCH
+#endif
+
+static bool
+heapam_index_fetch_batch(struct IndexFetchTableData *scan,
+						 IndexScanDesc idxscan,
+						 ItemPointer tid,
+						 Snapshot snapshot,
+						 TupleTableSlot *slot,
+						 bool *all_dead)
+{
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
+	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
+	bool		got_heap_tuple;
+	int			ntidsnext = 0;
+	BatchQueue *batchState;
+	BatchQueueItemPos *readPos;
+	BatchIndexScan readBatch;
+
+	Assert(TTS_IS_BUFFERTUPLE(slot));
+
+	/*
+	 * Switch to correct buffer if we don't have it already (we can skip this
+	 * if we're in mid-HOT chain)
+	 */
+	if (hscan->xs_blk != ItemPointerGetBlockNumber(tid))
+	{
+		/* Remember this buffer's block number for next time */
+		hscan->xs_blk = ItemPointerGetBlockNumber(tid);
+
+		if (BufferIsValid(hscan->xs_cbuf))
+			ReleaseBuffer(hscan->xs_cbuf);
+
+		/*
+		 * When using a read stream, the stream will already know which block
+		 * number comes next (though an assertion will verify a match below)
+		 */
+		hscan->xs_cbuf = ReadBuffer(hscan->xs_base.rel, hscan->xs_blk);
+
+		/*
+		 * Prune page when it is pinned for the first time
+		 */
+		heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
+
+		/*
+		 * Consider batching together future accesses to the same heap page
+		 * together.  This keeps buffer lock/unlock traffic to a minimum.
+		 */
+		if (idxscan->heapam_batch)
+		{
+			int			nextItem;
+
+			/*
+			 * Find any later TIDs (just ahead of caller's TID in the current
+			 * scan direction) that also point to hscan->xs_cbuf's heap page.
+			 * We'll definitely call heap_hot_search_buffer for caller's TID,
+			 * and may also do so with these later TIDs.
+			 */
+			batchState = idxscan->batchqueue;
+
+			readPos = &batchState->readPos;
+			readBatch = INDEX_SCAN_BATCH(idxscan, readPos->batch);
+
+			Assert(readPos->item >= 0);
+			Assert(readPos->item >= readBatch->firstItem &&
+				   readPos->item <= readBatch->lastItem);
+			Assert(ItemPointerEquals(tid,
+									 &readBatch->items[readPos->item].heapTid));
+
+			if (batchState->direction == ForwardScanDirection)
+			{
+				nextItem = readPos->item + 1;
+
+				for (int item = nextItem; item <= readBatch->lastItem; item++)
+				{
+					ItemPointer heapTid = &readBatch->items[item].heapTid;
+
+					if (ItemPointerGetBlockNumber(heapTid) != hscan->xs_blk)
+						break;
+					ntidsnext++;
+
+					/* Must stay within the capacity of scan's cache */
+					if (ntidsnext >= NTIDSHEAPBUFCACHE)
+						break;
+				}
+			}
+			else
+			{
+				Assert(batchState->direction == BackwardScanDirection);
+
+				nextItem = readPos->item - 1;	/* next in backwards direction */
+
+				for (int item = nextItem; item >= readBatch->firstItem; item--)
+				{
+					ItemPointer heapTid = &readBatch->items[item].heapTid;
+
+					if (ItemPointerGetBlockNumber(heapTid) != hscan->xs_blk)
+						break;
+					ntidsnext++;
+
+					/* Must stay within the capacity of scan's cache */
+					if (ntidsnext >= NTIDSHEAPBUFCACHE)
+						break;
+				}
+			}
+#ifdef DEBUG_BATCH
+			if (ntidsnext && MyBackendType != B_AUTOVAC_WORKER)
+				elog(WARNING, "\"%s\" ntidsnext: %d, tid that triggers caching: (%u,%u), readPos->index: %d, readBatch->items[readPos->index].heapTid: (%u,%u)",
+					 RelationGetRelationName(scan->rel), ntidsnext,
+					 ItemPointerGetBlockNumberNoCheck(tid), ItemPointerGetOffsetNumberNoCheck(tid),
+					 readPos->item,
+					 ItemPointerGetBlockNumberNoCheck(&readBatch->items[readPos->item].heapTid),
+					 ItemPointerGetOffsetNumberNoCheck(&readBatch->items[readPos->item].heapTid));
+#endif
+		}
+	}
+
+	/* Assert that the TID's block number's buffer is now pinned */
+	Assert(BufferIsValid(hscan->xs_cbuf));
+	Assert(BufferGetBlockNumber(hscan->xs_cbuf) == hscan->xs_blk);
+
+	/* Obtain share-lock on the buffer so we can examine visibility */
+	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);
+	got_heap_tuple = heap_hot_search_buffer(tid,
+											hscan->xs_base.rel,
+											hscan->xs_cbuf,
+											snapshot,
+											&bslot->base.tupdata,
+											all_dead,
+											true);
+	bslot->base.tupdata.t_self = *tid;
+	if (ntidsnext)
+	{
+		int			nextItem;
+		int			cacheidx = 0;
+
+		/*
+		 * Determined that we should cache at least one additional TID/tuple
+		 * before locking hscan->xs_cbuf.  Now that we have the lock (and have
+		 * called heap_hot_search_buffer for the first hscan->xs_cbuf tuple),
+		 * carry out extra heap_hot_search_buffer calls for later TIDs.
+		 */
+		if (batchState->direction == ForwardScanDirection)
+		{
+			nextItem = readPos->item + 1;
+
+			for (int item = nextItem; item < nextItem + ntidsnext; item++)
+			{
+				ItemPointerData heapTid = readBatch->items[item].heapTid;
+
+				Assert(ItemPointerGetBlockNumber(&heapTid) == hscan->xs_blk);
+
+				if (!heap_hot_search_buffer(&heapTid, hscan->xs_base.rel,
+											hscan->xs_cbuf, snapshot,
+											&scan->tids[cacheidx].tup,
+											&scan->tids[cacheidx].all_dead,
+											true))
+					scan->tids[cacheidx].tup.t_data = NULL;
+
+				cacheidx++;
+			}
+		}
+		else
+		{
+			nextItem = readPos->item - 1;	/* next in backwards direction */
+
+			for (int item = nextItem; item > nextItem - ntidsnext; item--)
+			{
+				ItemPointerData heapTid = readBatch->items[item].heapTid;
+
+				Assert(ItemPointerGetBlockNumber(&heapTid) == hscan->xs_blk);
+
+				if (!heap_hot_search_buffer(&heapTid, hscan->xs_base.rel,
+											hscan->xs_cbuf, snapshot,
+											&scan->tids[cacheidx].tup,
+											&scan->tids[cacheidx].all_dead,
+											true))
+					scan->tids[cacheidx].tup.t_data = NULL;
+
+				cacheidx++;
+			}
+		}
+
+		Assert(cacheidx == ntidsnext);
+		scan->tidindex = 0;
+		scan->ntidsnext = ntidsnext;
+	}
+	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_UNLOCK);
+
+	if (got_heap_tuple)
+	{
+		/*
+		 * Only in a non-MVCC snapshot can more than one member of the HOT
+		 * chain be visible.
+		 */
+		slot->tts_tableOid = RelationGetRelid(scan->rel);
+		pgstat_count_heap_fetch(idxscan->indexRelation);
+		ExecStoreBufferHeapTuple(&bslot->base.tupdata, slot, hscan->xs_cbuf);
 	}
 
 	return got_heap_tuple;
@@ -339,6 +549,39 @@ heap_batch_advance_pos(IndexScanDesc scan, struct BatchQueueItemPos *pos,
 	return false;
 }
 
+static pg_noinline void
+heapam_batch_rewind(IndexScanDesc scan, BatchQueue *batchqueue,
+					ScanDirection direction)
+{
+	/*
+	 * Handle a change in the scan's direction.
+	 *
+	 * Release future batches properly, to make it look like the current
+	 * batch is the only one we loaded.
+	 */
+	while (batchqueue->nextBatch > batchqueue->headBatch + 1)
+	{
+		/* release "later" batches in reverse order */
+		BatchIndexScan fbatch;
+
+		batchqueue->nextBatch--;
+		fbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch);
+		batch_free(scan, fbatch);
+	}
+
+	/*
+	 * Remember the new direction, and make sure the scan is not marked as
+	 * "finished" (we might have already read the last batch, but now we
+	 * need to start over).
+	 */
+	batchqueue->direction = direction;
+	batchqueue->finished = false;
+
+	/* Reset per-block tuple cache */
+	scan->xs_heapfetch->tidindex = 0;
+	scan->xs_heapfetch->ntidsnext = 0;
+}
+
 /* ----------------
  *		heapam_batch_getnext_tid - get next TID from index scan batch queue
  *
@@ -364,31 +607,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	if (batchqueue->direction == NoMovementScanDirection)
 		batchqueue->direction = direction;
 	else if (unlikely(batchqueue->direction != direction))
-	{
-		/*
-		 * Handle a change in the scan's direction.
-		 *
-		 * Release future batches properly, to make it look like the current
-		 * batch is the only one we loaded.
-		 */
-		while (batchqueue->nextBatch > batchqueue->headBatch + 1)
-		{
-			/* release "later" batches in reverse order */
-			BatchIndexScan fbatch;
-
-			batchqueue->nextBatch--;
-			fbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch);
-			batch_free(scan, fbatch);
-		}
-
-		/*
-		 * Remember the new direction, and make sure the scan is not marked as
-		 * "finished" (we might have already read the last batch, but now we
-		 * need to start over).
-		 */
-		batchqueue->direction = direction;
-		batchqueue->finished = false;
-	}
+		heapam_batch_rewind(scan, batchqueue, direction);
 
 	/* shortcut for the read position, for convenience */
 	readPos = &batchqueue->readPos;
@@ -487,9 +706,9 @@ index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
 	bool		all_dead = false;
 	bool		found;
 
-	found = heapam_index_fetch_tuple(scan->xs_heapfetch, &scan->xs_heaptid,
+	found = heapam_index_fetch_batch(scan->xs_heapfetch, scan, &scan->xs_heaptid,
 									 scan->xs_snapshot, slot,
-									 &scan->xs_heap_continue, &all_dead);
+									 &all_dead);
 
 	if (found)
 		pgstat_count_heap_fetch(scan->indexRelation);
@@ -536,6 +755,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	ItemPointer tid = NULL;
+	bool		all_dead;
 
 	for (;;)
 	{
@@ -561,6 +781,61 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			/* If we're out of index entries, we're done */
 			if (tid == NULL)
 				break;
+		}
+
+		Assert(ItemPointerEquals(tid, &scan->xs_heaptid));
+		if (scan->xs_heapfetch->tidindex < scan->xs_heapfetch->ntidsnext)
+		{
+			/*
+			 * Fetching from hscan->xs_cbuf's cache of heap tuples (also
+			 * tracks which tuples/TIDs are not visibile to caller's snapshot)
+			 */
+			HeapTuple	tup = &hscan->xs_base.tids[hscan->xs_base.tidindex].tup;
+
+			Assert(BufferIsValid(hscan->xs_cbuf));
+			Assert(BufferGetBlockNumber(hscan->xs_cbuf) == hscan->xs_blk);
+			Assert(hscan->xs_blk == ItemPointerGetBlockNumber(tid));
+
+			*tid = tup->t_self;
+			all_dead = hscan->xs_base.tids[hscan->xs_base.tidindex].all_dead;
+
+			scan->xs_heapfetch->tidindex++;
+
+			if (unlikely(!tup->t_data))
+			{
+				if (!scan->xactStartedInRecovery && all_dead)
+					index_batch_kill_item(scan);
+				/* heap_hot_search_buffer indicated no matching tuple for TID */
+#ifdef DEBUG_BATCH
+				if (MyBackendType != B_AUTOVAC_WORKER)
+					elog(WARNING, "not returning \"%s\" tid from cache: (%u,%u)",
+						 RelationGetRelationName(scan->heapRelation),
+						 ItemPointerGetBlockNumberNoCheck(tid),
+						 ItemPointerGetOffsetNumberNoCheck(tid));
+#endif
+				continue;
+			}
+
+			/*
+			 * Have a cached heap tuple that heap_hot_search_buffer found to
+			 * be visible to caller's snapshot
+			 */
+			Assert(!all_dead);
+			Assert(hscan->xs_blk == ItemPointerGetBlockNumber(&tup->t_self));
+
+			slot->tts_tableOid = RelationGetRelid(scan->xs_heapfetch->rel);
+			/* pgstat_count_heap_fetch(xs_heapfetch->idxscan->indexRelation); */
+			ExecStoreBufferHeapTuple(tup, slot, hscan->xs_cbuf);
+
+#ifdef DEBUG_BATCH
+			if (MyBackendType != B_AUTOVAC_WORKER)
+				elog(WARNING, "returning \"%s\" tid from cache: (%u,%u)",
+					 RelationGetRelationName(scan->heapRelation),
+					 ItemPointerGetBlockNumberNoCheck(tid),
+					 ItemPointerGetOffsetNumberNoCheck(tid));
+#endif
+
+			return true;
 		}
 
 		/*
