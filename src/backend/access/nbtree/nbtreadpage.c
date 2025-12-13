@@ -64,8 +64,9 @@ static bool _bt_scanbehind_checkkeys(IndexScanDesc scan, ScanDirection dir,
 									 IndexTuple finaltup);
 static bool _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
 								  IndexTuple finaltup);
-static void _bt_saveitem(BatchIndexScan newbatch, int itemIndex, OffsetNumber offnum,
-                         IndexTuple itup, int *tupleOffset);
+static inline void _bt_saveitem(BatchIndexScan restrict newbatch, int
+								itemIndex, OffsetNumber offnum,
+								IndexTuple itup, int *restrict tupleOffset);
 static int	_bt_setuppostingitems(BatchIndexScan newbatch, int itemIndex,
                                  OffsetNumber offnum, const ItemPointerData *heapTid,
                                  IndexTuple itup, int *tupleOffset);
@@ -1019,9 +1020,9 @@ _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
 }
 
 /* Save an index item into newbatch.items[itemIndex] */
-static void
-_bt_saveitem(BatchIndexScan newbatch, int itemIndex, OffsetNumber offnum,
-			 IndexTuple itup, int *tupleOffset)
+static inline void
+_bt_saveitem(BatchIndexScan restrict newbatch, int itemIndex, OffsetNumber offnum,
+			 IndexTuple itup, int *restrict tupleOffset)
 {
 	BatchMatchingItem *item = &newbatch->items[itemIndex];
 
@@ -1036,8 +1037,8 @@ _bt_saveitem(BatchIndexScan newbatch, int itemIndex, OffsetNumber offnum,
 		Size		itupsz = IndexTupleSize(itup);
 
 		item->tupleOffset = *tupleOffset;
-		memcpy(newbatch->currTuples + item->tupleOffset, itup, itupsz);
-		*tupleOffset = item->tupleOffset + itupsz;
+		memcpy(newbatch->currTuples + *tupleOffset, itup, itupsz);
+		*tupleOffset += itupsz;
 	}
 }
 
