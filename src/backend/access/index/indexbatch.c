@@ -74,7 +74,6 @@ index_batch_init(IndexScanDesc scan, bool xs_want_itup)
 	scan->batchqueue->dropPin =
 		(!xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
-	scan->heapam_batch = !xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot);
 	scan->batchqueue->finished = false;
 	scan->batchqueue->direction = NoMovementScanDirection;
 
@@ -324,10 +323,6 @@ index_batch_restore_pos(IndexScanDesc scan)
 
 	INDEX_SCAN_BATCH(scan, batchqueue->markPos.batch) = markBatch;
 	batchqueue->markBatch = markBatch;
-
-	/* Reset per-block tuple cache */
-	scan->xs_heapfetch->tidindex = 0;
-	scan->xs_heapfetch->ntidsnext = 0;
 }
 
 /*
