@@ -150,7 +150,7 @@ heapam_index_fetch_end(IndexFetchTableData *scan)
 	pfree(hscan);
 }
 
-static bool
+static inline bool
 heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 						 ItemPointer tid,
 						 Snapshot snapshot,
