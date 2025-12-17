@@ -149,6 +149,8 @@ batch_reset_pos(BatchQueueItemPos *pos)
 	pos->item = -1;
 }
 
+#define BATCH_ITEM_VM_VISIBLE	0x01
+
 /*
  * Matching item returned by amgetbatch (in returned BatchIndexScan) during an
  * index scan.  Used by table AM to locate relevant matching table tuple.
@@ -158,6 +160,7 @@ typedef struct BatchMatchingItem
 	ItemPointerData heapTid;	/* TID of referenced heap item */
 	OffsetNumber indexOffset;	/* index item's location within page */
 	LocationIndex tupleOffset;	/* IndexTuple's offset in workspace, if any */
+	uint8 flags;				/* additional bits for the item */
 } BatchMatchingItem;
 
 /*
@@ -184,6 +187,12 @@ typedef struct BatchIndexScanData
 
 	/* scan direction when the index page was read */
 	ScanDirection dir;
+
+	/*
+	 * Did we fully initialize this batch? For example, did we resolve VM
+	 * info after advancing to the batch for the first time?
+	 */
+	bool		initialized;
 
 	/*
 	 * moreLeft and moreRight track whether we think there may be matching
@@ -364,6 +373,7 @@ typedef struct IndexScanDescData
 	IndexFetchTableData *xs_heapfetch;
 
 	bool		xs_recheck;		/* T means scan keys must be rechecked */
+	bool		xs_visible;		/* T means the heap page is all-visible */
 
 	/*
 	 * When fetching with an ordering operator, the values of the ORDER BY

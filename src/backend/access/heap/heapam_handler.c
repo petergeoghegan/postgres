@@ -339,6 +339,47 @@ heap_batch_advance_pos(IndexScanDesc scan, struct BatchQueueItemPos *pos,
 	return false;
 }
 
+/*
+ * heap_batch_resolve_visibility
+ *		Resolve visibility for the whole batch at once.
+ *
+ * This only matters for index-only scans, and the initialization happens
+ * only once for the whole batch.
+ */
+static void
+heap_batch_resolve_visibility(IndexScanDesc scan, IndexFetchHeapData *hscan,
+							  BatchIndexScan batch)
+{
+	/* only do this for each batch once */
+	if (batch->initialized)
+		return;
+
+	/* only do this for index-only scans, leave flags=0 otherwise */
+	if (!scan->xs_want_itup)
+		return;
+
+	/*
+	 * Did we just advance to this batch in index-only scan? If yes,
+	 * resolve visibility for the whole batch at once.
+	 */
+	for (int i = batch->firstItem; i <= batch->lastItem; i++)
+	{
+		BatchMatchingItem *item = &batch->items[i];
+		ItemPointer tid = &item->heapTid;
+
+		if (VM_ALL_VISIBLE(scan->heapRelation,
+						   ItemPointerGetBlockNumber(tid),
+						   &hscan->vmbuf))
+		{
+			/* remember the item is from an all-visible page */
+			item->flags |= BATCH_ITEM_VM_VISIBLE;
+		}
+	}
+
+	/* remember we went through the initialization already */
+	batch->initialized = true;
+}
+
 /* ----------------
  *		heapam_batch_getnext_tid - get next TID from index scan batch queue
  *
@@ -354,6 +395,7 @@ heap_batch_advance_pos(IndexScanDesc scan, struct BatchQueueItemPos *pos,
 static ItemPointer
 heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 {
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	BatchQueue *batchqueue = scan->batchqueue;
 	BatchQueueItemPos *readPos;
 
@@ -408,8 +450,15 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		{
 			BatchIndexScan readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
 
+			/* make sure we have visibility for the whole batch */
+			heap_batch_resolve_visibility(scan, hscan, readBatch);
+
 			/* set the TID / itup for the scan */
 			scan->xs_heaptid = readBatch->items[readPos->item].heapTid;
+
+			/* plain index scans will have flags left set to 0 */
+			scan->xs_visible
+				= (readBatch->items[readPos->item].flags & BATCH_ITEM_VM_VISIBLE);
 
 			/* xs_hitup is not supported by amgetbatch scans */
 			Assert(!scan->xs_hitup);
@@ -556,7 +605,18 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			if (scan->batchqueue != NULL)
 				tid = heapam_batch_getnext_tid(scan, direction);
 			else
+			{
 				tid = index_getnext_tid(scan, direction);
+
+				/*
+				 * make sure to set the xs_visible flag, just like it's
+				 * done in heapam_batch_getnext_tid
+				 */
+				if ((tid != NULL) && (scan->xs_want_itup))
+					scan->xs_visible = VM_ALL_VISIBLE(scan->heapRelation,
+													  ItemPointerGetBlockNumber(tid),
+													  &hscan->vmbuf);
+			}
 
 			/* If we're out of index entries, we're done */
 			if (tid == NULL)
@@ -616,9 +676,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 * It's worth going through this complexity to avoid needing to
 			 * lock the VM buffer, which could cause significant contention.
 			 */
-			if (!VM_ALL_VISIBLE(hscan->xs_base.rel,
-								ItemPointerGetBlockNumber(tid),
-								&hscan->vmbuf))
+			if (!scan->xs_visible)
 			{
 				/*
 				 * Rats, we have to visit the heap to check visibility.

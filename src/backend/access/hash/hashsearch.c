@@ -689,4 +689,5 @@ _hash_saveitem(BatchIndexScan batch, int itemIndex,
 	currItem->heapTid = itup->t_tid;
 	currItem->indexOffset = offnum;
 	currItem->tupleOffset = 0;	/* Hash doesn't support index-only scans */
+	currItem->flags = 0;
 }
