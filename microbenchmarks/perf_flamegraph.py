@@ -622,11 +622,8 @@ def profile_postgres(pg_bin_dir, pg_name, conn_details, output_file, sql_query, 
                 perf_script_process.stdout.close()
                 perf_script_process.wait()
             elif run_perfstat:
-                # Print perf stat output
-                print(f"\n--- perf stat output for {pg_name} ---")
-                with open(stat_output_file, "r") as f:
-                    print(f.read())
-                print(f"--- End perf stat output for {pg_name} ---\n")
+                # Don't print here - will be displayed side-by-side in main()
+                pass
 
     finally:
         # Ensure the connection is closed
@@ -636,6 +633,46 @@ def profile_postgres(pg_bin_dir, pg_name, conn_details, output_file, sql_query, 
 
     # Return string of perf command for flamegraph --subtitle arg
     return ' '.join(perf_command), total_time
+
+def display_perfstat_comparison(master_stat_file, patch_stat_file):
+    """Display perf stat results for master and patch side by side."""
+    print("\n" + "="*120)
+    print("PERF STAT COMPARISON: MASTER vs PATCH")
+    print("="*120 + "\n")
+
+    try:
+        with open(master_stat_file, "r") as f_master:
+            master_lines = f_master.readlines()
+    except FileNotFoundError:
+        print(f"Error: Could not find master perf stat file: {master_stat_file}")
+        return
+
+    try:
+        with open(patch_stat_file, "r") as f_patch:
+            patch_lines = f_patch.readlines()
+    except FileNotFoundError:
+        print(f"Error: Could not find patch perf stat file: {patch_stat_file}")
+        return
+
+    # Print side by side with fixed column width
+    col_width = 58
+    print(f"{'MASTER':<{col_width}} | PATCH")
+    print("-" * col_width + "-+-" + "-" * col_width)
+
+    max_lines = max(len(master_lines), len(patch_lines))
+    for i in range(max_lines):
+        master_line = master_lines[i].rstrip() if i < len(master_lines) else ""
+        patch_line = patch_lines[i].rstrip() if i < len(patch_lines) else ""
+
+        # Truncate lines that are too long
+        if len(master_line) > col_width:
+            master_line = master_line[:col_width-3] + "..."
+        if len(patch_line) > col_width:
+            patch_line = patch_line[:col_width-3] + "..."
+
+        print(f"{master_line:<{col_width}} | {patch_line}")
+
+    print("\n" + "="*120 + "\n")
 
 def main():
     """Main execution flow."""
@@ -815,6 +852,10 @@ def main():
         print("Perf profiling was disabled. Exiting.")
         return
     elif args.perfstat:
+        # Display side-by-side comparison of perf stat results
+        master_stat_file = os.path.join(OUTPUT_DIR, "master_perfstat.txt")
+        patch_stat_file = os.path.join(OUTPUT_DIR, "patch_perfstat.txt")
+        display_perfstat_comparison(master_stat_file, patch_stat_file)
         print("perf stat mode complete. Skipping flamegraph generation.")
         return
 
