@@ -348,6 +348,7 @@ index_beginscan_internal(Relation indexRelation,
 	/* Initialize information for parallel scan. */
 	scan->parallel_scan = pscan;
 	scan->xs_temp_snap = temp_snap;
+	scan->heapam_batch = false;
 
 	return scan;
 }
