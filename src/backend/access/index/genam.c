@@ -89,7 +89,8 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 	scan->xs_snapshot = InvalidSnapshot;	/* caller must initialize this */
 	scan->numberOfKeys = nkeys;
 	scan->numberOfOrderBys = norderbys;
-	scan->batchqueue = NULL;	/* used by amgetbatch index AMs */
+	scan->batchqueue = NULL;	/* set later for amgetbatch callers */
+	scan->xs_want_itup = false; /* caller must initialize this */
 
 	/*
 	 * We allocate key workspace here, but it won't get filled until amrescan.
@@ -102,8 +103,6 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 		scan->orderByData = palloc_array(ScanKeyData, norderbys);
 	else
 		scan->orderByData = NULL;
-
-	scan->xs_want_itup = false; /* may be set later */
 
 	/*
 	 * During recovery we ignore killed tuples and don't bother to kill them
@@ -449,7 +448,7 @@ systable_beginscan(Relation heapRelation,
 				elog(ERROR, "column is not in index");
 		}
 
-		sysscan->iscan = index_beginscan(heapRelation, irel, NULL,
+		sysscan->iscan = index_beginscan(heapRelation, irel, false,
 										 snapshot, NULL, nkeys, 0);
 		index_rescan(sysscan->iscan, idxkey, nkeys, NULL, 0);
 		sysscan->scan = NULL;
@@ -711,7 +710,7 @@ systable_beginscan_ordered(Relation heapRelation,
 			elog(ERROR, "column is not in index");
 	}
 
-	sysscan->iscan = index_beginscan(heapRelation, indexRelation, NULL,
+	sysscan->iscan = index_beginscan(heapRelation, indexRelation, false,
 									 snapshot, NULL, nkeys, 0);
 	index_rescan(sysscan->iscan, idxkey, nkeys, NULL, 0);
 	sysscan->scan = NULL;

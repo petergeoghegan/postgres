@@ -253,7 +253,7 @@ index_insert_cleanup(Relation indexRelation,
 IndexScanDesc
 index_beginscan(Relation heapRelation,
 				Relation indexRelation,
-				TupleTableSlot *ios_tableslot,
+				bool xs_want_itup,
 				Snapshot snapshot,
 				IndexScanInstrumentation *instrument,
 				int nkeys, int norderbys)
@@ -281,12 +281,13 @@ index_beginscan(Relation heapRelation,
 	scan->heapRelation = heapRelation;
 	scan->xs_snapshot = snapshot;
 	scan->instrument = instrument;
+	scan->xs_want_itup = xs_want_itup;
 
 	if (indexRelation->rd_indam->amgetbatch != NULL)
-		index_batch_init(scan, ios_tableslot != NULL);
+		index_batch_init(scan);
 
 	/* prepare to fetch index matches from table */
-	scan->xs_heapfetch = table_index_fetch_begin(heapRelation, ios_tableslot);
+	scan->xs_heapfetch = table_index_fetch_begin(heapRelation);
 
 	return scan;
 }
@@ -609,7 +610,7 @@ index_parallelrescan(IndexScanDesc scan)
  */
 IndexScanDesc
 index_beginscan_parallel(Relation heaprel, Relation indexrel,
-						 TupleTableSlot *ios_tableslot,
+						 bool xs_want_itup,
 						 IndexScanInstrumentation *instrument,
 						 int nkeys, int norderbys,
 						 ParallelIndexScanDesc pscan)
@@ -632,12 +633,13 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 	scan->heapRelation = heaprel;
 	scan->xs_snapshot = snapshot;
 	scan->instrument = instrument;
+	scan->xs_want_itup = xs_want_itup;
 
 	if (indexrel->rd_indam->amgetbatch != NULL)
-		index_batch_init(scan, ios_tableslot != NULL);
+		index_batch_init(scan);
 
 	/* prepare to fetch index matches from table */
-	scan->xs_heapfetch = table_index_fetch_begin(heaprel, ios_tableslot);
+	scan->xs_heapfetch = table_index_fetch_begin(heaprel);
 
 	return scan;
 }

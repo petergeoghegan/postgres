@@ -29,10 +29,13 @@
 
 #include "access/amapi.h"
 #include "access/tableam.h"
+#include "common/int.h"
+#include "lib/qunique.h"
 #include "optimizer/cost.h"
 #include "pgstat.h"
 #include "utils/memdebug.h"
 
+static int batch_compare_int(const void *va, const void *vb);
 static void batch_debug_print_batches(const char *label, IndexScanDesc scan);
 
 /*
@@ -40,22 +43,19 @@ static void batch_debug_print_batches(const char *label, IndexScanDesc scan);
  *		Initialize various fields and arrays needed by batching.
  *
  * Sets up the batch queue structure and its initial read position.  Also
- * determines whether the scan will eagerly drop index page pins.  It isn't
- * safe to drop index page pins eagerly when doing so risks breaking an
- * assumption (about table TID recycling) that amfreebatch routines make when
- * setting LP_DEAD bits for known-dead index tuples.  Specifically, buffer
- * pins on index pages serve as interlocks preventing VACUUM from recycling
- * TIDs on those pages, protecting the table AM from confusing a recycled TID
- * with the original row it meant to reference.
+ * determines whether the scan will eagerly drop index page pins.
+ *
+ * Only call here when all of the index related fields in 'scan' were already
+ * initialized.
  */
 void
-index_batch_init(IndexScanDesc scan, bool xs_want_itup)
+index_batch_init(IndexScanDesc scan)
 {
 	/* Both amgetbatch and amfreebatch must be present together */
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
 	Assert(scan->indexRelation->rd_indam->amfreebatch != NULL);
 
-	scan->batchqueue = palloc(sizeof(BatchQueue));
+	scan->batchqueue = palloc_object(BatchQueue);
 
 	/*
 	 * We prefer to eagerly drop leaf page pins before amgetbatch returns.
@@ -72,7 +72,7 @@ index_batch_init(IndexScanDesc scan, bool xs_want_itup)
 	 * of eager pin dropping during unlogged relation scans for now.
 	 */
 	scan->dropPin =
-		(!xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
+		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
 	scan->finished = false;
 	scan->batchqueue->direction = NoMovementScanDirection;
@@ -347,6 +347,21 @@ batch_free(IndexScanDesc scan, BatchIndexScan batch)
 	if (batch == scan->batchqueue->markBatch)
 		return;
 
+	/*
+	 * killedItems[] is now in whatever order the scan returned items in.
+	 * Scrollable cursor scans might have even saved the same item/TID twice.
+	 *
+	 * Sort and unique-ify killedItems[].  That way the index AM can safely
+	 * assume that items will always be in their original index page order.
+	 */
+	if (batch->numKilled > 1)
+	{
+		qsort(batch->killedItems, batch->numKilled, sizeof(int),
+			  batch_compare_int);
+		batch->numKilled = qunique(batch->killedItems, batch->numKilled,
+								   sizeof(int), batch_compare_int);
+	}
+
 	scan->indexRelation->rd_indam->amfreebatch(scan, batch);
 }
 
@@ -367,9 +382,8 @@ index_batch_kill_item(IndexScanDesc scan)
 	batch_assert_pos_valid(scan, readPos);
 
 	if (readBatch->killedItems == NULL)
-		readBatch->killedItems = (int *)
-			palloc(readBatch->maxitems * sizeof(int));
-	if (readBatch->numKilled < readBatch->maxitems)
+		readBatch->killedItems = palloc_array(int, scan->maxitemsbatch);
+	if (readBatch->numKilled < scan->maxitemsbatch)
 		readBatch->killedItems[readBatch->numKilled++] = readPos->item;
 }
 
@@ -489,13 +503,13 @@ indexam_util_batch_unlock(IndexScanDesc scan, BatchIndexScan batch)
  * of batches already freed by calling indexam_util_batch_release.  See
  * comments above indexam_util_batch_release.
  *
- * We assume that all calls here during the same index scan will always use
- * the same maxitems and want_itup arguments.  Index AMs that use batches
- * should call this from either their amgetbatch or amgetbitmap routines.
- * They must not call here from other routines (particularly not amfreebatch).
+ * Index AMs that use batches should call this from either their amgetbatch or
+ * amgetbitmap routines.  They must not call here from other routines
+ * (particularly not amfreebatch).  We expect scan.maxitemsbatch to have
+ * already been initialized by ambeginscan when we're called.
  */
 BatchIndexScan
-indexam_util_batch_alloc(IndexScanDesc scan, int maxitems, bool want_itup)
+indexam_util_batch_alloc(IndexScanDesc scan)
 {
 	BatchIndexScan batch = NULL;
 
@@ -517,9 +531,7 @@ indexam_util_batch_alloc(IndexScanDesc scan, int maxitems, bool want_itup)
 	if (!batch)
 	{
 		batch = palloc(offsetof(BatchIndexScanData, items) +
-					   sizeof(BatchMatchingItem) * maxitems);
-
-		batch->maxitems = maxitems;
+					   sizeof(BatchMatchingItem) * scan->maxitemsbatch);
 
 		/*
 		 * If we are doing an index-only scan, we need a tuple storage
@@ -527,7 +539,7 @@ indexam_util_batch_alloc(IndexScanDesc scan, int maxitems, bool want_itup)
 		 * the index AM enough space to fit a full page's worth of tuples.
 		 */
 		batch->currTuples = NULL;
-		if (want_itup)
+		if (scan->xs_want_itup)
 			batch->currTuples = palloc(BLCKSZ);
 
 		/*
@@ -537,9 +549,8 @@ indexam_util_batch_alloc(IndexScanDesc scan, int maxitems, bool want_itup)
 		batch->killedItems = NULL;
 	}
 
-	/* want_itup callers must get a currTuples space */
-	Assert(batch->maxitems == maxitems);
-	Assert(!(want_itup && (batch->currTuples == NULL)));
+	/* xs_want_itup scans must get a currTuples space */
+	Assert(!(scan->xs_want_itup && (batch->currTuples == NULL)));
 
 	/* shared initialization */
 	batch->buf = InvalidBuffer;
@@ -615,6 +626,18 @@ indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch)
 
 	/* no free slot to save this batch (expected with amgetbitmap callers) */
 	pfree(batch);
+}
+
+/*
+ * qsort comparison function for int arrays
+ */
+static int
+batch_compare_int(const void *va, const void *vb)
+{
+	int			a = *((const int *) va);
+	int			b = *((const int *) vb);
+
+	return pg_cmp_s32(a, b);
 }
 
 static void

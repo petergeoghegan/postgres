@@ -124,9 +124,6 @@ typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 typedef struct IndexFetchTableData
 {
 	Relation	rel;
-
-	int			nheapaccesses;	/* number of heap accesses, for
-								 * instrumentation/metrics */
 } IndexFetchTableData;
 
 /*
@@ -214,7 +211,6 @@ typedef struct BatchIndexScanData
 	 * tuples.
 	 */
 	char	   *currTuples;		/* tuple storage for items[] */
-	int			maxitems;		/* allocated size of items[] */
 	BatchMatchingItem items[FLEXIBLE_ARRAY_MEMBER];
 } BatchIndexScanData;
 
@@ -365,6 +361,7 @@ typedef struct IndexScanDescData
 	IndexFetchTableData *xs_heapfetch;
 
 	bool		xs_recheck;		/* T means scan keys must be rechecked */
+	uint16		maxitemsbatch;	/* set by ambeginscan when amgetbatch used */
 
 	/*
 	 * When fetching with an ordering operator, the values of the ORDER BY

@@ -72,33 +72,6 @@ heapam_slot_callbacks(Relation relation)
 	return &TTSOpsBufferHeapTuple;
 }
 
-static void
-StoreIndexTuple(TupleTableSlot *slot,
-				IndexTuple itup, TupleDesc itupdesc)
-{
-	/*
-	 * Note: we must use the tupdesc supplied by the AM in index_deform_tuple,
-	 * not the slot's tupdesc, in case the latter has different datatypes
-	 * (this happens for btree name_ops in particular).  They'd better have
-	 * the same number of columns though, as well as being datatype-compatible
-	 * which is something we can't so easily check.
-	 */
-	Assert(slot->tts_tupleDescriptor->natts == itupdesc->natts);
-
-	ExecClearTuple(slot);
-	index_deform_tuple(itup, itupdesc, slot->tts_values, slot->tts_isnull);
-
-	/*
-	 * Copy all name columns stored as cstrings back into a NAMEDATALEN byte
-	 * sized allocation.  We mark this branch as unlikely as generally "name"
-	 * is used only for the system catalogs and this would have to be a user
-	 * query running on those or some other user table with an index on a name
-	 * column.
-	 */
-
-	ExecStoreVirtualTuple(slot);
-}
-
 
 /* ------------------------------------------------------------------------
  * Index Scan Callbacks for heap AM
@@ -106,18 +79,14 @@ StoreIndexTuple(TupleTableSlot *slot,
  */
 
 static IndexFetchTableData *
-heapam_index_fetch_begin(Relation rel, TupleTableSlot *ios_tableslot)
+heapam_index_fetch_begin(Relation rel)
 {
 	IndexFetchHeapData *hscan = palloc_object(IndexFetchHeapData);
 
 	hscan->xs_base.rel = rel;
-	hscan->xs_base.nheapaccesses = 0;
-
-	/* heapam specific fields */
 	hscan->xs_cbuf = InvalidBuffer;
 	hscan->xs_blk = InvalidBlockNumber;
 	hscan->vmbuf = InvalidBuffer;
-	hscan->ios_tableslot = ios_tableslot;
 
 	return &hscan->xs_base;
 }
@@ -637,27 +606,24 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 				/*
 				 * Rats, we have to visit the heap to check visibility.
 				 */
-				hscan->xs_base.nheapaccesses++;
-				if (!index_fetch_heap(scan, hscan->ios_tableslot))
+				if (scan->instrument)
+					scan->instrument->nheapfetches++;
+
+				if (!index_fetch_heap(scan, slot))
 					continue;	/* no visible tuple, try next index entry */
 
-				/*
-				 * selfuncs.c caller uses SnapshotNonVacuumable.  Just assume
-				 * that it's good enough that any one tuple from HOT chain is
-				 * visible for such a caller
-				 */
-				if (unlikely(!IsMVCCSnapshot(scan->xs_snapshot)))
-					return true;
-
-				ExecClearTuple(hscan->ios_tableslot);
+				ExecClearTuple(slot);
 
 				/*
-				 * Only MVCC snapshots are supported here, so there should be
-				 * no need to keep following the HOT chain once a visible
-				 * entry has been found.
+				 * Only MVCC snapshots are supported with standard index-only
+				 * scans, so there should be no need to keep following the HOT
+				 * chain once a visible entry has been found.  Other callers
+				 * (currently only selfuncs.c) use SnapshotNonVacuumable, and
+				 * want us to assume that just having one visible tuple in the
+				 * hot chain is always good enough.
 				 */
-				if (scan->xs_heap_continue)
-					elog(ERROR, "non-MVCC snapshots are not supported in index-only scans");
+				Assert(!(scan->xs_heap_continue &&
+						 IsMVCCSnapshot(scan->xs_snapshot)));
 
 				/*
 				 * Note: at this point we are holding a pin on the heap page,
@@ -668,8 +634,6 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 				 * the index entry will force us to perform a lookup that uses
 				 * the same already-pinned VM page.
 				 */
-				if (scan->xs_itup)
-					StoreIndexTuple(slot, scan->xs_itup, scan->xs_itupdesc);
 			}
 			else
 			{
@@ -682,6 +646,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 								  ItemPointerGetBlockNumber(tid),
 								  scan->xs_snapshot);
 			}
+
 			return true;
 		}
 	}
@@ -1268,7 +1233,7 @@ heapam_relation_copy_for_cluster(Relation OldHeap, Relation NewHeap,
 
 		tableScan = NULL;
 		heapScan = NULL;
-		indexScan = index_beginscan(OldHeap, OldIndex, NULL, SnapshotAny,
+		indexScan = index_beginscan(OldHeap, OldIndex, false, SnapshotAny,
 									NULL, 0, 0);
 		index_rescan(indexScan, NULL, 0, NULL, 0);
 	}

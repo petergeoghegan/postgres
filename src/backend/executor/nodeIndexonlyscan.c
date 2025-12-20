@@ -87,18 +87,13 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		 * parallel.
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
-								   node->ioss_RelationDesc,
-								   node->ioss_TableSlot,
+								   node->ioss_RelationDesc, true,
 								   estate->es_snapshot,
 								   &node->ioss_Instrument,
 								   node->ioss_NumScanKeys,
 								   node->ioss_NumOrderByKeys);
 
 		node->ioss_ScanDesc = scandesc;
-
-
-		/* Set it up for index-only scan */
-		node->ioss_ScanDesc->xs_want_itup = true;
 
 		/*
 		 * If no run-time keys to calculate or they are ready, go ahead and
@@ -115,15 +110,9 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	/*
 	 * OK, now that we have what we need, fetch the next tuple.
 	 */
-	while (table_index_getnext_slot(scandesc, direction, slot))
+	while (table_index_getnext_slot(scandesc, direction, node->ioss_TableSlot))
 	{
 		CHECK_FOR_INTERRUPTS();
-
-		if (((PlanState *) (node))->instrument)
-		{
-			InstrCountTuples2(node, scandesc->xs_heapfetch->nheapaccesses);
-			scandesc->xs_heapfetch->nheapaccesses = 0;
-		}
 
 		/*
 		 * Fill the scan tuple slot with data from the index.  This might be
@@ -174,13 +163,6 @@ IndexOnlyNext(IndexOnlyScanState *node)
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("lossy distance functions are not supported in index-only scans")));
 		return slot;
-	}
-
-	/* XXX This is ugly, but not clear how to do better */
-	if (((PlanState *) (node))->instrument)
-	{
-		InstrCountTuples2(node, scandesc->xs_heapfetch->nheapaccesses);
-		scandesc->xs_heapfetch->nheapaccesses = 0;
 	}
 
 	/*
@@ -358,6 +340,7 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 		 * which will have a new IndexOnlyScanState and zeroed stats.
 		 */
 		winstrument->nsearches += node->ioss_Instrument.nsearches;
+		winstrument->nheapfetches += node->ioss_Instrument.nheapfetches;
 	}
 
 	/*
@@ -709,13 +692,11 @@ ExecIndexOnlyScanInitializeDSM(IndexOnlyScanState *node,
 
 	node->ioss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->ioss_RelationDesc,
-								 node->ioss_TableSlot,
+								 node->ioss_RelationDesc, true,
 								 &node->ioss_Instrument,
 								 node->ioss_NumScanKeys,
 								 node->ioss_NumOrderByKeys,
 								 piscan);
-	node->ioss_ScanDesc->xs_want_itup = true;
 
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass
@@ -775,13 +756,11 @@ ExecIndexOnlyScanInitializeWorker(IndexOnlyScanState *node,
 
 	node->ioss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->ioss_RelationDesc,
-								 node->ioss_TableSlot,
+								 node->ioss_RelationDesc, true,
 								 &node->ioss_Instrument,
 								 node->ioss_NumScanKeys,
 								 node->ioss_NumOrderByKeys,
 								 piscan);
-	node->ioss_ScanDesc->xs_want_itup = true;
 
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass

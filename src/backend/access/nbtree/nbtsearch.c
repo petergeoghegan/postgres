@@ -1188,8 +1188,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	}
 
 	/* Allocate space for first batch */
-	firstbatch = indexam_util_batch_alloc(scan, MaxTIDsPerBTreePage,
-										  scan->xs_want_itup);
+	firstbatch = indexam_util_batch_alloc(scan);
 
 	/*
 	 * If we found no usable boundary keys, we have to start from one end of
@@ -1708,8 +1707,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 	BatchIndexScan newbatch;
 
 	/* Allocate space for next batch */
-	newbatch = indexam_util_batch_alloc(scan, MaxTIDsPerBTreePage,
-										scan->xs_want_itup);
+	newbatch = indexam_util_batch_alloc(scan);
 
 	/*
 	 * newbatch will be the batch for lastcurrblkno, a page to the left of

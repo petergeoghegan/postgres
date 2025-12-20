@@ -121,9 +121,6 @@ typedef struct IndexFetchHeapData
 	/* NB: if xs_cbuf is not InvalidBuffer, we hold a pin on that buffer */
 
 	Buffer		vmbuf;			/* visibility map buffer */
-	TupleTableSlot *ios_tableslot;	/* transient slot for fetching tuples to
-									 * check visibility during index-only
-									 * scans */
 } IndexFetchHeapData;
 
 /* Result codes for HeapTupleSatisfiesVacuum */

@@ -420,8 +420,7 @@ typedef struct TableAmRoutine
 	 *
 	 * Tuples for an index scan can then be fetched via index_fetch_tuple.
 	 */
-	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel,
-													  TupleTableSlot *ios_tableslot);
+	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel);
 
 	/*
 	 * Reset index fetch. Typically this will release cross index fetch
@@ -1183,15 +1182,14 @@ table_parallelscan_reinitialize(Relation rel, ParallelTableScanDesc pscan)
 
 /*
  * Prepare to fetch tuples from the relation, as needed when fetching tuples
- * for an index scan.  Index-only scan callers must provide ios_tableslot,
- * which is a slot for holding tuples fetched from the table.
+ * for an index scan.
  *
  * Tuples for an index scan can then be fetched via table_index_fetch_tuple().
  */
 static inline IndexFetchTableData *
-table_index_fetch_begin(Relation rel, TupleTableSlot *ios_tableslot)
+table_index_fetch_begin(Relation rel)
 {
-	return rel->rd_tableam->index_fetch_begin(rel, ios_tableslot);
+	return rel->rd_tableam->index_fetch_begin(rel);
 }
 
 /*
@@ -1220,9 +1218,10 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
  * The index scan should have been started via table_index_fetch_begin().
  * Callers must check scan->xs_recheck and recheck scan keys if required.
  *
- * Index-only scan callers must pass an index scan descriptor that was created
- * by passing a valid ios_tableslot to index_beginscan.  This ios_tableslot
- * will be passed down to table_index_fetch_begin by index_beginscan.
+ * Index-only scan callers (that pass xs_want_itup=true to index_beginscan)
+ * can consume index tuple results by examining IndexScanDescData fields such
+ * as xs_itup and xs_hitup.  The table AM won't usually fetch a heap tuple
+ * into the provided slot in the case of xs_want_itup=true callers.
  */
 static inline bool
 table_index_getnext_slot(IndexScanDesc idxscan, ScanDirection direction,

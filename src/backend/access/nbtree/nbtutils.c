@@ -21,15 +21,12 @@
 #include "access/reloptions.h"
 #include "access/relscan.h"
 #include "commands/progress.h"
-#include "common/int.h"
-#include "lib/qunique.h"
 #include "miscadmin.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 
 
-static int	_bt_compare_int(const void *va, const void *vb);
 static int	_bt_keep_natts(Relation rel, IndexTuple lastleft,
 						   IndexTuple firstright, BTScanInsert itup_key);
 
@@ -161,18 +158,6 @@ _bt_freestack(BTStack stack)
 }
 
 /*
- * qsort comparison function for int arrays
- */
-static int
-_bt_compare_int(const void *va, const void *vb)
-{
-	int			a = *((const int *) va);
-	int			b = *((const int *) vb);
-
-	return pg_cmp_s32(a, b);
-}
-
-/*
  * _bt_killitems - set LP_DEAD state for items an indexscan caller has
  * told us were killed
  *
@@ -208,31 +193,12 @@ _bt_killitems(IndexScanDesc scan, BatchIndexScan batch)
 	BTPageOpaque opaque;
 	OffsetNumber minoff;
 	OffsetNumber maxoff;
-	int			numKilled = batch->numKilled;
 	bool		killedsomething = false;
 	Buffer		buf;
 
-	Assert(numKilled > 0);
+	Assert(batch->numKilled > 0);
 	Assert(BlockNumberIsValid(batch->currPage));
 	Assert(scan->heapRelation != NULL); /* can't be a bitmap index scan */
-
-	/* Always invalidate batch->killedItems[] before freeing batch */
-	batch->numKilled = 0;
-
-	/*
-	 * We need to iterate through batch.killedItems[] in leaf page order; the
-	 * loop below expects this (when marking posting list tuples, at least).
-	 * killedItems[] is now in whatever order the scan returned items in.
-	 * Scrollable cursor scans might have even saved the same item/TID twice.
-	 *
-	 * Sort and unique-ify batch.killedItems[] to deal with all this.
-	 */
-	if (numKilled > 1)
-	{
-		qsort(batch->killedItems, numKilled, sizeof(int), _bt_compare_int);
-		numKilled = qunique(batch->killedItems, numKilled, sizeof(int),
-							_bt_compare_int);
-	}
 
 	if (!scan->dropPin)
 	{
@@ -269,7 +235,7 @@ _bt_killitems(IndexScanDesc scan, BatchIndexScan batch)
 	maxoff = PageGetMaxOffsetNumber(page);
 
 	/* Iterate through batch->killedItems[] in leaf page order */
-	for (int i = 0; i < numKilled; i++)
+	for (int i = 0; i < batch->numKilled; i++)
 	{
 		int			itemIndex = batch->killedItems[i];
 		BatchMatchingItem *kitem = &batch->items[itemIndex];
@@ -327,7 +293,7 @@ _bt_killitems(IndexScanDesc scan, BatchIndexScan batch)
 					 * kitem is also the last heap TID in the last index tuple
 					 * correctly -- posting tuple still gets killed).
 					 */
-					if (pi < numKilled)
+					if (pi < batch->numKilled)
 						kitem = &batch->items[batch->killedItems[pi++]];
 				}
 

@@ -355,6 +355,7 @@ hashbeginscan(Relation rel, int nkeys, int norderbys)
 	so->hashso_buc_split = false;
 
 	scan->opaque = so;
+	scan->maxitemsbatch = MaxIndexTuplesPerPage;
 
 	return scan;
 }

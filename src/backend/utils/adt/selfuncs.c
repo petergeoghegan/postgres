@@ -7045,6 +7045,7 @@ get_actual_variable_endpoint(Relation heapRel,
 	Datum		values[INDEX_MAX_KEYS];
 	bool		isnull[INDEX_MAX_KEYS];
 	MemoryContext oldcontext;
+	IndexScanInstrumentation instrument;
 
 	/*
 	 * We use the index-only-scan machinery for this.  With mostly-static
@@ -7093,11 +7094,14 @@ get_actual_variable_endpoint(Relation heapRel,
 	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
 							  GlobalVisTestFor(heapRel));
 
-	index_scan = index_beginscan(heapRel, indexRel, tableslot,
-								 &SnapshotNonVacuumable, NULL,
+	/*
+	 * Set it up for instrumented index-only scan.  We need the
+	 * instrumentation to monitor the number of heap fetches.
+	 */
+	memset(&instrument, 0, sizeof(instrument));
+	index_scan = index_beginscan(heapRel, indexRel, true,
+								 &SnapshotNonVacuumable, &instrument,
 								 1, 0);
-	/* Set it up for index-only scan */
-	index_scan->xs_want_itup = true;
 	index_rescan(index_scan, scankeys, 1, NULL, 0);
 
 	/* Fetch first/next tuple in specified direction */
@@ -7113,7 +7117,7 @@ get_actual_variable_endpoint(Relation heapRel,
 		 */
 #define VISITED_PAGES_LIMIT 100
 
-		if (index_scan->xs_heapfetch->nheapaccesses > VISITED_PAGES_LIMIT)
+		if (instrument.nheapfetches > VISITED_PAGES_LIMIT)
 			break;
 
 		/*

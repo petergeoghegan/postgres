@@ -76,7 +76,7 @@ _hash_next(IndexScanDesc scan, ScanDirection dir, BatchIndexScan priorbatch)
 	}
 
 	/* Allocate space for next batch */
-	batch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
+	batch = indexam_util_batch_alloc(scan);
 
 	/* Get the buffer for next batch */
 	buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
@@ -388,7 +388,7 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
 	}
 
 	/* Allocate space for first batch */
-	batch = indexam_util_batch_alloc(scan, MaxIndexTuplesPerPage, false);
+	batch = indexam_util_batch_alloc(scan);
 
 	/* Read the first page and load items into allocated batch */
 	if (!_hash_readpage(scan, &buf, dir, batch))

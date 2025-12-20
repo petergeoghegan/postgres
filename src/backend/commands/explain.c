@@ -1984,9 +1984,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (plan->qual)
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
-			if (es->analyze)
-				ExplainPropertyFloat("Heap Fetches", NULL,
-									 planstate->instrument->ntuples2, 0, es);
 			show_indexsearches_info(planstate, es);
 			break;
 		case T_BitmapIndexScan:
@@ -3864,7 +3861,9 @@ show_indexsearches_info(PlanState *planstate, ExplainState *es)
 {
 	Plan	   *plan = planstate->plan;
 	SharedIndexScanInstrumentation *SharedInfo = NULL;
-	uint64		nsearches = 0;
+	uint64		nsearches = 0,
+				nheapfetches = 0;
+	bool		showheapfetches = false;
 
 	if (!es->analyze)
 		return;
@@ -3885,7 +3884,9 @@ show_indexsearches_info(PlanState *planstate, ExplainState *es)
 				IndexOnlyScanState *indexstate = ((IndexOnlyScanState *) planstate);
 
 				nsearches = indexstate->ioss_Instrument.nsearches;
+				nheapfetches = indexstate->ioss_Instrument.nheapfetches;
 				SharedInfo = indexstate->ioss_SharedInfo;
+				showheapfetches = true;
 				break;
 			}
 		case T_BitmapIndexScan:
@@ -3908,8 +3909,12 @@ show_indexsearches_info(PlanState *planstate, ExplainState *es)
 			IndexScanInstrumentation *winstrument = &SharedInfo->winstrument[i];
 
 			nsearches += winstrument->nsearches;
+			nheapfetches += winstrument->nheapfetches;
 		}
 	}
+
+	if (showheapfetches)
+		ExplainPropertyUInteger("Heap Fetches", NULL, nheapfetches, es);
 
 	ExplainPropertyUInteger("Index Searches", NULL, nsearches, es);
 }

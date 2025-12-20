@@ -338,6 +338,7 @@ btbeginscan(Relation rel, int nkeys, int norderbys)
 
 	scan->opaque = so;
 	scan->xs_itupdesc = RelationGetDescr(rel);
+	scan->maxitemsbatch = MaxTIDsPerBTreePage;
 
 	return scan;
 }

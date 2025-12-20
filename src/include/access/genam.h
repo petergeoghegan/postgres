@@ -40,6 +40,12 @@ typedef struct IndexScanInstrumentation
 {
 	/* Index search count (incremented with pgstat_count_index_scan call) */
 	uint64		nsearches;
+
+	/*
+	 * heap blocks fetched counts (incremented by index_getnext_slot calls
+	 * within table AMs, though only during index-only scans)
+	 */
+	uint64		nheapfetches;
 } IndexScanInstrumentation;
 
 /*
@@ -176,7 +182,7 @@ extern void index_insert_cleanup(Relation indexRelation,
 
 extern IndexScanDesc index_beginscan(Relation heapRelation,
 									 Relation indexRelation,
-									 TupleTableSlot *ios_tableslot,
+									 bool xs_want_itup,
 									 Snapshot snapshot,
 									 IndexScanInstrumentation *instrument,
 									 int nkeys, int norderbys);
@@ -203,7 +209,7 @@ extern void index_parallelscan_initialize(Relation heapRelation,
 extern void index_parallelrescan(IndexScanDesc scan);
 extern IndexScanDesc index_beginscan_parallel(Relation heaprel,
 											  Relation indexrel,
-											  TupleTableSlot *ios_tableslot,
+											  bool xs_want_itup,
 											  IndexScanInstrumentation *instrument,
 											  int nkeys, int norderbys,
 											  ParallelIndexScanDesc pscan);
@@ -276,7 +282,7 @@ extern void systable_inplace_update_cancel(void *state);
  * amgetbatch utilities called by indexam.c (in indexbatch.c)
  */
 struct BatchQueueItemPos;
-extern void index_batch_init(IndexScanDesc scan, bool xs_want_itup);
+extern void index_batch_init(IndexScanDesc scan);
 extern bool batch_getnext(IndexScanDesc scan, ScanDirection direction);
 extern void batch_free(IndexScanDesc scan, BatchIndexScan batch);
 extern void index_batch_reset(IndexScanDesc scan, bool complete);
@@ -289,8 +295,7 @@ extern void index_batch_end(IndexScanDesc scan);
  * amgetbatch utilities called by index AMs (in indexbatch.c)
  */
 extern void indexam_util_batch_unlock(IndexScanDesc scan, BatchIndexScan batch);
-extern BatchIndexScan indexam_util_batch_alloc(IndexScanDesc scan,
-											   int maxitems, bool want_itup);
+extern BatchIndexScan indexam_util_batch_alloc(IndexScanDesc scan);
 extern void indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch);
 
 #endif							/* GENAM_H */

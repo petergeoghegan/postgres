@@ -538,16 +538,12 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	HashPageOpaque opaque;
 	OffsetNumber offnum,
 				maxoff;
-	int			numKilled = batch->numKilled;
 	int			i;
 	bool		killedsomething = false;
 
-	Assert(numKilled > 0);
+	Assert(batch->numKilled > 0);
 	Assert(batch->killedItems != NULL);
 	Assert(BlockNumberIsValid(batch->currPage));
-
-	/* Always invalidate batch->killedItems[] before freeing batch */
-	batch->numKilled = 0;
 
 	if (!scan->dropPin)
 	{
@@ -583,7 +579,7 @@ _hash_kill_items(IndexScanDesc scan, BatchIndexScan batch)
 	opaque = HashPageGetOpaque(page);
 	maxoff = PageGetMaxOffsetNumber(page);
 
-	for (i = 0; i < numKilled; i++)
+	for (i = 0; i < batch->numKilled; i++)
 	{
 		int			itemIndex = batch->killedItems[i];
 		BatchMatchingItem *currItem = &batch->items[itemIndex];

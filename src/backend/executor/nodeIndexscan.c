@@ -107,7 +107,7 @@ IndexNext(IndexScanState *node)
 		 * serially executing an index scan that was planned to be parallel.
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
-								   node->iss_RelationDesc, NULL,
+								   node->iss_RelationDesc, false,
 								   estate->es_snapshot,
 								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
@@ -203,7 +203,7 @@ IndexNextWithReorder(IndexScanState *node)
 		 * serially executing an index scan that was planned to be parallel.
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
-								   node->iss_RelationDesc, NULL,
+								   node->iss_RelationDesc, false,
 								   estate->es_snapshot,
 								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
@@ -812,6 +812,7 @@ ExecEndIndexScan(IndexScanState *node)
 		 * which will have a new IndexOnlyScanState and zeroed stats.
 		 */
 		winstrument->nsearches += node->iss_Instrument.nsearches;
+		Assert(node->iss_Instrument.nheapfetches == 0);
 	}
 
 	/*
@@ -1719,7 +1720,7 @@ ExecIndexScanInitializeDSM(IndexScanState *node,
 
 	node->iss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->iss_RelationDesc, NULL,
+								 node->iss_RelationDesc, false,
 								 &node->iss_Instrument,
 								 node->iss_NumScanKeys,
 								 node->iss_NumOrderByKeys,
@@ -1783,7 +1784,7 @@ ExecIndexScanInitializeWorker(IndexScanState *node,
 
 	node->iss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
-								 node->iss_RelationDesc, NULL,
+								 node->iss_RelationDesc, false,
 								 &node->iss_Instrument,
 								 node->iss_NumScanKeys,
 								 node->iss_NumOrderByKeys,
