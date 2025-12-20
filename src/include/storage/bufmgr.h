@@ -147,7 +147,6 @@ struct ReadBuffersOperation
 	int			flags;
 	int16		nblocks;
 	int16		nblocks_done;
-	bool		foreign_io;
 	PgAioWaitRef io_wref;
 	PgAioReturn io_return;
 };
