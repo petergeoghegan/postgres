@@ -79,7 +79,6 @@ index_batch_init(IndexScanDesc scan, bool xs_want_itup)
 	scan->batchqueue->prefetchingLockedIn = false;
 	scan->batchqueue->disabled = false;
 	scan->batchqueue->currentPrefetchBlock = InvalidBlockNumber;
-	scan->heapam_batch = !xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot);
 	scan->batchqueue->direction = NoMovementScanDirection;
 
 	/* positions in the queue of batches */
@@ -366,10 +365,6 @@ index_batch_restore_pos(IndexScanDesc scan)
 
 	INDEX_SCAN_BATCH(scan, batchqueue->markPos.batch) = markBatch;
 	batchqueue->markBatch = markBatch;
-
-	/* Reset per-block tuple cache */
-	scan->xs_heapfetch->tidindex = 0;
-	scan->xs_heapfetch->ntidsnext = 0;
 }
 
 /*

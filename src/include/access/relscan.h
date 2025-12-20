@@ -118,21 +118,6 @@ typedef struct ParallelBlockTableScanWorkerData
 typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 
 /*
- * Index scan matching heap tuple cache/heap_hot_search_buffer cache.
- *
- * Limit the cache size to 1/3 of the upper bound on the number of tuples that
- * can fit on one heap page.  This keeps the memory overhead under control
- * without unduly limiting the effectiveness of the optimization.
- */
-#define NTIDSHEAPBUFCACHE (MaxHeapTuplesPerPage / 3)
-
-typedef struct HeapTupleDataScan
-{
-	HeapTupleData tup;
-	bool		all_dead;
-} HeapTupleDataScan;
-
-/*
  * Base class for fetches from a table via an index. This is the base-class
  * for such scans, which needs to be embedded in the respective struct for
  * individual AMs.
@@ -144,9 +129,6 @@ typedef struct IndexFetchTableData
 
 	int			nheapaccesses;	/* number of heap accesses, for
 								 * instrumentation/metrics */
-	int			tidindex;
-	int			ntidsnext;
-	HeapTupleDataScan tids[NTIDSHEAPBUFCACHE];
 } IndexFetchTableData;
 
 /*
@@ -375,7 +357,6 @@ typedef struct IndexScanDescData
 	bool		xs_temp_snap;	/* unregister snapshot at scan end? */
 
 	/* signaling to index AM about killing index tuples */
-	bool		heapam_batch;
 	bool		kill_prior_tuple;	/* last-returned tuple is dead */
 	bool		ignore_killed_tuples;	/* do not return killed entries */
 	bool		xactStartedInRecovery;	/* prevents killing/seeing killed
