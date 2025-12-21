@@ -193,131 +193,50 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	return got_heap_tuple;
 }
 
-/*
- * heap_batch_advance_pos
- *		Advance the position to the next item, depending on scan direction.
- *
- * Move to the next item within the batch pointed to by caller's pos.  This is
- * usually readPos.  Advances the position to the next item, either in the
- * same batch or the following one (if already available).
- *
- * We can advance only if we already have some batches loaded, and there's
- * either enough items in the current batch, or some more items in the
- * subsequent batches.
- *
- * If this is the first advance (right after loading the initial/head batch),
- * position is still undefined.  Otherwise we expect the position to be valid.
- *
- * Returns true if the position was advanced, false otherwise.  The position
- * is guaranteed to be valid only after a successful advance.
- */
-pg_attribute_always_inline
-static bool
-heap_batch_advance_pos(IndexScanDesc scan, struct BatchQueueItemPos *pos,
-					   ScanDirection direction)
+static pg_noinline void
+heapam_batch_rewind(IndexScanDesc scan, BatchQueue *batchqueue,
+					ScanDirection direction)
 {
-	BatchIndexScan batch;
-
-	/* make sure we have batching initialized and consistent */
-	batch_assert_batches_valid(scan);
-
-	/* should know direction by now */
-	Assert(direction == scan->batchqueue->direction);
-	Assert(direction != NoMovementScanDirection);
-
-	/* We can't advance if there are no batches available. */
-	if (INDEX_SCAN_BATCH_COUNT(scan) == 0)
-		return false;
-
 	/*
-	 * If the position has not been advanced yet, it has to be right after we
-	 * loaded the initial batch (must be the head batch). In that case just
-	 * initialize it to the batch's first item (or its last item, when
-	 * scanning backwards).
+	 * Handle a change in the scan's direction.
+	 *
+	 * Release future batches properly, to make it look like the current
+	 * batch is the only one we loaded.
 	 */
-	if (INDEX_SCAN_POS_INVALID(pos))
+	while (batchqueue->nextBatch > batchqueue->headBatch + 1)
 	{
-		/*
-		 * We should have loaded the scan's initial batch, or maybe we have
-		 * changed the direction of the scan after scanning all the way to the
-		 * end (in which case the position is invalid, and we make it look
-		 * like there is just one batch). We should have just one batch,
-		 * though.
-		 */
-		Assert(INDEX_SCAN_BATCH_COUNT(scan) == 1);
+		/* release "later" batches in reverse order */
+		BatchIndexScan fbatch;
 
-		/*
-		 * Get the initial batch (which must be the head), and initialize the
-		 * position to the appropriate item for the current scan direction
-		 */
-		batch = INDEX_SCAN_BATCH(scan, scan->batchqueue->headBatch);
-
-		pos->batch = scan->batchqueue->headBatch;
-
-		if (ScanDirectionIsForward(direction))
-			pos->item = batch->firstItem;
-		else
-			pos->item = batch->lastItem;
-
-		batch_assert_pos_valid(scan, pos);
-
-		return true;
+		batchqueue->nextBatch--;
+		fbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch);
+		batch_free(scan, fbatch);
 	}
 
 	/*
-	 * The position is already defined, so we should have some batches loaded
-	 * and the position has to be valid with respect to those.
+	 * Remember the new direction, and make sure the scan is not marked as
+	 * "finished" (we might have already read the last batch, but now we
+	 * need to start over).
 	 */
-	batch_assert_pos_valid(scan, pos);
+	batchqueue->direction = direction;
+	scan->finished = false;
+}
 
-	/*
-	 * Advance to the next item in the same batch, if there are more items. If
-	 * we're at the last item, we'll try advancing to the next batch later.
-	 */
-	batch = INDEX_SCAN_BATCH(scan, pos->batch);
+static inline ItemPointer
+heapam_batch_return_tid(IndexScanDesc scan, BatchIndexScan readBatch,
+						BatchQueueItemPos *readPos)
+{
+	batch_assert_pos_valid(scan, readPos);
 
-	if (ScanDirectionIsForward(direction))
-	{
-		if (++pos->item <= batch->lastItem)
-		{
-			batch_assert_pos_valid(scan, pos);
+	/* set the TID / itup for the scan */
+	scan->xs_heaptid = readBatch->items[readPos->item].heapTid;
 
-			return true;
-		}
-	}
-	else						/* ScanDirectionIsBackward */
-	{
-		if (--pos->item >= batch->firstItem)
-		{
-			batch_assert_pos_valid(scan, pos);
+	if (scan->xs_want_itup)
+		scan->xs_itup =
+			(IndexTuple) (readBatch->currTuples +
+						  readBatch->items[readPos->item].tupleOffset);
 
-			return true;
-		}
-	}
-
-	/*
-	 * We couldn't advance within the same batch, try advancing to the next
-	 * batch, if it's already loaded.
-	 */
-	if (INDEX_SCAN_BATCH_LOADED(scan, pos->batch + 1))
-	{
-		/* advance to the next batch */
-		pos->batch++;
-
-		batch = INDEX_SCAN_BATCH(scan, pos->batch);
-
-		if (ScanDirectionIsForward(direction))
-			pos->item = batch->firstItem;
-		else
-			pos->item = batch->lastItem;
-
-		batch_assert_pos_valid(scan, pos);
-
-		return true;
-	}
-
-	/* can't advance */
-	return false;
+	return &scan->xs_heaptid;
 }
 
 /* ----------------
@@ -336,7 +255,8 @@ static ItemPointer
 heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 {
 	BatchQueue *batchqueue = scan->batchqueue;
-	BatchQueueItemPos *readPos;
+	BatchQueueItemPos *readPos = &batchqueue->readPos;
+	BatchIndexScan readBatch = NULL;
 
 	/* shouldn't get here without batching */
 	batch_assert_batches_valid(scan);
@@ -344,98 +264,81 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/* Initialize direction on first call */
 	if (batchqueue->direction == NoMovementScanDirection)
 		batchqueue->direction = direction;
-	else if (unlikely(batchqueue->direction != direction))
-	{
-		/*
-		 * Handle a change in the scan's direction.
-		 *
-		 * Release future batches properly, to make it look like the current
-		 * batch is the only one we loaded.
-		 */
-		while (batchqueue->nextBatch > batchqueue->headBatch + 1)
-		{
-			/* release "later" batches in reverse order */
-			BatchIndexScan fbatch;
-
-			batchqueue->nextBatch--;
-			fbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch);
-			batch_free(scan, fbatch);
-		}
-
-		/*
-		 * Remember the new direction, and make sure the scan is not marked as
-		 * "finished" (we might have already read the last batch, but now we
-		 * need to start over).
-		 */
-		batchqueue->direction = direction;
-		scan->finished = false;
-	}
-
-	/* shortcut for the read position, for convenience */
-	readPos = &batchqueue->readPos;
 
 	/*
 	 * Try advancing the batch position. If that doesn't succeed, it means we
 	 * don't have more items in the current batch, and there's no future batch
 	 * loaded. So try loading another batch, and retry if needed.
 	 */
-	while (true)
+	if (INDEX_SCAN_BATCH_LOADED(scan, readPos->batch))
 	{
-		/*
-		 * If we manage to advance to the next items, return it and we're
-		 * done. Otherwise try loading another batch.
-		 */
-		if (heap_batch_advance_pos(scan, readPos, direction))
+		readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
+		if (ScanDirectionIsForward(direction))
 		{
-			BatchIndexScan readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
+			if (++readPos->item > readBatch->lastItem)
+				goto nextbatch;
+		}
+		else						/* ScanDirectionIsBackward */
+		{
+			if (--readPos->item < readBatch->firstItem)
+				goto nextbatch;
+		}
 
-			/* set the TID / itup for the scan */
-			scan->xs_heaptid = readBatch->items[readPos->item].heapTid;
+		pgstat_count_index_tuples(scan->indexRelation, 1);
+		return heapam_batch_return_tid(scan, readBatch, readPos);
+	}
 
-			/* xs_hitup is not supported by amgetbatch scans */
-			Assert(!scan->xs_hitup);
+nextbatch:
 
-			if (scan->xs_want_itup)
-				scan->xs_itup =
-					(IndexTuple) (readBatch->currTuples +
-								  readBatch->items[readPos->item].tupleOffset);
+	if (unlikely(batchqueue->direction != direction))
+	{
+		heapam_batch_rewind(scan, batchqueue, direction);
+		readPos->batch = batchqueue->nextBatch - 1;
+	}
+
+	if ((readBatch = batch_getnext(scan, readBatch, direction)) != NULL)
+	{
+		/* xs_hitup is not supported by amgetbatch scans */
+		Assert(!scan->xs_hitup);
+
+		readPos->batch++;
+
+		/*
+		 * Get the initial batch (which must be the head), and initialize the
+		 * position to the appropriate item for the current scan direction
+		 */
+		if (ScanDirectionIsForward(direction))
+			readPos->item = readBatch->firstItem;
+		else
+			readPos->item = readBatch->lastItem;
+
+		batch_assert_pos_valid(scan, readPos);
+
+		/*
+		 * If we advanced to the next batch, release the batch we no
+		 * longer need. The positions is the "read" position, and we can
+		 * compare it to headBatch.
+		 */
+		if (readPos->batch != batchqueue->headBatch)
+		{
+			BatchIndexScan headBatch = INDEX_SCAN_BATCH(scan,
+														batchqueue->headBatch);
+
+			/* Free the head batch (except when it's markBatch) */
+			batch_free(scan, headBatch);
 
 			/*
-			 * If we advanced to the next batch, release the batch we no
-			 * longer need. The positions is the "read" position, and we can
-			 * compare it to headBatch.
+			 * In any case, remove the batch from the regular queue, even
+			 * if we kept it for mark/restore.
 			 */
-			if (unlikely(readPos->batch != batchqueue->headBatch))
-			{
-				BatchIndexScan headBatch = INDEX_SCAN_BATCH(scan,
-															batchqueue->headBatch);
+			batchqueue->headBatch++;
 
-				/* Free the head batch (except when it's markBatch) */
-				batch_free(scan, headBatch);
-
-				/*
-				 * In any case, remove the batch from the regular queue, even
-				 * if we kept it for mark/restore.
-				 */
-				batchqueue->headBatch++;
-
-				/* we can't skip any batches */
-				Assert(batchqueue->headBatch == readPos->batch);
-			}
-
-			pgstat_count_index_tuples(scan->indexRelation, 1);
-			return &scan->xs_heaptid;
+			/* we can't skip any batches */
+			Assert(batchqueue->headBatch == readPos->batch);
 		}
 
-		/*
-		 * Failed to advance the read position.  Have indexbatch.c utility
-		 * routine load another batch into our queue (next in this direction).
-		 */
-		if (!batch_getnext(scan, direction))
-		{
-			/* we're done -- there's no more batches in this scan direction */
-			break;
-		}
+		pgstat_count_index_tuples(scan->indexRelation, 1);
+		return heapam_batch_return_tid(scan, readBatch, readPos);
 	}
 
 	/*

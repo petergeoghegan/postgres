@@ -228,7 +228,7 @@ typedef struct BatchIndexScanData *BatchIndexScan;
 
 /* Did we already load batch with the requested index? */
 #define INDEX_SCAN_BATCH_LOADED(scan, idx) \
-	((idx) < (scan)->batchqueue->nextBatch)
+	((idx) >= 0 && (idx) < (scan)->batchqueue->nextBatch)
 
 /* Have we loaded the maximum number of batches? */
 #define INDEX_SCAN_BATCH_FULL(scan) \

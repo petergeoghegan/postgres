@@ -109,31 +109,23 @@ index_batch_init(IndexScanDesc scan)
  * no more batches in the given scan direction.
  * ----------------
  */
-bool
-batch_getnext(IndexScanDesc scan, ScanDirection direction)
+BatchIndexScan
+batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
+			  ScanDirection direction)
 {
 	BatchQueue *batchqueue = scan->batchqueue;
-	BatchIndexScan priorbatch = NULL,
-				batch = NULL;
+	BatchIndexScan batch = NULL;
 
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
 
 	/* Did we already read the last batch for this scan? */
 	if (scan->finished)
-		return false;
+		return NULL;
 
 	Assert(!INDEX_SCAN_BATCH_FULL(scan));
 
 	batch_debug_print_batches("batch_getnext / start", scan);
-
-	/*
-	 * Get the previously returned batch to pass to amgetbatch.  The index AM
-	 * uses this to determine which index page to read next, typically by
-	 * following page links forward or backward.
-	 */
-	if (batchqueue->headBatch < batchqueue->nextBatch)
-		priorbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch - 1);
 
 	batch = scan->indexRelation->rd_indam->amgetbatch(scan, priorbatch,
 													  direction);
@@ -156,7 +148,7 @@ batch_getnext(IndexScanDesc scan, ScanDirection direction)
 
 	batch_debug_print_batches("batch_getnext / end", scan);
 
-	return (batch != NULL);
+	return batch;
 }
 
 /* ----------------
