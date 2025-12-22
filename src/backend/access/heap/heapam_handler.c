@@ -300,10 +300,6 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/* shouldn't get here without batching */
 	batch_assert_batches_valid(scan);
 
-	/* Initialize direction on first call */
-	if (batchqueue->direction == NoMovementScanDirection)
-		batchqueue->direction = direction;
-
 	/*
 	 * Try advancing the batch position. If that doesn't succeed, it means we
 	 * don't have more items in the current batch, and there's no future batch
@@ -326,6 +322,10 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		pgstat_count_index_tuples(scan->indexRelation, 1);
 		return heapam_batch_return_tid(scan, readBatch, readPos);
 	}
+
+	/* Initialize direction on first call */
+	if (batchqueue->direction == NoMovementScanDirection)
+		batchqueue->direction = direction;
 
 nextbatch:
 
