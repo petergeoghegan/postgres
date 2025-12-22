@@ -239,6 +239,28 @@ heapam_batch_return_tid(IndexScanDesc scan, BatchIndexScan readBatch,
 	return &scan->xs_heaptid;
 }
 
+/* ----------------
+ *		heap_batch_getnext - get the next batch of TIDs from a scan
+ *
+ * Called by table AM's ordered index scan implementation when it needs to
+ * load the next batch of index entries to process in the given direction.
+ *
+ * The table AM controls the overall progress of the scan, deciding when to
+ * request new batches.  This division of labor gives the table AM the ability
+ * to reorder fetches of nearby table tuples (from the same batch, or from
+ * adjacent batches) based on its own considerations.  Importantly, table AMs
+ * are _not_ required to free a batch before loading the next batch during an
+ * index scan of an index that uses the amgetbatch/amfreebatch interface.
+ * (This isn't possible with the single-tuple amgettuple interface, which gives
+ * the index AM direct control over the progress of the index scan.  amgettuple
+ * index scans perform the work that we perform in batch_free as the scan
+ * progresses, and without notifying the table AM, which makes it impossible
+ * to safely reorder work in the way that our callers can.)
+ *
+ * Returns true if we managed to read a batch of TIDs, or false if there are
+ * no more batches in the given scan direction.
+ * ----------------
+ */
 static BatchIndexScan
 heap_batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
 				   ScanDirection direction)

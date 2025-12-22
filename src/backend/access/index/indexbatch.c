@@ -88,64 +88,6 @@ index_batch_init(IndexScanDesc scan)
 }
 
 /* ----------------
- *		batch_getnext - get the next batch of TIDs from a scan
- *
- * Called by table AM's ordered index scan implementation when it needs to
- * load the next batch of index entries to process in the given direction.
- *
- * The table AM controls the overall progress of the scan, deciding when to
- * request new batches.  This division of labor gives the table AM the ability
- * to reorder fetches of nearby table tuples (from the same batch, or from
- * adjacent batches) based on its own considerations.  Importantly, table AMs
- * are _not_ required to free a batch before loading the next batch during an
- * index scan of an index that uses the amgetbatch/amfreebatch interface.
- * (This isn't possible with the single-tuple amgettuple interface, which gives
- * the index AM direct control over the progress of the index scan.  amgettuple
- * index scans perform the work that we perform in batch_free as the scan
- * progresses, and without notifying the table AM, which makes it impossible
- * to safely reorder work in the way that our callers can.)
- *
- * Returns true if we managed to read a batch of TIDs, or false if there are
- * no more batches in the given scan direction.
- * ----------------
- */
-BatchIndexScan
-batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
-			  ScanDirection direction)
-{
-	BatchQueue *batchqueue = scan->batchqueue;
-	BatchIndexScan batch = NULL;
-
-	/* XXX: we should assert that a snapshot is pushed or registered */
-	Assert(TransactionIdIsValid(RecentXmin));
-
-	Assert(!INDEX_SCAN_BATCH_FULL(scan));
-
-	batch_debug_print_batches("batch_getnext / start", scan);
-
-	batch = scan->indexRelation->rd_indam->amgetbatch(scan, priorbatch,
-													  direction);
-	if (batch != NULL)
-	{
-		/* We got the batch from the AM -- add it to our queue */
-		int			batchIndex = batchqueue->nextBatch;
-
-		INDEX_SCAN_BATCH(scan, batchIndex) = batch;
-
-		batchqueue->nextBatch++;
-
-		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
-				  batchqueue->headBatch, batchqueue->nextBatch, batch);
-	}
-
-	batch_assert_batches_valid(scan);
-
-	batch_debug_print_batches("batch_getnext / end", scan);
-
-	return batch;
-}
-
-/* ----------------
  *		index_batch_reset - reset batch queue and read position
  *
  * Resets all loaded batches in the queue, and resets the read position to the

@@ -283,8 +283,6 @@ extern void systable_inplace_update_cancel(void *state);
  */
 struct BatchQueueItemPos;
 extern void index_batch_init(IndexScanDesc scan);
-extern BatchIndexScan batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
-                                    ScanDirection direction);
 extern void batch_free(IndexScanDesc scan, BatchIndexScan batch);
 extern void index_batch_reset(IndexScanDesc scan, bool complete);
 extern void index_batch_mark_pos(IndexScanDesc scan);
