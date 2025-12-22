@@ -214,9 +214,12 @@ heapam_batch_rewind(IndexScanDesc scan, BatchQueue *batchqueue,
 	}
 
 	/*
-	 * Remember the new direction
+	 * Remember the new direction, and make sure the scan is not marked as
+	 * "finished" (we might have already read the last batch, but now we
+	 * need to start over).
 	 */
 	batchqueue->direction = direction;
+	scan->finished = false;
 }
 
 static inline ItemPointer
@@ -377,6 +380,7 @@ nextbatch:
 	 * the read position.
 	 */
 	batch_reset_pos(readPos);
+	scan->finished = true;
 
 	return NULL;
 }

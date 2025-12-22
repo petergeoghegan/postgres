@@ -330,6 +330,11 @@ typedef struct IndexScanDescData
 	bool		dropPin;
 
 	/*
+	 * Did we read the final batch in this scan direction?
+	 */
+	bool		finished;
+
+	/*
 	 * Instrumentation counters maintained by all index AMs during both
 	 * amgettuple calls and amgetbitmap calls (unless field remains NULL)
 	 */

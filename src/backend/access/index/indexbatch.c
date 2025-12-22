@@ -74,6 +74,7 @@ index_batch_init(IndexScanDesc scan)
 	scan->dropPin =
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
+	scan->finished = false;
 	scan->batchqueue->direction = NoMovementScanDirection;
 
 	/* positions in the queue of batches */
@@ -211,6 +212,8 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	/* reset relevant batch state fields */
 	batchqueue->headBatch = 0;	/* initial batch */
 	batchqueue->nextBatch = 0;	/* initial batch is empty */
+
+	scan->finished = false;
 
 	batch_assert_batches_valid(scan);
 }
@@ -568,6 +571,11 @@ indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch)
 		/* amgetbatch scan caller */
 		Assert(scan->heapRelation != NULL);
 
+		if (scan->finished)
+		{
+			/* Don't bother using cache when scan is ending */
+		}
+		else
 		{
 			/*
 			 * Use cache.  This is generally only beneficial when there are
