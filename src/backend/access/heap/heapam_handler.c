@@ -266,9 +266,9 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 * don't have more items in the current batch, and there's no future batch
 	 * loaded. So try loading another batch, and retry if needed.
 	 */
-	if (readPos->batch >= 0)
+	if (readPos->ref)
 	{
-		readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
+		readBatch = readPos->ref;
 		if (ScanDirectionIsForward(direction))
 		{
 			if (++readPos->item > readBatch->lastItem)
@@ -302,6 +302,7 @@ nextbatch:
 		Assert(!scan->xs_hitup);
 
 		readPos->batch++;
+		readPos->ref = readBatch;
 
 		/*
 		 * Get the initial batch (which must be the head), and initialize the
