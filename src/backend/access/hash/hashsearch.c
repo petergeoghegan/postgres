@@ -79,7 +79,17 @@ _hash_next(IndexScanDesc scan, ScanDirection dir, BatchIndexScan priorbatch)
 	batch = indexam_util_batch_alloc(scan);
 
 	/* Get the buffer for next batch */
-	buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
+	if (ScanDirectionIsForward(dir))
+		buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
+	else
+	{
+		buf = _hash_getbuf(rel, blkno, HASH_READ,
+						   LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
+		if (buf == so->hashso_bucket_buf ||
+			buf == so->hashso_split_bucket_buf)
+			_hash_dropbuf(rel, buf);
+
+	}
 
 	/* Read the next page and load items into allocated batch */
 	if (!_hash_readpage(scan, &buf, dir, batch))
