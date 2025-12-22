@@ -855,6 +855,9 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 				lastcurrblkno;
 	BatchIndexScan firstbatch;
 
+	/* Allocate space for first batch */
+	firstbatch = indexam_util_batch_alloc(scan);
+
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
 	 * keys that must be matched to continue the scan.
@@ -869,6 +872,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	{
 		Assert(!so->needPrimScan);
 		_bt_parallel_done(scan);
+		indexam_util_batch_release(scan, firstbatch);
 		return false;
 	}
 
@@ -878,7 +882,10 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 */
 	if (scan->parallel_scan != NULL &&
 		!_bt_parallel_seize(scan, &blkno, &lastcurrblkno, true))
+	{
+		indexam_util_batch_release(scan, firstbatch);
 		return false;			/* definitely done (so->needPrimScan is unset) */
+	}
 
 	/*
 	 * Initialize the scan's arrays (if any) for the current scan direction
@@ -895,6 +902,8 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		 * _bt_readnextpage releases the scan for us (not _bt_readfirstpage).
 		 */
 		Assert(scan->parallel_scan != NULL);
+
+		indexam_util_batch_release(scan, firstbatch);
 
 		return _bt_readnextpage(scan, blkno, lastcurrblkno, dir, true);
 	}
@@ -1187,9 +1196,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 			}
 		}
 	}
-
-	/* Allocate space for first batch */
-	firstbatch = indexam_util_batch_alloc(scan);
 
 	/*
 	 * If we found no usable boundary keys, we have to start from one end of
@@ -1495,6 +1501,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		if (!BufferIsValid(firstbatch->buf))
 		{
 			_bt_parallel_done(scan);
+			indexam_util_batch_release(scan, firstbatch);
 			return false;
 		}
 	}
