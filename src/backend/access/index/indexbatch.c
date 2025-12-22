@@ -74,7 +74,6 @@ index_batch_init(IndexScanDesc scan)
 	scan->dropPin =
 		(!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
 		 RelationNeedsWAL(scan->indexRelation));
-	scan->finished = false;
 	scan->batchqueue->direction = NoMovementScanDirection;
 
 	/* positions in the queue of batches */
@@ -119,10 +118,6 @@ batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
 
-	/* Did we already read the last batch for this scan? */
-	if (scan->finished)
-		return NULL;
-
 	Assert(!INDEX_SCAN_BATCH_FULL(scan));
 
 	batch_debug_print_batches("batch_getnext / start", scan);
@@ -141,8 +136,6 @@ batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
 		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
 				  batchqueue->headBatch, batchqueue->nextBatch, batch);
 	}
-	else
-		scan->finished = true;
 
 	batch_assert_batches_valid(scan);
 
@@ -218,8 +211,6 @@ index_batch_reset(IndexScanDesc scan, bool complete)
 	/* reset relevant batch state fields */
 	batchqueue->headBatch = 0;	/* initial batch */
 	batchqueue->nextBatch = 0;	/* initial batch is empty */
-
-	scan->finished = false;
 
 	batch_assert_batches_valid(scan);
 }
@@ -577,11 +568,6 @@ indexam_util_batch_release(IndexScanDesc scan, BatchIndexScan batch)
 		/* amgetbatch scan caller */
 		Assert(scan->heapRelation != NULL);
 
-		if (scan->finished)
-		{
-			/* Don't bother using cache when scan is ending */
-		}
-		else
 		{
 			/*
 			 * Use cache.  This is generally only beneficial when there are

@@ -330,15 +330,6 @@ typedef struct IndexScanDescData
 	bool		dropPin;
 
 	/*
-	 * Did we read the final batch in this scan direction? The batches may be
-	 * loaded from multiple places, and we need to remember when we fail to
-	 * load the next batch in a given scan (which means "no more batches").
-	 * amgetbatch may restart the scan on the get call, so we need to remember
-	 * it's over.
-	 */
-	bool		finished;
-
-	/*
 	 * Instrumentation counters maintained by all index AMs during both
 	 * amgettuple calls and amgetbitmap calls (unless field remains NULL)
 	 */

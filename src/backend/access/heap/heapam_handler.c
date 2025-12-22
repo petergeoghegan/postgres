@@ -214,12 +214,9 @@ heapam_batch_rewind(IndexScanDesc scan, BatchQueue *batchqueue,
 	}
 
 	/*
-	 * Remember the new direction, and make sure the scan is not marked as
-	 * "finished" (we might have already read the last batch, but now we
-	 * need to start over).
+	 * Remember the new direction
 	 */
 	batchqueue->direction = direction;
-	scan->finished = false;
 }
 
 static inline ItemPointer
@@ -249,10 +246,6 @@ heap_batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
 
-	/* Did we already read the last batch for this scan? */
-	if (scan->finished)
-		return NULL;
-
 	Assert(!INDEX_SCAN_BATCH_FULL(scan));
 
 
@@ -270,8 +263,6 @@ heap_batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
 		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
 				  batchqueue->headBatch, batchqueue->nextBatch, batch);
 	}
-	else
-		scan->finished = true;
 
 	batch_assert_batches_valid(scan);
 
@@ -386,7 +377,6 @@ nextbatch:
 	 * the read position.
 	 */
 	batch_reset_pos(readPos);
-	Assert(scan->finished);
 
 	return NULL;
 }

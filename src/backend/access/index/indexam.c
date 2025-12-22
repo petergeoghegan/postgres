@@ -388,8 +388,6 @@ index_rescan(IndexScanDesc scan,
 	 * index_batch_reset doesn't see this, since indexam_util_batch_release
 	 * will be affected)
 	 */
-	scan->finished = false;
-
 	index_batch_reset(scan, true);
 
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
