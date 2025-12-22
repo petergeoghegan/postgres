@@ -127,6 +127,26 @@ typedef struct IndexFetchTableData
 } IndexFetchTableData;
 
 /*
+ * Queue-wise location of a BatchMatchingItem that appears in a BatchIndexScan
+ * returned by (and subsequently passed to) an amgetbatch routine
+ */
+typedef struct BatchQueueItemPos
+{
+	/* BatchQueue.batches[]-wise index to relevant BatchIndexScan */
+	int			batch;
+
+	/* BatchIndexScan.items[]-wise index to relevant BatchMatchingItem */
+	int			item;
+} BatchQueueItemPos;
+
+static inline void
+batch_reset_pos(BatchQueueItemPos *pos)
+{
+	pos->batch = -1;
+	pos->item = -1;
+}
+
+/*
  * Matching item returned by amgetbatch (in returned BatchIndexScan) during an
  * index scan.  Used by table AM to locate relevant matching table tuple.
  */
@@ -195,28 +215,6 @@ typedef struct BatchIndexScanData
 } BatchIndexScanData;
 
 typedef struct BatchIndexScanData *BatchIndexScan;
-
-/*
- * Queue-wise location of a BatchMatchingItem that appears in a BatchIndexScan
- * returned by (and subsequently passed to) an amgetbatch routine
- */
-typedef struct BatchQueueItemPos
-{
-	/* BatchQueue.batches[]-wise index to relevant BatchIndexScan */
-	int			batch;
-
-	/* BatchIndexScan.items[]-wise index to relevant BatchMatchingItem */
-	int			item;
-	BatchIndexScan ref;
-} BatchQueueItemPos;
-
-static inline void
-batch_reset_pos(BatchQueueItemPos *pos)
-{
-	pos->batch = -1;
-	pos->item = -1;
-	pos->ref = NULL;
-}
 
 /*
  * Maximum number of batches (leaf pages) we can keep in memory.  We need a

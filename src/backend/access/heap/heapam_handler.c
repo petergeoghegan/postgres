@@ -261,6 +261,10 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/* shouldn't get here without batching */
 	batch_assert_batches_valid(scan);
 
+	/* Initialize direction on first call */
+	if (batchqueue->direction == NoMovementScanDirection)
+		batchqueue->direction = direction;
+
 	/*
 	 * Try advancing the batch position. If that doesn't succeed, it means we
 	 * don't have more items in the current batch, and there's no future batch
@@ -268,7 +272,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 */
 	if (INDEX_SCAN_BATCH_LOADED(scan, readPos->batch))
 	{
-		readBatch = readPos->ref;
+		readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
 		if (ScanDirectionIsForward(direction))
 		{
 			if (++readPos->item > readBatch->lastItem)
@@ -284,10 +288,6 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		return heapam_batch_return_tid(scan, readBatch, readPos);
 	}
 
-	/* Initialize direction on first call */
-	if (batchqueue->direction == NoMovementScanDirection)
-		batchqueue->direction = direction;
-
 nextbatch:
 
 	if (unlikely(batchqueue->direction != direction))
@@ -302,7 +302,6 @@ nextbatch:
 		Assert(!scan->xs_hitup);
 
 		readPos->batch++;
-		readPos->ref = readBatch;
 
 		/*
 		 * Get the initial batch (which must be the head), and initialize the
