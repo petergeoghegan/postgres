@@ -4344,6 +4344,29 @@ where district in (1, 3, 800) and warehouse in (1,2)
 and orderid in (48, 50)
 order by district, warehouse, orderid, orderline;
 
+--
+-- Cause some overflow insert and splits.
+--
+set client_min_messages=error;
+drop table if exists hash_split_heap;
+reset client_min_messages;
+CREATE UNLOGGED TABLE hash_split_heap (keycol INT);
+INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 500) a;
+CREATE INDEX hash_split_index on hash_split_heap USING HASH (keycol);
+INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 5000) a;
+
+-- Let's do a backward scan.
+BEGIN;
+SET enable_seqscan = OFF;
+SET enable_bitmapscan = OFF;
+
+DECLARE c CURSOR FOR SELECT * from hash_split_heap WHERE keycol = 1;
+MOVE FORWARD ALL FROM c;
+MOVE BACKWARD 10000 FROM c;
+MOVE BACKWARD ALL FROM c;
+CLOSE c;
+END;
+
 -- (November 25)
 --
 -- Here we don't remember the scan's array keys before processing a page, only

@@ -12654,7 +12654,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 -- Move back to the start of the key space:
@@ -12693,7 +12693,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 /* default_scroll_cursor */ commit;
@@ -13016,7 +13016,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 -- Move back to the start of the key space:
@@ -13055,7 +13055,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 /* full_scroll_cursor */ commit;
@@ -13596,7 +13596,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 -- Move back to the start of the key space:
@@ -13635,7 +13635,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 /* default_scroll_cursor */ commit;
@@ -13741,7 +13741,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  1
+  3
 (1 row)
 
 fetch backward 5 from default_scroll_cursor;
@@ -13786,7 +13786,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  1
+  3
 (1 row)
 
 -- Move to the end of the key space:
@@ -13825,7 +13825,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  4
 (1 row)
 
 -- Move back to the start of the key space:
@@ -13864,7 +13864,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  1
+  3
 (1 row)
 
 /* default_scroll_cursor */ commit;
@@ -14352,6 +14352,26 @@ order by district, warehouse, orderid, orderline;
    Buffers: shared hit=18
 (4 rows)
 
+--
+-- Cause some overflow insert and splits.
+--
+set client_min_messages=error;
+drop table if exists hash_split_heap;
+reset client_min_messages;
+CREATE UNLOGGED TABLE hash_split_heap (keycol INT);
+INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 500) a;
+CREATE INDEX hash_split_index on hash_split_heap USING HASH (keycol);
+INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 5000) a;
+-- Let's do a backward scan.
+BEGIN;
+SET enable_seqscan = OFF;
+SET enable_bitmapscan = OFF;
+DECLARE c CURSOR FOR SELECT * from hash_split_heap WHERE keycol = 1;
+MOVE FORWARD ALL FROM c;
+MOVE BACKWARD 10000 FROM c;
+MOVE BACKWARD ALL FROM c;
+CLOSE c;
+END;
 -- (November 25)
 --
 -- Here we don't remember the scan's array keys before processing a page, only
@@ -14891,7 +14911,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 fetch backward 5 from inequalities_orderid;
@@ -14936,7 +14956,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 move forward 10000 in inequalities_orderid;
@@ -14975,7 +14995,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 move backward 10000 in inequalities_orderid;
@@ -15012,7 +15032,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  2
 (1 row)
 
 /* inequalities_orderid */ commit;
@@ -16400,7 +16420,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh; -- 2 index hits
  bh 
 ----
-  0
+  2
 (1 row)
 
 fetch backward 270 from korotkov_scroll_cursor;
@@ -16427,7 +16447,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh; -- 5 index hits (back to where we started)
  bh 
 ----
-  0
+  5
 (1 row)
 
 /* korotkov_scroll_cursor */ commit;
@@ -16546,7 +16566,7 @@ select pg_stat_get_xact_blocks_hit('plain_equal_inequal_nonrequired'::regclass) 
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  3
 (1 row)
 
 /* korotkov_scroll_cursor */ commit;
