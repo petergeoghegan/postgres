@@ -266,7 +266,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 * don't have more items in the current batch, and there's no future batch
 	 * loaded. So try loading another batch, and retry if needed.
 	 */
-	if (INDEX_SCAN_BATCH_LOADED(scan, readPos->batch))
+	if (readPos->batch >= 0)
 	{
 		readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
 		if (ScanDirectionIsForward(direction))
