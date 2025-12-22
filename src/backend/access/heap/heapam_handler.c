@@ -239,6 +239,45 @@ heapam_batch_return_tid(IndexScanDesc scan, BatchIndexScan readBatch,
 	return &scan->xs_heaptid;
 }
 
+static BatchIndexScan
+heap_batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
+				   ScanDirection direction)
+{
+	BatchQueue *batchqueue = scan->batchqueue;
+	BatchIndexScan batch = NULL;
+
+	/* XXX: we should assert that a snapshot is pushed or registered */
+	Assert(TransactionIdIsValid(RecentXmin));
+
+	/* Did we already read the last batch for this scan? */
+	if (scan->finished)
+		return NULL;
+
+	Assert(!INDEX_SCAN_BATCH_FULL(scan));
+
+
+	batch = scan->indexRelation->rd_indam->amgetbatch(scan, priorbatch,
+													  direction);
+	if (batch != NULL)
+	{
+		/* We got the batch from the AM -- add it to our queue */
+		int			batchIndex = batchqueue->nextBatch;
+
+		INDEX_SCAN_BATCH(scan, batchIndex) = batch;
+
+		batchqueue->nextBatch++;
+
+		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
+				  batchqueue->headBatch, batchqueue->nextBatch, batch);
+	}
+	else
+		scan->finished = true;
+
+	batch_assert_batches_valid(scan);
+
+	return batch;
+}
+
 /* ----------------
  *		heapam_batch_getnext_tid - get next TID from index scan batch queue
  *
@@ -296,7 +335,7 @@ nextbatch:
 		readPos->batch = batchqueue->nextBatch - 1;
 	}
 
-	if ((readBatch = batch_getnext(scan, readBatch, direction)) != NULL)
+	if ((readBatch = heap_batch_getnext(scan, readBatch, direction)) != NULL)
 	{
 		/* xs_hitup is not supported by amgetbatch scans */
 		Assert(!scan->xs_hitup);
