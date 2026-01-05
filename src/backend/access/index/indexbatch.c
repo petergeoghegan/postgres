@@ -93,6 +93,105 @@ index_batch_init(IndexScanDesc scan)
 }
 
 /* ----------------
+ *		batch_getnext - get the next batch of TIDs from a scan
+ *
+ * Called by table AM's ordered index scan implementation when it needs to
+ * load the next batch of index entries to process in the given direction.
+ *
+ * The table AM controls the overall progress of the scan, deciding when to
+ * request new batches.  This division of labor gives the table AM the ability
+ * to reorder fetches of nearby table tuples (from the same batch, or from
+ * adjacent batches) based on its own considerations.  Importantly, table AMs
+ * are _not_ required to free a batch before loading the next batch during an
+ * index scan of an index that uses the amgetbatch/amfreebatch interface.
+ * (This isn't possible with the single-tuple amgettuple interface, which gives
+ * the index AM direct control over the progress of the index scan.  amgettuple
+ * index scans perform the work that we perform in batch_free as the scan
+ * progresses, and without notifying the table AM, which makes it impossible
+ * to safely reorder work in the way that our callers can.)
+ *
+ * Returns true if we managed to read a batch of TIDs, or false if there are
+ * no more batches in the given scan direction.
+ * ----------------
+ */
+bool
+batch_getnext(IndexScanDesc scan, ScanDirection direction)
+{
+	BatchQueue *batchqueue = scan->batchqueue;
+	BatchIndexScan priorbatch = NULL,
+				batch = NULL;
+
+	/* XXX: we should assert that a snapshot is pushed or registered */
+	Assert(TransactionIdIsValid(RecentXmin));
+
+	/* Did we already read the last batch for this scan? */
+	if (scan->finished)
+		return false;
+
+	/*
+	 * If we already used the maximum number of batch slots available, it's
+	 * pointless to try loading another one. This can happen for various
+	 * reasons, e.g. for index-only scans on all-visible table, or skipping
+	 * duplicate blocks on perfectly correlated indexes, etc.
+	 *
+	 * We could enlarge the array to allow more batches, but that's futile, we
+	 * can always construct a case using more memory. Not only it would risk
+	 * OOM, it'd also be inefficient because this happens early in the scan
+	 * (so it'd interfere with LIMIT queries).
+	 */
+	if (INDEX_SCAN_BATCH_FULL(scan))
+	{
+		DEBUG_LOG("batch_getnext: ran out of space for batches");
+		scan->batchqueue->reset = true;
+		return false;
+	}
+
+	batch_debug_print_batches("batch_getnext / start", scan);
+
+	/*
+	 * Get the previously returned batch to pass to amgetbatch.  The index AM
+	 * uses this to determine which index page to read next, typically by
+	 * following page links forward or backward.
+	 */
+	if (batchqueue->headBatch < batchqueue->nextBatch)
+		priorbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch - 1);
+
+	batch = scan->indexRelation->rd_indam->amgetbatch(scan, priorbatch,
+													  direction);
+	if (batch != NULL)
+	{
+		/* We got the batch from the AM -- add it to our queue */
+		int			batchIndex = batchqueue->nextBatch;
+
+		INDEX_SCAN_BATCH(scan, batchIndex) = batch;
+
+		batchqueue->nextBatch++;
+
+		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
+				  batchqueue->headBatch, batchqueue->nextBatch, batch);
+
+		/* Delay initializing stream until reading from scan's second batch */
+		if (priorbatch && !scan->xs_heapfetch->rs && !batchqueue->disabled &&
+			!scan->xs_want_itup &&	/* XXX prefetching disabled for IoS, for
+									 * now */
+			enable_indexscan_prefetch)
+			scan->xs_heapfetch->rs =
+				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
+										   scan->heapRelation, MAIN_FORKNUM,
+										   scan->heapRelation->rd_tableam->index_getnext_stream,
+										   scan, 0);
+	}
+	else
+		scan->finished = true;
+
+	batch_assert_batches_valid(scan);
+
+	batch_debug_print_batches("batch_getnext / end", scan);
+
+	return (batch != NULL);
+}
+
+/* ----------------
  *		index_batch_reset - reset batch queue and read position
  *
  * Resets all loaded batches in the queue, and resets the read position to the

@@ -333,93 +333,6 @@ heap_batch_advance_pos(IndexScanDesc scan, struct BatchQueueItemPos *pos,
 	return false;
 }
 
-static pg_noinline void
-heapam_batch_rewind(IndexScanDesc scan, BatchQueue *batchqueue,
-					ScanDirection direction)
-{
-	/*
-	 * Handle a change in the scan's direction.
-	 *
-	 * Release future batches properly, to make it look like the current
-	 * batch is the only one we loaded.
-	 */
-	while (batchqueue->nextBatch > batchqueue->headBatch + 1)
-	{
-		/* release "later" batches in reverse order */
-		BatchIndexScan fbatch;
-
-		batchqueue->nextBatch--;
-		fbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch);
-		batch_free(scan, fbatch);
-	}
-
-	/*
-	 * Remember the new direction, and make sure the scan is not marked as
-	 * "finished" (we might have already read the last batch, but now we
-	 * need to start over).
-	 */
-	batchqueue->direction = direction;
-	scan->finished = false;
-}
-
-static inline ItemPointer
-heapam_batch_return_tid(IndexScanDesc scan, BatchIndexScan readBatch,
-						BatchQueueItemPos *readPos)
-{
-	batch_assert_pos_valid(scan, readPos);
-
-	/* set the TID / itup for the scan */
-	scan->xs_heaptid = readBatch->items[readPos->item].heapTid;
-
-	if (scan->xs_want_itup)
-		scan->xs_itup =
-			(IndexTuple) (readBatch->currTuples +
-						  readBatch->items[readPos->item].tupleOffset);
-
-	return &scan->xs_heaptid;
-}
-
-/* ----------------
- *		heap_batch_getnext - get the next batch of TIDs from a scan
- *
- * Called when we need to load the next batch of index entries to process in
- * the given direction.
- *
- * Returns the next batch to be processed by the index scan, or NULL when
- * there are no more matches in the given scan direction.
- * ----------------
- */
-static BatchIndexScan
-heap_batch_getnext(IndexScanDesc scan, BatchIndexScan priorbatch,
-				   ScanDirection direction)
-{
-	BatchQueue *batchqueue = scan->batchqueue;
-	BatchIndexScan batch = NULL;
-
-	/* XXX: we should assert that a snapshot is pushed or registered */
-	Assert(TransactionIdIsValid(RecentXmin));
-	Assert(!INDEX_SCAN_BATCH_FULL(scan));
-
-	batch = scan->indexRelation->rd_indam->amgetbatch(scan, priorbatch,
-													  direction);
-	if (batch != NULL)
-	{
-		/* We got the batch from the AM -- add it to our queue */
-		int			batchIndex = batchqueue->nextBatch;
-
-		INDEX_SCAN_BATCH(scan, batchIndex) = batch;
-
-		batchqueue->nextBatch++;
-
-		DEBUG_LOG("batch_getnext headBatch %d nextBatch %d batch %p",
-				  batchqueue->headBatch, batchqueue->nextBatch, batch);
-	}
-
-	batch_assert_batches_valid(scan);
-
-	return batch;
-}
-
 /* ----------------
  *		heapam_batch_getnext_tid - get next TID from index scan batch queue
  *
@@ -436,8 +349,7 @@ static ItemPointer
 heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 {
 	BatchQueue *batchqueue = scan->batchqueue;
-	BatchQueueItemPos *readPos = &batchqueue->readPos;
-	BatchIndexScan readBatch = NULL;
+	BatchQueueItemPos *readPos;
 
 	/* shouldn't get here without batching */
 	batch_assert_batches_valid(scan);
@@ -445,81 +357,176 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/* Initialize direction on first call */
 	if (batchqueue->direction == NoMovementScanDirection)
 		batchqueue->direction = direction;
+	else if (unlikely(batchqueue->disabled && scan->xs_heapfetch->rs))
+	{
+		/*
+		 * Handle cancelling the use of the read stream for prefetching
+		 */
+		batch_reset_pos(&batchqueue->streamPos);
+
+		read_stream_reset(scan->xs_heapfetch->rs);
+		scan->xs_heapfetch->rs = NULL;
+	}
+	else if (unlikely(batchqueue->direction != direction))
+	{
+		/*
+		 * Handle a change in the scan's direction.
+		 *
+		 * Release future batches properly, to make it look like the current
+		 * batch is the only one we loaded. Also reset the stream position, as
+		 * if we are just starting the scan.
+		 */
+		while (batchqueue->nextBatch > batchqueue->headBatch + 1)
+		{
+			/* release "later" batches in reverse order */
+			BatchIndexScan fbatch;
+
+			batchqueue->nextBatch--;
+			fbatch = INDEX_SCAN_BATCH(scan, batchqueue->nextBatch);
+			batch_free(scan, fbatch);
+		}
+
+		/*
+		 * Remember the new direction, and make sure the scan is not marked as
+		 * "finished" (we might have already read the last batch, but now we
+		 * need to start over). Do this before resetting the stream - it
+		 * should not invoke the callback until the first read, but it may
+		 * seem a bit confusing otherwise.
+		 */
+		batchqueue->direction = direction;
+		scan->finished = false;
+		batch_reset_pos(&batchqueue->streamPos);
+
+		if (scan->xs_heapfetch->rs)
+			read_stream_reset(scan->xs_heapfetch->rs);
+	}
+
+	/* shortcut for the read position, for convenience */
+	readPos = &batchqueue->readPos;
 
 	/*
 	 * Try advancing the batch position. If that doesn't succeed, it means we
 	 * don't have more items in the current batch, and there's no future batch
 	 * loaded. So try loading another batch, and retry if needed.
 	 */
-	if (INDEX_SCAN_BATCH_LOADED(scan, readPos->batch))
+	while (true)
 	{
-		readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
-		if (ScanDirectionIsForward(direction))
-		{
-			if (++readPos->item > readBatch->lastItem)
-				goto nextbatch;
-		}
-		else						/* ScanDirectionIsBackward */
-		{
-			if (--readPos->item < readBatch->firstItem)
-				goto nextbatch;
-		}
-
-		pgstat_count_index_tuples(scan->indexRelation, 1);
-		return heapam_batch_return_tid(scan, readBatch, readPos);
-	}
-
-nextbatch:
-
-	if (unlikely(batchqueue->direction != direction))
-	{
-		heapam_batch_rewind(scan, batchqueue, direction);
-		readPos->batch = batchqueue->nextBatch - 1;
-	}
-
-	if ((readBatch = heap_batch_getnext(scan, readBatch, direction)) != NULL)
-	{
-		/* xs_hitup is not supported by amgetbatch scans */
-		Assert(!scan->xs_hitup);
-
-		readPos->batch++;
-
 		/*
-		 * Get the initial batch (which must be the head), and initialize the
-		 * position to the appropriate item for the current scan direction
+		 * If we manage to advance to the next items, return it and we're
+		 * done. Otherwise try loading another batch.
 		 */
-		if (ScanDirectionIsForward(direction))
-			readPos->item = readBatch->firstItem;
-		else
-			readPos->item = readBatch->lastItem;
-
-		batch_assert_pos_valid(scan, readPos);
-
-		/*
-		 * If we advanced to the next batch, release the batch we no
-		 * longer need. The positions is the "read" position, and we can
-		 * compare it to headBatch.
-		 */
-		if (readPos->batch != batchqueue->headBatch)
+		if (heap_batch_advance_pos(scan, readPos, direction))
 		{
-			BatchIndexScan headBatch = INDEX_SCAN_BATCH(scan,
-														batchqueue->headBatch);
+			BatchIndexScan readBatch = INDEX_SCAN_BATCH(scan, readPos->batch);
 
-			/* Free the head batch (except when it's markBatch) */
-			batch_free(scan, headBatch);
+			/* set the TID / itup for the scan */
+			scan->xs_heaptid = readBatch->items[readPos->item].heapTid;
+
+			/* xs_hitup is not supported by amgetbatch scans */
+			Assert(!scan->xs_hitup);
+
+			if (scan->xs_want_itup)
+				scan->xs_itup =
+					(IndexTuple) (readBatch->currTuples +
+								  readBatch->items[readPos->item].tupleOffset);
 
 			/*
-			 * In any case, remove the batch from the regular queue, even
-			 * if we kept it for mark/restore.
+			 * If we advanced to the next batch, release the batch we no
+			 * longer need. The positions is the "read" position, and we can
+			 * compare it to headBatch.
 			 */
-			batchqueue->headBatch++;
+			if (unlikely(readPos->batch != batchqueue->headBatch))
+			{
+				BatchIndexScan headBatch = INDEX_SCAN_BATCH(scan,
+															batchqueue->headBatch);
 
-			/* we can't skip any batches */
-			Assert(batchqueue->headBatch == readPos->batch);
+				/*
+				 * XXX When advancing readPos, the streamPos may get behind as
+				 * we're only advancing it when actually requesting heap
+				 * blocks. But we may not do that often enough - e.g. IOS may
+				 * not need to access all-visible heap blocks, so the
+				 * read_next callback does not get invoked for a long time.
+				 * It's possible the stream gets so far behind the position
+				 * that is becomes invalid, as we already removed the batch.
+				 * But that means we don't need any heap blocks until the
+				 * current read position -- if we did, we would not be in this
+				 * situation (or it's a sign of a bug, as those two places are
+				 * expected to be in sync). So if the streamPos still points
+				 * at the batch we're about to free, reset the position --
+				 * we'll set it to readPos in the read_next callback later on.
+				 *
+				 * XXX This can happen after the queue gets full, we "pause"
+				 * the stream, and then reset it to continue. But I think that
+				 * just increases the probability of hitting the issue, it's
+				 * just more chance to to not advance the streamPos, which
+				 * depends on when we try to fetch the first heap block after
+				 * calling read_stream_reset().
+				 *
+				 * FIXME Simplify/clarify/shorten this comment. Can it
+				 * actually happen, if we never pull from the stream in IOS?
+				 * We probably don't look ahead for the first call.
+				 */
+				if (unlikely(batchqueue->streamPos.batch == batchqueue->headBatch))
+				{
+					batch_reset_pos(&batchqueue->streamPos);
+				}
+
+				/* Free the head batch (except when it's markBatch) */
+				batch_free(scan, headBatch);
+
+				/*
+				 * In any case, remove the batch from the regular queue, even
+				 * if we kept it for mark/restore.
+				 */
+				batchqueue->headBatch++;
+
+				/* we can't skip any batches */
+				Assert(batchqueue->headBatch == readPos->batch);
+			}
+
+			pgstat_count_index_tuples(scan->indexRelation, 1);
+			return &scan->xs_heaptid;
 		}
 
-		pgstat_count_index_tuples(scan->indexRelation, 1);
-		return heapam_batch_return_tid(scan, readBatch, readPos);
+		/*
+		 * We failed to advance, i.e. we ran out of currently loaded batches.
+		 * So if we filled the queue, this is a good time to reset the stream
+		 * (before we try loading the next batch).
+		 */
+		if (unlikely(batchqueue->reset))
+		{
+			batchqueue->reset = false;
+			batchqueue->currentPrefetchBlock = InvalidBlockNumber;
+
+			/*
+			 * Need to reset the stream position, it might be too far behind.
+			 * Ultimately we want to set it to readPos, but we can't do that
+			 * yet - readPos still point sat the old batch, so just reset it
+			 * and we'll init it to readPos later in the callback.
+			 */
+			batch_reset_pos(&batchqueue->streamPos);
+
+			if (scan->xs_heapfetch->rs)
+				read_stream_reset(scan->xs_heapfetch->rs);
+		}
+
+		/*
+		 * Failed to advance the read position, so try reading the next batch.
+		 * If this fails, we're done - there's nothing more to load.
+		 *
+		 * Most of the batches should be loaded from read_stream_next_buffer,
+		 * but we need to call batch_getnext here too, for two reasons. First,
+		 * the read_stream only gets working after we try fetching the first
+		 * heap tuple, so we need to load the initial batch (the head).
+		 * Second, while most batches will be preloaded by the stream thanks
+		 * to prefetching, it's possible to set effective_io_concurrency=0,
+		 * and in that case all the batches get loaded from here.
+		 */
+		if (!batch_getnext(scan, direction))
+		{
+			/* we're done -- there's no more batches in this scan direction */
+			break;
+		}
 	}
 
 	/*
@@ -528,7 +535,7 @@ nextbatch:
 	 * the read position.
 	 */
 	batch_reset_pos(readPos);
-	scan->finished = true;
+	Assert(scan->finished);
 
 	return NULL;
 }
@@ -606,7 +613,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	while (true)
 	{
 		bool		advanced = false;
-		BatchIndexScan streamBatch;
 
 		/*
 		 * If the stream position has not been initialized yet, set it to the
@@ -645,9 +651,9 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		 * used to skip duplicate block numbers (a sequence of TIDS for the
 		 * same block).
 		 */
-		streamBatch = INDEX_SCAN_BATCH(scan, streamPos->batch);
 		if (advanced)
 		{
+			BatchIndexScan streamBatch = INDEX_SCAN_BATCH(scan, streamPos->batch);
 			ItemPointer tid = &streamBatch->items[streamPos->item].heapTid;
 
 			DEBUG_LOG("heapam_getnext_stream: item %d, TID (%u,%u)",
@@ -674,7 +680,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		 *
 		 * If we fail to load the next batch, we're done.
 		 */
-		if (!heap_batch_getnext(scan, streamBatch, direction))
+		if (!batch_getnext(scan, direction))
 			break;
 
 		/*
