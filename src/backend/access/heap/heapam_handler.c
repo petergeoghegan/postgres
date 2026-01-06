@@ -173,7 +173,10 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 
 	/* Assert that the TID's block number's buffer is now pinned */
 	Assert(BufferIsValid(hscan->xs_cbuf));
-	Assert(BufferGetBlockNumber(hscan->xs_cbuf) == hscan->xs_blk);
+	if (BufferGetBlockNumber(hscan->xs_cbuf) != hscan->xs_blk)
+		elog(ERROR,
+			 "BufferGetBlockNumber(hscan->xs_cbuf) %u != hscan->xs_blk %u",
+			 BufferGetBlockNumber(hscan->xs_cbuf), hscan->xs_blk);
 
 	/* Obtain share-lock on the buffer so we can examine visibility */
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);

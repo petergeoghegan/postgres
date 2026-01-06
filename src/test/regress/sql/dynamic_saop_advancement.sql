@@ -15,7 +15,7 @@ reset client_min_messages;
 -- applied (HACK, just sets commit_siblings instead when we don't have that
 -- patch available):
 select set_config((select coalesce((select name from pg_settings where name = 'log_btree_verbosity'), 'commit_siblings')), '1', false);
-select set_config((select coalesce((select name from pg_settings where name = 'enable_indexscan_prefetch'), 'enable_tidscan')), 'false', false);
+-- select set_config((select coalesce((select name from pg_settings where name = 'enable_indexscan_prefetch'), 'enable_tidscan')), 'false', false);
 
 -- Establish if this server is master or the patch -- want to skip stress
 -- tests if it's the latter
