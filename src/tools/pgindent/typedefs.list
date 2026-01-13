@@ -4198,6 +4198,7 @@ teSection
 temp_tablespaces_extra
 test128
 test_re_flags
+test_read_stream_resume_state
 test_regex_ctx
 test_shm_mq_header
 test_spec
