@@ -430,6 +430,7 @@
 #enable_distinct_reordering = on
 #enable_self_join_elimination = on
 #enable_eager_aggregate = on
+#index_scan_max_batches = 64
 
 # - Planner Cost Constants -
 

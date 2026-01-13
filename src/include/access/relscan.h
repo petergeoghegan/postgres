@@ -241,19 +241,21 @@ typedef struct IndexScanBatchData *IndexScanBatch;
 #define INDEX_SCAN_BATCH_COUNT(scan) \
 	((scan)->batchringbuf->nextBatch - (scan)->batchringbuf->headBatch)
 
+extern PGDLLIMPORT int index_scan_max_batches;
+
 /* Did we already load batch with the requested index? */
 #define INDEX_SCAN_BATCH_LOADED(scan, idx) \
 	((idx) >= (scan)->batchringbuf->headBatch && (idx) < (scan)->batchringbuf->nextBatch)
 
 /* Have we loaded the maximum number of batches? */
 #define INDEX_SCAN_BATCH_FULL(scan) \
-	(INDEX_SCAN_BATCH_COUNT(scan) == INDEX_SCAN_MAX_BATCHES)
+	(INDEX_SCAN_BATCH_COUNT(scan) == index_scan_max_batches)
 
 /* Return batch for the provided index */
 #define INDEX_SCAN_BATCH(scan, idx)	\
 ( \
 	AssertMacro(INDEX_SCAN_BATCH_LOADED(scan, idx)), \
-	((scan)->batchringbuf->batches[(idx) % INDEX_SCAN_MAX_BATCHES]) \
+	((scan)->batchringbuf->batches[(idx) % index_scan_max_batches]) \
 )
 
 /* Append given batch to scan's batch ring buffer */
@@ -261,7 +263,7 @@ typedef struct IndexScanBatchData *IndexScanBatch;
 	do { \
 		BatchRingBuffer *mringbuf = (scan)->batchringbuf;	\
 		int				nextBatch = mringbuf->nextBatch; \
-		mringbuf->batches[nextBatch % INDEX_SCAN_MAX_BATCHES] = (batch); \
+		mringbuf->batches[nextBatch % index_scan_max_batches] = (batch); \
 		mringbuf->nextBatch++; \
 	} while(0)
 
