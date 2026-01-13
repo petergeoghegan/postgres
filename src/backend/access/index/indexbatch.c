@@ -33,6 +33,8 @@
 #include "lib/qunique.h"
 #include "utils/memdebug.h"
 
+int			index_scan_max_batches = 64;
+
 static int	batch_compare_int(const void *va, const void *vb);
 
 /*
