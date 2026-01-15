@@ -1296,16 +1296,6 @@
   show_hook => 'show_in_hot_standby',
 },
 
-{ name => 'index_scan_max_batches', type => 'int', context => 'PGC_USERSET', group => 'QUERY_TUNING_COST',
-  short_desc => 'maximum number of batches in index scan',
-  long_desc => 'blah blah blah',
-  flags => 'GUC_EXPLAIN',
-  variable => 'index_scan_max_batches',
-  boot_val => '64',
-  min => '2',
-  max => '64',
-},
-
 { name => 'integer_datetimes', type => 'bool', context => 'PGC_INTERNAL', group => 'PRESET_OPTIONS',
   short_desc => 'Shows whether datetimes are integer based.',
   flags => 'GUC_REPORT | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE',
