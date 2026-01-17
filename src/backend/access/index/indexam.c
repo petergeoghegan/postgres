@@ -280,6 +280,8 @@ index_beginscan(Relation heapRelation,
 	 */
 	scan->heapRelation = heapRelation;
 	scan->xs_snapshot = snapshot;
+	scan->MVCCScan = IsMVCCSnapshot(snapshot);
+	scan->finished = false;
 	scan->instrument = instrument;
 	scan->xs_want_itup = xs_want_itup;
 
@@ -315,6 +317,8 @@ index_beginscan_bitmap(Relation indexRelation,
 	 * up by RelationGetIndexScan.
 	 */
 	scan->xs_snapshot = snapshot;
+	scan->MVCCScan = IsMVCCSnapshot(snapshot);
+	scan->finished = false;
 	scan->instrument = instrument;
 
 	return scan;
@@ -635,6 +639,8 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 	 */
 	scan->heapRelation = heaprel;
 	scan->xs_snapshot = snapshot;
+	scan->MVCCScan = IsMVCCSnapshot(snapshot);
+	scan->finished = false;
 	scan->instrument = instrument;
 	scan->xs_want_itup = xs_want_itup;
 

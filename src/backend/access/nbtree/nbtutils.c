@@ -237,10 +237,8 @@ _bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 					if (!ItemPointerEquals(item, &kitem->heapTid))
 						break;	/* out of posting list loop */
 
-					/*
-					 * kitem must have matching offnum when heap TIDs match
-					 */
 					Assert(kitem->indexOffset == offnum);
+					Assert(!kitem->allVisible);
 
 					/*
 					 * Read-ahead to later kitems here.

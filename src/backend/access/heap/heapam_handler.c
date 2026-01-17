@@ -280,6 +280,26 @@ heap_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch)
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 
+	/*
+	 * Batch's buffer pin (the one held when amgetbatch returned) must still
+	 * be held when we're called.  It'll be released by our caller upon return
+	 * (our caller will definitely do this because index-only scans always use
+	 * an MVCC snapshot).
+	 *
+	 * Index vacuuming will block on acquiring a conflicting cleanup lock on
+	 * batch's index page due to our holding on to a pin on that same page.
+	 * Copying the relevant visibility map data into our local cache suffices
+	 * to prevent unsafe concurrent TID recycling: if any of these TIDs point
+	 * to dead heap tuples, VACUUM cannot possibly return from ambulkdelete
+	 * and mark the pointed-to heap pages as all-visible.  VACUUM _can_ do so
+	 * once our caller releases the batch's pin, but that's okay; we'll be
+	 * working off of cached visibility info that indicates that the dead TIDs
+	 * are NOT all-visible.  The subsequent heap fetches for these dead TIDs
+	 * will indicate that they're not dead-to-all, but that's okay; they won't
+	 * be visible to _our_ MVCC snapshot, so everything works out.
+	 */
+	Assert(BufferIsValid(batch->buf));
+
 	for (int i = batch->firstItem; i <= batch->lastItem; i++)
 	{
 		BatchMatchingItem *item = &batch->items[i];
@@ -349,10 +369,16 @@ heap_batch_getnext(IndexScanDesc scan, IndexScanBatch priorbatch,
 		INDEX_SCAN_BATCH_APPEND(scan, batch);
 
 		/*
-		 * drop pin eagerly during dropPin scans, now that we have called
-		 * heap_batch_resolve_visibility for batch where needed
+		 * It's now safe to drop the batch's buffer pin, as we've resolved the
+		 * visibility status of all of its items (during index-only scans).
+		 * See heap_batch_resolve_visibility comments for an explanation.
+		 *
+		 * Note: We can't drop the pin here (we delay it until amfreebatch is
+		 * called for the batch) whenever the scan uses a non-MVCC snapshot.
+		 * This is explained fully in doc/src/sgml/indexam.sgml.
 		 */
-		if (scan->dropPin)
+		Assert(scan->MVCCScan == IsMVCCSnapshot(scan->xs_snapshot));
+		if (scan->MVCCScan)
 		{
 			ReleaseBuffer(batch->buf);
 			batch->buf = InvalidBuffer;
@@ -364,14 +390,13 @@ heap_batch_getnext(IndexScanDesc scan, IndexScanBatch priorbatch,
 		 * very selective index scans.  We can likely improve upon this, but
 		 * it works well enough for now.
 		 *
-		 * Also avoid prefetching during !dropPin scans (i.e. during scans
-		 * that use a non-MVCC snapshot).  Such scans have batches that can
-		 * only release their index page when amfreebatch is called.  That
-		 * could have undesirable interactions with pins acquired by the read
-		 * stream, which we aren't prepared to deal with.
+		 * Also avoid prefetching during scans where we're unable to drop each
+		 * batch's buffer pin right away (non-MVCC snapshot scans).  We are
+		 * not prepared to sensibly limit the total number of buffer pins held
+		 * (read stream handles all pin resource management for us, and knows
+		 * nothing about pins held on index pages/within batches).
 		 */
-		Assert(scan->dropPin == IsMVCCSnapshot(scan->xs_snapshot));
-		if (!scan->xs_heapfetch->rs && scan->dropPin && priorbatch &&
+		if (!scan->xs_heapfetch->rs && priorbatch && scan->MVCCScan &&
 			enable_indexscan_prefetch)
 		{
 			Assert(INDEX_SCAN_POS_INVALID(&batchringbuf->prefetchPos));

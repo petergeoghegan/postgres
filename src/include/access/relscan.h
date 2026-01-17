@@ -180,7 +180,7 @@ typedef struct IndexScanBatchData
 	BlockNumber nextPage;		/* currPage's right link */
 
 	Buffer		buf;			/* currPage buf (invalid means unpinned) */
-	XLogRecPtr	lsn;			/* currPage's LSN (when dropPin) */
+	XLogRecPtr	lsn;			/* currPage's LSN */
 
 	/* scan direction when the index page was read */
 	ScanDirection dir;
@@ -368,8 +368,8 @@ typedef struct IndexScanDescData
 	bool		ignore_killed_tuples;	/* do not return killed entries */
 	bool		xactStartedInRecovery;	/* prevents killing/seeing killed
 										 * tuples */
-	/* amgetbatch can safely drop pins on returned batch's index page? */
-	bool		dropPin;
+	/* Safe to drop index page pins eagerly? */
+	bool		MVCCScan;
 
 	/*
 	 * Did we read the final batch in this scan direction?

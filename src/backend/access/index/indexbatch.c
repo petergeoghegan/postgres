@@ -53,13 +53,7 @@ index_batchscan_init(IndexScanDesc scan)
 
 	scan->batchringbuf = palloc_object(BatchRingBuffer);
 
-	/*
-	 * We prefer to eagerly drop leaf page pins just after amgetbatch returns.
-	 * This avoids making VACUUM wait to acquire a cleanup lock on the page.
-	 * It's unsafe for scans that use a non-MVCC snapshot to do this.
-	 */
-	scan->dropPin = IsMVCCSnapshot(scan->xs_snapshot);
-	scan->finished = false;
+	/* Tracks scan direction used to return last item */
 	scan->batchringbuf->direction = NoMovementScanDirection;
 
 	/* positions in the ring buffer of batches */
@@ -309,10 +303,8 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
  * with a batch and wishes to release its resources.
  *
  * This calls the index AM's amfreebatch callback to release AM-specific
- * resources, and to set LP_DEAD bits on the batch's index page.  It isn't
- * safe for table AMs to fetch table tuples using TIDs saved from a batch that
- * was already freed: 'dropPin' scans need the index AM to retain a pin on the
- * TID's index page, as an interlock against concurrent TID recycling.
+ * resources, and to set LP_DEAD bits on the batch's index page.  amfreebatch
+ * recycles underlying batch storage by calling indexam_util_batch_release.
  */
 void
 tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)

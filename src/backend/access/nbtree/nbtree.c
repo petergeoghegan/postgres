@@ -374,9 +374,11 @@ btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 	if (batch->numKilled > 0)
 		_bt_killitems(scan, batch);
 
-	if (!scan->dropPin)
+	if (BufferIsValid(batch->buf))
 	{
-		/* indexam_util_batch_unlock didn't unpin page earlier, do it now */
+		/* table AM didn't unpin page earlier -- do it now */
+		Assert(!scan->MVCCScan);
+
 		ReleaseBuffer(batch->buf);
 		batch->buf = InvalidBuffer;
 	}

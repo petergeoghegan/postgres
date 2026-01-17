@@ -115,8 +115,6 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 	 * should not be altered by index AMs.
 	 */
 	scan->kill_prior_tuple = false;
-	scan->dropPin = true;		/* for now */
-	scan->finished = false;
 	scan->xactStartedInRecovery = TransactionStartedDuringRecovery();
 	scan->ignore_killed_tuples = !scan->xactStartedInRecovery;
 
