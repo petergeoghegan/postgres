@@ -732,7 +732,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		if (scan->xs_want_itup && item->allVisible)
 		{
 			/* item is known to be all-visible; prefetching isn't required */
-			read_stream_skip_block(stream);
 			continue;
 		}
 
@@ -743,7 +742,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			 * block number; we must not return the same prefetchBlock twice
 			 * (twice in succession)
 			 */
-			read_stream_skip_block(stream);
 			continue;
 		}
 
