@@ -303,8 +303,9 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
  * with a batch and wishes to release its resources.
  *
  * This calls the index AM's amfreebatch callback to release AM-specific
- * resources, and to set LP_DEAD bits on the batch's index page.  amfreebatch
- * recycles underlying batch storage by calling indexam_util_batch_release.
+ * resources, and to set LP_DEAD bits on the batch's index page (in index AMs
+ * that implement that optimization).  Every amfreebatch routine must recycle
+ * the underlying batch memory by passing it to indexam_util_batch_release.
  */
 void
 tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
