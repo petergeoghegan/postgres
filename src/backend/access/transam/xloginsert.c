@@ -41,6 +41,7 @@
 #include "storage/proc.h"
 #include "utils/memutils.h"
 #include "utils/pgstat_internal.h"
+#include "utils/rel.h"
 
 /*
  * Guess the maximum buffer size required to store a compressed version of
@@ -545,6 +546,70 @@ XLogSimpleInsertInt64(RmgrId rmid, uint8 info, int64 value)
 	XLogBeginInsert();
 	XLogRegisterData(&value, sizeof(value));
 	return XLogInsert(rmid, info);
+}
+
+/*
+ * XLogGetFakeLSN - get a fake LSN for an index page that isn't WAL-logged.
+ *
+ * Some index AMs use LSNs to detect concurrent page modifications, but not
+ * all index pages are WAL-logged.  This function provides a sequence of fake
+ * LSNs for that purpose.
+ *
+ * The behavior depends on the relation's persistence:
+ *
+ * - For temporary relations, we use a simple backend-local counter since
+ *   temporary relations are only accessible within our session.
+ *
+ * - For permanent relations when WAL-logging is disabled (e.g., during index
+ *   creation with wal_level=minimal), we use the current WAL insert position.
+ *   If the insert position hasn't advanced since the last call, we emit a
+ *   dummy WAL record via XLogAssignLSN() to ensure we get a distinct LSN.
+ *
+ * - For unlogged relations, we use the global fake LSN counter maintained
+ *   by GetFakeLSNForUnloggedRel().
+ */
+XLogRecPtr
+XLogGetFakeLSN(Relation rel)
+{
+	if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
+	{
+		/*
+		 * Temporary relations are only accessible in our session, so a simple
+		 * backend-local counter will do.
+		 */
+		static XLogRecPtr counter = FirstNormalUnloggedLSN;
+
+		return counter++;
+	}
+	else if (rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED)
+	{
+		/*
+		 * Unlogged relations are accessible from other backends, and survive
+		 * (clean) restarts.  GetFakeLSNForUnloggedRel() handles that for us.
+		 */
+		return GetFakeLSNForUnloggedRel();
+	}
+	else
+	{
+		/*
+		 * WAL-logging on this relation will start after commit, so its LSNs
+		 * must be distinct numbers smaller than the LSN at the next commit.
+		 * Emit a dummy WAL record if insert-LSN hasn't advanced after the
+		 * last call.
+		 */
+		static XLogRecPtr lastlsn = InvalidXLogRecPtr;
+		XLogRecPtr	currlsn = GetXLogInsertRecPtr();
+
+		Assert(!RelationNeedsWAL(rel));
+		Assert(RelationIsPermanent(rel));
+
+		/* No need for an actual record if we already have a distinct LSN */
+		if (XLogRecPtrIsValid(lastlsn) && lastlsn == currlsn)
+			currlsn = XLogAssignLSN();
+
+		lastlsn = currlsn;
+		return currlsn;
+	}
 }
 
 /*
