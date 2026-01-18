@@ -397,7 +397,8 @@ indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
 	{
 		/* amgetbitmap (not amgetbatch) caller */
 		Assert(scan->heapRelation == NULL);
-		/* drop the lock and the pin */
+
+		/* drop both the lock and the pin */
 		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
 
 #ifdef USE_VALGRIND
