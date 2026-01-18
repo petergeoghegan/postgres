@@ -1674,7 +1674,7 @@ ReadBuffersIOAlreadyInProgress(ReadBuffersOperation *operation, Buffer buffer)
 	if (BufferIsLocal(buffer))
 	{
 		desc = GetLocalBufferDescriptor(-buffer - 1);
-		buf_state = pg_atomic_read_u32(&desc->state);
+		buf_state = pg_atomic_read_u64(&desc->state);
 		if ((buf_state & BM_IO_IN_PROGRESS) && !(buf_state & BM_VALID))
 			iow = desc->io_wref;
 	}
@@ -1857,7 +1857,7 @@ WaitReadBuffers(ReadBuffersOperation *operation)
 				if (BufferIsLocal(buffer))
 				{
 					desc = GetLocalBufferDescriptor(-buffer - 1);
-					buf_state = pg_atomic_read_u32(&desc->state);
+					buf_state = pg_atomic_read_u64(&desc->state);
 				}
 				else
 				{
