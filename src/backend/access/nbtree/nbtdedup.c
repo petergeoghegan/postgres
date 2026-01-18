@@ -265,7 +265,7 @@ _bt_dedup_pass(Relation rel, Buffer buf, IndexTuple newitem, Size newitemsz,
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_DEDUP);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(page, recptr);
 

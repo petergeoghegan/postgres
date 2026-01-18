@@ -1397,7 +1397,7 @@ _bt_insertonpg(Relation rel,
 			recptr = XLogInsert(RM_BTREE_ID, xlinfo);
 		}
 		else
-			recptr = _bt_getfakelsn(rel);
+			recptr = XLogGetFakeLSN(rel);
 
 		if (BufferIsValid(metabuf))
 			PageSetLSN(metapg, recptr);
@@ -2071,7 +2071,7 @@ _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key, Buffer buf,
 		recptr = XLogInsert(RM_BTREE_ID, xlinfo);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(origpage, recptr);
 	PageSetLSN(rightpage, recptr);
@@ -2611,7 +2611,7 @@ _bt_newlevel(Relation rel, Relation heaprel, Buffer lbuf, Buffer rbuf)
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_NEWROOT);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(lpage, recptr);
 	PageSetLSN(rootpage, recptr);

@@ -518,7 +518,7 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 									   dist, oldrlink, oldnsn, leftchildbuf,
 									   markfollowright);
 			else
-				recptr = gistGetFakeLSN(rel);
+				recptr = XLogGetFakeLSN(rel);
 		}
 
 		for (ptr = dist; ptr; ptr = ptr->next)
@@ -595,7 +595,7 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 										leftchildbuf);
 			}
 			else
-				recptr = gistGetFakeLSN(rel);
+				recptr = XLogGetFakeLSN(rel);
 		}
 		PageSetLSN(page, recptr);
 
@@ -1734,7 +1734,7 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 			PageSetLSN(page, recptr);
 		}
 		else
-			PageSetLSN(page, gistGetFakeLSN(rel));
+			PageSetLSN(page, XLogGetFakeLSN(rel));
 
 		END_CRIT_SECTION();
 	}

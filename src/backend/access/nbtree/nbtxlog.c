@@ -1054,9 +1054,6 @@ btree_redo(XLogReaderState *record)
 		case XLOG_BTREE_META_CLEANUP:
 			_bt_restore_meta(record, 0);
 			break;
-		case XLOG_BTREE_ASSIGN_LSN:
-			/* nop. See _bt_getfakelsn(). */
-			break;
 		default:
 			elog(PANIC, "btree_redo: unknown op code %u", info);
 	}
@@ -1119,22 +1116,4 @@ btree_mask(char *pagedata, BlockNumber blkno)
 	 */
 	maskopaq->btpo_flags &= ~BTP_SPLIT_END;
 	maskopaq->btpo_cycleid = 0;
-}
-
-/*
- * Write an empty XLOG record to assign a distinct LSN.
- */
-XLogRecPtr
-_bt_xlog_assignlsn(void)
-{
-	int			dummy = 0;
-
-	/*
-	 * Records other than XLOG_SWITCH must have content. We use an integer 0
-	 * to follow the restriction.
-	 */
-	XLogBeginInsert();
-	XLogSetRecordFlags(XLOG_MARK_UNIMPORTANT);
-	XLogRegisterData(&dummy, sizeof(dummy));
-	return XLogInsert(RM_BTREE_ID, XLOG_BTREE_ASSIGN_LSN);
 }

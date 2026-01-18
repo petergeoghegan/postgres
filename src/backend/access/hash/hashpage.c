@@ -935,7 +935,7 @@ restart_expand:
 		recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_SPLIT_ALLOCATE_PAGE);
 	}
 	else
-		recptr = _hash_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(BufferGetPage(buf_oblkno), recptr);
 	PageSetLSN(BufferGetPage(buf_nblkno), recptr);
@@ -1314,7 +1314,7 @@ _hash_splitbucket(Relation rel,
 		recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_SPLIT_COMPLETE);
 	}
 	else
-		recptr = _hash_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(BufferGetPage(bucket_obuf), recptr);
 	PageSetLSN(BufferGetPage(bucket_nbuf), recptr);

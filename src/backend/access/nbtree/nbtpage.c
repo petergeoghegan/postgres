@@ -305,7 +305,7 @@ _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages)
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_META_CLEANUP);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(metapg, recptr);
 
@@ -501,7 +501,7 @@ _bt_getroot(Relation rel, Relation heaprel, int access)
 			recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_NEWROOT);
 		}
 		else
-			recptr = _bt_getfakelsn(rel);
+			recptr = XLogGetFakeLSN(rel);
 
 		PageSetLSN(rootpage, recptr);
 		PageSetLSN(metapg, recptr);
@@ -859,58 +859,6 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 	_bt_checkpage(rel, buf);
 
 	return buf;
-}
-
-/*
- *	_bt_getfakelsn() -- Get a fake LSN for non-permanent relation.
- *
- *		Some indexes are not WAL-logged, but we need LSNs to detect concurrent
- *		page modifications anyway. This function provides a fake sequence of
- *		LSNs for that purpose.
- */
-XLogRecPtr
-_bt_getfakelsn(Relation rel)
-{
-	if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
-	{
-		/*
-		 * Temporary relations are only accessible in our session, so a simple
-		 * backend-local counter will do.
-		 */
-		static XLogRecPtr counter = FirstNormalUnloggedLSN;
-
-		return counter++;
-	}
-	else if (RelationIsPermanent(rel))
-	{
-		/*
-		 * WAL-logging on this relation will start after commit, so its LSNs
-		 * must be distinct numbers smaller than the LSN at the next commit.
-		 * Emit a dummy WAL record if insert-LSN hasn't advanced after the
-		 * last call.
-		 */
-		static XLogRecPtr lastlsn = InvalidXLogRecPtr;
-		XLogRecPtr	currlsn = GetXLogInsertRecPtr();
-
-		/* Shouldn't be called for WAL-logging relations */
-		Assert(!RelationNeedsWAL(rel));
-
-		/* No need for an actual record if we already have a distinct LSN */
-		if (XLogRecPtrIsValid(lastlsn) && lastlsn == currlsn)
-			currlsn = _bt_xlog_assignlsn();
-
-		lastlsn = currlsn;
-		return currlsn;
-	}
-	else
-	{
-		/*
-		 * Unlogged relations are accessible from other backends, and survive
-		 * (clean) restarts. GetFakeLSNForUnloggedRel() handles that for us.
-		 */
-		Assert(rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED);
-		return GetFakeLSNForUnloggedRel();
-	}
 }
 
 /*
@@ -1309,7 +1257,7 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_VACUUM);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(page, recptr);
 
@@ -1429,7 +1377,7 @@ _bt_delitems_delete(Relation rel, Buffer buf,
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_DELETE);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(page, recptr);
 
@@ -2339,7 +2287,7 @@ _bt_mark_page_halfdead(Relation rel, Relation heaprel, Buffer leafbuf,
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_MARK_PAGE_HALFDEAD);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	page = BufferGetPage(subtreeparent);
 	PageSetLSN(page, recptr);
@@ -2787,7 +2735,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		recptr = XLogInsert(RM_BTREE_ID, xlinfo);
 	}
 	else
-		recptr = _bt_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	if (BufferIsValid(metabuf))
 		PageSetLSN(metapg, recptr);

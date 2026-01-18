@@ -42,7 +42,6 @@
 										 * FSM */
 #define XLOG_BTREE_META_CLEANUP	0xE0	/* update cleanup-related data in the
 										 * metapage */
-#define XLOG_BTREE_ASSIGN_LSN	0xF0	/* nop, assign new LSN */
 
 /*
  * All that we need to regenerate the meta-data page

@@ -597,7 +597,7 @@ loop_top:
 		recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_UPDATE_META_PAGE);
 	}
 	else
-		recptr = _hash_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(BufferGetPage(metabuf), recptr);
 
@@ -821,7 +821,7 @@ hashbucketcleanup(Relation rel, Bucket cur_bucket, Buffer bucket_buf,
 				recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_DELETE);
 			}
 			else
-				recptr = _hash_getfakelsn(rel);
+				recptr = XLogGetFakeLSN(rel);
 
 			PageSetLSN(BufferGetPage(buf), recptr);
 
@@ -888,7 +888,7 @@ hashbucketcleanup(Relation rel, Bucket cur_bucket, Buffer bucket_buf,
 			recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_SPLIT_CLEANUP);
 		}
 		else
-			recptr = _hash_getfakelsn(rel);
+			recptr = XLogGetFakeLSN(rel);
 
 		PageSetLSN(page, recptr);
 

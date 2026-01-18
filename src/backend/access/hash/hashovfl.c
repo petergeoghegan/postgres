@@ -410,7 +410,7 @@ found:
 		recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_ADD_OVFL_PAGE);
 	}
 	else
-		recptr = _hash_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(BufferGetPage(ovflbuf), recptr);
 	PageSetLSN(BufferGetPage(buf), recptr);
@@ -741,7 +741,7 @@ _hash_freeovflpage(Relation rel, Buffer bucketbuf, Buffer ovflbuf,
 	}
 	else						/* !RelationNeedsWAL(rel) */
 	{
-		recptr = _hash_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 		/* Determine if wbuf is modified */
 		if (nitups > 0)
@@ -1039,7 +1039,7 @@ readpage:
 						recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_MOVE_PAGE_CONTENTS);
 					}
 					else
-						recptr = _hash_getfakelsn(rel);
+						recptr = XLogGetFakeLSN(rel);
 
 					PageSetLSN(BufferGetPage(wbuf), recptr);
 					PageSetLSN(BufferGetPage(rbuf), recptr);

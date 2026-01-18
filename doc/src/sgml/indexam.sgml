@@ -1473,11 +1473,11 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
     to set <literal>LP_DEAD</literal> bits must support the LSN change detection
     mechanism.  This implies that the index AM must generate fake LSNs for
     unlogged and temporary relations, since these relations do not use WAL and
-    would otherwise have no meaningful LSN changes to detect.  B-tree uses
-    <function>_bt_getfakelsn</function> for this purpose; hash uses
-    <function>_hash_getfakelsn</function>.  Third-party index access methods
-    implementing <function>amgetbatch</function> with <literal>LP_DEAD</literal>
-    marking must provide equivalent fake LSN support.
+    would otherwise have no meaningful LSN changes to detect.  The core system
+    provides <function>XLogGetFakeLSN</function> for this purpose.
+    Third-party index access methods implementing <function>amgetbatch</function>
+    with <literal>LP_DEAD</literal> marking should use this function to set
+    the LSN in critical sections that modify pages from an unlogged relation.
    </para>
 
    <para>

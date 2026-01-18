@@ -420,12 +420,6 @@ extern BlockNumber _hash_get_newblock_from_oldbucket(Relation rel, Bucket old_bu
 extern Bucket _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
 												 uint32 lowmask, uint32 maxbucket);
 extern void _hash_kill_items(IndexScanDesc scan, IndexScanBatch batch);
-extern XLogRecPtr _hash_getfakelsn(Relation rel);
-
-/*
- * prototypes for functions in hash_xlog.c
- */
-extern XLogRecPtr _hash_xlog_assignlsn(void);
 
 /* hash.c */
 extern void hashbucketcleanup(Relation rel, Bucket cur_bucket,

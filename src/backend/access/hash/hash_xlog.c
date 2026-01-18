@@ -17,28 +17,8 @@
 #include "access/bufmask.h"
 #include "access/hash.h"
 #include "access/hash_xlog.h"
-#include "access/xlog.h"
-#include "access/xloginsert.h"
 #include "access/xlogutils.h"
 #include "storage/standby.h"
-
-/*
- * Write an empty XLOG record to assign a distinct LSN.
- */
-XLogRecPtr
-_hash_xlog_assignlsn(void)
-{
-	int			dummy = 0;
-
-	/*
-	 * Records other than XLOG_SWITCH must have content. We use an integer 0
-	 * to follow the restriction.
-	 */
-	XLogBeginInsert();
-	XLogSetRecordFlags(XLOG_MARK_UNIMPORTANT);
-	XLogRegisterData(&dummy, sizeof(dummy));
-	return XLogInsert(RM_HASH_ID, XLOG_HASH_ASSIGN_LSN);
-}
 
 /*
  * replay a hash index meta page
@@ -1124,9 +1104,6 @@ hash_redo(XLogReaderState *record)
 			break;
 		case XLOG_HASH_VACUUM_ONE_PAGE:
 			hash_xlog_vacuum_one_page(record);
-			break;
-		case XLOG_HASH_ASSIGN_LSN:
-			/* nop. See _hash_getfakelsn(). */
 			break;
 		default:
 			elog(PANIC, "hash_redo: unknown op code %u", info);

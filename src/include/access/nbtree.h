@@ -1136,7 +1136,6 @@ extern void _bt_metaversion(Relation rel, bool *heapkeyspace,
 							bool *allequalimage);
 extern void _bt_checkpage(Relation rel, Buffer buf);
 extern Buffer _bt_getbuf(Relation rel, BlockNumber blkno, int access);
-extern XLogRecPtr _bt_getfakelsn(Relation rel);
 extern Buffer _bt_allocbuf(Relation rel, Relation heaprel);
 extern Buffer _bt_relandgetbuf(Relation rel, Buffer obuf,
 							   BlockNumber blkno, int access);
@@ -1230,10 +1229,5 @@ extern void btadjustmembers(Oid opfamilyoid,
 extern IndexBuildResult *btbuild(Relation heap, Relation index,
 								 struct IndexInfo *indexInfo);
 extern void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc);
-
-/*
- * prototypes for functions in nbtxlog.c
- */
-extern XLogRecPtr _bt_xlog_assignlsn(void);
 
 #endif							/* NBTREE_H */

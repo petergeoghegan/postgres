@@ -231,7 +231,7 @@ restart_insert:
 		recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_INSERT);
 	}
 	else
-		recptr = _hash_getfakelsn(rel);
+		recptr = XLogGetFakeLSN(rel);
 
 	PageSetLSN(BufferGetPage(buf), recptr);
 	PageSetLSN(BufferGetPage(metabuf), recptr);
@@ -449,7 +449,7 @@ _hash_vacuum_one_page(Relation rel, Relation hrel, Buffer metabuf, Buffer buf)
 			recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_VACUUM_ONE_PAGE);
 		}
 		else
-			recptr = _hash_getfakelsn(rel);
+			recptr = XLogGetFakeLSN(rel);
 
 		PageSetLSN(BufferGetPage(buf), recptr);
 		PageSetLSN(BufferGetPage(metabuf), recptr);

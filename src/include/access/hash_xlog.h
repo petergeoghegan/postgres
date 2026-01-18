@@ -44,7 +44,6 @@
 
 #define XLOG_HASH_VACUUM_ONE_PAGE	0xC0	/* remove dead tuples from index
 											 * page */
-#define XLOG_HASH_ASSIGN_LSN		0xD0	/* nop, assign new LSN */
 
 /*
  * xl_hash_split_allocate_page flag values, 8 bits are available.
