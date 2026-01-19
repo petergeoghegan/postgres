@@ -117,7 +117,7 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	}
 
 	/* now release all other currently loaded batches */
-	while (batchringbuf->headBatch < batchringbuf->nextBatch)
+	while ((int8) (batchringbuf->headBatch - batchringbuf->nextBatch) < 0)
 	{
 		IndexScanBatch batch = INDEX_SCAN_BATCH(scan,
 												batchringbuf->headBatch);

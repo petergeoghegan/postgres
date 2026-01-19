@@ -221,7 +221,7 @@ heapam_batch_rewind(IndexScanDesc scan, BatchRingBuffer *batchringbuf,
 	 * Release future batches properly, to make it look like the current batch
 	 * is the only one we loaded.
 	 */
-	while (batchringbuf->nextBatch > batchringbuf->headBatch + 1)
+	while ((int8) (batchringbuf->nextBatch - batchringbuf->headBatch) > 1)
 	{
 		/* release "later" batches in reverse order */
 		IndexScanBatch fbatch;
@@ -720,7 +720,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		Assert(prefetchBatch->dir == direction);
 
 		/* scanPos is always <= prefetchPos when we return */
-		Assert(scanPos->batch < prefetchPos->batch ||
+		Assert((int8) (scanPos->batch - prefetchPos->batch) < 0 ||
 			   (scanPos->batch == prefetchPos->batch &&
 				ScanDirectionIsForward(direction) ?
 				scanPos->item <= prefetchPos->item :
