@@ -1260,30 +1260,30 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
     This section is primarily relevant to table access method authors.
     When an index scan uses the <function>amgetbatch</function> interface,
     the table AM is responsible for managing position state within
-    <structfield>scan-&gt;batchRingBuffer</structfield> and for controlling when
+    <structfield>scan-&gt;batchringbuf</structfield> and for controlling when
     buffer pins on index pages are released.
    </para>
 
    <para>
-    The <structfield>scan-&gt;batchRingBuffer.scanPos</structfield> field tracks the
-    current read position within the ring buffer of batches.  The table AM
-    must advance <structfield>scanPos</structfield> as tuples are returned
-    by <function>table_index_getnext_slot</function>.  The core code may also
+    The <structfield>scan-&gt;batchringbuf.scanPos</structfield> field tracks
+    the current read position within the ring buffer of batches.  The table AM
+    must advance <structfield>scanPos</structfield> as tuples are returned by
+    <function>table_index_getnext_slot</function>.  The core code may also
     modify this field during operations such as mark/restore.
    </para>
 
    <para>
-    The <structfield>scan-&gt;batchRingBuffer.prefetchPos</structfield> field tracks
-    the position for I/O prefetching.  It is generally advanced by initializing
-    it from <structfield>readPos</structfield> within a read stream callback,
-    allowing the table AM to prefetch table blocks pointed to by items that are
-    well ahead of the current scan position.  Initially
+    The <structfield>scan-&gt;batchringbuf.prefetchPos</structfield> field
+    tracks the position for I/O prefetching.  It is generally advanced by
+    initializing it from <structfield>scanPos</structfield> within a read
+    stream callback, allowing the table AM to prefetch table blocks pointed to
+    by items that are well ahead of the current scan position.  Initially
     <structfield>prefetchPos</structfield> starts at
     <structfield>scanPos</structfield>, but as the read stream ramps up it can
     get far ahead &mdash; spanning multiple index pages if necessary to
-    maintain an optimal I/O prefetch distance for table block reads.  A major goal
-    of the <function>amgetbatch</function> interface is to allow the table AM
-    to prefetch without being limited to items from the current
+    maintain an optimal I/O prefetch distance for table block reads.  A major
+    goal of the <function>amgetbatch</function> interface is to allow the
+    table AM to prefetch without being limited to items from the current
     <structfield>scanPos</structfield> index leaf page.
    </para>
 
