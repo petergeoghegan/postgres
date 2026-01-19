@@ -51,22 +51,22 @@ index_batchscan_init(IndexScanDesc scan)
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
 	Assert(scan->indexRelation->rd_indam->amfreebatch != NULL);
 
-	scan->batchringbuf = palloc_object(BatchRingBuffer);
-
 	/* Tracks scan direction used to return last item */
-	scan->batchringbuf->direction = NoMovementScanDirection;
+	scan->batchringbuf.direction = NoMovementScanDirection;
 
 	/* positions in the ring buffer of batches */
-	batch_reset_pos(&scan->batchringbuf->scanPos);
-	batch_reset_pos(&scan->batchringbuf->markPos);
-	batch_reset_pos(&scan->batchringbuf->prefetchPos);
+	batch_reset_pos(&scan->batchringbuf.scanPos);
+	batch_reset_pos(&scan->batchringbuf.markPos);
+	batch_reset_pos(&scan->batchringbuf.prefetchPos);
 
-	scan->batchringbuf->markBatch = NULL;
-	scan->batchringbuf->headBatch = 0;	/* initial head batch */
-	scan->batchringbuf->nextBatch = 0;	/* initial batch starts empty */
-	memset(&scan->batchringbuf->cache, 0, sizeof(scan->batchringbuf->cache));
-	scan->batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
-	scan->batchringbuf->paused = false;
+	scan->batchringbuf.markBatch = NULL;
+	scan->batchringbuf.headBatch = 0;	/* initial head batch */
+	scan->batchringbuf.nextBatch = 0;	/* initial batch starts empty */
+	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
+	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
+	scan->batchringbuf.paused = false;
+
+	scan->usebatchring = true;
 }
 
 /*
@@ -80,7 +80,7 @@ index_batchscan_init(IndexScanDesc scan)
 void
 index_batchscan_reset(IndexScanDesc scan, bool complete)
 {
-	BatchRingBuffer *batchringbuf = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 
 	batch_assert_batches_valid(scan);
 	Assert(scan->xs_heapfetch);
@@ -153,7 +153,7 @@ index_batchscan_end(IndexScanDesc scan)
 
 	for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
 	{
-		IndexScanBatch cached = scan->batchringbuf->cache[i];
+		IndexScanBatch cached = scan->batchringbuf.cache[i];
 
 		if (cached == NULL)
 			continue;
@@ -164,8 +164,6 @@ index_batchscan_end(IndexScanDesc scan)
 			pfree(cached->currTuples);
 		pfree(cached);
 	}
-
-	pfree(scan->batchringbuf);
 }
 
 /*
@@ -179,7 +177,7 @@ index_batchscan_end(IndexScanDesc scan)
 void
 index_batchscan_mark_pos(IndexScanDesc scan)
 {
-	BatchRingBuffer *batchringbuf = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *markPos = &batchringbuf->markPos;
 	IndexScanBatch markBatch = batchringbuf->markBatch;
 
@@ -222,7 +220,7 @@ index_batchscan_mark_pos(IndexScanDesc scan)
 void
 index_batchscan_restore_pos(IndexScanDesc scan)
 {
-	BatchRingBuffer *batchringbuf = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *markPos = &batchringbuf->markPos;
 	IndexScanBatch markBatch = batchringbuf->markBatch;
 
@@ -285,7 +283,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 void
 tableam_util_kill_scanpositem(IndexScanDesc scan)
 {
-	BatchRingItemPos *scanPos = &scan->batchringbuf->scanPos;
+	BatchRingItemPos *scanPos = &scan->batchringbuf.scanPos;
 	IndexScanBatch scanBatch = INDEX_SCAN_BATCH(scan, scanPos->batch);
 
 	batch_assert_pos_valid(scan, scanPos);
@@ -313,7 +311,7 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 	batch_assert_batch_valid(scan, batch);
 
 	/* don't free the batch that is marked */
-	if (batch == scan->batchringbuf->markBatch)
+	if (batch == scan->batchringbuf.markBatch)
 		return;
 
 	/*
@@ -371,7 +369,7 @@ indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
 	/* batch must have one or more matching items returned by index AM */
 	Assert(batch->firstItem >= 0 && batch->firstItem <= batch->lastItem);
 
-	if (scan->batchringbuf)
+	if (scan->usebatchring)
 	{
 		/* amgetbatch (not amgetbitmap) caller */
 		Assert(scan->heapRelation != NULL);
@@ -432,15 +430,15 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 	IndexScanBatch batch = NULL;
 
 	/* First look for an existing batch from ring buffer */
-	if (scan->batchringbuf != NULL)
+	if (scan->usebatchring)
 	{
 		for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
 		{
-			if (scan->batchringbuf->cache[i] != NULL)
+			if (scan->batchringbuf.cache[i] != NULL)
 			{
 				/* Return cached unreferenced batch */
-				batch = scan->batchringbuf->cache[i];
-				scan->batchringbuf->cache[i] = NULL;
+				batch = scan->batchringbuf.cache[i];
+				scan->batchringbuf.cache[i] = NULL;
 				break;
 			}
 		}
@@ -498,7 +496,7 @@ indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 {
 	Assert(batch->buf == InvalidBuffer);
 
-	if (scan->batchringbuf)
+	if (scan->usebatchring)
 	{
 		/* amgetbatch scan caller */
 		Assert(scan->heapRelation != NULL);
@@ -515,10 +513,10 @@ indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 			 */
 			for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
 			{
-				if (scan->batchringbuf->cache[i] == NULL)
+				if (scan->batchringbuf.cache[i] == NULL)
 				{
 					/* found empty slot, we're done */
-					scan->batchringbuf->cache[i] = batch;
+					scan->batchringbuf.cache[i] = batch;
 					return;
 				}
 			}
