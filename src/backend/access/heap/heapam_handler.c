@@ -274,6 +274,35 @@ heapam_batch_return_tid(IndexScanDesc scan, IndexScanBatch scanBatch,
  * Caching visibility information up front avoids that problem.  If a VM bit
  * is concurrently set (or unset), it can't matter, since everybody will have
  * works off of this immutable local cache.
+ *
+ * Note on Memory Ordering Effects
+ * -------------------------------
+ *
+ * visibilitymap_get_status does not lock the visibility map buffer, and
+ * therefore the result we read here could be slightly stale.  However, it
+ * can't be stale enough to matter.
+ *
+ * We need to detect clearing a VM bit due to an insert right away, because
+ * the tuple is present in the index page but not visible.  The reading of the
+ * TID by this scan (using a shared lock on the index buffer) is serialized
+ * with the insert of the TID into the index (using an exclusive lock on the
+ * index buffer).  Because the VM bit is cleared before updating the index,
+ * and locking/unlocking of the index page acts as a full memory barrier, we
+ * are sure to see the cleared bit if we see a recently-inserted TID.
+ *
+ * Deletes do not update the index page (only VACUUM will clear out the TID),
+ * so the clearing of the VM bit by a delete is not serialized with this test
+ * below, and we may see a value that is significantly stale.  However, we
+ * don't care about the delete right away, because the tuple is still visible
+ * until the deleting transaction commits or the statement ends (if it's our
+ * transaction).  In either case, the lock on the VM buffer will have been
+ * released (acting as a write barrier) after clearing the bit.  And for us to
+ * have a snapshot that includes the deleting transaction (making the tuple
+ * invisible), we must have acquired ProcArrayLock after that time, acting as
+ * a read barrier.
+ *
+ * It's worth going through this complexity to avoid needing to lock the VM
+ * buffer, which could cause significant contention.
  */
 static void
 heap_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch)
@@ -884,36 +913,9 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 * we'll use the index tuple not the heap tuple as the data
 			 * source.
 			 *
-			 * Note on Memory Ordering Effects: visibilitymap_get_status does
-			 * not lock the visibility map buffer, and therefore the result we
-			 * read here could be slightly stale.  However, it can't be stale
-			 * enough to matter.
-			 *
-			 * We need to detect clearing a VM bit due to an insert right
-			 * away, because the tuple is present in the index page but not
-			 * visible. The reading of the TID by this scan (using a shared
-			 * lock on the index buffer) is serialized with the insert of the
-			 * TID into the index (using an exclusive lock on the index
-			 * buffer). Because the VM bit is cleared before updating the
-			 * index, and locking/unlocking of the index page acts as a full
-			 * memory barrier, we are sure to see the cleared bit if we see a
-			 * recently-inserted TID.
-			 *
-			 * Deletes do not update the index page (only VACUUM will clear
-			 * out the TID), so the clearing of the VM bit by a delete is not
-			 * serialized with this test below, and we may see a value that is
-			 * significantly stale. However, we don't care about the delete
-			 * right away, because the tuple is still visible until the
-			 * deleting transaction commits or the statement ends (if it's our
-			 * transaction). In either case, the lock on the VM buffer will
-			 * have been released (acting as a write barrier) after clearing
-			 * the bit. And for us to have a snapshot that includes the
-			 * deleting transaction (making the tuple invisible), we must have
-			 * acquired ProcArrayLock after that time, acting as a read
-			 * barrier.
-			 *
-			 * It's worth going through this complexity to avoid needing to
-			 * lock the VM buffer, which could cause significant contention.
+			 * See heap_batch_resolve_visibility for details on why it's safe
+			 * to rely on the VM result despite not holding a lock on the VM
+			 * buffer.
 			 */
 			if (!scan->xs_visible)
 			{
