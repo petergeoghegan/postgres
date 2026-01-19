@@ -144,13 +144,13 @@ typedef struct BatchRingItemPos
 static inline void
 batch_reset_pos(BatchRingItemPos *pos)
 {
-	/*
-	 * Set item to -1, indicating that the position is invalid.
-	 *
-	 * Set batch to max value so that incrementing in index_batchpos_newbatch
-	 * wraps around to 0.
-	 */
+	/* Set item to -1 to indicate that pos is now invalid */
 	pos->item = -1;
+
+	/*
+	 * Set batch to max value so that incrementing in index_batchpos_newbatch
+	 * wraps around to 0
+	 */
 	pos->batch = PG_UINT8_MAX;
 }
 
