@@ -89,7 +89,7 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 	scan->xs_snapshot = InvalidSnapshot;	/* caller must initialize this */
 	scan->numberOfKeys = nkeys;
 	scan->numberOfOrderBys = norderbys;
-	scan->batchringbuf = NULL;	/* set later for amgetbatch callers */
+	scan->usebatchring = false;	/* set later for amgetbatch callers */
 	scan->xs_want_itup = false; /* caller must initialize this */
 
 	/*

@@ -284,6 +284,7 @@ index_beginscan(Relation heapRelation,
 	scan->finished = false;
 	scan->instrument = instrument;
 	scan->xs_want_itup = xs_want_itup;
+	scan->usebatchring = false;
 
 	if (indexRelation->rd_indam->amgetbatch != NULL)
 		index_batchscan_init(scan);
@@ -394,7 +395,7 @@ index_rescan(IndexScanDesc scan,
 	 */
 	scan->finished = false;
 
-	if (scan->batchringbuf)
+	if (scan->usebatchring)
 		index_batchscan_reset(scan, true);
 
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
@@ -412,7 +413,7 @@ index_endscan(IndexScanDesc scan)
 	CHECK_SCAN_PROCEDURE(amendscan);
 
 	/* Cleanup batching, so that the AM can release pins and so on. */
-	if (scan->batchringbuf)
+	if (scan->usebatchring)
 		index_batchscan_end(scan);
 
 	/* Release resources (like buffer pins) from table accesses */
@@ -602,7 +603,7 @@ index_parallelrescan(IndexScanDesc scan)
 	if (scan->xs_heapfetch)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
-	if (scan->batchringbuf)
+	if (scan->usebatchring)
 		index_batchscan_reset(scan, true);
 
 	/* amparallelrescan is optional; assume no-op if not provided by AM */

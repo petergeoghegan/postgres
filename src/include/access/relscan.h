@@ -239,11 +239,11 @@ typedef struct IndexScanBatchData *IndexScanBatch;
 #define INDEX_SCAN_MAX_BATCHES		64
 #define INDEX_SCAN_CACHE_BATCHES	2
 #define INDEX_SCAN_BATCH_COUNT(scan) \
-	((scan)->batchringbuf->nextBatch - (scan)->batchringbuf->headBatch)
+	((scan)->batchringbuf.nextBatch - (scan)->batchringbuf.headBatch)
 
 /* Did we already load batch with the requested index? */
 #define INDEX_SCAN_BATCH_LOADED(scan, idx) \
-	((idx) >= (scan)->batchringbuf->headBatch && (idx) < (scan)->batchringbuf->nextBatch)
+	((idx) >= (scan)->batchringbuf.headBatch && (idx) < (scan)->batchringbuf.nextBatch)
 
 /* Have we loaded the maximum number of batches? */
 #define INDEX_SCAN_BATCH_FULL(scan) \
@@ -253,13 +253,13 @@ typedef struct IndexScanBatchData *IndexScanBatch;
 #define INDEX_SCAN_BATCH(scan, idx)	\
 ( \
 	AssertMacro(INDEX_SCAN_BATCH_LOADED(scan, idx)), \
-	((scan)->batchringbuf->batches[(idx) % INDEX_SCAN_MAX_BATCHES]) \
+	((scan)->batchringbuf.batches[(idx) % INDEX_SCAN_MAX_BATCHES]) \
 )
 
 /* Append given batch to scan's batch ring buffer */
 #define INDEX_SCAN_BATCH_APPEND(scan, batch) \
 	do { \
-		BatchRingBuffer *mringbuf = (scan)->batchringbuf;	\
+		BatchRingBuffer *mringbuf = &(scan)->batchringbuf;	\
 		int				nextBatch = mringbuf->nextBatch; \
 		mringbuf->batches[nextBatch % INDEX_SCAN_MAX_BATCHES] = (batch); \
 		mringbuf->nextBatch++; \
@@ -358,7 +358,9 @@ typedef struct IndexScanDescData
 	void	   *opaque;			/* access-method-specific info */
 
 	/* table access method's private amgetbatch state */
-	BatchRingBuffer *batchringbuf;	/* amgetbatch related state */
+	BatchRingBuffer batchringbuf;	/* amgetbatch related state */
+
+	bool		usebatchring;	/* scan uses amgetbatch/batchringbuf? */
 
 	bool		xs_want_itup;	/* caller requests index tuples */
 	bool		xs_temp_snap;	/* unregister snapshot at scan end? */
@@ -501,7 +503,7 @@ static inline void
 batch_assert_pos_valid(IndexScanDescData *scan, BatchRingItemPos *pos)
 {
 #ifdef USE_ASSERT_CHECKING
-	BatchRingBuffer *batchringbuf = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	IndexScanBatch batch = INDEX_SCAN_BATCH(scan, pos->batch);
 
 	/* make sure the position is valid for currently loaded batches */
@@ -534,7 +536,7 @@ static inline void
 batch_assert_batches_valid(IndexScanDescData *scan)
 {
 #ifdef USE_ASSERT_CHECKING
-	BatchRingBuffer *batchringbuf = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 
 	/* The head/next indexes should define a valid range */
 	Assert(batchringbuf->headBatch >= 0 &&

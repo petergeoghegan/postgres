@@ -330,7 +330,7 @@ heap_batch_getnext(IndexScanDesc scan, IndexScanBatch priorbatch,
 				   ScanDirection direction)
 {
 	IndexScanBatch batch = NULL;
-	BatchRingBuffer *batchringbuf PG_USED_FOR_ASSERTS_ONLY = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf PG_USED_FOR_ASSERTS_ONLY = &scan->batchringbuf;
 
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
@@ -427,7 +427,7 @@ heap_batch_getnext(IndexScanDesc scan, IndexScanBatch priorbatch,
 static ItemPointer
 heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 {
-	BatchRingBuffer *batchringbuf = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *scanPos = &batchringbuf->scanPos;
 	IndexScanBatch scanBatch = NULL;
 
@@ -579,7 +579,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 					  void *per_buffer_data)
 {
 	IndexScanDesc scan = (IndexScanDesc) callback_private_data;
-	BatchRingBuffer *batchringbuf = scan->batchringbuf;
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *scanPos = &batchringbuf->scanPos;
 	BatchRingItemPos *prefetchPos = &batchringbuf->prefetchPos;
 	ScanDirection direction = batchringbuf->direction;
@@ -786,7 +786,7 @@ index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
 	 */
 	if (!scan->xactStartedInRecovery)
 	{
-		if (scan->batchringbuf)
+		if (scan->usebatchring)
 		{
 			if (all_dead)
 				tableam_util_kill_scanpositem(scan);
@@ -841,7 +841,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 * just pass it through a direction to get the next tuple in), so
 			 * we cannot reorder any work.
 			 */
-			if (scan->batchringbuf != NULL)
+			if (scan->usebatchring)
 				tid = heapam_batch_getnext_tid(scan, direction);
 			else
 			{
