@@ -472,21 +472,16 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/* Initialize direction on first call */
 	if (batchringbuf->direction == NoMovementScanDirection)
 		batchringbuf->direction = direction;
-
-	/*
-	 * XXX Shouldn't this also update the batchringbuf->direction? If we get
-	 * to the next block hangling direction change, then we will remember it
-	 * (because heapam_batch_rewind will store it). But if we return in the
-	 * next block, won't we forget about it?
-	 *
-	 * XXX It's a bit weird we handle the direction change in two places.
-	 * Would be good to explain why that's necessary.
-	 *
-	 * XXX How come this doesn't need to do heapam_batch_rewind too? Could
-	 * there be some future batches already loaded?
-	 */
-	if (unlikely(batchringbuf->direction != direction))
+	else if (unlikely(batchringbuf->direction != direction))
 	{
+		/*
+		 * We detected a change in scan direction.  Reset read stream, since
+		 * we can't rely on scanPos continuing to agree with read stream.
+		 *
+		 * Note: we deliberately delay discarding batches until it's clear
+		 * that this change in direction will continue across batch
+		 * boundaries.
+		 */
 		if (scan->xs_heapfetch->rs)
 			read_stream_reset(scan->xs_heapfetch->rs);
 		batch_reset_pos(&batchringbuf->prefetchPos);
@@ -501,7 +496,8 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 * succeed, it means we don't have more items in it, and we need to
 	 * advance to the next one (in the new scan direction).
 	 */
-	if (INDEX_SCAN_BATCH_LOADED(scan, scanPos->batch))
+	if (!INDEX_SCAN_POS_INVALID(scanPos) &&
+		INDEX_SCAN_BATCH_LOADED(scan, scanPos->batch))
 	{
 		scanBatch = INDEX_SCAN_BATCH(scan, scanPos->batch);
 
@@ -511,18 +507,11 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 
 	if (unlikely(batchringbuf->direction != direction))
 	{
-		/* XXX shouldn't heapam_batch_rewind update the scanPos too? */
-		heapam_batch_rewind(scan, batchringbuf, direction);
-
 		/*
-		 * XXX It seems a bit weird to update just the batch part of the
-		 * scanPos. Doesn't it make it rather wrong, with the item still set
-		 * from the original batch? The next code block sets item too. So it
-		 * seems we're doing this only to "fake" the batch, and then the next
-		 * block will advance batch and reset the item. It's confusing, worth
-		 * documenting. Maybe we should set item=-1?
+		 * We detected a change in scan direction across batches.  Eliminate
+		 * any batches that are loaded after this one.
 		 */
-		scanPos->batch = batchringbuf->nextBatch - 1;
+		heapam_batch_rewind(scan, batchringbuf, direction);
 	}
 
 	/*
@@ -541,9 +530,8 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	{
 		/*
 		 * There are no more batches to be loaded in the current scan
-		 * direction.  Defensively reset the read position.
+		 * direction
 		 */
-		batch_reset_pos(scanPos);
 		scan->finished = true;
 
 		return NULL;
@@ -749,7 +737,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		Assert(prefetchBatch->dir == direction);
 
 		/* scanPos is always <= prefetchPos when we return */
-		Assert(scanPos->batch < prefetchPos->batch ||
+		Assert((int8) (scanPos->batch - prefetchPos->batch) < 0 ||
 			   (scanPos->batch == prefetchPos->batch &&
 				ScanDirectionIsForward(direction) ?
 				scanPos->item <= prefetchPos->item :
