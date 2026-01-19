@@ -221,7 +221,7 @@ heapam_batch_rewind(IndexScanDesc scan, BatchRingBuffer *batchringbuf,
 	 * Release future batches properly, to make it look like the current batch
 	 * is the only one we loaded.
 	 */
-	while ((int8) (batchringbuf->nextBatch - batchringbuf->headBatch) > 1)
+	while (INDEX_SCAN_BATCH_COUNT(scan) > 1)
 	{
 		/* release "later" batches in reverse order */
 		IndexScanBatch fbatch;
