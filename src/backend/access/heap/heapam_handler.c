@@ -500,8 +500,13 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 * Try advancing the position in the current batch. If that doesn't
 	 * succeed, it means we don't have more items in it, and we need to
 	 * advance to the next one (in the new scan direction).
+	 *
+	 * Note: Must also check that the position is valid (item != -1).  The
+	 * batch field in an invalid position might coincidentally match a
+	 * currently loaded batch number due to uint8 wraparound.
 	 */
-	if (INDEX_SCAN_BATCH_LOADED(scan, scanPos->batch))
+	if (!INDEX_SCAN_POS_INVALID(scanPos) &&
+		INDEX_SCAN_BATCH_LOADED(scan, scanPos->batch))
 	{
 		scanBatch = INDEX_SCAN_BATCH(scan, scanPos->batch);
 
