@@ -126,6 +126,8 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 	scan->xs_hitup = NULL;
 	scan->xs_hitupdesc = NULL;
 
+	scan->tuples_needed = -1;	/* no limit */
+
 	return scan;
 }
 

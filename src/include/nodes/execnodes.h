@@ -1724,6 +1724,7 @@ typedef struct IndexScanState
 	struct IndexScanDescData *iss_ScanDesc;
 	IndexScanInstrumentation iss_Instrument;
 	SharedIndexScanInstrumentation *iss_SharedInfo;
+	int64		iss_TuplesNeeded;	/* tuple bound, see ExecSetTupleBound */
 
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
@@ -1774,6 +1775,7 @@ typedef struct IndexOnlyScanState
 	struct IndexScanDescData *ioss_ScanDesc;
 	IndexScanInstrumentation ioss_Instrument;
 	SharedIndexScanInstrumentation *ioss_SharedInfo;
+	int64		ioss_TuplesNeeded;	/* tuple bound, see ExecSetTupleBound */
 	TupleTableSlot *ioss_TableSlot;
 	Size		ioss_PscanLen;
 	AttrNumber *ioss_NameCStringAttNums;
