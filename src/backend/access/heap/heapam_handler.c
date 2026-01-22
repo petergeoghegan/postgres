@@ -521,6 +521,7 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 		 * nothing about pins held on index pages/within batches).
 		 */
 		if (!hscan->xs_read_stream && priorBatch && scan->MVCCScan &&
+			(scan->tuples_needed == -1 || scan->tuples_needed > 10) &&
 			hscan->xs_blk != InvalidBlockNumber &&
 			io_method != IOMETHOD_SYNC && enable_indexscan_prefetch)
 		{
