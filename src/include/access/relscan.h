@@ -372,6 +372,8 @@ typedef struct IndexScanDescData
 	/* parallel index scan information, in shared memory */
 	struct ParallelIndexScanDescData *parallel_scan;
 
+	int64		tuples_needed;
+
 	/*
 	 * Flag to request early abort during get_actual_variable_range scans.
 	 * Such scans must end on the rightmost (or leftmost) index page, no

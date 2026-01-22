@@ -96,6 +96,9 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		node->ioss_ScanDesc = scandesc;
 		Assert(node->ioss_ScanDesc->xs_want_itup);
 
+		/* Pass down any tuple bound */
+		scandesc->tuples_needed = node->ioss_TuplesNeeded;
+
 		/*
 		 * If no run-time keys to calculate or they are ready, go ahead and
 		 * pass the scankeys to the index AM.
@@ -524,6 +527,7 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	indexstate->ioss_RuntimeKeysReady = false;
 	indexstate->ioss_RuntimeKeys = NULL;
 	indexstate->ioss_NumRuntimeKeys = 0;
+	indexstate->ioss_TuplesNeeded = -1;
 
 	/*
 	 * build the index scan keys from the index qualification
@@ -700,6 +704,9 @@ ExecIndexOnlyScanInitializeDSM(IndexOnlyScanState *node,
 								 piscan);
 	Assert(node->ioss_ScanDesc->xs_want_itup);
 
+	/* Pass down any tuple bound */
+	node->ioss_ScanDesc->tuples_needed = node->ioss_TuplesNeeded;
+
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass
 	 * the scankeys to the index AM.
@@ -764,6 +771,9 @@ ExecIndexOnlyScanInitializeWorker(IndexOnlyScanState *node,
 								 node->ioss_NumOrderByKeys,
 								 piscan);
 	Assert(node->ioss_ScanDesc->xs_want_itup);
+
+	/* Pass down any tuple bound */
+	node->ioss_ScanDesc->tuples_needed = node->ioss_TuplesNeeded;
 
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass
