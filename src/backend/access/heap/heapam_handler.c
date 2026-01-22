@@ -506,6 +506,7 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 		 * nothing about pins held on index pages/within batches).
 		 */
 		if (!scan->xs_heapfetch->rs && priorBatch && scan->MVCCScan &&
+			(scan->tuples_needed == -1 || scan->tuples_needed > 10) &&
 			enable_indexscan_prefetch)
 		{
 			Assert(!batchringbuf->prefetchPos.valid);
