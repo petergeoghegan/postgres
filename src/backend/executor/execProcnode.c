@@ -72,6 +72,7 @@
  */
 #include "postgres.h"
 
+#include "access/relscan.h"
 #include "executor/executor.h"
 #include "executor/nodeAgg.h"
 #include "executor/nodeAppend.h"
@@ -976,6 +977,49 @@ ExecSetTupleBound(int64 tuples_needed, PlanState *child_node)
 		gstate->tuples_needed = tuples_needed;
 
 		ExecSetTupleBound(tuples_needed, outerPlanState(child_node));
+	}
+	else if (IsA(child_node, IndexScanState))
+	{
+		/*
+		 * If it is an IndexScan, save the tuples_needed in the state so it
+		 * can be propagated to the IndexScanDesc when the scan is started.
+		 *
+		 * Note: As with Sort, the index scan node is responsible for reacting
+		 * properly to changes to this parameter.
+		 */
+		IndexScanState *isstate = (IndexScanState *) child_node;
+
+		isstate->iss_TuplesNeeded = tuples_needed;
+
+		/* If scan already started, update the IndexScanDesc too */
+		if (isstate->iss_ScanDesc)
+			isstate->iss_ScanDesc->tuples_needed = tuples_needed;
+	}
+	else if (IsA(child_node, IndexOnlyScanState))
+	{
+		/* Same comments as for IndexScan */
+		IndexOnlyScanState *iosstate = (IndexOnlyScanState *) child_node;
+
+		iosstate->ioss_TuplesNeeded = tuples_needed;
+
+		/* If scan already started, update the IndexScanDesc too */
+		if (iosstate->ioss_ScanDesc)
+			iosstate->ioss_ScanDesc->tuples_needed = tuples_needed;
+	}
+	else if (IsA(child_node, NestLoopState))
+	{
+		/*
+		 * For NestLoop joins where each outer tuple produces at most one
+		 * output tuple, we can propagate the bound to the outer child
+		 */
+		NestLoopState *nlstate = (NestLoopState *) child_node;
+		JoinType	jointype = nlstate->js.jointype;
+
+		if (jointype == JOIN_SEMI || jointype == JOIN_ANTI ||
+			nlstate->js.single_match)
+		{
+			ExecSetTupleBound(tuples_needed, outerPlanState(child_node));
+		}
 	}
 
 	/*

@@ -369,6 +369,8 @@ typedef struct IndexScanDescData
 
 	/* parallel index scan information, in shared memory */
 	struct ParallelIndexScanDescData *parallel_scan;
+
+	int64		tuples_needed;
 } IndexScanDescData;
 
 /* Generic structure for parallel scans */
