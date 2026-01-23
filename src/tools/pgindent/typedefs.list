@@ -2344,6 +2344,7 @@ PredicateLockData
 PredicateLockTargetType
 PrefetchBufferResult
 PrepParallelRestorePtrType
+PrepareReadBuffer_Status
 PrepareStmt
 PreparedStatement
 PresortedKeyData
