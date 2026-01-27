@@ -7171,6 +7171,11 @@ get_actual_variable_endpoint(Relation heapRel,
 	 * a huge amount of time here, so we give up once we've read too many heap
 	 * pages.  When we fail for that reason, the caller will end up using
 	 * whatever extremal value is recorded in pg_statistic.
+	 *
+	 * XXX This can't work with the new table_index_getnext_slot interface,
+	 * which simply won't return a tuple that isn't visible to our snapshot.
+	 * table_index_getnext_slot will need some kind of callback that provides
+	 * a way for the scan to give up when the costs start to get out of hand.
 	 */
 	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
 							  GlobalVisTestFor(heapRel));
@@ -7191,16 +7196,6 @@ get_actual_variable_endpoint(Relation heapRel,
 	{
 		/* We don't actually need the heap tuple for anything */
 		ExecClearTuple(tableslot);
-
-		/*
-		 * No visible tuple for this index entry, so we need to advance to the
-		 * next entry.  Before doing so, count heap page fetches and give up
-		 * if we've done too many.
-		 */
-#define VISITED_PAGES_LIMIT 100
-
-		if (instrument.nheapfetches > VISITED_PAGES_LIMIT)
-			break;
 
 		/*
 		 * We expect that the index will return data in IndexTuple not
