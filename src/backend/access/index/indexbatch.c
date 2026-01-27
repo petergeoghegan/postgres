@@ -380,7 +380,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
  */
 
 /*
- * tableam_util_batch_dirchange - handle cross-batch change in scan dir
+ * tableam_util_batch_dirchange - handle cross-batch change in scan direction
  *
  * Called by table AM when its scan changes direction in a way that
  * necessitates backing the scan up to an index page originally associated
