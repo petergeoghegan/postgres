@@ -1061,7 +1061,7 @@ extern void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 extern void btfreebatch(IndexScanDesc scan, IndexScanBatch batch);
 extern void btparallelrescan(IndexScanDesc scan);
 extern void btendscan(IndexScanDesc scan);
-extern void btposreset(IndexScanDesc scan, IndexScanBatch markbatch);
+extern void btposreset(IndexScanDesc scan, IndexScanBatch batch);
 extern IndexBulkDeleteResult *btbulkdelete(IndexVacuumInfo *info,
 										   IndexBulkDeleteResult *stats,
 										   IndexBulkDeleteCallback callback,

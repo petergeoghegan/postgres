@@ -411,7 +411,7 @@ btendscan(IndexScanDesc scan)
  * retain its original value (from when btgetbatch returned it).
  */
 void
-btposreset(IndexScanDesc scan, IndexScanBatch markbatch)
+btposreset(IndexScanDesc scan, IndexScanBatch batch)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 
@@ -436,11 +436,11 @@ btposreset(IndexScanDesc scan, IndexScanBatch markbatch)
 	 * they will catch up automatically.  But when they're ahead of that
 	 * page's key space, the scan could miss matching tuples.
 	 */
-	_bt_start_array_keys(scan, markbatch->dir);
-	if (ScanDirectionIsForward(markbatch->dir))
-		markbatch->moreRight = true;
+	_bt_start_array_keys(scan, batch->dir);
+	if (ScanDirectionIsForward(batch->dir))
+		batch->moreRight = true;
 	else
-		markbatch->moreLeft = true;
+		batch->moreLeft = true;
 	so->needPrimScan = false;
 	so->scanBehind = false;
 	so->oppositeDirCheck = false;

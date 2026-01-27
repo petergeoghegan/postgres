@@ -755,8 +755,7 @@ amgettuple (IndexScanDesc scan,
     As of <productname>PostgreSQL</productname> version 19, position marking
     and restoration of scans is no longer supported for the
     <function>amgettuple</function> interface; only the
-    <function>amgetbatch</function> interface supports this feature through
-    the <function>amposreset</function> callback.
+    <function>amgetbatch</function> interface supports this feature.
    </para>
   </note>
 
