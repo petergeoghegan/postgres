@@ -16,6 +16,7 @@
  *		index_batchscan_end - free resources at end of batch index scan
  *		index_batchscan_mark_pos - set a mark from scanPos position
  *		index_batchscan_restore_pos - restore mark to scanPos position
+ *		tableam_util_batch_dirchange - handle cross-batch change in scan dir
  *		tableam_util_kill_scanpositem - record that scanPos item is dead
  *		tableam_util_free_batch - release resources associated with a batch
  *		indexam_util_batch_unlock - unlock batch's buffer lock
@@ -341,7 +342,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
  */
 
 /*
- * tableam_util_batch_dirchange - handle cross-batch change in scan direction
+ * tableam_util_batch_dirchange - handle cross-batch change in scan dir
  *
  * Called by table AM when its scan changes direction in a way that
  * necessitates backing the scan up to an index page originally associated
