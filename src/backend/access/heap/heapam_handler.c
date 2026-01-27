@@ -426,6 +426,7 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 
 		/* priorBatch is now batchringbuf's only batch */
 		Assert(pos->batch == batchringbuf->headBatch);
+		Assert(index_scan_batch_count(scan) == 1);
 	}
 	else if (index_scan_batch_loaded(scan, pos->batch + 1))
 	{
