@@ -301,7 +301,7 @@ index_batchscan_mark_pos(IndexScanDesc scan)
  * The scan's markPos becomes its scanPos.  The marked batch is restored as
  * the current scanBatch when needed.
  *
- * We just discard all batch's (other than markBatch/restored scanBatch),
+ * We just discard all batches (other than markBatch/restored scanBatch),
  * except when markBatch is already the scan's current scanBatch.  We always
  * invalidate prefetchPos and close the scan's read stream, if any.  This
  * approach keeps things simple for table AMs: most code that deals with
