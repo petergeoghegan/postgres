@@ -17913,10 +17913,10 @@ group by small_a order by small_a;
 ------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.43..2625.42 rows=1 width=12) (actual rows=1.00 loops=1)
    Group Key: small.a
-   Buffers: shared hit=412
+   Buffers: shared hit=379
    ->  Merge Join  (cost=0.43..2338.69 rows=57344 width=4) (actual rows=57344.00 loops=1)
          Merge Cond: ((small.a = big.a) AND (small.b = big.b))
-         Buffers: shared hit=412
+         Buffers: shared hit=379
          ->  Index Scan using amber_small_idx on amber_small small  (cost=0.14..7.96 rows=104 width=8) (actual rows=104.00 loops=1)
                Index Cond: (a = ANY ('{1,3}'::integer[]))
                Index Searches: 1
@@ -17924,7 +17924,7 @@ group by small_a order by small_a;
          ->  Index Scan using amber_big_idx on amber_big big  (cost=0.29..315.24 rows=12288 width=8) (actual rows=62457.00 loops=1)
                Index Cond: (a = ANY ('{1,3}'::integer[]))
                Index Searches: 1
-               Buffers: shared hit=410
+               Buffers: shared hit=377
 (14 rows)
 
 -- Same again, but this time it's a nestloop join:
@@ -18037,7 +18037,7 @@ execute restore_buggy_primscan_qry;
 -------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.88..33.94 rows=10 width=16) (actual rows=3.00 loops=1)
    Group Key: o.b
-   Buffers: shared hit=40
+   Buffers: shared hit=32
    InitPlan expr_1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
@@ -18045,7 +18045,7 @@ execute restore_buggy_primscan_qry;
                  Rows Removed by Filter: 18
    ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=21.00 loops=1)
          Merge Cond: (o.b = bug.y)
-         Buffers: shared hit=40
+         Buffers: shared hit=32
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..23.37 rows=584 width=8) (actual rows=395.00 loops=1)
                Index Cond: (a = 1)
                Index Searches: 1
@@ -18053,7 +18053,7 @@ execute restore_buggy_primscan_qry;
          ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.50 rows=10 width=8) (actual rows=21.00 loops=1)
                Index Cond: ((x = 1) AND (y = ANY (ARRAY[(InitPlan expr_1).col1])))
                Index Searches: 2
-               Buffers: shared hit=33
+               Buffers: shared hit=25
 (19 rows)
 
 deallocate restore_buggy_primscan_qry;
@@ -18084,7 +18084,7 @@ execute skip_restore_buggy_primscan_qry;
 -------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.88..33.96 rows=10 width=16) (actual rows=3.00 loops=1)
    Group Key: o.a, o.b
-   Buffers: shared hit=40
+   Buffers: shared hit=32
    InitPlan expr_1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
@@ -18092,14 +18092,14 @@ execute skip_restore_buggy_primscan_qry;
                  Rows Removed by Filter: 18
    ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=21.00 loops=1)
          Merge Cond: ((o.a = bug.x) AND (o.b = bug.y))
-         Buffers: shared hit=40
+         Buffers: shared hit=32
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..21.91 rows=584 width=8) (actual rows=395.00 loops=1)
                Index Searches: 1
                Buffers: shared hit=7
          ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.47 rows=10 width=8) (actual rows=21.00 loops=1)
                Index Cond: (y = ANY (ARRAY[(InitPlan expr_1).col1]))
                Index Searches: 2
-               Buffers: shared hit=33
+               Buffers: shared hit=25
 (18 rows)
 
 -- (Jun 6 2024)
@@ -18136,7 +18136,7 @@ execute skip_restore_buggy_primscan_qry;
 -------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=0.88..33.96 rows=10 width=16) (actual rows=9.00 loops=1)
    Group Key: o.a, o.b
-   Buffers: shared hit=103
+   Buffers: shared hit=85
    InitPlan expr_1
      ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual rows=1.00 loops=1)
            ->  Function Scan on generate_series i  (cost=0.00..0.32 rows=1 width=4) (actual rows=3.00 loops=1)
@@ -18144,14 +18144,14 @@ execute skip_restore_buggy_primscan_qry;
                  Rows Removed by Filter: 18
    ->  Merge Join  (cost=0.55..33.45 rows=10 width=8) (actual rows=63.00 loops=1)
          Merge Cond: ((o.a = bug.x) AND (o.b = bug.y))
-         Buffers: shared hit=103
+         Buffers: shared hit=85
          ->  Index Scan using avoid_sort on outer_table o  (cost=0.28..21.91 rows=584 width=8) (actual rows=1563.00 loops=1)
                Index Searches: 1
                Buffers: shared hit=23
          ->  Index Scan using buggy_idx on restore_buggy_primscan_table bug  (cost=0.28..8.47 rows=10 width=8) (actual rows=63.00 loops=1)
                Index Cond: (y = ANY (ARRAY[(InitPlan expr_1).col1]))
                Index Searches: 2
-               Buffers: shared hit=80
+               Buffers: shared hit=62
 (18 rows)
 
 deallocate skip_restore_buggy_primscan_qry;
