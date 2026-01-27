@@ -175,7 +175,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
 	}
 
-	/* Assert that the TID's block number's buffer is now pinned */
 	Assert(BufferIsValid(hscan->xs_cbuf));
 	Assert(BufferGetBlockNumber(hscan->xs_cbuf) == hscan->xs_blk);
 
