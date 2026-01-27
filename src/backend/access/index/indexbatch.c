@@ -429,7 +429,7 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
  *
  * Note: Calling here when 'batch' is also batchringbuf.markBatch is a no-op.
  * Callers that don't want this should set batchringbuf.markBatch to NULL
- * before calling us.
+ * before calling us.  Note that markBatch usually has to be explicitly freed.
  */
 void
 tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
