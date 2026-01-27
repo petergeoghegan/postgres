@@ -242,8 +242,9 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
  * indicates that the dead TIDs are NOT all-visible.
  *
  * Note: We cannot drop the pin early when the scan uses a non-MVCC snapshot;
- * we must delay it until amfreebatch is called for the batch.  This is why we
- * don't support prefetching during such scans.  See doc/src/sgml/indexam.sgml.
+ * we must delay it until all heap fetches for the loaded batch have taken
+ * place.  This is why we don't support prefetching during such scans.  See
+ * doc/src/sgml/indexam.sgml.
  *
  * Read stream agreement
  * ---------------------

@@ -366,22 +366,16 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 }
 
 /*
- *	btfreebatch() -- Free batch resources, including its buffer pin
+ *	btfreebatch() -- Free batch resources
  */
 void
 btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 {
+	/* Table AM should have already released batch page's pin by now */
+	Assert(!BufferIsValid(batch->buf));
+
 	if (batch->numKilled > 0)
 		_bt_killitems(scan, batch);
-
-	if (BufferIsValid(batch->buf))
-	{
-		/* table AM didn't unpin page earlier -- do it now */
-		Assert(!scan->MVCCScan || scan->xs_want_itup);
-
-		ReleaseBuffer(batch->buf);
-		batch->buf = InvalidBuffer;
-	}
 
 	indexam_util_batch_release(scan, batch);
 }

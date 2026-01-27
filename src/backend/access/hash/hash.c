@@ -386,22 +386,16 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 }
 
 /*
- *	hashfreebatch() -- Free batch resources, including its buffer pin
+ *	hashfreebatch() -- Free batch resources
  */
 void
 hashfreebatch(IndexScanDesc scan, IndexScanBatch batch)
 {
+	/* Table AM should have already released batch page's pin by now */
+	Assert(!BufferIsValid(batch->buf));
+
 	if (batch->numKilled > 0)
 		_hash_kill_items(scan, batch);
-
-	if (BufferIsValid(batch->buf))
-	{
-		/* table AM didn't unpin page earlier -- do it now */
-		Assert(!scan->MVCCScan);
-
-		ReleaseBuffer(batch->buf);
-		batch->buf = InvalidBuffer;
-	}
 
 	indexam_util_batch_release(scan, batch);
 }

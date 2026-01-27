@@ -422,7 +422,12 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
  * Called by table AM's ordered index scan implementation when it is finished
  * with a batch and wishes to release its resources.
  *
- * This calls the index AM's amfreebatch callback to release AM-specific
+ * We release the batch's buffer pin if table AM hasn't released it already.
+ * In MVCC snapshot scans the table AM caller typically releases the pin early
+ * (once visibility has been resolved for all items in the batch), but in
+ * non-MVCC snapshot scans the pin is held until this function releases it.
+ *
+ * We also call the index AM's amfreebatch callback to release AM-specific
  * resources, and to set LP_DEAD bits on the batch's index page (in index AMs
  * that implement that optimization).  Every amfreebatch routine must recycle
  * the underlying batch memory by passing it to indexam_util_batch_release.
@@ -437,6 +442,15 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 	/* don't free caller's batch if it is scan's current markBatch */
 	if (batch == scan->batchringbuf.markBatch)
 		return;
+
+	if (BufferIsValid(batch->buf))
+	{
+		/* table AM didn't unpin page earlier -- do it now */
+		Assert(!scan->MVCCScan || scan->xs_want_itup);
+
+		ReleaseBuffer(batch->buf);
+		batch->buf = InvalidBuffer;
+	}
 
 	/*
 	 * batch.killedItems[] is now in whatever order the scan returned items

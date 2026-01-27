@@ -514,8 +514,9 @@ _hash_readpage(IndexScanDesc scan, Buffer buf, ScanDirection dir,
 		 * populated due to a split.
 		 *
 		 * Increment local reference count so that batch gets an independent
-		 * buffer reference that can be released (by hashfreebatch) before the
-		 * hashso_bucket_buf/hashso_split_bucket_buf references are released.
+		 * buffer reference that can be released (by the core code/table AM)
+		 * before the hashso_bucket_buf/hashso_split_bucket_buf references are
+		 * released.
 		 */
 		IncrBufferRefCount(batch->buf);
 

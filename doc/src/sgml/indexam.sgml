@@ -866,36 +866,32 @@ amfreebatch (IndexScanDesc scan,
 </programlisting>
    Frees a batch returned by the <function>amgetbatch</function> callback.
    The <literal>batch</literal> argument is associated with an index page,
-   which will never be locked when <function>amfreebatch</function> is called.
-   The batch might still retain a buffer pin on the page by the time that
-   <function>amfreebatch</function> is called (whether or not it does is
-   decided by the table AM).
+   which will never be locked or pinned when <function>amfreebatch</function>
+   is called.
   </para>
 
   <para>
-   <function>amfreebatch</function> releases the buffer pin on the batch's
-   associated index page (if the table AM has not already released it), and
-   frees related memory and resources.  It must always release the caller's
-   batch last, by passing it as an argument to
-   <function>indexam_util_batch_release</function>.
+   <function>amfreebatch</function> frees memory and resources associated with
+   the batch.  It must always release the caller's batch last, by passing it
+   as an argument to <function>indexam_util_batch_release</function>.
   </para>
 
   <para>
-   This function is called exclusively by table access methods to indicate
+   This function is called exclusively by table access methods (via the
+   <function>tableam_util_free_batch</function> wrapper function) to indicate
    that processing of the batch is complete; it should never be called within
-   the index access method itself.  The table access method controls when the
-   buffer pin is dropped.  When the table AM hasn't already dropped the buffer
-   pin, it is left up to the index AM's <function>amfree</function> routine.
+   the index access method itself.  The table AM is responsible for releasing
+   the batch's buffer pin before calling <function>amfreebatch</function>.
   </para>
 
   <para>
    The index AM has the option of setting <literal>LP_DEAD</literal> bits in
-   the index page to mark dead tuples before releasing the buffer pin. While
-   this is optional, implementing it is recommended for performance, as it
-   allows future scans to skip known-dead index entries. Both core index access
-   methods that currently support <function>amgetbatch</function> (B-tree
-   and hash) implement <literal>LP_DEAD</literal> marking, though third-party
-   index access methods are free to choose whether to implement this feature.
+   the index page to mark dead tuples.  While this is optional, implementing
+   it is recommended for performance, as it allows future scans to skip
+   known-dead index entries.  Both core index access methods that currently
+   support <function>amgetbatch</function> (B-tree and hash) implement
+   <literal>LP_DEAD</literal> marking, though third-party index access methods
+   are free to choose whether to implement this feature.
    The table AM may call
    <function>tableam_util_kill_scanpositem</function> to mark dead items as
    the scan progresses. If the batch contains any such dead items, the batch's
