@@ -1,7 +1,58 @@
 /*-------------------------------------------------------------------------
  *
  * indexbatch.c
- *	  amgetbatch implementation routines
+ *	  Batch-based index scan infrastructure for the amgetbatch interface.
+ *
+ * This module provides the core infrastructure for batch-based index scans,
+ * which allow index AMs to return multiple matching TIDs per page in a single
+ * call.  The batch ring buffer is managed by the table AM, with help from us,
+ * and with help from the ring buffer inline functions in relscan.h.  This
+ * approach enables efficient prefetching of table AM blocks during ordered
+ * index scans.
+ *
+ * The ring buffer loads batches in index key space order.  This allows the
+ * table AM to maintain an adequate prefetch distance: its read stream
+ * callback is thereby able to request table blocks referenced by index pages
+ * that are well ahead of the current scan position's index page.
+ *
+ * There's three types of functions in this module:
+ *
+ * 1. Core batch scan lifecycle (index_batchscan_*): Functions that manage
+ *    batch scan state including initialization, reset, cleanup, and the
+ *    mark/restore operations needed for merge joins.  Called by indexam.c
+ *    routines that manage index scans on behalf of the core executor.
+ *
+ * 2. Table AM utilities (tableam_util_*): Helper functions called by table
+ *    AMs during amgetbatch index scans.  These handle cross-batch direction
+ *    changes, recording dead items for later LP_DEAD marking, and freeing
+ *    batches when the table AM is done with them.
+ *
+ * 3. Index AM utilities (indexam_util_*): Helper functions called by index
+ *    AMs that implement the amgetbatch interface.  These manage batch
+ *    allocation, index page buffer lock release, and batch memory recycling.
+ *
+ * These three layers coordinate without explicit coupling: the core lifecycle
+ * functions assume that table AMs use scanPos/scanBatch and prefetchPos/
+ * prefetchBatch in a standardized way (see heapam_handler.c for the reference
+ * implementation), while table AMs assume that index AMs free and unlock
+ * batches according to the conventions established here.  See indexam.sgml
+ * for the full specification of the amgetbatch/amfreebatch contract.
+ *
+ * When the scan direction changes, the table AM must immediately stop its
+ * read stream -- blocks already requested via prefetchPos will no longer
+ * match what scanPos needs to return.  Crossing a batch boundary in a new
+ * scan direction is a separate process, handled here: table AMs are required
+ * to call tableam_util_batch_dirchange to leave the scan's batch ring buffer
+ * in a consistent state.  The current implementation handles this by simply
+ * discarding most batches.  The key invariant is that all loaded batches must
+ * be in a consistent scan direction order.  (During cross-batch direction
+ * changes, the current scanBatch will have its IndexScanBatchData.dir
+ * flipped, but we have no provision for keeping all other loaded batches.
+ * It's not clear that it'd be useful to hold onto them; the scan direction is
+ * unlikely to change back.  The scan batch direction invariant keeps things
+ * simple: it is convenient for most code that deals with batches to be able
+ * to assume that the common case where scan direction never changes is the
+ * only case.)
  *
  * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -9,19 +60,6 @@
  *
  * IDENTIFICATION
  *	  src/backend/access/index/indexbatch.c
- *
- * INTERFACE ROUTINES
- *		index_batchscan_init - initialize fields for a batch index scan
- *		index_batchscan_reset - reset state needed by a batch index scan
- *		index_batchscan_end - free resources at end of batch index scan
- *		index_batchscan_mark_pos - set a mark from scanPos position
- *		index_batchscan_restore_pos - restore mark to scanPos position
- *		tableam_util_batch_dirchange - handle cross-batch change in scan dir
- *		tableam_util_kill_scanpositem - record that scanPos item is dead
- *		tableam_util_free_batch - release resources associated with a batch
- *		indexam_util_batch_unlock - unlock batch's buffer lock
- *		indexam_util_batch_alloc - allocate a new batch
- *		indexam_util_batch_release - release allocated batch
  *
  *-------------------------------------------------------------------------
  */

@@ -398,7 +398,17 @@ btendscan(IndexScanDesc scan)
 }
 
 /*
- *	btposreset() -- invalidate scan's array keys
+ *	btposreset() -- reset array key state for scan position change
+ *
+ * Called by the core system when the scan's logical position is about to
+ * change in a way that invalidates our array key state.  This happens when
+ * restoring a marked position, or when the scan crosses a batch boundary
+ * while moving in the opposite direction to the one originally used.
+ *
+ * For direction changes, the core system will have already flipped the
+ * batch's dir field before calling here; we use this updated direction when
+ * resetting our array keys.  For mark restoration, the batch's dir will
+ * retain its original value (from when btgetbatch returned it).
  */
 void
 btposreset(IndexScanDesc scan, IndexScanBatch markbatch)
@@ -409,20 +419,24 @@ btposreset(IndexScanDesc scan, IndexScanBatch markbatch)
 		return;
 
 	/*
-	 * Core system is about to restore a mark associated with a previously
-	 * returned batch.  Reset the scan's arrays to make all this safe.
+	 * Reset array keys to initial state for the batch's scan direction.  Also
+	 * clear needPrimScan and related flags.  These were set based on the soft
+	 * assumption that the scan would always proceed in the same direction.
+	 *
+	 * These steps work around the soft assumption being violated: they force
+	 * the scan to step to the next/previous page, making the arrays recover.
+	 * When we go to read that page, _bt_readpage will reliably determine if a
+	 * primitive scan really is needed based on the page's tuples.  If there's
+	 * a primitive scan, it will reposition the scan using new array values
+	 * (based on the tuples from the neighboring page we'll step on to).
+	 *
+	 * We need to reset the array key state in the correct direction so that
+	 * we won't get confused.  When the array keys are behind the key space
+	 * for the page we're stepping on to (behind in terms of the scan dir),
+	 * they will catch up automatically.  But when they're ahead of that
+	 * page's key space, the scan could miss matching tuples.
 	 */
 	_bt_start_array_keys(scan, markbatch->dir);
-
-	/*
-	 * Core system will invalidate all other batches.
-	 *
-	 * Deal with this by unsetting needPrimScan as well as moreRight (or as
-	 * well as moreLeft, when scanning backwards).  That way, the next time
-	 * _bt_next is called it will step to the right (or to the left).  At that
-	 * point _bt_readpage will restore the scan's arrays to elements that
-	 * correctly track the next page's position in the index's key space.
-	 */
 	if (ScanDirectionIsForward(markbatch->dir))
 		markbatch->moreRight = true;
 	else
