@@ -75,7 +75,7 @@
 static int	batch_compare_int(const void *va, const void *vb);
 
 /*
- * index_batchscan_init - initialize fields for a batch index scan.
+ * Initialize fields for a batch index scan.
  *
  * Sets up the batch ring buffer structure and its initial read position.
  * Also determines whether the scan will eagerly drop index page pins.
@@ -114,7 +114,7 @@ index_batchscan_init(IndexScanDesc scan)
 }
 
 /*
- * index_batchscan_reset - reset state used for a batch index scan
+ * Reset state used for a batch index scan
  *
  * Resets all loaded batches in the ring buffer, and resets the read position
  * to the initial state (or just initialize ring buffer state).  When
@@ -192,7 +192,7 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 }
 
 /*
- * index_batchscan_end - free resources at end of batch index scan
+ * Free resources at end of batch index scan
  *
  * Called when an index scan is being ended, right before the owning scan
  * descriptor goes away.  Cleans up all batch related resources.
@@ -219,7 +219,7 @@ index_batchscan_end(IndexScanDesc scan)
 }
 
 /*
- * index_batchscan_mark_pos - set a mark from scanPos position
+ * Set a mark from scanPos position
  *
  * Saves the current read position and associated batch so that the scan can
  * be restored to this point later, via a call to index_batchscan_restore_pos.
@@ -295,21 +295,19 @@ index_batchscan_mark_pos(IndexScanDesc scan)
 }
 
 /*
- * index_batchscan_restore_pos - restore mark to scanPos position
+ * Restore mark to scanPos position
  *
- * Restores the scan to a position previously saved by
- * index_batchscan_mark_pos.  The marked batch is restored as the current
- * batch, allowing the scan to resume from the marked position.  Also notifies
- * the index AM via a call to its amposreset routine, which allows it to
- * invalidate any private state that independently tracks scan progress (such
- * as array key state).
+ * Restores the scan to a position saved by index_batchscan_mark_pos earlier.
+ * The scan's markPos becomes its scanPos.  The marked batch is restored as
+ * the current scanBatch when needed.
  *
- * Function currently just discards most batch ring buffer state.  It might
- * make sense to teach it to hold on to other nearby batches (still-held
- * batches that are likely to be needed once the scan finishes returning
- * matching items from the restored batch) as an optimization.  Such a scheme
- * would have the benefit of avoiding repeat calls to amgetbatch/repeatedly
- * reading the same index pages.
+ * We just discard all batch's (other than markBatch/restored scanBatch),
+ * except when markBatch is already the scan's current scanBatch.  We always
+ * invalidate prefetchPos and close the scan's read stream, if any.  This
+ * approach keeps things simple for table AMs: most code that deals with
+ * batches is thereby able to assume that the common case where scan direction
+ * never changes is the only case (tableam_util_batch_dirchange takes a
+ * similar approach to handling a cross-batch change in scan direction).
  */
 void
 index_batchscan_restore_pos(IndexScanDesc scan)
@@ -380,7 +378,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
  */
 
 /*
- * tableam_util_batch_dirchange - handle cross-batch change in scan direction
+ * Handle cross-batch change in scan direction
  *
  * Called by table AM when its scan changes direction in a way that
  * necessitates backing the scan up to an index page originally associated
@@ -436,7 +434,7 @@ tableam_util_batch_dirchange(IndexScanDesc scan)
 }
 
 /*
- * tableam_util_kill_scanpositem - record that scanPos item is dead
+ * Record that scanPos item is dead
  *
  * Records an offset to the scanBatch item of the currently-read tuple, saving
  * it in scanBatch's killedItems array. The items' index tuples will later be
@@ -456,7 +454,7 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
 }
 
 /*
- * tableam_util_free_batch - release resources associated with a batch
+ * Release resources associated with a batch
  *
  * Called by table AM's ordered index scan implementation when it is finished
  * with a batch and wishes to release its resources.
@@ -519,7 +517,7 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
  */
 
 /*
- * indexam_util_batch_unlock - unlock batch's shared buffer lock
+ * Unlock batch's shared buffer lock
  *
  * Unlocks caller's batch->buf in preparation for amgetbatch returning items
  * saved in that batch.  Performs extra steps required by amgetbatch callers
@@ -587,7 +585,7 @@ indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
 }
 
 /*
- * indexam_util_batch_alloc - allocate a new batch
+ * Allocate a new batch
  *
  * Used by index AMs that support amgetbatch interface (both during amgetbatch
  * and amgetbitmap scans).
@@ -657,7 +655,7 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 }
 
 /*
- * indexam_util_batch_release - release allocated batch
+ * Release allocated batch
  *
  * This function is called by index AMs to release a batch allocated by
  * indexam_util_batch_alloc.  Batches are cached here for reuse (when scan
@@ -723,7 +721,7 @@ indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 }
 
 /*
- * batch_compare_int - qsort comparison function for int arrays
+ * qsort comparison function for int arrays
  */
 static int
 batch_compare_int(const void *va, const void *vb)
