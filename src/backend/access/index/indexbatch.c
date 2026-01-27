@@ -460,9 +460,11 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
  * with a batch and wishes to release its resources.
  *
  * We release the batch's buffer pin if table AM hasn't released it already.
- * In MVCC snapshot scans the table AM caller typically releases the pin early
- * (once visibility has been resolved for all items in the batch), but in
- * non-MVCC snapshot scans the pin is held until this function releases it.
+ * For plain index scans with an MVCC snapshot, the table AM caller releases
+ * the pin immediately, so we never release the pin here.  Index-only scans
+ * must delay dropping the pin until visibility is resolved for all items in
+ * the batch, so we may need to release the pin here.  For non-MVCC snapshot
+ * scans, the pin is always held until this function releases it.
  *
  * We also call the index AM's amfreebatch callback to release AM-specific
  * resources, and to set LP_DEAD bits on the batch's index page (in index AMs
@@ -476,6 +478,8 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
 void
 tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 {
+	Assert(BufferIsValid(batch->buf) || scan->MVCCScan);
+
 	/* don't free caller's batch if it is scan's current markBatch */
 	if (batch == scan->batchringbuf.markBatch)
 		return;
@@ -488,6 +492,18 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 		ReleaseBuffer(batch->buf);
 		batch->buf = InvalidBuffer;
 	}
+#ifdef USE_ASSERT_CHECKING
+	else if (scan->xs_want_itup)
+	{
+		/*
+		 * Index-only scan that dropped this batch's pin eagerly.
+		 *
+		 * Table AM must have checked visibility for every item in the batch.
+		 */
+		for (int i = batch->firstItem; i <= batch->lastItem; i++)
+			Assert(batch->items[i].checkedVisible);
+	}
+#endif
 
 	/*
 	 * batch.killedItems[] is now in whatever order the scan returned items
