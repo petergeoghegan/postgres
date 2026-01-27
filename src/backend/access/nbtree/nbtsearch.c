@@ -1593,7 +1593,6 @@ _bt_next(IndexScanDesc scan, ScanDirection dir, IndexScanBatch priorbatch)
 	return _bt_readnextpage(scan, blkno, lastcurrblkno, dir, false);
 }
 
-
 /*
  *	_bt_readfirstpage() -- Read first page containing valid data for _bt_first
  *
