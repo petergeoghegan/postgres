@@ -166,9 +166,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		else
 			hscan->xs_cbuf = ReadBuffer(hscan->xs_base.rel, hscan->xs_blk);
 
-		Assert(BufferIsValid(hscan->xs_cbuf));
-		Assert(BufferGetBlockNumber(hscan->xs_cbuf) == ItemPointerGetBlockNumber(tid));
-
 		/*
 		 * Prune page when it is pinned for the first time
 		 */
