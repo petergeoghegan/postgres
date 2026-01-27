@@ -54,9 +54,9 @@ index_batchscan_init(IndexScanDesc scan)
 	/* Tracks scan direction used to return last item */
 	scan->batchringbuf.direction = NoMovementScanDirection;
 
-	index_scan_pos_invalidate(&scan->batchringbuf.scanPos);
-	index_scan_pos_invalidate(&scan->batchringbuf.markPos);
-	index_scan_pos_invalidate(&scan->batchringbuf.prefetchPos);
+	scan->batchringbuf.scanPos.valid = false;
+	scan->batchringbuf.markPos.valid = false;
+	scan->batchringbuf.prefetchPos.valid = false;
 
 	scan->batchringbuf.markBatch = NULL;
 	scan->batchringbuf.headBatch = 0;	/* initial head batch */
@@ -94,8 +94,8 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	if (scan->xs_heapfetch->rs)
 		read_stream_reset(scan->xs_heapfetch->rs);
 
-	index_scan_pos_invalidate(&batchringbuf->scanPos);
-	index_scan_pos_invalidate(&batchringbuf->prefetchPos);
+	batchringbuf->scanPos.valid = false;
+	batchringbuf->prefetchPos.valid = false;
 
 	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
@@ -110,7 +110,7 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 		 * so that tableam_util_free_batch actually frees markBatch later on.
 		 */
 		batchringbuf->markBatch = NULL;
-		index_scan_pos_invalidate(&batchringbuf->markPos);
+		batchringbuf->markPos.valid = false;
 	}
 
 	/*
@@ -291,7 +291,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 		read_stream_end(scan->xs_heapfetch->rs);
 		scan->xs_heapfetch->rs = NULL;
 	}
-	index_scan_pos_invalidate(&batchringbuf->prefetchPos);
+	batchringbuf->prefetchPos.valid = false;
 	batchringbuf->paused = false;
 
 	if (scanBatch == markBatch)

@@ -510,7 +510,7 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 			priorBatch != batchringbuf->markBatch &&
 			enable_indexscan_prefetch)
 		{
-			Assert(!index_scan_pos_is_valid(&batchringbuf->prefetchPos));
+			Assert(!batchringbuf->prefetchPos.valid);
 
 			scan->xs_heapfetch->rs =
 				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
@@ -557,10 +557,8 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 
 	/* scan should only be paused when there's no free batch slots */
 	Assert(!batchringbuf->paused || index_scan_batch_full(scan));
-	Assert(!index_scan_pos_is_valid(scanPos) ||
-		   batchringbuf->headBatch == scanPos->batch);
-	Assert(index_scan_pos_is_valid(scanPos) ||
-		   index_scan_batch_count(scan) == 0);
+	Assert(!scanPos->valid || batchringbuf->headBatch == scanPos->batch);
+	Assert(scanPos->valid || index_scan_batch_count(scan) == 0);
 
 	/* Initialize direction on first call */
 	if (batchringbuf->direction == NoMovementScanDirection)
@@ -576,7 +574,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 			read_stream_end(scan->xs_heapfetch->rs);
 			scan->xs_heapfetch->rs = NULL;
 		}
-		index_scan_pos_invalidate(&batchringbuf->prefetchPos);
+		batchringbuf->prefetchPos.valid = false;
 		batchringbuf->paused = false;
 
 		/*
@@ -595,7 +593,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	 * Check if there's an existing loaded scanBatch for us to return the next
 	 * matching item's TID/index tuple from
 	 */
-	if (index_scan_pos_is_valid(scanPos))
+	if (scanPos->valid)
 	{
 		/*
 		 * scanPos is valid, so scanBatch must already be loaded in batch ring
@@ -746,8 +744,8 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * offsets: prefetchPos->batch cannot possibly fall behind scanPos->batch
 	 * by more than INDEX_SCAN_MAX_BATCHES at any time.  We rely on that here.
 	 */
-	if (!index_scan_pos_is_valid(prefetchPos) ||
-		!index_scan_batch_loaded(scan, prefetchPos->batch))
+	if (!prefetchPos->valid || !index_scan_batch_loaded(scan,
+														prefetchPos->batch))
 	{
 		batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
 		*prefetchPos = *scanPos;

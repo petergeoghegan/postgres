@@ -480,24 +480,6 @@ index_scan_batch_append(IndexScanDescData *scan, IndexScanBatch batch)
 }
 
 /*
- * Is the batch position valid?
- */
-static inline bool
-index_scan_pos_is_valid(BatchRingItemPos *pos)
-{
-	return pos->valid;
-}
-
-/*
- * Invalidate a batch position
- */
-static inline void
-index_scan_pos_invalidate(BatchRingItemPos *pos)
-{
-	pos->valid = false;
-}
-
-/*
  * Advance position to its next item in the batch.
  *
  * Advance to the next item within the provided batch (or to the previous item,
@@ -510,7 +492,7 @@ static inline bool
 index_scan_pos_advance(ScanDirection direction,
 					   IndexScanBatch batch, BatchRingItemPos *pos)
 {
-	Assert(index_scan_pos_is_valid(pos));
+	Assert(pos->valid);
 
 	if (ScanDirectionIsForward(direction))
 	{
@@ -541,7 +523,7 @@ index_scan_pos_nextbatch(ScanDirection direction,
 	Assert(newBatch->dir == direction);
 
 	/* Increment batch (often wraps uint8 batch field) */
-	if (index_scan_pos_is_valid(pos))
+	if (pos->valid)
 		pos->batch++;
 	else
 		pos->batch = 0;
