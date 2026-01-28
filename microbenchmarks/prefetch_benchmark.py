@@ -2760,6 +2760,7 @@ def run_stress_test(args):
             if regressions_found:
                 print(f"\n--- Verifying {len(regressions_found)} apparent regression(s) with retries ---")
                 confirmed_regressions = []
+                needs_rebaseline = []  # Regressions that survived retries, need master re-baseline
 
                 start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
                 try:
@@ -2808,13 +2809,91 @@ def run_stress_test(args):
                                 print("FAILED")
 
                         if regression_confirmed:
-                            print(f"    All retries confirm regression")
-                            confirmed_regressions.append(reg)
+                            print(f"    All retries confirm regression - needs master re-baseline")
+                            needs_rebaseline.append(reg)
 
                     patch_conn.close()
                 finally:
                     stop_server(patch_bin, PATCH_DATA_DIR)
                     time.sleep(2)
+
+                # Phase 2: Re-baseline verification for regressions that survived retries
+                # This accounts for environmental drift since the original master baseline
+                if needs_rebaseline:
+                    print(f"\n--- Re-baselining {len(needs_rebaseline)} regression(s) against master ---")
+
+                    for reg in needs_rebaseline:
+                        query_def = reg["query_def"]
+                        prefetch_setting = "off" if reg["config"] == "prefetch=off" else "on"
+
+                        print(f"\n  Re-baselining {reg['query_id']} ({reg['config']})...")
+
+                        # Run query on master to establish new baseline
+                        start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
+                        try:
+                            master_conn = psycopg.connect(**MASTER_CONN)
+                            pin_backend(master_conn.info.backend_pid, args.benchmark_cpu)
+                            with master_conn.cursor() as cur:
+                                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_prewarm")
+                                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_buffercache")
+                                cur.execute("SET enable_bitmapscan = off")
+                                cur.execute("SET random_page_cost = 1.1")
+                                cur.execute("SET max_parallel_workers_per_gather = 0")
+
+                            new_master_time, _ = run_query(
+                                master_conn, query_def, args.cached,
+                                is_master=True, prefetch_setting=None,
+                                benchmark_cpu=args.benchmark_cpu
+                            )
+                            master_conn.close()
+                        finally:
+                            stop_server(master_bin, MASTER_DATA_DIR)
+                            time.sleep(2)
+
+                        if new_master_time is None:
+                            print(f"    Master re-baseline FAILED, discarding regression")
+                            continue
+
+                        print(f"    New master baseline: {new_master_time:.3f} ms (was {reg['master_ms']:.3f} ms)")
+
+                        # Run query on patch with new baseline
+                        start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
+                        try:
+                            patch_conn = psycopg.connect(**PATCH_CONN)
+                            pin_backend(patch_conn.info.backend_pid, args.benchmark_cpu)
+                            with patch_conn.cursor() as cur:
+                                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_prewarm")
+                                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_buffercache")
+                                cur.execute("SET enable_bitmapscan = off")
+                                cur.execute("SET random_page_cost = 1.1")
+                                cur.execute("SET max_parallel_workers_per_gather = 0")
+
+                            new_patch_time, _ = run_query(
+                                patch_conn, query_def, args.cached,
+                                is_master=False, prefetch_setting=prefetch_setting,
+                                benchmark_cpu=args.benchmark_cpu
+                            )
+                            patch_conn.close()
+                        finally:
+                            stop_server(patch_bin, PATCH_DATA_DIR)
+                            time.sleep(2)
+
+                        if new_patch_time is None:
+                            print(f"    Patch re-run FAILED, discarding regression")
+                            continue
+
+                        new_ratio = new_patch_time / new_master_time
+                        print(f"    New patch time: {new_patch_time:.3f} ms ({new_ratio:.3f}x vs new baseline)")
+
+                        if new_ratio >= STRESS_REGRESSION_THRESHOLD:
+                            print(f"    Regression CONFIRMED with fresh baseline")
+                            # Update reg with new measurements
+                            reg["master_ms"] = new_master_time
+                            reg["patch_ms"] = new_patch_time
+                            reg["ratio"] = new_ratio
+                            confirmed_regressions.append(reg)
+                        else:
+                            print(f"    Environmental drift detected - discarding (was {reg['ratio']:.3f}x, now {new_ratio:.3f}x)")
 
                 regressions_found = confirmed_regressions
 
