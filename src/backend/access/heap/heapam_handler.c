@@ -569,8 +569,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	IndexScanBatch scanBatch = NULL;
 
 	/* scan should only be paused when there's no free batch slots */
-	Assert(!batchringbuf->paused || index_scan_batch_full(scan) ||
-		   scan->xs_mergejoin_input);
+	Assert(!batchringbuf->paused || index_scan_batch_full(scan));
 	Assert(!scanPos->valid || batchringbuf->headBatch == scanPos->batch);
 	Assert(scanPos->valid || index_scan_batch_count(scan) == 0);
 
@@ -800,15 +799,8 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			 * various reasons, e.g. for index-only scans on all-visible
 			 * table, or skipping duplicate blocks on perfectly correlated
 			 * indexes, etc.
-			 *
-			 * For merge join inputs, limit prefetching to one batch ahead.
-			 * Merge joins consume tuples in a pattern that doesn't benefit
-			 * from aggressive prefetching - they may skip around or stop
-			 * early.  If we already have 2+ batches loaded, pause instead of
-			 * loading more.
 			 */
-			if (index_scan_batch_full(scan) ||
-				(scan->xs_mergejoin_input && index_scan_batch_count(scan) >= 2))
+			if (index_scan_batch_full(scan))
 			{
 				batchringbuf->paused = true;
 				return read_stream_pause(stream);

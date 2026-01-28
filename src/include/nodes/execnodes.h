@@ -1697,7 +1697,6 @@ typedef struct
  *		Instrument		   local index scan instrumentation
  *		SharedInfo		   parallel worker instrumentation (no leader entry)
  *		TuplesNeeded	   tuple bound, see ExecSetTupleBound
- *		MergeJoinInput	   true if feeding a merge join, see ExecSetMergeJoinHint
  *
  *		ReorderQueue	   tuples that need reordering due to re-check
  *		ReachedEnd		   have we fetched all tuples from index already?
@@ -1727,7 +1726,6 @@ typedef struct IndexScanState
 	IndexScanInstrumentation iss_Instrument;
 	SharedIndexScanInstrumentation *iss_SharedInfo;
 	int64		iss_TuplesNeeded;
-	bool		iss_MergeJoinInput; /* true if feeding a merge join */
 
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
@@ -1757,7 +1755,6 @@ typedef struct IndexScanState
  *		Instrument		   local index scan instrumentation
  *		SharedInfo		   parallel worker instrumentation (no leader entry)
  *		TuplesNeeded	   tuple bound, see ExecSetTupleBound
- *		MergeJoinInput	   true if feeding a merge join, see ExecSetMergeJoinHint
  *		TableSlot		   slot for holding tuples fetched from the table
  *		PscanLen		   size of parallel index-only scan descriptor
  *		NameCStringAttNums attnums of name typed columns to pad to NAMEDATALEN
@@ -1781,7 +1778,6 @@ typedef struct IndexOnlyScanState
 	IndexScanInstrumentation ioss_Instrument;
 	SharedIndexScanInstrumentation *ioss_SharedInfo;
 	int64		ioss_TuplesNeeded;
-	bool		ioss_MergeJoinInput; /* true if feeding a merge join */
 	TupleTableSlot *ioss_TableSlot;
 	Size		ioss_PscanLen;
 	AttrNumber *ioss_NameCStringAttNums;

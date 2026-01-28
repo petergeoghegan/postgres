@@ -99,9 +99,6 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		/* Pass down any tuple bound */
 		scandesc->tuples_needed = node->ioss_TuplesNeeded;
 
-		/* Pass down merge join hint */
-		scandesc->xs_mergejoin_input = node->ioss_MergeJoinInput;
-
 		/*
 		 * If no run-time keys to calculate or they are ready, go ahead and
 		 * pass the scankeys to the index AM.
@@ -531,7 +528,6 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	indexstate->ioss_RuntimeKeys = NULL;
 	indexstate->ioss_NumRuntimeKeys = 0;
 	indexstate->ioss_TuplesNeeded = -1;
-	indexstate->ioss_MergeJoinInput = false;
 
 	/*
 	 * build the index scan keys from the index qualification
@@ -711,9 +707,6 @@ ExecIndexOnlyScanInitializeDSM(IndexOnlyScanState *node,
 	/* Pass down any tuple bound */
 	node->ioss_ScanDesc->tuples_needed = node->ioss_TuplesNeeded;
 
-	/* Pass down merge join hint */
-	node->ioss_ScanDesc->xs_mergejoin_input = node->ioss_MergeJoinInput;
-
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass
 	 * the scankeys to the index AM.
@@ -781,9 +774,6 @@ ExecIndexOnlyScanInitializeWorker(IndexOnlyScanState *node,
 
 	/* Pass down any tuple bound */
 	node->ioss_ScanDesc->tuples_needed = node->ioss_TuplesNeeded;
-
-	/* Pass down merge join hint */
-	node->ioss_ScanDesc->xs_mergejoin_input = node->ioss_MergeJoinInput;
 
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass

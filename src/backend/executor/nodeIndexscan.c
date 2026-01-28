@@ -118,9 +118,6 @@ IndexNext(IndexScanState *node)
 		/* Pass down any tuple bound */
 		scandesc->tuples_needed = node->iss_TuplesNeeded;
 
-		/* Pass down merge join hint */
-		scandesc->xs_mergejoin_input = node->iss_MergeJoinInput;
-
 		/*
 		 * If no run-time keys to calculate or they are ready, go ahead and
 		 * pass the scankeys to the index AM.
@@ -219,9 +216,6 @@ IndexNextWithReorder(IndexScanState *node)
 
 		/* Pass down any tuple bound */
 		scandesc->tuples_needed = node->iss_TuplesNeeded;
-
-		/* Pass down merge join hint */
-		scandesc->xs_mergejoin_input = node->iss_MergeJoinInput;
 
 		/*
 		 * If no run-time keys to calculate or they are ready, go ahead and
@@ -995,7 +989,6 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 	indexstate->iss_RuntimeKeys = NULL;
 	indexstate->iss_NumRuntimeKeys = 0;
 	indexstate->iss_TuplesNeeded = -1;
-	indexstate->iss_MergeJoinInput = false;
 
 	/*
 	 * build the index scan keys from the index qualification
@@ -1743,9 +1736,6 @@ ExecIndexScanInitializeDSM(IndexScanState *node,
 	/* Pass down any tuple bound */
 	node->iss_ScanDesc->tuples_needed = node->iss_TuplesNeeded;
 
-	/* Pass down merge join hint */
-	node->iss_ScanDesc->xs_mergejoin_input = node->iss_MergeJoinInput;
-
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass
 	 * the scankeys to the index AM.
@@ -1812,9 +1802,6 @@ ExecIndexScanInitializeWorker(IndexScanState *node,
 
 	/* Pass down any tuple bound */
 	node->iss_ScanDesc->tuples_needed = node->iss_TuplesNeeded;
-
-	/* Pass down merge join hint */
-	node->iss_ScanDesc->xs_mergejoin_input = node->iss_MergeJoinInput;
 
 	/*
 	 * If no run-time keys to calculate or they are ready, go ahead and pass
