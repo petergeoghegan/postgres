@@ -38,21 +38,23 @@
  * batches according to the conventions established here.  See indexam.sgml
  * for the full specification of the amgetbatch/amfreebatch contract.
  *
- * When the scan direction changes, the table AM must immediately stop its
+ * The table AM fully controls the read stream as its own private state.
+ * When the scan direction changes, the table AM must immediately reset its
  * read stream -- blocks already requested via prefetchPos will no longer
- * match what scanPos needs to return.  Crossing a batch boundary in a new
- * scan direction is a separate process, handled here: table AMs are required
- * to call tableam_util_batch_dirchange to leave the scan's batch ring buffer
- * in a consistent state.  The current implementation handles this by simply
- * discarding most batches.  The key invariant is that all loaded batches must
- * be in a consistent scan direction order.  (During cross-batch direction
- * changes, the current scanBatch will have its IndexScanBatchData.dir
- * flipped, but we have no provision for keeping all other loaded batches.
- * It's not clear that it'd be useful to hold onto them; the scan direction is
- * unlikely to change back.  The scan batch direction invariant keeps things
- * simple: it is convenient for most code that deals with batches to be able
- * to assume that the common case where scan direction never changes is the
- * only case.)
+ * match what scanPos needs to return.
+ *
+ * Crossing a batch boundary in a new scan direction is a separate process,
+ * handled here: table AMs are required to call tableam_util_batch_dirchange
+ * to leave the scan's batch ring buffer in a consistent state.  The current
+ * implementation handles this by simply discarding most batches.  The key
+ * invariant is that all loaded batches must be in a consistent scan direction
+ * order.  (During cross-batch direction changes, the current scanBatch will
+ * have its IndexScanBatchData.dir flipped, but we have no provision for
+ * keeping all other loaded batches.  It's not clear that it'd be useful to
+ * hold onto them; the scan direction is unlikely to change back.  The scan
+ * batch direction invariant keeps things simple: it is convenient for most
+ * code that deals with batches to be able to assume that the common case
+ * where scan direction never changes is the only case.)
  *
  * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -67,6 +69,7 @@
 #include "postgres.h"
 
 #include "access/amapi.h"
+#include "access/genam.h"
 #include "access/tableam.h"
 #include "catalog/catalog.h"
 #include "common/int.h"
@@ -88,9 +91,6 @@ index_batchscan_init(IndexScanDesc scan)
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
 	Assert(scan->indexRelation->rd_indam->amfreebatch != NULL);
 
-	/* Tracks scan direction used to return last item */
-	scan->batchringbuf.direction = NoMovementScanDirection;
-
 	scan->batchringbuf.scanPos.valid = false;
 	scan->batchringbuf.markPos.valid = false;
 	scan->batchringbuf.prefetchPos.valid = false;
@@ -100,14 +100,6 @@ index_batchscan_init(IndexScanDesc scan)
 	scan->batchringbuf.nextBatch = 0;	/* initial batch starts empty */
 	scan->batchringbuf.done = false;
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
-	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
-	scan->batchringbuf.paused = false;
-
-	/*
-	 * Start by resolving visibility for just one item, then gradually ramp up
-	 * the number of items processed.
-	 */
-	scan->batchringbuf.vmItems = 1;
 
 #ifdef BATCH_CACHE_DEBUG
 	/* Initialize batch cache stats */
@@ -135,15 +127,38 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 {
 	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	IndexScanBatch markBatch = batchringbuf->markBatch;
-	bool		markBatchFreed = false;
+	uint8		batchCount = (uint8) (batchringbuf->nextBatch -
+									  batchringbuf->headBatch);
 
 	Assert(scan->xs_heapfetch);
 
-	if (scan->xs_heapfetch->rs)
-		read_stream_reset(scan->xs_heapfetch->rs);
-
 	batchringbuf->scanPos.valid = false;
 	batchringbuf->prefetchPos.valid = false;
+
+	/*
+	 * Fast path for the common case: exactly one batch loaded, no markBatch,
+	 * MVCC scan (buffer already released), and no killed items.  This avoids
+	 * function call overhead through tableam_util_free_batch -> amfreebatch.
+	 */
+	if (likely(batchCount == 1 && markBatch == NULL && scan->MVCCScan))
+	{
+		IndexScanBatch batch = batchringbuf->batches[batchringbuf->headBatch &
+													 (INDEX_SCAN_MAX_BATCHES - 1)];
+
+		if (likely(batch->numKilled == 0))
+		{
+			/* Directly release to cache, skipping amfreebatch overhead */
+			if (BufferIsValid(batch->buf))
+			{
+				ReleaseBuffer(batch->buf);
+				batch->buf = InvalidBuffer;
+			}
+			indexam_util_batch_release(scan, batch);
+			batchringbuf->headBatch = 0;
+			batchringbuf->nextBatch = 0;
+			return;
+		}
+	}
 
 	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
@@ -151,6 +166,8 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	 */
 	if (complete && unlikely(markBatch != NULL))
 	{
+		bool		markBatchFreed = false;
+
 		/*
 		 * We'll free markBatch during this call.
 		 *
@@ -159,45 +176,45 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 		 */
 		batchringbuf->markBatch = NULL;
 		batchringbuf->markPos.valid = false;
-	}
 
-	/*
-	 * Release all currently loaded batches, being sure to avoid freeing
-	 * markBatch (unless called with complete, where we're supposed to)
-	 */
-	while (index_scan_batch_count(scan) > 0)
-	{
-		IndexScanBatch batch = index_scan_batch(scan,
-												batchringbuf->headBatch);
-
-		if (complete || batch != markBatch)
+		/*
+		 * Release all currently loaded batches
+		 */
+		for (uint8 i = batchringbuf->headBatch; i != batchringbuf->nextBatch; i++)
 		{
+			IndexScanBatch batch = index_scan_batch(scan, i);
+
 			markBatchFreed = (batch == markBatch);
 			tableam_util_free_batch(scan, batch);
 		}
 
-		/* update the valid range, so that asserts / debugging works */
-		batchringbuf->headBatch++;
+		if (markBatch != NULL && !markBatchFreed)
+		{
+			/*
+			 * We didn't free markBatch because it was no longer loaded in ring
+			 * buffer.  Do so now instead.
+			 */
+			tableam_util_free_batch(scan, markBatch);
+		}
 	}
-
-	if (complete && markBatch != NULL && !markBatchFreed)
+	else
 	{
 		/*
-		 * We didn't free markBatch because it was no longer loaded in ring
-		 * buffer.  Do so now instead.
+		 * Release all currently loaded batches, being sure to avoid freeing
+		 * markBatch
 		 */
-		tableam_util_free_batch(scan, markBatch);
+		for (uint8 i = batchringbuf->headBatch; i != batchringbuf->nextBatch; i++)
+		{
+			IndexScanBatch batch = index_scan_batch(scan, i);
+
+			if (batch != markBatch)
+				tableam_util_free_batch(scan, batch);
+		}
 	}
 
 	/* reset relevant batch state fields */
 	batchringbuf->headBatch = 0;	/* initial batch */
 	batchringbuf->nextBatch = 0;	/* initial batch is empty */
-
-	batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
-	batchringbuf->paused = false;
-
-	/* reset the visibility check batch size */
-	batchringbuf->vmItems = 1;
 }
 
 /*
@@ -344,7 +361,8 @@ index_batchscan_mark_pos(IndexScanDesc scan)
  *
  * We just discard all batches (other than markBatch/restored scanBatch),
  * except when markBatch is already the scan's current scanBatch.  We always
- * invalidate prefetchPos and close the scan's read stream, if any.  This
+ * invalidate prefetchPos.  The read stream and related prefetching state are
+ * handled by table_index_fetch_reset(), called before this function.  This
  * approach keeps things simple for table AMs: most code that deals with
  * batches is thereby able to assume that the common case where scan direction
  * never changes is the only case (tableam_util_batch_dirchange takes a
@@ -360,17 +378,12 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 	IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);
 
 	/*
-	 * Restoring a mark always required stopping prefetching/that we stop
-	 * using scan's read stream.  This is similar to the handling table AMs
-	 * implement to deal with a tuple-level change in the scan's direction.
+	 * Restoring a mark always requires stopping prefetching.  This is similar
+	 * to the handling table AMs implement to deal with a tuple-level change
+	 * in the scan's direction.  The read stream and related state are handled
+	 * by table_index_fetch_reset() called before this function.
 	 */
-	if (scan->xs_heapfetch->rs)
-	{
-		read_stream_end(scan->xs_heapfetch->rs);
-		scan->xs_heapfetch->rs = NULL;
-	}
 	batchringbuf->prefetchPos.valid = false;
-	batchringbuf->paused = false;
 
 	if (scanBatch == markBatch)
 	{
@@ -394,6 +407,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 	scan->indexRelation->rd_indam->amposreset(scan, markBatch);
 
 	/* Remove all batches from the ring buffer except for the marked batch */
+	scan->batchringbuf.done = true;
 	index_batchscan_reset(scan, false);
 
 	/*

@@ -125,7 +125,6 @@ typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 typedef struct IndexFetchTableData
 {
 	Relation	rel;
-	ReadStream *rs;
 } IndexFetchTableData;
 
 /*
@@ -267,9 +266,6 @@ typedef struct IndexScanBatchData *IndexScanBatch;
  */
 typedef struct BatchRingBuffer
 {
-	/* Current direction, helps determine when to invalidate read stream */
-	ScanDirection direction;
-
 	/* current positions in batches[] for scan */
 	BatchRingItemPos scanPos;	/* scan's read position */
 	BatchRingItemPos markPos;	/* mark/restore position */
@@ -294,36 +290,8 @@ typedef struct BatchRingBuffer
 	/* Array of pointers to cached recyclable batches */
 	IndexScanBatch cache[INDEX_SCAN_CACHE_BATCHES];
 
-	/*
-	 * Array of pointers to ring buffer batches
-	 *
-	 * Note: Must be accessed using the index_scan_batch* functions, which
-	 * will correctly deal with headBatch/nextBatch overflow.
-	 */
+	/* Array of pointers to ring buffer batches */
 	IndexScanBatch batches[INDEX_SCAN_MAX_BATCHES];
-
-	/*
-	 * Prefetching related state.
-	 *
-	 * XXX Should we move this to a heapam struct, such as IndexFetchHeapData?
-	 *
-	 * currentPrefetchBlock is the table AM block number that was returned by
-	 * its read stream callback most recently.  Used to suppress duplicate
-	 * successive read stream block requests.
-	 *
-	 * Occasionally, the read stream callback will request another table block
-	 * when the scan has already stored INDEX_SCAN_MAX_BATCHES-many batches.
-	 * The paused flag can set to remember that the callback had to return
-	 * read_stream_pause() (rather than the next block in line to be read).
-	 * When the scan can subsequently consumes enough scanPos items to make it
-	 * safe to free another batch, it must check this flag.  If the flag is
-	 * set, then the scan should call read_stream_resume (and unset the flag).
-	 */
-	BlockNumber currentPrefetchBlock;
-	bool		paused;
-
-	/* number of items to resolve during visibility checks */
-	int			vmItems;
 
 #ifdef BATCH_CACHE_DEBUG
 	/* Batch cache efficiency stats (for debugging/analysis) */
@@ -338,6 +306,7 @@ typedef struct BatchRingBuffer
 } BatchRingBuffer;
 
 struct IndexScanInstrumentation;
+struct IndexScanDescData;
 
 /*
  * We use the same IndexScanDescData structure for both amgettuple-based
@@ -501,6 +470,39 @@ index_scan_batch_append(IndexScanDescData *scan, IndexScanBatch batch)
 			ringbuf->batchHighWatermark = count;
 	}
 #endif
+}
+
+/*
+ * Compare two batch ring positions in the given scan direction.
+ *
+ * Returns negative if pos1 is behind pos2, 0 if equal, positive if pos1 is
+ * ahead of pos2.  This is in the style of a qsort comparator.
+ */
+static inline int
+index_scan_pos_cmp(BatchRingItemPos *pos1, BatchRingItemPos *pos2,
+				   ScanDirection direction)
+{
+	int8		batchdiff = (int8) (pos1->batch - pos2->batch);
+
+	if (batchdiff != 0)
+		return batchdiff;
+
+	/* Same batch, compare items */
+	if (ScanDirectionIsForward(direction))
+		return pos1->item - pos2->item;
+	else
+		return pos2->item - pos1->item;
+}
+
+/*
+ * Return the signed distance in batches between two positions.
+ *
+ * Positive means pos1 is ahead of pos2 by that many batches.
+ */
+static inline int8
+index_scan_pos_batch_distance(BatchRingItemPos *pos1, BatchRingItemPos *pos2)
+{
+	return (int8) (pos1->batch - pos2->batch);
 }
 
 /*
