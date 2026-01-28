@@ -496,6 +496,12 @@ Examples:
         default="io_uring",
         help="Value for io_method PostgreSQL setting (default: io_uring)"
     )
+    parser.add_argument(
+        "--delay-pgdata",
+        action="store_true",
+        dest="delay_pgdata",
+        help="Use data directories with simulated I/O delay (data-delay instead of data)"
+    )
     return parser.parse_args()
 
 
@@ -2786,7 +2792,16 @@ def run_stress_test(args):
 
 
 def main():
+    global MASTER_DATA_DIR, PATCH_DATA_DIR
     args = parse_arguments()
+
+    if args.delay_pgdata:
+        MASTER_DATA_DIR = "/mnt/nvme/postgresql/master/data-delay"
+        PATCH_DATA_DIR = "/mnt/nvme/postgresql/patch/data-delay"
+        print(f"Using delayed I/O data directories:")
+        print(f"  Master: {MASTER_DATA_DIR}")
+        print(f"  Patch:  {PATCH_DATA_DIR}")
+
     if args.stress_test:
         run_stress_test(args)
     elif args.readstream_tests:
