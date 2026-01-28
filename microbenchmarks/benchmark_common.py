@@ -430,6 +430,19 @@ QUERIES = OrderedDict([
         "prewarm_indexes": ["prefetch_orders_cust_date_idx", "prefetch_customers_pkey"],
         "prewarm_tables": ["prefetch_orders", "prefetch_customers"],
     }),
+    ("A19", {
+        "name": "Stress #1041: range-scan, index-only",
+        "sql": """
+            SELECT customer_id, order_date
+            FROM prefetch_orders
+            WHERE customer_id BETWEEN 91411 AND 91684
+            AND order_date BETWEEN '2023-02-15' AND '2023-02-23'
+            ORDER BY order_date
+        """,
+        "evict": ["prefetch_orders"],
+        "prewarm_indexes": ["prefetch_orders_cust_date_idx"],
+        "prewarm_tables": ["prefetch_orders"],
+    }),
 ])
 
 
