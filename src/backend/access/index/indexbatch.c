@@ -101,6 +101,7 @@ index_batchscan_init(IndexScanDesc scan)
 	scan->batchringbuf.done = false;
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
 	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
+	scan->batchringbuf.yielded = false;
 	scan->batchringbuf.paused = false;
 
 	/*
@@ -139,11 +140,15 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 
 	Assert(scan->xs_heapfetch);
 
-	if (scan->xs_heapfetch->rs)
-		read_stream_reset(scan->xs_heapfetch->rs);
-
+	/*
+	 * Invalidate positions before calling read_stream_reset, since the reset
+	 * may invoke the callback which checks scanPos.valid.
+	 */
 	batchringbuf->scanPos.valid = false;
 	batchringbuf->prefetchPos.valid = false;
+
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
 
 	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
