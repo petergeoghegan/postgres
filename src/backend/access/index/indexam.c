@@ -387,7 +387,12 @@ index_rescan(IndexScanDesc scan,
 	scan->xs_heap_continue = false;
 
 	if (scan->usebatchring)
+	{
+#ifdef BATCH_CACHE_DEBUG
+		scan->batchringbuf.rescans++;
+#endif
 		index_batchscan_reset(scan);
+	}
 
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
 											orderbys, norderbys);
