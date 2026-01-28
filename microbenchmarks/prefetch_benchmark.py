@@ -502,6 +502,12 @@ Examples:
         dest="delay_pgdata",
         help="Use data directories with simulated I/O delay (data-delay instead of data)"
     )
+    parser.add_argument(
+        "--old-master-results",
+        action="store_true",
+        dest="old_master_results",
+        help="Use master results from most recent benchmark run instead of re-running master"
+    )
     return parser.parse_args()
 
 
@@ -1490,6 +1496,38 @@ def run_query(conn, query_def, cached_mode, is_master, prefetch_setting, benchma
     return exec_time, explain_output
 
 
+def load_most_recent_master_results():
+    """Load master results from the most recent benchmark JSON file.
+
+    Returns:
+        tuple: (old_results dict, json_file path) or (None, None) if not found
+    """
+    if not os.path.exists(OUTPUT_DIR):
+        return None, None
+
+    # Find all benchmark JSON files
+    json_files = []
+    for f in os.listdir(OUTPUT_DIR):
+        if f.startswith("benchmark_") and f.endswith(".json"):
+            json_files.append(os.path.join(OUTPUT_DIR, f))
+
+    if not json_files:
+        return None, None
+
+    # Sort by modification time (most recent first)
+    json_files.sort(key=os.path.getmtime, reverse=True)
+
+    # Load the most recent one
+    most_recent = json_files[0]
+    try:
+        with open(most_recent, "r") as f:
+            old_results = json.load(f)
+        return old_results, most_recent
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Warning: Could not load {most_recent}: {e}")
+        return None, None
+
+
 def run_benchmark(args):
     """Run the benchmark."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -1519,6 +1557,34 @@ def run_benchmark(args):
     else:
         selected_queries = list(QUERIES.keys())
 
+    # Handle --old-master-results: load previous results and filter queries
+    old_master_data = None
+    old_master_file = None
+    old_results = None
+    if args.old_master_results:
+        old_results, old_master_file = load_most_recent_master_results()
+        if old_results is None:
+            print("Error: --old-master-results specified but no previous benchmark results found")
+            sys.exit(1)
+
+        # Extract master data from old results
+        old_master_data = {}
+        old_queries = old_results.get("queries", {})
+        for qid in list(selected_queries):
+            if qid in old_queries and old_queries[qid].get("master", {}).get("min") is not None:
+                old_master_data[qid] = old_queries[qid]["master"]
+            else:
+                print(f"Warning: Query {qid} has no master results in previous run, skipping")
+                selected_queries.remove(qid)
+
+        if not selected_queries:
+            print("Error: No queries with existing master results found")
+            sys.exit(1)
+
+        print(f"\nUsing master results from: {old_master_file}")
+        print(f"  Original master hash: {old_results.get('master_hash', 'unknown')}")
+        print(f"  Queries with results: {', '.join(selected_queries)}")
+
     print(f"\n{'=' * 60}")
     print("Prefetch Benchmark")
     print(f"{'=' * 60}")
@@ -1536,8 +1602,9 @@ def run_benchmark(args):
 
     # Verify/load data on each server (one at a time due to memory constraints)
     # Skip entirely if --skip-load is set
-    if args.skip_load:
-        master_version = None  # Will be fetched during benchmark run
+    # Skip master if --old-master-results is set
+    if args.skip_load or args.old_master_results:
+        master_version = None  # Will be fetched during benchmark run (or from old results)
         patch_version = None
     else:
         print("\n--- Verifying data on master ---")
@@ -1561,62 +1628,82 @@ def run_benchmark(args):
         time.sleep(2)
 
     # Results storage
+    # Use old master hash if using old master results
+    effective_master_hash = master_hash
+    if args.old_master_results and old_results:
+        effective_master_hash = old_results.get("master_hash", master_hash)
     results = {
         "timestamp": datetime.now().isoformat(),
-        "master_hash": master_hash,
+        "master_hash": effective_master_hash,
         "patch_hash": patch_hash,
         "master_version": master_version,
         "patch_version": patch_version,
         "mode": "cached" if args.cached else "uncached",
         "runs": args.runs,
         "queries": {},
+        "master_results_from": old_master_file if args.old_master_results else None,
     }
 
     # Initialize query results structure
     for query_id in selected_queries:
         query_def = QUERIES[query_id]
+        # Use old master data if available, otherwise initialize empty
+        if old_master_data and query_id in old_master_data:
+            master_result = old_master_data[query_id].copy()
+        else:
+            master_result = {"times": [], "avg": None, "min": None, "max": None, "explain": None}
         results["queries"][query_id] = {
             "name": query_def["name"],
-            "master": {"times": [], "avg": None, "min": None, "max": None, "explain": None},
+            "master": master_result,
             "patch_off": {"times": [], "avg": None, "min": None, "max": None, "explain": None},
             "patch_on": {"times": [], "avg": None, "min": None, "max": None, "explain": None},
         }
 
-    # Run all queries on master
-    print(f"\n{'=' * 60}")
-    print("Running all queries on MASTER")
-    print(f"{'=' * 60}")
-    master_start_time = time.time()
-    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
-    try:
-        master_conn = psycopg.connect(**MASTER_CONN)
-        pin_backend(master_conn.info.backend_pid, args.benchmark_cpu)
-        if master_version is None:
-            master_version = get_pg_version(MASTER_CONN)
-        with master_conn.cursor() as cur:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS pg_prewarm")
-            cur.execute("CREATE EXTENSION IF NOT EXISTS pg_buffercache")
+    # Run all queries on master (skip if using old master results)
+    if args.old_master_results:
+        print(f"\n{'=' * 60}")
+        print("SKIPPING MASTER (using previous results)")
+        print(f"{'=' * 60}")
+        master_start_time = 0
+        master_end_time = 0
+        # Get master version from old results if available
+        if old_results and old_results.get("master_version"):
+            master_version = old_results["master_version"]
+    else:
+        print(f"\n{'=' * 60}")
+        print("Running all queries on MASTER")
+        print(f"{'=' * 60}")
+        master_start_time = time.time()
+        start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
+        try:
+            master_conn = psycopg.connect(**MASTER_CONN)
+            pin_backend(master_conn.info.backend_pid, args.benchmark_cpu)
+            if master_version is None:
+                master_version = get_pg_version(MASTER_CONN)
+            with master_conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_prewarm")
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_buffercache")
 
-        for query_id in selected_queries:
-            query_def = QUERIES[query_id]
-            print(f"\n{query_id}: {query_def['name']} ({args.runs} runs)...")
-            for run in range(args.runs):
-                exec_time, explain_output = run_query(
-                    master_conn, query_def, args.cached,
-                    is_master=True, prefetch_setting=None,
-                    benchmark_cpu=args.benchmark_cpu
-                )
-                if exec_time is not None:
-                    results["queries"][query_id]["master"]["times"].append(exec_time)
-                    # Save the last run's explain output
-                    results["queries"][query_id]["master"]["explain"] = explain_output
-                    print(f"  Run {run + 1}: {exec_time:.3f} ms")
+            for query_id in selected_queries:
+                query_def = QUERIES[query_id]
+                print(f"\n{query_id}: {query_def['name']} ({args.runs} runs)...")
+                for run in range(args.runs):
+                    exec_time, explain_output = run_query(
+                        master_conn, query_def, args.cached,
+                        is_master=True, prefetch_setting=None,
+                        benchmark_cpu=args.benchmark_cpu
+                    )
+                    if exec_time is not None:
+                        results["queries"][query_id]["master"]["times"].append(exec_time)
+                        # Save the last run's explain output
+                        results["queries"][query_id]["master"]["explain"] = explain_output
+                        print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
-        master_conn.close()
-    finally:
-        stop_server(master_bin, MASTER_DATA_DIR)
-        time.sleep(2)
-    master_end_time = time.time()
+            master_conn.close()
+        finally:
+            stop_server(master_bin, MASTER_DATA_DIR)
+            time.sleep(2)
+        master_end_time = time.time()
 
     # Run all queries on patch (both prefetch=off and prefetch=on)
     print(f"\n{'=' * 60}")
