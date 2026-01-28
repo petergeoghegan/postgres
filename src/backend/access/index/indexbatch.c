@@ -103,7 +103,9 @@ index_batchscan_init(IndexScanDesc scan)
 	scan->batchringbuf.nextBatch = 0;	/* initial batch starts empty */
 	scan->batchringbuf.done = false;
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
+	scan->batchringbuf.extendedCache = NULL;
 	scan->batchringbuf.nextCacheSlot = 0;
+	scan->batchringbuf.cacheCapacity = INDEX_SCAN_CACHE_BATCHES;
 	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchringbuf.paused = false;
 
@@ -213,13 +215,18 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 void
 index_batchscan_end(IndexScanDesc scan)
 {
+	BatchRingBuffer *ringbuf = &scan->batchringbuf;
+	IndexScanBatch *cacheArray;
+
 	/* Call amfreebatch and all remaining loaded batches (even markBatch) */
-	scan->batchringbuf.done = true;
+	ringbuf->done = true;
 	index_batchscan_reset(scan, true);
 
-	for (int i = 0; i < scan->batchringbuf.nextCacheSlot; i++)
+	/* Free cached batches */
+	cacheArray = ringbuf->extendedCache ? ringbuf->extendedCache : ringbuf->cache;
+	for (int i = 0; i < ringbuf->nextCacheSlot; i++)
 	{
-		IndexScanBatch cached = scan->batchringbuf.cache[i];
+		IndexScanBatch cached = cacheArray[i];
 
 		if (cached->killedItems)
 			pfree(cached->killedItems);
@@ -227,6 +234,10 @@ index_batchscan_end(IndexScanDesc scan)
 			pfree(cached->currTuples);
 		pfree(cached);
 	}
+
+	/* Free extended cache array if allocated */
+	if (ringbuf->extendedCache)
+		pfree(ringbuf->extendedCache);
 
 #ifdef BATCH_CACHE_DEBUG
 #define BATCH_CACHE_DEBUG_MIN_BATCHES	50
@@ -665,10 +676,13 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 	/* First look for an existing batch from cache */
 	if (scan->usebatchring && scan->batchringbuf.nextCacheSlot > 0)
 	{
+		IndexScanBatch *cacheArray = scan->batchringbuf.extendedCache ?
+			scan->batchringbuf.extendedCache : scan->batchringbuf.cache;
+
 		/* Return cached batch */
 		scan->batchringbuf.nextCacheSlot--;
-		batch = scan->batchringbuf.cache[scan->batchringbuf.nextCacheSlot];
-		scan->batchringbuf.cache[scan->batchringbuf.nextCacheSlot] = NULL;
+		batch = cacheArray[scan->batchringbuf.nextCacheSlot];
+		cacheArray[scan->batchringbuf.nextCacheSlot] = NULL;
 #ifdef BATCH_CACHE_DEBUG
 		scan->batchringbuf.cacheHits++;
 #endif
@@ -733,19 +747,55 @@ indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 
 	if (scan->usebatchring)
 	{
+		BatchRingBuffer *ringbuf = &scan->batchringbuf;
+
 		/* amgetbatch scan caller */
 		Assert(scan->heapRelation != NULL);
 
-		if (!scan->batchringbuf.done &&
-			scan->batchringbuf.nextCacheSlot < INDEX_SCAN_CACHE_BATCHES)
+		if (!ringbuf->done)
 		{
+			IndexScanBatch *cacheArray;
+
 			/*
-			 * Use cache.  This is generally only beneficial when there are
-			 * many small rescans of an index.
+			 * If cache is full, double its capacity (up to max of 64).
 			 */
-			scan->batchringbuf.cache[scan->batchringbuf.nextCacheSlot] = batch;
-			scan->batchringbuf.nextCacheSlot++;
-			return;
+			if (ringbuf->nextCacheSlot >= ringbuf->cacheCapacity &&
+				ringbuf->cacheCapacity < INDEX_SCAN_CACHE_BATCHES_EXTENDED)
+			{
+				uint8		newCapacity = ringbuf->cacheCapacity * 2;
+				IndexScanBatch *newCache;
+				IndexScanBatch *oldCache = ringbuf->extendedCache;
+
+
+				/* Copy from old cache (inline or extended) */
+				if (oldCache)
+				{
+					newCache = repalloc(oldCache, sizeof(IndexScanBatch) * newCapacity);
+				}
+				else
+				{
+					newCache = palloc(sizeof(IndexScanBatch) * newCapacity);
+					memcpy(newCache, ringbuf->cache,
+						   sizeof(IndexScanBatch) * ringbuf->cacheCapacity);
+				}
+
+				ringbuf->extendedCache = newCache;
+				ringbuf->cacheCapacity = newCapacity;
+			}
+
+			cacheArray = ringbuf->extendedCache ? ringbuf->extendedCache :
+				ringbuf->cache;
+
+			if (ringbuf->nextCacheSlot < ringbuf->cacheCapacity)
+			{
+				/*
+				 * Use cache.  This is generally only beneficial when there
+				 * are many small rescans of an index.
+				 */
+				cacheArray[ringbuf->nextCacheSlot] = batch;
+				ringbuf->nextCacheSlot++;
+				return;
+			}
 		}
 
 		/*
