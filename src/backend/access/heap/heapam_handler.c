@@ -507,6 +507,7 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 		 */
 		if (!scan->xs_heapfetch->rs && priorBatch && scan->MVCCScan &&
 			(scan->tuples_needed == -1 || scan->tuples_needed > 10) &&
+			!scan->xs_mergejoin_input &&
 			enable_indexscan_prefetch)
 		{
 			Assert(!batchringbuf->prefetchPos.valid);

@@ -1493,6 +1493,13 @@ ExecInitMergeJoin(MergeJoin *node, EState *estate, int eflags)
 	innerDesc = ExecGetResultType(innerPlanState(mergestate));
 
 	/*
+	 * Let child nodes know they're feeding a merge join.  This allows index
+	 * scans to optimize their behavior (e.g., prefetching strategies).
+	 */
+	ExecSetMergeJoinHint(outerPlanState(mergestate));
+	ExecSetMergeJoinHint(innerPlanState(mergestate));
+
+	/*
 	 * For certain types of inner child nodes, it is advantageous to issue
 	 * MARK every time we advance past an inner tuple we will never return to.
 	 * For other types, MARK on a tuple we cannot return to is a waste of

@@ -1014,3 +1014,107 @@ ExecSetTupleBound(int64 tuples_needed, PlanState *child_node)
 	 * it's unclear that any other cases are worth checking here.
 	 */
 }
+
+/*
+ * ExecSetMergeJoinHint
+ *
+ * Set a hint on a planstate node indicating that it is feeding a merge join.
+ * This lets child index scan nodes optimize their behavior based on the
+ * knowledge that they're providing sorted input to a merge join.
+ *
+ * This should be called after node initialization (typically from
+ * ExecInitMergeJoin) on both the inner and outer children of a merge join.
+ */
+void
+ExecSetMergeJoinHint(PlanState *child_node)
+{
+	/*
+	 * Since this function recurses, in principle we should check stack depth
+	 * here.  In practice, it's probably pointless since the earlier node
+	 * initialization tree traversal would surely have consumed more stack.
+	 */
+
+	if (IsA(child_node, AppendState))
+	{
+		/*
+		 * If it is an Append, we can apply the hint to any nodes that are
+		 * children of the Append.
+		 */
+		AppendState *aState = (AppendState *) child_node;
+		int			i;
+
+		for (i = 0; i < aState->as_nplans; i++)
+			ExecSetMergeJoinHint(aState->appendplans[i]);
+	}
+	else if (IsA(child_node, MergeAppendState))
+	{
+		/*
+		 * If it is a MergeAppend, we can apply the hint to any nodes that
+		 * are children of the MergeAppend.
+		 */
+		MergeAppendState *maState = (MergeAppendState *) child_node;
+		int			i;
+
+		for (i = 0; i < maState->ms_nplans; i++)
+			ExecSetMergeJoinHint(maState->mergeplans[i]);
+	}
+	else if (IsA(child_node, ResultState))
+	{
+		/*
+		 * For a projecting Result, we can apply the hint to its child node.
+		 */
+		if (outerPlanState(child_node))
+			ExecSetMergeJoinHint(outerPlanState(child_node));
+	}
+	else if (IsA(child_node, SubqueryScanState))
+	{
+		/*
+		 * We can descend through SubqueryScan.
+		 */
+		SubqueryScanState *subqueryState = (SubqueryScanState *) child_node;
+
+		ExecSetMergeJoinHint(subqueryState->subplan);
+	}
+	else if (IsA(child_node, GatherState))
+	{
+		/*
+		 * A Gather node can propagate the hint to its child.
+		 */
+		ExecSetMergeJoinHint(outerPlanState(child_node));
+	}
+	else if (IsA(child_node, GatherMergeState))
+	{
+		/* Same as for Gather */
+		ExecSetMergeJoinHint(outerPlanState(child_node));
+	}
+	else if (IsA(child_node, IndexScanState))
+	{
+		/*
+		 * If it is an IndexScan, save the hint in the state so it can be
+		 * propagated to the IndexScanDesc when the scan is started.
+		 */
+		IndexScanState *isstate = (IndexScanState *) child_node;
+
+		isstate->iss_MergeJoinInput = true;
+
+		/* If scan already started, update the IndexScanDesc too */
+		if (isstate->iss_ScanDesc)
+			isstate->iss_ScanDesc->xs_mergejoin_input = true;
+	}
+	else if (IsA(child_node, IndexOnlyScanState))
+	{
+		/* Same as for IndexScan */
+		IndexOnlyScanState *iosstate = (IndexOnlyScanState *) child_node;
+
+		iosstate->ioss_MergeJoinInput = true;
+
+		/* If scan already started, update the IndexScanDesc too */
+		if (iosstate->ioss_ScanDesc)
+			iosstate->ioss_ScanDesc->xs_mergejoin_input = true;
+	}
+
+	/*
+	 * We don't descend through nodes that could reorder or combine rows, as
+	 * that would make the merge join hint meaningless for lower nodes.
+	 */
+}

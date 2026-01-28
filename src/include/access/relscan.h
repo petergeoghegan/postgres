@@ -415,6 +415,9 @@ typedef struct IndexScanDescData
 	struct ParallelIndexScanDescData *parallel_scan;
 
 	int64		tuples_needed;
+
+	/* true if this scan is feeding a merge join */
+	bool		xs_mergejoin_input;
 } IndexScanDescData;
 
 /* Generic structure for parallel scans */
