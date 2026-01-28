@@ -973,7 +973,8 @@ def run_prefetch_query_profiling(args, master_bin, patch_bin, tmpfs_mount, perf_
         if tmpfs_mount:
             cleanup_tmpfs(tmpfs_mount)
 
-    print(f"\nPatch query took \033[1m{total_time_patch/total_time_master:.3f}x\033[0m as long as master")
+    print(f"\nPatch min: {total_time_patch:.2f} ms, Master min: {total_time_master:.2f} ms")
+    print(f"Patch query took \033[1m{total_time_patch/total_time_master:.3f}x\033[0m as long as master")
 
     if not run_perf and not args.perfstat:
         print("Perf profiling was disabled. Exiting.")
@@ -1104,8 +1105,10 @@ def profile_prefetch_query(pg_bin_dir, pg_name, conn_details, output_file, sql_q
         execution_times = []
 
         for i in range(query_repetitions):
-            # Prepare cache before each run (including first - EXPLAIN ANALYZE above affects cache)
-            prepare_prefetch_cache(conn, query_def, cached_mode)
+            # In uncached mode, prepare cache before each run
+            # In cached mode, data stays in buffer cache so no need to re-prewarm
+            if not cached_mode:
+                prepare_prefetch_cache(conn, query_def, cached_mode)
 
             with conn.cursor() as cursor:
                 cursor.execute(explain_sql)
@@ -1145,7 +1148,9 @@ def profile_prefetch_query(pg_bin_dir, pg_name, conn_details, output_file, sql_q
         if gucs:
             reset_gucs(conn, gucs)
 
-        return perf_command, total_time
+        # Return min execution time (in ms) for accurate comparison
+        query_time_ms = min_time if execution_times else total_time * 1000
+        return perf_command, query_time_ms
 
     finally:
         if conn:
@@ -1224,6 +1229,18 @@ def main():
     # Extract perf event from args.perf if it's a string, otherwise set to None
     perf_event = args.perf if isinstance(args.perf, str) else None
     run_perf = bool(args.perf)  # True if --perf was specified (with or without event)
+
+    # Check perf_event_paranoid setting when using perf
+    if run_perf or args.perfstat:
+        try:
+            with open("/proc/sys/kernel/perf_event_paranoid", "r") as f:
+                paranoid = int(f.read().strip())
+                if paranoid != -1:
+                    print(f"Error: /proc/sys/kernel/perf_event_paranoid is {paranoid}, must be -1")
+                    print("Fix with: sudo sysctl kernel.perf_event_paranoid=-1")
+                    sys.exit(1)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Warning: Could not check perf_event_paranoid: {e}")
 
     # Validate that --queries is only used with --benchmark simple_select
     if args.num_queries is not None and args.benchmark != "simple_select":

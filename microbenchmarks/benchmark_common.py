@@ -363,6 +363,39 @@ QUERIES = OrderedDict([
         "prewarm_indexes": ["prefetch_orders_prod_idx"],
         "prewarm_tables": ["prefetch_orders"],
     }),
+    ("A15", {
+        "name": "regressed anti-join, index-only",
+        "sql": """
+            SELECT o.customer_id, o.order_date
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-02-09' AND '2023-02-23'
+            AND o.customer_id BETWEEN 36307 AND 37126
+            AND NOT EXISTS (
+            SELECT 1 FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id
+            AND c.region_id = 4
+            )
+            ORDER BY o.order_date
+        """,
+        "evict": ["prefetch_orders", "prefetch_customers"],
+        "prewarm_indexes": ["prefetch_orders_cust_date_idx", "prefetch_customers_pkey"],
+        "prewarm_tables": ["prefetch_orders", "prefetch_customers"],
+    }),
+    ("A16", {
+        "name": "correlated query, regressed with --cache mode only",
+        "sql": """
+            SELECT o.order_id, o.customer_id, o.amount,
+            (SELECT c.customer_name FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id) as cust_name
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-01-27' AND '2023-04-11'
+            AND o.customer_id BETWEEN 77305 AND 77845
+            ORDER BY o.order_date
+        """,
+        "evict": ["prefetch_customers", "prefetch_orders"],
+        "prewarm_indexes": ["prefetch_orders_cust_date_idx", "prefetch_customers_pkey"],
+        "prewarm_tables": ["prefetch_customers", "prefetch_orders"],
+    }),
 ])
 
 

@@ -89,7 +89,7 @@ READSTREAM_QUERIES = OrderedDict([
         """,
         "evict": ["t_readstream"],
         "prewarm_indexes": ["idx_readstream"],
-        "prewarm_tables": [],
+        "prewarm_tables": ["t_readstream"],
         "gucs": {
             "enable_bitmapscan": "off",
             "enable_seqscan": "off",
@@ -104,7 +104,7 @@ READSTREAM_QUERIES = OrderedDict([
         """,
         "evict": ["t_tupdistance_new_regress"],
         "prewarm_indexes": ["t_tupdistance_new_regress_idx"],
-        "prewarm_tables": [],
+        "prewarm_tables": ["t_tupdistance_new_regress"],
         "gucs": {
             "enable_bitmapscan": "off",
             "enable_seqscan": "off",
@@ -119,7 +119,7 @@ READSTREAM_QUERIES = OrderedDict([
         """,
         "evict": ["t_remaining_regression"],
         "prewarm_indexes": ["t_remaining_regression_idx"],
-        "prewarm_tables": [],
+        "prewarm_tables": ["t_remaining_regression"],
         "gucs": {
             "enable_bitmapscan": "off",
             "enable_seqscan": "off",
@@ -141,7 +141,7 @@ RANDOM_BACKWARDS_QUERIES = OrderedDict([
         """,
         "evict": ["t"],
         "prewarm_indexes": ["t_pk"],
-        "prewarm_tables": [],
+        "prewarm_tables": ["t"],
         "gucs": {
             "enable_bitmapscan": "off",
             "enable_seqscan": "off",
@@ -156,7 +156,7 @@ RANDOM_BACKWARDS_QUERIES = OrderedDict([
         """,
         "evict": ["t"],
         "prewarm_indexes": ["t_pk"],
-        "prewarm_tables": [],
+        "prewarm_tables": ["t"],
         "gucs": {
             "enable_bitmapscan": "off",
             "enable_seqscan": "off",
@@ -171,7 +171,7 @@ RANDOM_BACKWARDS_QUERIES = OrderedDict([
         """,
         "evict": ["t_randomized"],
         "prewarm_indexes": ["t_randomized_pk"],
-        "prewarm_tables": [],
+        "prewarm_tables": ["t_randomized"],
         "gucs": {
             "enable_bitmapscan": "off",
             "enable_seqscan": "off",
@@ -186,7 +186,7 @@ RANDOM_BACKWARDS_QUERIES = OrderedDict([
         """,
         "evict": ["t_randomized"],
         "prewarm_indexes": ["t_randomized_pk"],
-        "prewarm_tables": [],
+        "prewarm_tables": ["t_randomized"],
         "gucs": {
             "enable_bitmapscan": "off",
             "enable_seqscan": "off",
@@ -459,6 +459,42 @@ Examples:
         action="store_true",
         dest="random_backwards_tests",
         help="Run random backwards benchmark tests (loads data if needed)"
+    )
+    parser.add_argument(
+        "--effective_io_concurrency",
+        type=int,
+        default=100,
+        help="Value for effective_io_concurrency PostgreSQL setting (default: 100)"
+    )
+    parser.add_argument(
+        "--io_combine_limit",
+        type=int,
+        default=128,
+        help="Value for io_combine_limit in 8kB units (default: 128 = 1MB)"
+    )
+    parser.add_argument(
+        "--io_max_combine_limit",
+        type=int,
+        default=128,
+        help="Value for io_max_combine_limit in 8kB units (default: 128 = 1MB)"
+    )
+    parser.add_argument(
+        "--io_max_concurrency",
+        type=int,
+        default=64,
+        help="Value for io_max_concurrency PostgreSQL setting (default: 64)"
+    )
+    parser.add_argument(
+        "--io_workers",
+        type=int,
+        default=3,
+        help="Value for io_workers PostgreSQL setting (default: 3)"
+    )
+    parser.add_argument(
+        "--io_method",
+        type=str,
+        default="io_uring",
+        help="Value for io_method PostgreSQL setting (default: io_uring)"
     )
     return parser.parse_args()
 
@@ -959,7 +995,18 @@ def get_pg_version(conn_details):
 # setup_tmpfs_hugepages, copy_binaries_to_tmpfs, cleanup_tmpfs are imported from benchmark_common
 
 
-def start_server(pg_bin_dir, pg_name, pg_data_dir, conn_details):
+def print_io_settings(args):
+    """Print the PostgreSQL I/O settings that will be used."""
+    print(f"\nPostgreSQL I/O settings:")
+    print(f"  effective_io_concurrency = {args.effective_io_concurrency}")
+    print(f"  io_combine_limit = {args.io_combine_limit} (8kB units)")
+    print(f"  io_max_combine_limit = {args.io_max_combine_limit} (8kB units)")
+    print(f"  io_max_concurrency = {args.io_max_concurrency}")
+    print(f"  io_workers = {args.io_workers}")
+    print(f"  io_method = {args.io_method}")
+
+
+def start_server(pg_bin_dir, pg_name, pg_data_dir, conn_details, args):
     """Start a PostgreSQL server and wait for it to be ready."""
     pg_ctl_path = os.path.join(pg_bin_dir, "pg_ctl")
     log_file = os.path.join(OUTPUT_DIR, f"{pg_name}.postgres_log")
@@ -979,15 +1026,24 @@ def start_server(pg_bin_dir, pg_name, pg_data_dir, conn_details):
     print(f"Starting {pg_name} PostgreSQL server (port {conn_details.get('port', 'default')})...")
     start_options = f"-p {conn_details['port']}" if 'port' in conn_details else ""
 
-    result = subprocess.run(
-        [pg_ctl_path, "start",
-         "-o", "--autovacuum=off",
-         "-D", pg_data_dir,
-         "-l", log_file,
-         "-o", start_options],
-        capture_output=True,
-        text=True
-    )
+    # Build PostgreSQL configuration options
+    pg_options = [
+        "--autovacuum=off",
+        f"-c effective_io_concurrency={args.effective_io_concurrency}",
+        f"-c io_combine_limit={args.io_combine_limit}",
+        f"-c io_max_combine_limit={args.io_max_combine_limit}",
+        f"-c io_max_concurrency={args.io_max_concurrency}",
+        f"-c io_workers={args.io_workers}",
+        f"-c io_method={args.io_method}",
+    ]
+
+    cmd = [pg_ctl_path, "start", "-D", pg_data_dir, "-l", log_file]
+    for opt in pg_options:
+        cmd.extend(["-o", opt])
+    if start_options:
+        cmd.extend(["-o", start_options])
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
         print(f"Error: Failed to start {pg_name} server")
@@ -1470,6 +1526,7 @@ def run_benchmark(args):
     patch_hash = get_git_hash(PATCH_SOURCE_DIR)
     print(f"Master git hash: {master_hash}")
     print(f"Patch git hash: {patch_hash}")
+    print_io_settings(args)
 
     # Verify/load data on each server (one at a time due to memory constraints)
     # Skip entirely if --skip-load is set
@@ -1478,7 +1535,7 @@ def run_benchmark(args):
         patch_version = None
     else:
         print("\n--- Verifying data on master ---")
-        start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN)
+        start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
         if not verify_data(MASTER_CONN, args.skip_load):
             print("Loading data on master...")
             load_data(MASTER_CONN)
@@ -1488,7 +1545,7 @@ def run_benchmark(args):
         time.sleep(2)
 
         print("\n--- Verifying data on patch ---")
-        start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+        start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
         if not verify_data(PATCH_CONN, args.skip_load):
             print("Loading data on patch...")
             load_data(PATCH_CONN)
@@ -1524,7 +1581,7 @@ def run_benchmark(args):
     print("Running all queries on MASTER")
     print(f"{'=' * 60}")
     master_start_time = time.time()
-    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN)
+    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
     try:
         master_conn = psycopg.connect(**MASTER_CONN)
         pin_backend(master_conn.info.backend_pid, args.benchmark_cpu)
@@ -1560,7 +1617,7 @@ def run_benchmark(args):
     print("Running all queries on PATCH")
     print(f"{'=' * 60}")
     patch_start_time = time.time()
-    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
     try:
         patch_conn = psycopg.connect(**PATCH_CONN)
         pin_backend(patch_conn.info.backend_pid, args.benchmark_cpu)
@@ -1864,7 +1921,16 @@ def run_readstream_tests(args):
     else:
         print("\nSkipping tmpfs hugepages setup (disabled with --no-tmpfs-hugepages)")
 
-    queries = READSTREAM_QUERIES
+    # Parse query selection
+    if args.queries:
+        selected_queries = [q.strip().upper() for q in args.queries.split(",")]
+        for q in selected_queries:
+            if q not in READSTREAM_QUERIES:
+                print(f"Error: Unknown query '{q}'. Available: {', '.join(READSTREAM_QUERIES.keys())}")
+                sys.exit(1)
+        queries = OrderedDict((k, READSTREAM_QUERIES[k]) for k in selected_queries)
+    else:
+        queries = READSTREAM_QUERIES
 
     print(f"\n{'=' * 60}")
     print("Readstream Benchmark Tests")
@@ -1878,10 +1944,11 @@ def run_readstream_tests(args):
     patch_hash = get_git_hash(PATCH_SOURCE_DIR)
     print(f"Master git hash: {master_hash}")
     print(f"Patch git hash: {patch_hash}")
+    print_io_settings(args)
 
     # Verify/load data on each server
     print("\n--- Verifying data on master ---")
-    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN)
+    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
     if not verify_readstream_data(MASTER_CONN):
         print("Loading data on master...")
         load_readstream_data(MASTER_CONN)
@@ -1890,7 +1957,7 @@ def run_readstream_tests(args):
     time.sleep(2)
 
     print("\n--- Verifying data on patch ---")
-    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
     if not verify_readstream_data(PATCH_CONN):
         print("Loading data on patch...")
         load_readstream_data(PATCH_CONN)
@@ -1924,7 +1991,7 @@ def run_readstream_tests(args):
     print(f"\n{'=' * 60}")
     print("Running all queries on MASTER")
     print(f"{'=' * 60}")
-    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN)
+    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
     try:
         master_conn = psycopg.connect(**MASTER_CONN)
         pin_backend(master_conn.info.backend_pid, args.benchmark_cpu)
@@ -1955,7 +2022,7 @@ def run_readstream_tests(args):
     print(f"\n{'=' * 60}")
     print("Running all queries on PATCH")
     print(f"{'=' * 60}")
-    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
     try:
         patch_conn = psycopg.connect(**PATCH_CONN)
         pin_backend(patch_conn.info.backend_pid, args.benchmark_cpu)
@@ -2089,7 +2156,16 @@ def run_random_backwards_tests(args):
     else:
         print("\nSkipping tmpfs hugepages setup (disabled with --no-tmpfs-hugepages)")
 
-    queries = RANDOM_BACKWARDS_QUERIES
+    # Parse query selection
+    if args.queries:
+        selected_queries = [q.strip().upper() for q in args.queries.split(",")]
+        for q in selected_queries:
+            if q not in RANDOM_BACKWARDS_QUERIES:
+                print(f"Error: Unknown query '{q}'. Available: {', '.join(RANDOM_BACKWARDS_QUERIES.keys())}")
+                sys.exit(1)
+        queries = OrderedDict((k, RANDOM_BACKWARDS_QUERIES[k]) for k in selected_queries)
+    else:
+        queries = RANDOM_BACKWARDS_QUERIES
 
     print(f"\n{'=' * 60}")
     print("Random Backwards Benchmark Tests")
@@ -2103,10 +2179,11 @@ def run_random_backwards_tests(args):
     patch_hash = get_git_hash(PATCH_SOURCE_DIR)
     print(f"Master git hash: {master_hash}")
     print(f"Patch git hash: {patch_hash}")
+    print_io_settings(args)
 
     # Verify/load data on each server
     print("\n--- Verifying data on master ---")
-    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN)
+    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
     if not verify_random_backwards_data(MASTER_CONN):
         print("Loading data on master...")
         load_random_backwards_data(MASTER_CONN)
@@ -2115,7 +2192,7 @@ def run_random_backwards_tests(args):
     time.sleep(2)
 
     print("\n--- Verifying data on patch ---")
-    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
     if not verify_random_backwards_data(PATCH_CONN):
         print("Loading data on patch...")
         load_random_backwards_data(PATCH_CONN)
@@ -2149,7 +2226,7 @@ def run_random_backwards_tests(args):
     print(f"\n{'=' * 60}")
     print("Running all queries on MASTER")
     print(f"{'=' * 60}")
-    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN)
+    start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
     try:
         master_conn = psycopg.connect(**MASTER_CONN)
         pin_backend(master_conn.info.backend_pid, args.benchmark_cpu)
@@ -2180,7 +2257,7 @@ def run_random_backwards_tests(args):
     print(f"\n{'=' * 60}")
     print("Running all queries on PATCH")
     print(f"{'=' * 60}")
-    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+    start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
     try:
         patch_conn = psycopg.connect(**PATCH_CONN)
         pin_backend(patch_conn.info.backend_pid, args.benchmark_cpu)
@@ -2326,6 +2403,7 @@ def run_stress_test(args):
     patch_hash = get_git_hash(PATCH_SOURCE_DIR)
     print(f"\nMaster git hash: {master_hash}")
     print(f"Patch git hash: {patch_hash}")
+    print_io_settings(args)
 
     # We assume data is already loaded (--skip-load behavior for stress test)
     # User should run the normal benchmark first to ensure data exists
@@ -2363,7 +2441,7 @@ def run_stress_test(args):
 
             # Run all queries on master, replacing any that are too fast
             print(f"\n--- Running on MASTER ---")
-            start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN)
+            start_server(master_bin, "master", MASTER_DATA_DIR, MASTER_CONN, args)
             try:
                 master_conn = psycopg.connect(**MASTER_CONN)
                 pin_backend(master_conn.info.backend_pid, args.benchmark_cpu)
@@ -2403,9 +2481,9 @@ def run_stress_test(args):
                                     # Update results dict for new query
                                     results[query_id] = {
                                         "query_def": query_def,
-                                        "master": {"times": [], "avg": None, "explain": None},
-                                        "patch_off": {"times": [], "avg": None, "explain": None},
-                                        "patch_on": {"times": [], "avg": None, "explain": None},
+                                        "master": {"times": [], "min": None, "explain": None},
+                                        "patch_off": {"times": [], "min": None, "explain": None},
+                                        "patch_on": {"times": [], "min": None, "explain": None},
                                     }
                                     continue  # Try again with new query
                                 else:
@@ -2430,7 +2508,7 @@ def run_stress_test(args):
 
             # Run all queries on patch
             print(f"\n--- Running on PATCH ---")
-            start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+            start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
             try:
                 patch_conn = psycopg.connect(**PATCH_CONN)
                 pin_backend(patch_conn.info.backend_pid, args.benchmark_cpu)
@@ -2560,7 +2638,7 @@ def run_stress_test(args):
                 print(f"\n--- Verifying {len(regressions_found)} apparent regression(s) with retries ---")
                 confirmed_regressions = []
 
-                start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN)
+                start_server(patch_bin, "patch", PATCH_DATA_DIR, PATCH_CONN, args)
                 try:
                     patch_conn = psycopg.connect(**PATCH_CONN)
                     pin_backend(patch_conn.info.backend_pid, args.benchmark_cpu)
