@@ -287,6 +287,8 @@ typedef struct BatchRingBuffer
 	 */
 	uint8		nextBatch;
 
+	bool		done;
+
 	/* Array of pointers to cached recyclable batches */
 	IndexScanBatch cache[INDEX_SCAN_CACHE_BATCHES];
 

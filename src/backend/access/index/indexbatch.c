@@ -100,6 +100,7 @@ index_batchscan_init(IndexScanDesc scan)
 	scan->batchringbuf.markBatch = NULL;
 	scan->batchringbuf.headBatch = 0;	/* initial head batch */
 	scan->batchringbuf.nextBatch = 0;	/* initial batch starts empty */
+	scan->batchringbuf.done = false;
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
 	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchringbuf.paused = false;
@@ -201,6 +202,7 @@ void
 index_batchscan_end(IndexScanDesc scan)
 {
 	/* Call amfreebatch and all remaining loaded batches (even markBatch) */
+	scan->batchringbuf.done = true;
 	index_batchscan_reset(scan, true);
 
 	for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
@@ -694,7 +696,7 @@ indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 		/* amgetbatch scan caller */
 		Assert(scan->heapRelation != NULL);
 
-		if (batch->knownEndLeft || batch->knownEndRight)
+		if (scan->batchringbuf.done)
 		{
 			/* Don't bother using cache when scan is ending */
 		}
