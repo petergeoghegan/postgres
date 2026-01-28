@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import random
 import re
@@ -1993,6 +1994,35 @@ def run_benchmark(args):
             print(f"    {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
     else:
         print("  (none)")
+
+    # Print overall summary comparing patch vs master
+    # Determine which config to summarize based on benchmark settings
+    if args.prefetch_disabled:
+        summary_config = "prefetch=off"
+        summary_label = "patch + no prefetch vs master"
+    else:
+        summary_config = "prefetch=on"
+        summary_label = "patch + prefetch vs master"
+
+    # Filter ratios for the applicable config
+    config_ratios = [e for e in all_ratios if e["config"] == summary_config]
+
+    if config_ratios:
+        # Calculate total execution times
+        total_master_ms = sum(e["master_ms"] for e in config_ratios)
+        total_patch_ms = sum(e["patch_ms"] for e in config_ratios)
+
+        # Calculate geometric mean of ratios
+        log_sum = sum(math.log(e["ratio"]) for e in config_ratios)
+        geomean_ratio = math.exp(log_sum / len(config_ratios))
+
+        print(f"\n{'=' * 60}")
+        print(f"OVERALL SUMMARY: {summary_label}")
+        print(f"{'=' * 60}")
+        print(f"  Total execution time (master): {total_master_ms:10.3f} ms")
+        print(f"  Total execution time (patch):  {total_patch_ms:10.3f} ms")
+        print(f"  Geometric mean of ratios:      {BOLD}{geomean_ratio:.3f}x{RESET}")
+        print(f"  Number of queries:             {len(config_ratios)}")
 
 
 def run_readstream_tests(args):
