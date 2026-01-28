@@ -511,10 +511,24 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 		{
 			Assert(!batchringbuf->prefetchPos.valid);
 
-			scan->xs_heapfetch->rs =
-				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
-										   scan->heapRelation, MAIN_FORKNUM,
-										   heapam_getnext_stream, scan, 0);
+			if (scan->xs_want_itup)
+			{
+				IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
+
+				if (hscan->xs_blk != InvalidBlockNumber)
+					scan->xs_heapfetch->rs =
+						read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
+												   scan->heapRelation, MAIN_FORKNUM,
+												   heapam_getnext_stream, scan, 0);
+			}
+			else
+			{
+
+				scan->xs_heapfetch->rs =
+					read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
+											   scan->heapRelation, MAIN_FORKNUM,
+											   heapam_getnext_stream, scan, 0);
+			}
 		}
 	}
 	else
