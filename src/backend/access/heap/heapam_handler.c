@@ -655,6 +655,10 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 	index_scan_pos_nextbatch(direction, scanBatch, scanPos);
 	Assert(index_scan_batch(scan, scanPos->batch) == scanBatch);
 
+#ifdef BATCH_CACHE_DEBUG
+	batchringbuf->batchesScanned++;
+#endif
+
 	/*
 	 * Remove the head batch from the batch ring buffer (unless the head batch
 	 * is also our new scanBatch, which happens on the first call here)
