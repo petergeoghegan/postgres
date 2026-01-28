@@ -825,6 +825,11 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				return InvalidBlockNumber;
 			}
 
+			if (index_scan_batch_count(scan) >= 3)
+			{
+				return read_stream_yield(stream);
+			}
+
 			/* Position prefetchPos to the start of new prefetchBatch */
 			index_scan_pos_nextbatch(direction, prefetchBatch, prefetchPos);
 		}
