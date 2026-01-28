@@ -389,6 +389,9 @@ index_rescan(IndexScanDesc scan,
 
 	if (scan->usebatchring)
 	{
+#ifdef BATCH_CACHE_DEBUG
+		scan->batchringbuf.rescans++;
+#endif
 		Assert(!scan->batchringbuf.done);
 		index_batchscan_reset(scan);
 	}
