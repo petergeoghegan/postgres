@@ -103,7 +103,6 @@ index_batchscan_init(IndexScanDesc scan)
 	scan->batchringbuf.nextBatch = 0;	/* initial batch starts empty */
 	scan->batchringbuf.done = false;
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
-	scan->batchringbuf.nextCacheSlot = 0;
 	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchringbuf.paused = false;
 
@@ -217,9 +216,12 @@ index_batchscan_end(IndexScanDesc scan)
 	scan->batchringbuf.done = true;
 	index_batchscan_reset(scan, true);
 
-	for (int i = 0; i < scan->batchringbuf.nextCacheSlot; i++)
+	for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
 	{
 		IndexScanBatch cached = scan->batchringbuf.cache[i];
+
+		if (cached == NULL)
+			continue;
 
 		if (cached->killedItems)
 			pfree(cached->killedItems);
@@ -662,16 +664,22 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 {
 	IndexScanBatch batch = NULL;
 
-	/* First look for an existing batch from cache */
-	if (scan->usebatchring && scan->batchringbuf.nextCacheSlot > 0)
+	/* First look for an existing batch from ring buffer */
+	if (scan->usebatchring)
 	{
-		/* Return cached batch */
-		scan->batchringbuf.nextCacheSlot--;
-		batch = scan->batchringbuf.cache[scan->batchringbuf.nextCacheSlot];
-		scan->batchringbuf.cache[scan->batchringbuf.nextCacheSlot] = NULL;
+		for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
+		{
+			if (scan->batchringbuf.cache[i] != NULL)
+			{
+				/* Return cached unreferenced batch */
+				batch = scan->batchringbuf.cache[i];
+				scan->batchringbuf.cache[i] = NULL;
 #ifdef BATCH_CACHE_DEBUG
-		scan->batchringbuf.cacheHits++;
+				scan->batchringbuf.cacheHits++;
 #endif
+				break;
+			}
+		}
 	}
 
 	if (!batch)
@@ -736,20 +744,30 @@ indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 		/* amgetbatch scan caller */
 		Assert(scan->heapRelation != NULL);
 
-		if (!scan->batchringbuf.done &&
-			scan->batchringbuf.nextCacheSlot < INDEX_SCAN_CACHE_BATCHES)
+		if (scan->batchringbuf.done)
+		{
+			/* Don't bother using cache when scan is ending */
+		}
+		else
 		{
 			/*
 			 * Use cache.  This is generally only beneficial when there are
 			 * many small rescans of an index.
 			 */
-			scan->batchringbuf.cache[scan->batchringbuf.nextCacheSlot] = batch;
-			scan->batchringbuf.nextCacheSlot++;
-			return;
+			for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
+			{
+				if (scan->batchringbuf.cache[i] == NULL)
+				{
+					/* found empty slot, we're done */
+					scan->batchringbuf.cache[i] = batch;
+					return;
+				}
+			}
 		}
 
 		/*
-		 * Cache is full or scan is ending.  Free the batch.
+		 * Failed to find a free slot for this batch.  We'll just free it
+		 * ourselves.  This isn't really expected; it's just defensive.
 		 */
 		if (batch->killedItems)
 			pfree(batch->killedItems);
