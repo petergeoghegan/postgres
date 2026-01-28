@@ -70,6 +70,7 @@
 
 #include "access/amapi.h"
 #include "access/tableam.h"
+#include "catalog/catalog.h"
 #include "common/int.h"
 #include "lib/qunique.h"
 #include "utils/memdebug.h"
@@ -98,6 +99,16 @@ index_batchscan_init(IndexScanDesc scan)
 	scan->batchringbuf.nextBatch = 0;	/* initial batch starts empty */
 	scan->batchringbuf.done = false;
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
+
+#ifdef BATCH_CACHE_DEBUG
+	/* Initialize batch cache stats */
+	scan->batchringbuf.cacheHits = 0;
+	scan->batchringbuf.cacheMisses = 0;
+	scan->batchringbuf.batchesReturned = 0;
+	scan->batchringbuf.batchesScanned = 0;
+	scan->batchringbuf.rescans = 0;
+	scan->batchringbuf.batchHighWatermark = 0;
+#endif
 
 	scan->usebatchring = true;
 }
@@ -193,6 +204,37 @@ index_batchscan_end(IndexScanDesc scan)
 			pfree(cached->currTuples);
 		pfree(cached);
 	}
+
+#ifdef BATCH_CACHE_DEBUG
+#define BATCH_CACHE_DEBUG_MIN_BATCHES	50
+
+	/*
+	 * Report batch stats for non-catalog indexes.  This helps identify scans
+	 * where the batch cache is not being effective.
+	 */
+	if (!IsCatalogRelation(scan->indexRelation))
+	{
+		BatchRingBuffer *batchringbuf = &scan->batchringbuf;
+		uint64		totalAllocs = batchringbuf->cacheHits + batchringbuf->cacheMisses;
+
+		if (totalAllocs > 0 &&
+			batchringbuf->batchesReturned >= BATCH_CACHE_DEBUG_MIN_BATCHES)
+		{
+			double		hitRate = (double) batchringbuf->cacheHits / totalAllocs * 100.0;
+
+			ereport(WARNING,
+					(errmsg("batch stats for index \"%s\" (%lu rescans):\n"
+							"  %lu batches returned (%lu scanned, %.1f%% cache hit rate)\n"
+							"  high watermark %u loaded batches",
+							RelationGetRelationName(scan->indexRelation),
+							(unsigned long) batchringbuf->rescans,
+							(unsigned long) batchringbuf->batchesReturned,
+							(unsigned long) batchringbuf->batchesScanned,
+							hitRate,
+							batchringbuf->batchHighWatermark)));
+		}
+	}
+#endif
 }
 
 /*
@@ -603,6 +645,9 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 				/* Return cached unreferenced batch */
 				batch = scan->batchringbuf.cache[i];
 				scan->batchringbuf.cache[i] = NULL;
+#ifdef BATCH_CACHE_DEBUG
+				scan->batchringbuf.cacheHits++;
+#endif
 				break;
 			}
 		}
@@ -610,6 +655,9 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 
 	if (!batch)
 	{
+#ifdef BATCH_CACHE_DEBUG
+		scan->batchringbuf.cacheMisses++;
+#endif
 		batch = palloc(offsetof(IndexScanBatchData, items) +
 					   sizeof(BatchMatchingItem) * scan->maxitemsbatch);
 
