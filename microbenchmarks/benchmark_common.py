@@ -396,6 +396,20 @@ QUERIES = OrderedDict([
         "prewarm_indexes": ["prefetch_orders_cust_date_idx", "prefetch_customers_pkey"],
         "prewarm_tables": ["prefetch_customers", "prefetch_orders"],
     }),
+    ("A17", {
+        "name": "regressed aggregate",
+        "sql": """
+            SELECT order_date, count(*) as cnt
+            FROM prefetch_orders
+            WHERE order_date BETWEEN '2023-11-15' AND '2023-11-17'
+
+            GROUP BY order_date
+            ORDER BY order_date
+        """,
+        "evict": ["prefetch_orders"],
+        "prewarm_indexes": ["prefetch_orders_date_idx"],
+        "prewarm_tables": ["prefetch_orders"],
+    }),
 ])
 
 
