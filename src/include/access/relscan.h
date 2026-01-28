@@ -243,7 +243,7 @@ typedef struct IndexScanBatchData *IndexScanBatch;
  * ultimately the number of future batches) to meet that.
  */
 #define INDEX_SCAN_MAX_BATCHES		64
-#define INDEX_SCAN_CACHE_BATCHES	2
+#define INDEX_SCAN_CACHE_BATCHES	64
 
 /* #define BATCH_CACHE_DEBUG */
 
@@ -293,6 +293,7 @@ typedef struct BatchRingBuffer
 
 	/* Array of pointers to cached recyclable batches */
 	IndexScanBatch cache[INDEX_SCAN_CACHE_BATCHES];
+	uint8		nextCacheSlot;	/* next free slot in cache[] (0 = empty) */
 
 	/*
 	 * Array of pointers to ring buffer batches
