@@ -321,6 +321,7 @@ typedef struct BatchRingBuffer
 	 */
 	BlockNumber currentPrefetchBlock;
 	bool		paused;
+	bool		yieldedFarAhead;	/* yielded due to prefetchPos ahead of scanPos */
 
 	/* number of items to resolve during visibility checks */
 	int			vmItems;

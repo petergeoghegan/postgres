@@ -105,6 +105,7 @@ index_batchscan_init(IndexScanDesc scan)
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
 	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
 	scan->batchringbuf.paused = false;
+	scan->batchringbuf.yieldedFarAhead = false;
 
 	/*
 	 * Start by resolving visibility for just one item, then gradually ramp up
@@ -142,11 +143,15 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 
 	Assert(scan->xs_heapfetch);
 
-	if (scan->xs_heapfetch->rs)
-		read_stream_reset(scan->xs_heapfetch->rs);
-
+	/*
+	 * Invalidate positions before calling read_stream_reset, since the reset
+	 * may invoke the callback which checks scanPos.valid.
+	 */
 	batchringbuf->scanPos.valid = false;
 	batchringbuf->prefetchPos.valid = false;
+
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
 
 	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
