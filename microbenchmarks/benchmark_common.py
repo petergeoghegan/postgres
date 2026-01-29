@@ -462,6 +462,20 @@ QUERIES = OrderedDict([
         "prewarm_indexes": ["prefetch_orders_cust_date_idx", "prefetch_customers_pkey"],
         "prewarm_tables": ["prefetch_customers", "prefetch_orders"],
     }),
+    ("A21", {
+        "name": "regressed 1.063x with --cached, correlated",
+        "sql": """
+            SELECT o.order_id, o.customer_id, o.amount,
+            (SELECT c.customer_name FROM prefetch_customers c
+            WHERE c.customer_id = o.customer_id) as cust_name
+            FROM prefetch_orders o
+            WHERE o.order_date BETWEEN '2023-05-30' AND '2023-06-08'
+            AND o.customer_id BETWEEN 82712 AND 83606
+        """,
+        "evict": ["prefetch_customers", "prefetch_orders"],
+        "prewarm_indexes": ["prefetch_orders_cust_date_idx", "prefetch_customers_pkey"],
+        "prewarm_tables": ["prefetch_customers", "prefetch_orders"],
+    }),
 ])
 
 
