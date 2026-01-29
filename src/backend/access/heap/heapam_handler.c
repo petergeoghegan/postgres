@@ -790,6 +790,8 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		}
 		else if (!index_scan_pos_advance(direction, prefetchBatch, prefetchPos))
 		{
+			IndexScanBatch oldPrefetchBatch;
+
 			/*
 			 * Ran out of items from prefetchBatch.  Try to advance it to next
 			 * batch.
@@ -806,6 +808,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				return read_stream_pause(stream);
 			}
 
+			oldPrefetchBatch = prefetchBatch;
 			prefetchBatch = heapam_batch_getnext(scan, direction,
 												 prefetchBatch, prefetchPos);
 			if (!prefetchBatch)
@@ -818,8 +821,16 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				return InvalidBlockNumber;
 			}
 
-			if (index_scan_batch_count(scan) >= 3)
+			if (index_scan_batch_count(scan) >= 3 && scanPos->batch < prefetchPos->batch - 1)
 			{
+				if (ScanDirectionIsForward(direction))
+				{
+					prefetchPos->item = oldPrefetchBatch->lastItem;
+				}
+				else
+				{
+					prefetchPos->item = oldPrefetchBatch->firstItem;
+				}
 				return read_stream_yield(stream);
 			}
 
