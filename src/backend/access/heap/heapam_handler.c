@@ -731,8 +731,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * least one batch, loaded, for scanBatch.  prefetchPos might not yet be
 	 * valid, in which case it'll be initialized using scanPos.
 	 */
-	if (index_scan_batch_count(scan) == 0)
-		return InvalidBlockNumber;
+	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
 	 * If prefetchPos has not been initialized yet, that typically indicates
@@ -821,16 +820,14 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				return InvalidBlockNumber;
 			}
 
-			if (index_scan_batch_count(scan) >= 3 && scanPos->batch < prefetchPos->batch - 1)
+			if (index_scan_batch_count(scan) >= 3 &&
+				scanPos->batch < prefetchPos->batch - 1)
 			{
 				if (ScanDirectionIsForward(direction))
-				{
 					prefetchPos->item = oldPrefetchBatch->lastItem;
-				}
 				else
-				{
 					prefetchPos->item = oldPrefetchBatch->firstItem;
-				}
+
 				return read_stream_yield(stream);
 			}
 
