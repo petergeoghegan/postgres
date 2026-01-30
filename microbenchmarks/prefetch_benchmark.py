@@ -1966,32 +1966,48 @@ def run_benchmark(args):
                 "patch_ms": patch_on_min,
             })
 
-    # Improvements: ratio <= 1.00 (same speed or faster than master)
-    # Regressions: ratio > 1.00 (slower than master)
-    improvements = sorted([e for e in all_ratios if e["ratio"] <= 1.0], key=lambda x: x["ratio"])
-    regressions = sorted([e for e in all_ratios if e["ratio"] > 1.0], key=lambda x: x["ratio"], reverse=True)
+    # Neutral: 0.99 <= ratio <= 1.01 (essentially same speed)
+    # Improvements: ratio < 0.99 (faster than master)
+    # Regressions: ratio > 1.01 (slower than master)
+    neutral = sorted([e for e in all_ratios if 0.99 <= e["ratio"] <= 1.01], key=lambda x: x["ratio"])
+    improvements = sorted([e for e in all_ratios if e["ratio"] < 0.99], key=lambda x: x["ratio"])
+    regressions = sorted([e for e in all_ratios if e["ratio"] > 1.01], key=lambda x: x["ratio"], reverse=True)
 
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
     topn = args.topn
+
+    # Print neutral section first
     print(f"\n{'=' * 60}")
-    print(f"TOP {topn} IMPROVEMENTS vs MASTER (using min)")
+    print(f"NEUTRAL vs MASTER (using min) [{len(neutral)} total]")
     print(f"{'=' * 60}")
-    if improvements:
-        for entry in improvements[:topn]:
-            print(f"  {entry['query_id']} ({entry['config']}): {entry['name']}")
-            print(f"    {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
+    if neutral:
+        for rank, entry in enumerate(neutral[:topn], 1):
+            print(f"  #{rank}  {entry['query_id']} ({entry['config']}): {entry['name']}")
+            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
     else:
         print("  (none)")
 
+    # Print improvements section
     print(f"\n{'=' * 60}")
-    print(f"TOP {topn} REGRESSIONS vs MASTER (using min)")
+    print(f"TOP {topn} IMPROVEMENTS vs MASTER (using min) [{len(improvements)} total]")
+    print(f"{'=' * 60}")
+    if improvements:
+        for rank, entry in enumerate(improvements[:topn], 1):
+            print(f"  #{rank}  {entry['query_id']} ({entry['config']}): {entry['name']}")
+            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
+    else:
+        print("  (none)")
+
+    # Print regressions section last
+    print(f"\n{'=' * 60}")
+    print(f"TOP {topn} REGRESSIONS vs MASTER (using min) [{len(regressions)} total]")
     print(f"{'=' * 60}")
     if regressions:
-        for entry in regressions[:topn]:
-            print(f"  {entry['query_id']} ({entry['config']}): {entry['name']}")
-            print(f"    {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
+        for rank, entry in enumerate(regressions[:topn], 1):
+            print(f"  #{rank}  {entry['query_id']} ({entry['config']}): {entry['name']}")
+            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
     else:
         print("  (none)")
 
@@ -2023,6 +2039,19 @@ def run_benchmark(args):
         print(f"  Total execution time (patch):  {total_patch_ms:10.3f} ms")
         print(f"  Geometric mean of ratios:      {BOLD}{geomean_ratio:.3f}x{RESET}")
         print(f"  Number of queries:             {len(config_ratios)}")
+
+        # Calculate improved/regressed/neutral counts using same thresholds
+        config_improved = [e for e in config_ratios if e["ratio"] < 0.99]
+        config_regressed = [e for e in config_ratios if e["ratio"] > 1.01]
+        config_neutral = [e for e in config_ratios if 0.99 <= e["ratio"] <= 1.01]
+        best_ratio = min(e["ratio"] for e in config_ratios)
+        worst_ratio = max(e["ratio"] for e in config_ratios)
+
+        print(f"  Queries improved:              {len(config_improved)}")
+        print(f"  Queries regressed:             {len(config_regressed)}")
+        print(f"  Queries neutral:               {len(config_neutral)}")
+        print(f"  Best case ratio:               {best_ratio:.3f}x")
+        print(f"  Worst case ratio:              {worst_ratio:.3f}x")
 
 
 def run_readstream_tests(args):
