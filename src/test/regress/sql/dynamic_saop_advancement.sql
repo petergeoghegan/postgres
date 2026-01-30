@@ -8750,3 +8750,55 @@ fetch forward 83 from c_14;
 select 1 from pg_buffercache_evict_all();
 fetch backward 27 from c_14;
 commit;
+
+--
+-- 2026-01-29 19:59
+--
+-- Bug that I ran into while trying to make read stream incrementally pause
+--
+set client_min_messages=error;
+drop table if exists wrong_blknum_table;
+reset client_min_messages;
+create table wrong_blknum_table(
+  a bigint,
+  b bigint,
+  c bigint,
+  d bigint,
+  e bigint,
+  f bigint,
+  g bigint
+)
+with (
+  fillfactor = 87
+);
+
+create index wrong_blknum_table_idx on wrong_blknum_table(a, b, c, d, e, f, g) with (fillfactor = 87, deduplicate_items = on);
+
+insert into wrong_blknum_table
+select (i / 67), (i / 37), (i / 59), (i / 37), (i / 2), (i / 7), (i / 11)
+from generate_series(1, 1000) s(i)
+order by i + mod(i::bigint * 725554, 4), md5(i::text);
+
+vacuum freeze wrong_blknum_table;
+analyze wrong_blknum_table;
+
+set enable_seqscan = off;
+set enable_bitmapscan = off;
+set enable_indexonlyscan = off;
+set cursor_tuple_fraction = 1.0;
+
+begin;
+declare c_13 scroll cursor for
+  select *
+  from wrong_blknum_table
+  order by a asc, b asc, c asc, d asc, e asc, f asc, g asc;
+
+select 1 from pg_buffercache_evict_all();
+fetch forward 444 from c_13;
+select 1 from pg_buffercache_evict_all();
+fetch backward 444 from c_13;
+select 1 from pg_buffercache_evict_all();
+fetch forward 445 from c_13;
+select 1 from pg_buffercache_evict_all();
+fetch backward 445 from c_13;
+commit;
