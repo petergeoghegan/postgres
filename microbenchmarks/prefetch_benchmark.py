@@ -71,7 +71,7 @@ STRESS_PROB_LOW_SELECTIVITY = 0.20     # Low selectivity (many rows)
 
 # Stress-test configuration
 STRESS_QUERIES_PER_BATCH = 10          # Number of queries to generate per iteration
-STRESS_REGRESSION_THRESHOLD = 1.08     # 8% slower = regression
+STRESS_REGRESSION_THRESHOLD = 1.05     # 5% slower = regression
 STRESS_MIN_QUERY_MS = 1.5             # Discard queries slower than this (too noisy)
 
 # QUERIES is imported from benchmark_common
