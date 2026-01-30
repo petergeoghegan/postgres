@@ -581,12 +581,24 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		/*
 		 * We detected a change in scan direction.  Release read stream, since
 		 * we can't rely on scanPos continuing to agree with read stream.
+		 *
+		 * Invalidate prefetchPos BEFORE ending the stream, since the stream
+		 * cleanup may invoke the callback which checks prefetchPos.valid.
+		 * Clear paused/yieldedFarAhead AFTER, since the callback might set
+		 * them during cleanup.
 		 */
+		batchringbuf->prefetchPos.valid = false;
 		if (scan->xs_heapfetch->rs)
 		{
 			read_stream_end(scan->xs_heapfetch->rs);
 			scan->xs_heapfetch->rs = NULL;
 		}
+
+		/*
+		 * Clear these AFTER read_stream_end, since the callback might set
+		 * them during cleanup.  prefetchPos.valid is set again because the
+		 * callback may have re-initialized it from scanPos.
+		 */
 		batchringbuf->prefetchPos.valid = false;
 		batchringbuf->paused = false;
 		batchringbuf->yieldedFarAhead = false;
@@ -638,7 +650,6 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		 * might still back up in the other direction.
 		 */
 		return NULL;
-		scanPos->valid = false;
 	}
 
 	/*
@@ -784,9 +795,15 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		  scanPos->item > prefetchPos->item :
 		  scanPos->item < prefetchPos->item)))
 	{
+		IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);
+
 		batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
 		*prefetchPos = *scanPos;
 		fromScanPos = true;
+
+		if (prefetchPos->item < scanBatch->firstItem ||
+			prefetchPos->item > scanBatch->lastItem)
+			return InvalidBlockNumber;
 	}
 
 	/*
@@ -868,6 +885,9 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				ScanDirectionIsForward(direction) ?
 				scanPos->item <= prefetchPos->item :
 				scanPos->item >= prefetchPos->item));
+
+		Assert(prefetchPos->item >= prefetchBatch->firstItem &&
+			   prefetchPos->item <= prefetchBatch->lastItem);
 
 		item = &prefetchBatch->items[prefetchPos->item];
 		prefetchBlock = ItemPointerGetBlockNumber(&item->heapTid);
