@@ -311,6 +311,10 @@ typedef struct BatchRingBuffer
 	 * its read stream callback most recently.  Used to suppress duplicate
 	 * successive read stream block requests.
 	 *
+	 * When prefetchPos gets ahead of scanPos by a set number of batches, it
+	 * yields, giving the scan the opportunity to return additional items.
+	 * This is important with scans that can terminate early.
+	 *
 	 * Occasionally, the read stream callback will request another table block
 	 * when the scan has already stored INDEX_SCAN_MAX_BATCHES-many batches.
 	 * The paused flag can set to remember that the callback had to return
@@ -320,8 +324,8 @@ typedef struct BatchRingBuffer
 	 * set, then the scan should call read_stream_resume (and unset the flag).
 	 */
 	BlockNumber currentPrefetchBlock;
+	bool		yielded;
 	bool		paused;
-	bool		yieldedFarAhead;	/* yielded due to prefetchPos ahead of scanPos */
 
 	/* number of items to resolve during visibility checks */
 	int			vmItems;
@@ -502,6 +506,39 @@ index_scan_batch_append(IndexScanDescData *scan, IndexScanBatch batch)
 			ringbuf->batchHighWatermark = count;
 	}
 #endif
+}
+
+/*
+ * Compare two batch ring positions in the given scan direction.
+ *
+ * Returns negative if pos1 is behind pos2, 0 if equal, positive if pos1 is
+ * ahead of pos2.  This is in the style of a qsort comparator.
+ */
+static inline int
+index_scan_pos_cmp(BatchRingItemPos *pos1, BatchRingItemPos *pos2,
+				   ScanDirection direction)
+{
+	int8		batchdiff = (int8) (pos1->batch - pos2->batch);
+
+	if (batchdiff != 0)
+		return batchdiff;
+
+	/* Same batch, compare items */
+	if (ScanDirectionIsForward(direction))
+		return pos1->item - pos2->item;
+	else
+		return pos2->item - pos1->item;
+}
+
+/*
+ * Return the signed distance in batches between two positions.
+ *
+ * Positive means pos1 is ahead of pos2 by that many batches.
+ */
+static inline int8
+index_scan_pos_batch_distance(BatchRingItemPos *pos1, BatchRingItemPos *pos2)
+{
+	return (int8) (pos1->batch - pos2->batch);
 }
 
 /*

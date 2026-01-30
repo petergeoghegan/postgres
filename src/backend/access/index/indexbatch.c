@@ -104,8 +104,8 @@ index_batchscan_init(IndexScanDesc scan)
 	scan->batchringbuf.done = false;
 	memset(&scan->batchringbuf.cache, 0, sizeof(scan->batchringbuf.cache));
 	scan->batchringbuf.currentPrefetchBlock = InvalidBlockNumber;
+	scan->batchringbuf.yielded = false;
 	scan->batchringbuf.paused = false;
-	scan->batchringbuf.yieldedFarAhead = false;
 
 	/*
 	 * Start by resolving visibility for just one item, then gradually ramp up

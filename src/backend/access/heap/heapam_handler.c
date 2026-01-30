@@ -581,27 +581,15 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		/*
 		 * We detected a change in scan direction.  Release read stream, since
 		 * we can't rely on scanPos continuing to agree with read stream.
-		 *
-		 * Invalidate prefetchPos BEFORE ending the stream, since the stream
-		 * cleanup may invoke the callback which checks prefetchPos.valid.
-		 * Clear paused/yieldedFarAhead AFTER, since the callback might set
-		 * them during cleanup.
 		 */
-		batchringbuf->prefetchPos.valid = false;
 		if (scan->xs_heapfetch->rs)
 		{
 			read_stream_end(scan->xs_heapfetch->rs);
 			scan->xs_heapfetch->rs = NULL;
 		}
-
-		/*
-		 * Clear these AFTER read_stream_end, since the callback might set
-		 * them during cleanup.  prefetchPos.valid is set again because the
-		 * callback may have re-initialized it from scanPos.
-		 */
 		batchringbuf->prefetchPos.valid = false;
+		batchringbuf->yielded = false;
 		batchringbuf->paused = false;
-		batchringbuf->yieldedFarAhead = false;
 
 		/*
 		 * Remember new scan direction (we should never reach here more than
@@ -673,7 +661,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 													batchringbuf->headBatch);
 
 		/* Reset yieldedFarAhead since scanPos advanced to a new batch */
-		batchringbuf->yieldedFarAhead = false;
+		batchringbuf->yielded = false;
 
 		/* Also free obsolescent head batch (unless it is scan's markBatch) */
 		tableam_util_free_batch(scan, headBatch);
@@ -734,10 +722,10 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	bool		fromScanPos = false;
 
 	/*
-	 * During read_stream_reset (cleanup), we might be called when there are
-	 * no batches or scanPos is invalid.  Just return InvalidBlockNumber.
+	 * During read_stream_reset (cleanup), we might be called scanPos is
+	 * invalid.  Just end the read stream.
 	 */
-	if (index_scan_batch_count(scan) == 0 || !scanPos->valid)
+	if (!scanPos->valid)
 		return InvalidBlockNumber;
 
 	/*
@@ -789,35 +777,30 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 */
 	if (!prefetchPos->valid ||
 		!index_scan_batch_loaded(scan, prefetchPos->batch) ||
-		(int8) (scanPos->batch - prefetchPos->batch) > 0 ||
-		(scanPos->batch == prefetchPos->batch &&
-		 (ScanDirectionIsForward(direction) ?
-		  scanPos->item > prefetchPos->item :
-		  scanPos->item < prefetchPos->item)))
+		index_scan_pos_cmp(prefetchPos, scanPos, direction) < 0)
 	{
 		IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);
+
+		/* If scanPos is already past the end of matching items, we're done */
+		if (scanPos->item < scanBatch->firstItem ||
+			scanPos->item > scanBatch->lastItem)
+			return InvalidBlockNumber;
 
 		batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
 		*prefetchPos = *scanPos;
 		fromScanPos = true;
-
-		if (prefetchPos->item < scanBatch->firstItem ||
-			prefetchPos->item > scanBatch->lastItem)
-			return InvalidBlockNumber;
 	}
 
 	/*
-	 * If prefetchPos is significantly ahead of scanPos (2+ batches) and we
-	 * haven't yielded for this condition yet, yield to give the scan a chance
-	 * to return at least one tuple.  Important for merge joins where the
-	 * other side might run out of tuples early.
+	 * If prefetchPos is significantly ahead of scanPos (3+ batches) and we
+	 * haven't yielded for this condition yet, do so now.  This gives scans
+	 * with high prefetch distances the opportunity to return at least one
+	 * tuple per additional batch scanned.
 	 */
-	if (!batchringbuf->yieldedFarAhead &&
-		prefetchPos->valid &&
-		batchringbuf->currentPrefetchBlock != InvalidBlockNumber &&
-		(int8) (prefetchPos->batch - scanPos->batch) >= 2)
+	if (!batchringbuf->yielded &&
+		index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
 	{
-		batchringbuf->yieldedFarAhead = true;
+		batchringbuf->yielded = true;
 		return read_stream_yield(stream);
 	}
 
@@ -880,12 +863,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		Assert(index_scan_batch(scan, prefetchPos->batch) == prefetchBatch);
 
 		/* scanPos is always <= prefetchPos when we return */
-		Assert((int8) (scanPos->batch - prefetchPos->batch) < 0 ||
-			   (scanPos->batch == prefetchPos->batch &&
-				ScanDirectionIsForward(direction) ?
-				scanPos->item <= prefetchPos->item :
-				scanPos->item >= prefetchPos->item));
-
+		Assert(index_scan_pos_cmp(scanPos, prefetchPos, direction) <= 0);
 		Assert(prefetchPos->item >= prefetchBatch->firstItem &&
 			   prefetchPos->item <= prefetchBatch->lastItem);
 
