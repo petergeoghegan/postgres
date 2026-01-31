@@ -552,6 +552,37 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 	Assert(!scan->xs_hitup);
 
 	return batch;
+
+}
+
+static pg_noinline void
+heapam_batch_tuple_dirchange(IndexScanDesc scan,
+							 BatchRingBuffer *batchringbuf,
+							 ScanDirection direction)
+{
+	/*
+	 * We detected a change in scan direction.  Release read stream, since
+	 * we can't rely on scanPos continuing to agree with read stream.
+	 */
+	if (scan->xs_heapfetch->rs)
+	{
+		read_stream_end(scan->xs_heapfetch->rs);
+		scan->xs_heapfetch->rs = NULL;
+	}
+	batchringbuf->prefetchPos.valid = false;
+	batchringbuf->yielded = false;
+	batchringbuf->paused = false;
+
+	/*
+	 * Remember new scan direction (we should never reach here more than
+	 * once per loaded batch).
+	 *
+	 * Note: iff the scan _continues_ in this new direction, and actually
+	 * steps off scanBatch to an earlier index page, heapam_batch_getnext
+	 * will deal with it.  But that might never happen; the scan might yet
+	 * change direction again (or just end before returning more items).
+	 */
+	batchringbuf->direction = direction;
 }
 
 /* ----------------
@@ -577,31 +608,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	if (batchringbuf->direction == NoMovementScanDirection)
 		batchringbuf->direction = direction;
 	else if (unlikely(batchringbuf->direction != direction))
-	{
-		/*
-		 * We detected a change in scan direction.  Release read stream, since
-		 * we can't rely on scanPos continuing to agree with read stream.
-		 */
-		if (scan->xs_heapfetch->rs)
-		{
-			read_stream_end(scan->xs_heapfetch->rs);
-			scan->xs_heapfetch->rs = NULL;
-		}
-		batchringbuf->prefetchPos.valid = false;
-		batchringbuf->yielded = false;
-		batchringbuf->paused = false;
-
-		/*
-		 * Remember new scan direction (we should never reach here more than
-		 * once per loaded batch).
-		 *
-		 * Note: iff the scan _continues_ in this new direction, and actually
-		 * steps off scanBatch to an earlier index page, heapam_batch_getnext
-		 * will deal with it.  But that might never happen; the scan might yet
-		 * change direction again (or just end before returning more items).
-		 */
-		batchringbuf->direction = direction;
-	}
+		heapam_batch_tuple_dirchange(scan, batchringbuf, direction);
 
 	/*
 	 * Check if there's an existing loaded scanBatch for us to return the next
