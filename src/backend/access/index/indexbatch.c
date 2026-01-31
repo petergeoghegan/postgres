@@ -140,11 +140,11 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 
 	Assert(scan->xs_heapfetch);
 
-	if (scan->xs_heapfetch->rs)
-		read_stream_reset(scan->xs_heapfetch->rs);
-
 	batchringbuf->scanPos.valid = false;
 	batchringbuf->prefetchPos.valid = false;
+
+	if (scan->xs_heapfetch->rs)
+		read_stream_reset(scan->xs_heapfetch->rs);
 
 	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
