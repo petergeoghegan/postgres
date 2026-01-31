@@ -186,11 +186,9 @@ QUERIES = OrderedDict([
             WHERE customer_id = 1
               AND order_date BETWEEN '2023-01-01' AND '2023-12-31'
         """,
-        # Special handling: no eviction, run query twice to warm cache first
-        "evict": [],
-        "prewarm_indexes": [],
-        "prewarm_tables": [],
-        "warmup_query": True,
+        "evict": ["prefetch_orders"],
+        "prewarm_indexes": ["prefetch_orders_cust_date_idx"],
+        "prewarm_tables": ["prefetch_orders"],
     }),
     ("A4", {
         "name": "Early LIMIT termination (adversarial)",
