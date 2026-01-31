@@ -191,6 +191,7 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	batchringbuf->nextBatch = 0;	/* initial batch is empty */
 
 	batchringbuf->currentPrefetchBlock = InvalidBlockNumber;
+	batchringbuf->yielded = false;
 	batchringbuf->paused = false;
 
 	/* reset the visibility check batch size */
@@ -367,6 +368,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 		scan->xs_heapfetch->rs = NULL;
 	}
 	batchringbuf->prefetchPos.valid = false;
+	batchringbuf->yielded = false;
 	batchringbuf->paused = false;
 
 	if (scanBatch == markBatch)
