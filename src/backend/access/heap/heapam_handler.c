@@ -583,14 +583,13 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		 * we can't rely on scanPos continuing to agree with read stream.
 		 */
 		batchringbuf->prefetchPos.valid = false;
+		batchringbuf->yielded = false;
+		batchringbuf->paused = false;
 		if (scan->xs_heapfetch->rs)
 		{
 			read_stream_end(scan->xs_heapfetch->rs);
 			scan->xs_heapfetch->rs = NULL;
 		}
-		batchringbuf->prefetchPos.valid = false;
-		batchringbuf->yielded = false;
-		batchringbuf->paused = false;
 
 		/*
 		 * Remember new scan direction (we should never reach here more than
@@ -726,8 +725,10 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * During read_stream_reset (cleanup), we might be called scanPos is
 	 * invalid.  Just end the read stream.
 	 */
-	if (index_scan_batch_count(scan) == 0 || !scanPos->valid)
+	if (!scanPos->valid)
 		return InvalidBlockNumber;
+
+	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
 	 * It is possible for the scan's direction to change, but that's handled
