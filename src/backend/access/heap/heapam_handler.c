@@ -808,7 +808,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * tuple per additional batch scanned.
 	 */
 	if (!batchringbuf->yielded &&
-		batchringbuf->currentPrefetchBlock != InvalidBlockNumber &&
 		index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
 	{
 		batchringbuf->yielded = true;
