@@ -140,15 +140,11 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 
 	Assert(scan->xs_heapfetch);
 
-	/*
-	 * Invalidate positions before calling read_stream_reset, since the reset
-	 * may invoke the callback which checks scanPos.valid.
-	 */
-	batchringbuf->scanPos.valid = false;
-	batchringbuf->prefetchPos.valid = false;
-
 	if (scan->xs_heapfetch->rs)
 		read_stream_reset(scan->xs_heapfetch->rs);
+
+	batchringbuf->scanPos.valid = false;
+	batchringbuf->prefetchPos.valid = false;
 
 	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
@@ -399,6 +395,7 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 	scan->indexRelation->rd_indam->amposreset(scan, markBatch);
 
 	/* Remove all batches from the ring buffer except for the marked batch */
+	scan->batchringbuf.done = true;
 	index_batchscan_reset(scan, false);
 
 	/*

@@ -391,6 +391,7 @@ index_rescan(IndexScanDesc scan,
 #ifdef BATCH_CACHE_DEBUG
 		scan->batchringbuf.rescans++;
 #endif
+		Assert(!scan->batchringbuf.done);
 		index_batchscan_reset(scan, true);
 	}
 
@@ -600,7 +601,10 @@ index_parallelrescan(IndexScanDesc scan)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
 	if (scan->usebatchring)
+	{
+		Assert(!scan->batchringbuf.done);
 		index_batchscan_reset(scan, true);
+	}
 
 	/* amparallelrescan is optional; assume no-op if not provided by AM */
 	if (scan->indexRelation->rd_indam->amparallelrescan != NULL)
