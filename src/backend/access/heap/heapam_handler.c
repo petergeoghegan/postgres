@@ -582,14 +582,14 @@ heapam_batch_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 		 * We detected a change in scan direction.  Release read stream, since
 		 * we can't rely on scanPos continuing to agree with read stream.
 		 */
-		batchringbuf->prefetchPos.valid = false;
-		batchringbuf->yielded = false;
-		batchringbuf->paused = false;
 		if (scan->xs_heapfetch->rs)
 		{
 			read_stream_end(scan->xs_heapfetch->rs);
 			scan->xs_heapfetch->rs = NULL;
 		}
+		batchringbuf->prefetchPos.valid = false;
+		batchringbuf->yielded = false;
+		batchringbuf->paused = false;
 
 		/*
 		 * Remember new scan direction (we should never reach here more than
