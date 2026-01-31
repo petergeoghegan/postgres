@@ -442,7 +442,7 @@ QUERIES = OrderedDict([
         "prewarm_tables": ["prefetch_orders"],
     }),
     ("A20", {
-        "name": "1.087x slower than master anti-join",
+        "name": "1.087x slower than master anti-join, outer side index filter qual excludes many rows",
         "sql": """
             SELECT o.order_id, o.customer_id, o.amount
             FROM prefetch_orders o
