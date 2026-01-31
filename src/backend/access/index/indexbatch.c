@@ -166,19 +166,15 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	 * Release all currently loaded batches, being sure to avoid freeing
 	 * markBatch (unless called with complete, where we're supposed to)
 	 */
-	while (index_scan_batch_count(scan) > 0)
+	for (uint8 i = batchringbuf->headBatch; i != batchringbuf->nextBatch; i++)
 	{
-		IndexScanBatch batch = index_scan_batch(scan,
-												batchringbuf->headBatch);
+		IndexScanBatch batch = index_scan_batch(scan, i);
 
 		if (complete || batch != markBatch)
 		{
 			markBatchFreed = (batch == markBatch);
 			tableam_util_free_batch(scan, batch);
 		}
-
-		/* update the valid range, so that asserts / debugging works */
-		batchringbuf->headBatch++;
 	}
 
 	if (complete && markBatch != NULL && !markBatchFreed)
