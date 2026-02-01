@@ -293,11 +293,14 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
+	BatchIOSItem *iosItems = batch->iosItems;
 	int			firstItem,
 				lastItem;
 
+	Assert(iosItems != NULL);
+
 	/* Do nothing if we already resolved visibility for the item. */
-	if (batch->items[item].checkedVisible)
+	if (iosItems[item].checkedVisible)
 		return;
 
 	/* We better still have a pin on batch's index leaf page */
@@ -317,11 +320,10 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 
 	for (int i = firstItem; i <= lastItem; i++)
 	{
-		BatchMatchingItem *mitem = &batch->items[i];
-		ItemPointer tid = &mitem->heapTid;
+		ItemPointer tid = &batch->items[i].heapTid;
 
-		mitem->checkedVisible = true;
-		mitem->allVisible =
+		iosItems[i].checkedVisible = true;
+		iosItems[i].allVisible =
 			VM_ALL_VISIBLE(scan->heapRelation,
 						   ItemPointerGetBlockNumber(tid),
 						   &hscan->vmbuf) != 0;
@@ -334,8 +336,8 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	 * It's enough to check the visibility of the first and last item, as all
 	 * the items in between have to have the visibility set too.
 	 */
-	if (batch->items[batch->firstItem].checkedVisible &&
-		batch->items[batch->lastItem].checkedVisible &&
+	if (iosItems[batch->firstItem].checkedVisible &&
+		iosItems[batch->lastItem].checkedVisible &&
 		scan->MVCCScan)
 	{
 		Assert(BufferIsValid(batch->buf));
@@ -364,15 +366,15 @@ heapam_batch_return_tid(IndexScanDesc scan, IndexScanBatch scanBatch,
 
 		heapam_batch_resolve_visibility(scan, scanBatch, item);
 		scan->xs_itup = (IndexTuple) (scanBatch->currTuples +
-									  scanBatch->items[item].tupleOffset);
+									  scanBatch->iosItems[item].tupleOffset);
+		scan->xs_visible = scanBatch->iosItems[item].allVisible;
+	}
+	else
+	{
+		scan->xs_visible = false;
 	}
 
-	/*
-	 * Set xs_heaptid and xs_visible, which heapam_index_getnext_slot needs
-	 * (xs_visible isn't needed when !xs_want_itup but set it consistently)
-	 */
 	scan->xs_heaptid = scanBatch->items[scanPos->item].heapTid;
-	scan->xs_visible = scanBatch->items[scanPos->item].allVisible;
 
 	return &scan->xs_heaptid;
 }
@@ -887,7 +889,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 											prefetchPos->item);
 
 			/* item is known to be all-visible; prefetching isn't required */
-			if (item->allVisible)
+			if (prefetchBatch->iosItems[prefetchPos->item].allVisible)
 				continue;
 		}
 

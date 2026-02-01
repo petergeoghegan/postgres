@@ -146,6 +146,18 @@ typedef struct BatchRingItemPos
 } BatchRingItemPos;
 
 /*
+ * Index-only scan specific data for each item in a batch.  This struct is
+ * only allocated for index-only scans (when xs_want_itup is true).  Elements
+ * correspond 1:1 with the BatchMatchingItem items[] array.
+ */
+typedef struct BatchIOSItem
+{
+	LocationIndex tupleOffset;	/* IndexTuple's offset in currTuples workspace */
+	bool		checkedVisible; /* checked heapTid table block's visibility? */
+	bool		allVisible;		/* table block is known to be all-visible? */
+} BatchIOSItem;
+
+/*
  * Matching item returned by amgetbatch (in returned IndexScanBatch) during an
  * index scan.  Used by table AM to locate relevant matching table tuple.
  */
@@ -153,9 +165,6 @@ typedef struct BatchMatchingItem
 {
 	ItemPointerData heapTid;	/* TID of referenced heap item */
 	OffsetNumber indexOffset;	/* index item's location within page */
-	LocationIndex tupleOffset;	/* IndexTuple's offset in workspace, if any */
-	bool		checkedVisible; /* checked heapTid table block's visibility? */
-	bool		allVisible;		/* table block is known to be all-visible? */
 } BatchMatchingItem;
 
 /*
@@ -220,11 +229,12 @@ typedef struct IndexScanBatchData
 	int			numKilled;		/* number of currently stored items */
 
 	/*
-	 * If we are doing an index-only scan, these are the tuple storage
-	 * workspaces for the matching tuples (tuples referenced by items[]). Each
-	 * is of size BLCKSZ, so it can hold as much as a full page's worth of
-	 * tuples.
+	 * If we are doing an index-only scan, iosItems points to an array of
+	 * BatchIOSItem (one per items[] element) and currTuples points to the
+	 * tuple storage workspace (of size BLCKSZ).  Both are allocated together
+	 * with items[] in a single palloc and are NULL for non-IOS scans.
 	 */
+	BatchIOSItem *iosItems;		/* IOS-specific data parallel to items[] */
 	char	   *currTuples;		/* tuple storage for items[] */
 	BatchMatchingItem items[FLEXIBLE_ARRAY_MEMBER]; /* matching items */
 } IndexScanBatchData;

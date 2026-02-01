@@ -572,7 +572,8 @@ _hash_kill_items(IndexScanDesc scan, IndexScanBatch batch)
 			if (ItemPointerEquals(&ituple->t_tid, &currItem->heapTid))
 			{
 				/* found the item */
-				Assert(!currItem->allVisible);
+				Assert(!batch->iosItems ||
+					   !batch->iosItems[itemIndex].allVisible);
 				ItemIdMarkDead(iid);
 				killedsomething = true;
 				break;			/* out of inner search loop */

@@ -218,10 +218,9 @@ index_batchscan_end(IndexScanDesc scan)
 		if (cached == NULL)
 			continue;
 
+		/* iosItems and currTuples are part of the batch allocation */
 		if (cached->killedItems)
 			pfree(cached->killedItems);
-		if (cached->currTuples)
-			pfree(cached->currTuples);
 		pfree(cached);
 	}
 
@@ -542,7 +541,7 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 		 * Table AM must have checked visibility for every item in the batch.
 		 */
 		for (int i = batch->firstItem; i <= batch->lastItem; i++)
-			Assert(batch->items[i].checkedVisible);
+			Assert(batch->iosItems[i].checkedVisible);
 	}
 #endif
 
@@ -681,20 +680,49 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 
 	if (!batch)
 	{
+		Size		basesize;
+		Size		iosItemsOff = 0;
+		Size		currTuplesOff = 0;
+		Size		batchsize;
+
 #ifdef BATCH_CACHE_DEBUG
 		scan->batchringbuf.cacheMisses++;
 #endif
-		batch = palloc(offsetof(IndexScanBatchData, items) +
-					   sizeof(BatchMatchingItem) * scan->maxitemsbatch);
 
 		/*
-		 * If we are doing an index-only scan, we need a tuple storage
-		 * workspace. We allocate BLCKSZ for this, which should always give
-		 * the index AM enough space to fit a full page's worth of tuples.
+		 * Compute allocation size.  For index-only scans, we include space
+		 * for the BatchIOSItem array and currTuples workspace in the same
+		 * allocation as the batch itself.
 		 */
-		batch->currTuples = NULL;
+		basesize = offsetof(IndexScanBatchData, items) +
+			sizeof(BatchMatchingItem) * scan->maxitemsbatch;
+
 		if (scan->xs_want_itup)
-			batch->currTuples = palloc(BLCKSZ);
+		{
+			iosItemsOff = MAXALIGN(basesize);
+			currTuplesOff = MAXALIGN(iosItemsOff +
+									 sizeof(BatchIOSItem) * scan->maxitemsbatch);
+			batchsize = currTuplesOff + BLCKSZ;
+		}
+		else
+			batchsize = basesize;
+
+		batch = palloc(batchsize);
+
+		/*
+		 * Set up pointers for index-only scan data.  For non-IOS scans, both
+		 * iosItems and currTuples remain NULL.
+		 */
+		if (scan->xs_want_itup)
+		{
+			batch->iosItems = (BatchIOSItem *) ((char *) batch + iosItemsOff);
+			batch->currTuples = (char *) batch + currTuplesOff;
+		}
+		else
+		{
+			batch->iosItems = NULL;
+			batch->currTuples = NULL;
+		}
 
 		/*
 		 * Batches allocate killedItems lazily (though note that cached
@@ -703,7 +731,8 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 		batch->killedItems = NULL;
 	}
 
-	/* xs_want_itup scans must get a currTuples space */
+	/* xs_want_itup scans must get iosItems and currTuples space */
+	Assert(!(scan->xs_want_itup && (batch->iosItems == NULL)));
 	Assert(!(scan->xs_want_itup && (batch->currTuples == NULL)));
 
 	/* shared initialization */
@@ -765,17 +794,19 @@ indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 		/*
 		 * Failed to find a free slot for this batch.  We'll just free it
 		 * ourselves.  This isn't really expected; it's just defensive.
+		 *
+		 * Note: iosItems and currTuples are part of the batch allocation, so
+		 * only killedItems needs separate freeing.
 		 */
 		if (batch->killedItems)
 			pfree(batch->killedItems);
-		if (batch->currTuples)
-			pfree(batch->currTuples);
 	}
 	else
 	{
 		/* amgetbitmap scan caller */
 		Assert(scan->heapRelation == NULL);
 		Assert(batch->killedItems == NULL);
+		Assert(batch->iosItems == NULL);
 		Assert(batch->currTuples == NULL);
 	}
 

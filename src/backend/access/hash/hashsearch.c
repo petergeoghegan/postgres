@@ -660,7 +660,4 @@ _hash_saveitem(IndexScanBatch batch, int itemIndex,
 
 	currItem->heapTid = itup->t_tid;
 	currItem->indexOffset = offnum;
-	currItem->tupleOffset = 0;
-	currItem->checkedVisible = false;
-	currItem->allVisible = false;
 }

@@ -238,7 +238,8 @@ _bt_killitems(IndexScanDesc scan, IndexScanBatch batch)
 						break;	/* out of posting list loop */
 
 					Assert(kitem->indexOffset == offnum);
-					Assert(!kitem->allVisible);
+					Assert(!batch->iosItems ||
+						   !batch->iosItems[kitem - batch->items].allVisible);
 
 					/*
 					 * Read-ahead to later kitems here.

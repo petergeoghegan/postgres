@@ -1028,14 +1028,14 @@ _bt_saveitem(IndexScanBatch newbatch, int itemIndex, OffsetNumber offnum,
 	/* copy the populated part of the items array */
 	newbatch->items[itemIndex].heapTid = itup->t_tid;
 	newbatch->items[itemIndex].indexOffset = offnum;
-	newbatch->items[itemIndex].checkedVisible = false;
-	newbatch->items[itemIndex].allVisible = false;
 
-	if (newbatch->currTuples)
+	if (newbatch->iosItems)
 	{
 		Size		itupsz = IndexTupleSize(itup);
 
-		newbatch->items[itemIndex].tupleOffset = *tupleOffset;
+		newbatch->iosItems[itemIndex].tupleOffset = *tupleOffset;
+		newbatch->iosItems[itemIndex].checkedVisible = false;
+		newbatch->iosItems[itemIndex].allVisible = false;
 		memcpy(newbatch->currTuples + *tupleOffset, itup, itupsz);
 		*tupleOffset += MAXALIGN(itupsz);
 	}
@@ -1063,17 +1063,18 @@ _bt_setuppostingitems(IndexScanBatch newbatch, int itemIndex,
 	/* copy the populated part of the items array */
 	item->heapTid = *heapTid;
 	item->indexOffset = offnum;
-	item->checkedVisible = false;
-	item->allVisible = false;
 
-	if (newbatch->currTuples)
+	if (newbatch->iosItems)
 	{
 		/* Save base IndexTuple (truncate posting list) */
+		BatchIOSItem *iosItem = &newbatch->iosItems[itemIndex];
 		IndexTuple	base;
 		Size		itupsz = BTreeTupleGetPostingOffset(itup);
 
 		itupsz = MAXALIGN(itupsz);
-		item->tupleOffset = *tupleOffset;
+		iosItem->tupleOffset = *tupleOffset;
+		iosItem->checkedVisible = false;
+		iosItem->allVisible = false;
 		base = (IndexTuple) (newbatch->currTuples + *tupleOffset);
 		memcpy(base, itup, itupsz);
 		/* Defensively reduce work area index tuple header size */
@@ -1081,7 +1082,7 @@ _bt_setuppostingitems(IndexScanBatch newbatch, int itemIndex,
 		base->t_info |= itupsz;
 		*tupleOffset += itupsz;
 
-		return item->tupleOffset;
+		return iosItem->tupleOffset;
 	}
 
 	return 0;
@@ -1102,15 +1103,19 @@ _bt_savepostingitem(IndexScanBatch newbatch, int itemIndex, OffsetNumber offnum,
 
 	item->heapTid = *heapTid;
 	item->indexOffset = offnum;
-	item->checkedVisible = false;
-	item->allVisible = false;
 
 	/*
 	 * Have index-only scans return the same base IndexTuple for every TID
 	 * that originates from the same posting list
 	 */
-	if (newbatch->currTuples)
-		item->tupleOffset = baseOffset;
+	if (newbatch->iosItems)
+	{
+		BatchIOSItem *iosItem = &newbatch->iosItems[itemIndex];
+
+		iosItem->tupleOffset = baseOffset;
+		iosItem->checkedVisible = false;
+		iosItem->allVisible = false;
+	}
 }
 
 #define LOOK_AHEAD_REQUIRED_RECHECKS 	3
