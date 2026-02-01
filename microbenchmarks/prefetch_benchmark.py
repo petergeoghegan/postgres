@@ -1696,8 +1696,11 @@ def run_benchmark(args):
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["master"]["times"].append(exec_time)
-                        # Save the last run's explain output
-                        results["queries"][query_id]["master"]["explain"] = explain_output
+                        # Save the explain output from the run with the minimum execution time
+                        current_min = results["queries"][query_id]["master"].get("min_time")
+                        if current_min is None or exec_time < current_min:
+                            results["queries"][query_id]["master"]["min_time"] = exec_time
+                            results["queries"][query_id]["master"]["explain"] = explain_output
                         print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
             master_conn.close()
@@ -1735,8 +1738,11 @@ def run_benchmark(args):
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_off"]["times"].append(exec_time)
-                        # Save the last run's explain output
-                        results["queries"][query_id]["patch_off"]["explain"] = explain_output
+                        # Save the explain output from the run with the minimum execution time
+                        current_min = results["queries"][query_id]["patch_off"].get("min_time")
+                        if current_min is None or exec_time < current_min:
+                            results["queries"][query_id]["patch_off"]["min_time"] = exec_time
+                            results["queries"][query_id]["patch_off"]["explain"] = explain_output
                         print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
             # Run with prefetch ON (skip if --prefetch-disabled)
@@ -1750,8 +1756,11 @@ def run_benchmark(args):
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_on"]["times"].append(exec_time)
-                        # Save the last run's explain output
-                        results["queries"][query_id]["patch_on"]["explain"] = explain_output
+                        # Save the explain output from the run with the minimum execution time
+                        current_min = results["queries"][query_id]["patch_on"].get("min_time")
+                        if current_min is None or exec_time < current_min:
+                            results["queries"][query_id]["patch_on"]["min_time"] = exec_time
+                            results["queries"][query_id]["patch_on"]["explain"] = explain_output
                         print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
         patch_conn.close()
@@ -2162,7 +2171,11 @@ def run_readstream_tests(args):
                 )
                 if exec_time is not None:
                     results["queries"][query_id]["master"]["times"].append(exec_time)
-                    results["queries"][query_id]["master"]["explain"] = explain_output
+                    # Save the explain output from the run with the minimum execution time
+                    current_min = results["queries"][query_id]["master"].get("min_time")
+                    if current_min is None or exec_time < current_min:
+                        results["queries"][query_id]["master"]["min_time"] = exec_time
+                        results["queries"][query_id]["master"]["explain"] = explain_output
                     print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
         master_conn.close()
@@ -2196,7 +2209,11 @@ def run_readstream_tests(args):
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_off"]["times"].append(exec_time)
-                        results["queries"][query_id]["patch_off"]["explain"] = explain_output
+                        # Save the explain output from the run with the minimum execution time
+                        current_min = results["queries"][query_id]["patch_off"].get("min_time")
+                        if current_min is None or exec_time < current_min:
+                            results["queries"][query_id]["patch_off"]["min_time"] = exec_time
+                            results["queries"][query_id]["patch_off"]["explain"] = explain_output
                         print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
             # Run with prefetch ON
@@ -2210,7 +2227,11 @@ def run_readstream_tests(args):
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_on"]["times"].append(exec_time)
-                        results["queries"][query_id]["patch_on"]["explain"] = explain_output
+                        # Save the explain output from the run with the minimum execution time
+                        current_min = results["queries"][query_id]["patch_on"].get("min_time")
+                        if current_min is None or exec_time < current_min:
+                            results["queries"][query_id]["patch_on"]["min_time"] = exec_time
+                            results["queries"][query_id]["patch_on"]["explain"] = explain_output
                         print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
         patch_conn.close()
@@ -2397,7 +2418,11 @@ def run_random_backwards_tests(args):
                 )
                 if exec_time is not None:
                     results["queries"][query_id]["master"]["times"].append(exec_time)
-                    results["queries"][query_id]["master"]["explain"] = explain_output
+                    # Save the explain output from the run with the minimum execution time
+                    current_min = results["queries"][query_id]["master"].get("min_time")
+                    if current_min is None or exec_time < current_min:
+                        results["queries"][query_id]["master"]["min_time"] = exec_time
+                        results["queries"][query_id]["master"]["explain"] = explain_output
                     print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
         master_conn.close()
@@ -2431,7 +2456,11 @@ def run_random_backwards_tests(args):
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_off"]["times"].append(exec_time)
-                        results["queries"][query_id]["patch_off"]["explain"] = explain_output
+                        # Save the explain output from the run with the minimum execution time
+                        current_min = results["queries"][query_id]["patch_off"].get("min_time")
+                        if current_min is None or exec_time < current_min:
+                            results["queries"][query_id]["patch_off"]["min_time"] = exec_time
+                            results["queries"][query_id]["patch_off"]["explain"] = explain_output
                         print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
             # Run with prefetch ON
@@ -2445,7 +2474,11 @@ def run_random_backwards_tests(args):
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_on"]["times"].append(exec_time)
-                        results["queries"][query_id]["patch_on"]["explain"] = explain_output
+                        # Save the explain output from the run with the minimum execution time
+                        current_min = results["queries"][query_id]["patch_on"].get("min_time")
+                        if current_min is None or exec_time < current_min:
+                            results["queries"][query_id]["patch_on"]["min_time"] = exec_time
+                            results["queries"][query_id]["patch_on"]["explain"] = explain_output
                         print(f"  Run {run + 1}: {exec_time:.3f} ms")
 
         patch_conn.close()
