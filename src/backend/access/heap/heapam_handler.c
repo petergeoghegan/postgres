@@ -287,7 +287,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
  * It's worth going through this complexity to avoid needing to lock the VM
  * buffer, which could cause significant contention.
  */
-static void
+static pg_noinline void
 heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 								int item)
 {
@@ -368,10 +368,6 @@ heapam_batch_return_tid(IndexScanDesc scan, IndexScanBatch scanBatch,
 		scan->xs_itup = (IndexTuple) (scanBatch->currTuples +
 									  scanBatch->iosItems[item].tupleOffset);
 		scan->xs_visible = scanBatch->iosItems[item].allVisible;
-	}
-	else
-	{
-		scan->xs_visible = false;
 	}
 
 	scan->xs_heaptid = scanBatch->items[scanPos->item].heapTid;
