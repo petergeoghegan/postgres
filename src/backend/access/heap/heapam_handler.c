@@ -429,7 +429,7 @@ heapam_batch_return_tid(IndexScanDesc scan, IndexScanBatch scanBatch,
  * don't free any batches here, though; that is also left up to caller.
  * ----------------
  */
-static IndexScanBatch
+static pg_attribute_hot IndexScanBatch
 heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 					 IndexScanBatch priorBatch, BatchRingItemPos *pos)
 {
@@ -617,7 +617,7 @@ heapam_dirchange_readstream_inval(IndexFetchHeapData *hscan,
  * given scan direction.
  * ----------------
  */
-static inline ItemPointer
+static pg_attribute_hot ItemPointer
 heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 						 ScanDirection direction)
 {
@@ -921,7 +921,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
  * dropped elsewhere.
  * ----------------
  */
-static bool
+static pg_attribute_hot bool
 index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
 {
 	bool		all_dead = false;
@@ -973,7 +973,7 @@ index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
  * enough information to do it efficiently in the general case.
  * ----------------
  */
-static bool
+static pg_attribute_hot bool
 heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 						  TupleTableSlot *slot)
 {
