@@ -128,6 +128,8 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 
 	scan->tuples_needed = -1;	/* no limit */
 
+	scan->xs_read_extremal_only = false;
+
 	return scan;
 }
 
