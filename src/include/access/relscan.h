@@ -491,6 +491,39 @@ index_scan_batch_append(IndexScanDescData *scan, IndexScanBatch batch)
 }
 
 /*
+ * Compare two batch ring positions in the given scan direction.
+ *
+ * Returns negative if pos1 is behind pos2, 0 if equal, positive if pos1 is
+ * ahead of pos2.  This is in the style of a qsort comparator.
+ */
+static inline int
+index_scan_pos_cmp(BatchRingItemPos *pos1, BatchRingItemPos *pos2,
+				   ScanDirection direction)
+{
+	int8		batchdiff = (int8) (pos1->batch - pos2->batch);
+
+	if (batchdiff != 0)
+		return batchdiff;
+
+	/* Same batch, compare items */
+	if (ScanDirectionIsForward(direction))
+		return pos1->item - pos2->item;
+	else
+		return pos2->item - pos1->item;
+}
+
+/*
+ * Return the signed distance in batches between two positions.
+ *
+ * Positive means pos1 is ahead of pos2 by that many batches.
+ */
+static inline int8
+index_scan_pos_batch_distance(BatchRingItemPos *pos1, BatchRingItemPos *pos2)
+{
+	return (int8) (pos1->batch - pos2->batch);
+}
+
+/*
  * Advance position to its next item in the batch.
  *
  * Advance to the next item within the provided batch (or to the previous item,
