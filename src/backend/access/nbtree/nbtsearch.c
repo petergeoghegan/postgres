@@ -1656,6 +1656,7 @@ _bt_readfirstpage(IndexScanDesc scan, IndexScanBatch firstbatch,
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	BTBatchData *btfirstbatch = BTBatchGetData(firstbatch);
+	bool		extscandone = false;
 	BlockNumber blkno,
 				lastcurrblkno;
 
@@ -1704,14 +1705,28 @@ _bt_readfirstpage(IndexScanDesc scan, IndexScanBatch firstbatch,
 
 	Assert(firstbatch->dir == dir);
 
-	if (blkno == P_NONE ||
+	/*
+	 * Maintain xs_read_extremal_only, a limit on the number of leaf pages
+	 * we'll read before giving up and ending the scan
+	 */
+	if (unlikely(scan->xs_read_extremal_only))
+	{
+		if (--scan->xs_read_extremal_only == 0)
+			extscandone = true;
+	}
+
+	if (blkno == P_NONE || extscandone ||
 		(ScanDirectionIsForward(dir) ?
 		 !btfirstbatch->moreRight : !btfirstbatch->moreLeft))
 	{
 		/*
 		 * firstbatch _bt_readpage call ended scan in this direction (though
-		 * if so->needPrimScan was set the scan will continue in _bt_first)
+		 * if so->needPrimScan was set the scan will continue in _bt_first).
+		 *
+		 * Also cut our losses during xs_read_extremal_only scans, which are
+		 * limited to scanning only a few leaf pages in the index.
 		 */
+		Assert(!scan->xs_read_extremal_only || !so->needPrimScan);
 		indexam_util_batch_release(scan, firstbatch);
 		_bt_parallel_done(scan);
 		return NULL;
@@ -1752,6 +1767,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 				 BlockNumber lastcurrblkno, ScanDirection dir, bool firstpage)
 {
 	Relation	rel = scan->indexRelation;
+	bool		extscandone = false;
 	IndexScanBatch newbatch;
 	BTBatchData *btnewbatch;
 
@@ -1829,8 +1845,18 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 		/* no matching tuples on this page */
 		_bt_relbuf(rel, btnewbatch->buf);
 
+		/*
+		 * Maintain xs_read_extremal_only, a limit on the number of leaf pages
+		 * we'll read before giving up and ending the scan
+		 */
+		if (unlikely(scan->xs_read_extremal_only))
+		{
+			if (--scan->xs_read_extremal_only == 0)
+				extscandone = true;
+		}
+
 		/* Continue the scan in this direction? */
-		if (blkno == P_NONE ||
+		if (blkno == P_NONE || extscandone ||
 			(ScanDirectionIsForward(dir) ?
 			 !btnewbatch->moreRight : !btnewbatch->moreLeft))
 		{

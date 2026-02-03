@@ -381,6 +381,14 @@ typedef struct IndexScanDescData
 
 	/* parallel index scan information, in shared memory */
 	struct ParallelIndexScanDescData *parallel_scan;
+
+	/*
+	 * Counter to request early abort during get_actual_variable_range scans.
+	 * When nonzero, the scan will read at most this many leaf pages before
+	 * giving up (regardless of whether those pages had matching items). Zero
+	 * means disabled (normal scan behavior).
+	 */
+	int			xs_read_extremal_only;
 } IndexScanDescData;
 
 /* Generic structure for parallel scans */
