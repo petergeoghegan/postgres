@@ -113,7 +113,7 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 
 	/*
 	 * Deliberately don't drop any vmbuf pin here.  But do reset xs_vm_items,
-	 * so that rescans don't excessively many VM lookups.
+	 * so that rescans don't do an excessive number of VM lookups.
 	 */
 	hscan->xs_vm_items = 1;
 
