@@ -7167,14 +7167,10 @@ get_actual_variable_endpoint(Relation heapRel,
 	 *
 	 * Despite all this care, there are situations where we might find many
 	 * non-visible tuples near the end of the index.  We don't want to expend
-	 * a huge amount of time here, so we give up once we've read too many heap
-	 * pages.  When we fail for that reason, the caller will end up using
-	 * whatever extremal value is recorded in pg_statistic.
-	 *
-	 * XXX This can't work with the new table_index_getnext_slot interface,
-	 * which simply won't return a tuple that isn't visible to our snapshot.
-	 * table_index_getnext_slot will need some kind of callback that provides
-	 * a way for the scan to give up when the costs start to get out of hand.
+	 * a huge amount of time here, so we give up the extremal index leaf page
+	 * has no matching items (generally only seen when the page has many index
+	 * tuples with set LP_DEAD bits).  When we give up the caller will end up
+	 * using whatever extremal value is recorded in pg_statistic.
 	 */
 	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
 							  GlobalVisTestFor(heapRel));
@@ -7183,6 +7179,10 @@ get_actual_variable_endpoint(Relation heapRel,
 								 &SnapshotNonVacuumable, NULL,
 								 1, 0);
 	Assert(index_scan->xs_want_itup);
+
+	/* Set up our index-only scan to read at most one index leaf page */
+	index_scan->xs_read_extremal_only = true;
+
 	index_rescan(index_scan, scankeys, 1, NULL, 0);
 
 	/* Fetch first/next tuple in specified direction */
