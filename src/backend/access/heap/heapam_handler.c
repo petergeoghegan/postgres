@@ -568,6 +568,17 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 			ReleaseBuffer(batch->buf);
 			batch->buf = InvalidBuffer;
 		}
+
+		/*
+		 * xs_read_extremal_only scans are used by get_actual_variable_range
+		 * to find min/max values.  They only need a value from one of the
+		 * extremal leaf pages, so once we have one batch, we give up.
+		 */
+		if (unlikely(scan->xs_read_extremal_only) && priorBatch)
+		{
+			Assert(scan->xs_want_itup);
+			return NULL;
+		}
 	}
 	else
 	{
