@@ -135,6 +135,7 @@ typedef struct IndexFetchHeapData
 	 */
 	ScanDirection xs_dir;
 	BlockNumber xs_prefetch_block;
+	bool		xs_yielded;		/* yielded until xs_cbuf changes */
 	bool		xs_paused;		/* paused until next batch is read */
 
 	/* NB: if xs_cbuf or vmbuf are not InvalidBuffer, we hold a pin */

@@ -119,6 +119,7 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 
 	hscan->xs_dir = NoMovementScanDirection;
 	hscan->xs_prefetch_block = InvalidBlockNumber;
+	hscan->xs_yielded = false;
 	hscan->xs_paused = false;
 
 	if (hscan->xs_read_stream)
@@ -592,6 +593,7 @@ heapam_dirchange_readstream_inval(IndexFetchHeapData *hscan,
 		hscan->xs_read_stream = NULL;
 	}
 	batchringbuf->prefetchPos.valid = false;
+	hscan->xs_yielded = false;
 	hscan->xs_paused = false;
 
 	/*
@@ -694,6 +696,9 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		IndexScanBatch headBatch = index_scan_batch(scan,
 													batchringbuf->headBatch);
 
+		/* Reset xs_yielded, since scanPos advanced to a new batch */
+		hscan->xs_yielded = false;
+
 		/* Also free obsolescent head batch (unless it is scan's markBatch) */
 		tableam_util_free_batch(scan, headBatch);
 
@@ -753,6 +758,13 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	IndexScanBatch prefetchBatch;
 	bool		fromScanPos = false;
 
+	/*
+	 * During read_stream_reset (cleanup), we might be called scanPos is
+	 * invalid.  Just end the read stream.
+	 */
+	if (!scanPos->valid)
+		return InvalidBlockNumber;
+
 	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
@@ -798,13 +810,38 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * Note: This approach is robust against uint8 wraparound of ring buffer
 	 * offsets: prefetchPos->batch cannot possibly fall behind scanPos->batch
 	 * by more than INDEX_SCAN_MAX_BATCHES at any time.  We rely on that here.
+	 *
+	 * We also re-initialize when scanPos has caught up to or passed
+	 * prefetchPos, which can happen after yielding due to prefetchPos being
+	 * too far ahead.
 	 */
 	if (!prefetchPos->valid ||
-		!index_scan_batch_loaded(scan, prefetchPos->batch))
+		!index_scan_batch_loaded(scan, prefetchPos->batch) ||
+		index_scan_pos_cmp(prefetchPos, scanPos, direction) < 0)
 	{
+		IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);
+
+		/* If scanPos is already past the end of matching items, we're done */
+		if (scanPos->item < scanBatch->firstItem ||
+			scanPos->item > scanBatch->lastItem)
+			return InvalidBlockNumber;
+
 		hscan->xs_prefetch_block = InvalidBlockNumber;
 		*prefetchPos = *scanPos;
 		fromScanPos = true;
+	}
+
+	/*
+	 * If prefetchPos is significantly ahead of scanPos (3+ batches) and we
+	 * haven't yielded for this condition yet, do so now.  This gives scans
+	 * with high prefetch distances the opportunity to return at least one
+	 * tuple per additional batch scanned.
+	 */
+	if (!hscan->xs_yielded &&
+		index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
+	{
+		hscan->xs_yielded = true;
+		return read_stream_yield(stream);
 	}
 
 	prefetchBatch = index_scan_batch(scan, prefetchPos->batch);
@@ -866,6 +903,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		Assert(index_scan_batch(scan, prefetchPos->batch) == prefetchBatch);
 
 		/* scanPos is always <= prefetchPos when we return */
+		Assert(index_scan_pos_cmp(scanPos, prefetchPos, direction) <= 0);
 		Assert(prefetchPos->item >= prefetchBatch->firstItem &&
 			   prefetchPos->item <= prefetchBatch->lastItem);
 
