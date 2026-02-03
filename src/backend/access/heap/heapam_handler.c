@@ -300,6 +300,10 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	if (batch->items[posItem].checkedVisible)
 		return;
 
+#ifdef VM_RESOLVE_DEBUG
+	scan->batchringbuf.vmResolveCalls++;
+#endif
+
 	/* We better still have a pin on batch's index page */
 	Assert(BufferIsValid(batch->buf));
 
@@ -326,6 +330,27 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 						   ItemPointerGetBlockNumber(tid),
 						   &hscan->vmbuf) != 0;
 	}
+
+#ifdef VM_RESOLVE_DEBUG
+	{
+		int			itemsChecked = lastItem - firstItem + 1;
+		int			itemsAllVisible = 0;
+
+		for (int j = firstItem; j <= lastItem; j++)
+			if (batch->items[j].allVisible)
+				itemsAllVisible++;
+
+		scan->batchringbuf.vmItemsChecked += itemsChecked;
+		scan->batchringbuf.vmItemsAllVisible += itemsAllVisible;
+
+		/* Track min/max allVisible per call */
+		if (scan->batchringbuf.vmResolveCalls == 1 ||
+			(uint64) itemsAllVisible < scan->batchringbuf.vmAllVisPerCallMin)
+			scan->batchringbuf.vmAllVisPerCallMin = itemsAllVisible;
+		if ((uint64) itemsAllVisible > scan->batchringbuf.vmAllVisPerCallMax)
+			scan->batchringbuf.vmAllVisPerCallMax = itemsAllVisible;
+	}
+#endif
 
 	/*
 	 * It's now safe to drop the batch's buffer pin, as we've resolved the
@@ -671,6 +696,11 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 
 #ifdef BATCH_CACHE_DEBUG
 	batchringbuf->batchesScanned++;
+#endif
+
+#ifdef VM_RESOLVE_DEBUG
+	batchringbuf->vmBatchesScanned++;
+	batchringbuf->vmTotalBatchItems += (scanBatch->lastItem - scanBatch->firstItem + 1);
 #endif
 
 	/*
