@@ -145,6 +145,32 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	batchringbuf->prefetchPos.valid = false;
 
 	/*
+	 * Fast path for the common case: exactly one batch loaded, no markBatch,
+	 * MVCC scan (buffer already released), and no killed items.  This avoids
+	 * function call overhead through tableam_util_free_batch -> amfreebatch.
+	 */
+	if (likely(index_scan_batch_count(scan) == 1 && markBatch == NULL &&
+			   scan->MVCCScan))
+	{
+		IndexScanBatch batch = index_scan_batch(scan,
+												batchringbuf->headBatch);
+
+		if (likely(batch->numKilled == 0))
+		{
+			/* Directly release to cache, skipping amfreebatch overhead */
+			if (BufferIsValid(batch->buf))
+			{
+				ReleaseBuffer(batch->buf);
+				batch->buf = InvalidBuffer;
+			}
+			indexam_util_batch_release(scan, batch);
+			batchringbuf->headBatch = 0;
+			batchringbuf->nextBatch = 0;
+			return;
+		}
+	}
+
+	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
 	 * and that all markBatch related state is reset
 	 */
