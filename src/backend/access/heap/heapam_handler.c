@@ -533,6 +533,13 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 			batch->buf = InvalidBuffer;
 		}
 
+		if (unlikely(scan->xs_read_extremal_only) && priorBatch)
+		{
+			Assert(!hscan->xs_read_stream);
+			Assert(scan->xs_want_itup);
+			return NULL;
+		}
+
 		/*
 		 * Delay initializing stream until reading from scan's second batch.
 		 * This heuristic avoids wasting cycles on starting a read stream for
