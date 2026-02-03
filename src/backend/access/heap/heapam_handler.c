@@ -526,6 +526,18 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 		}
 
 		/*
+		 * xs_read_extremal_only scans are used by get_actual_variable_range
+		 * to find min/max values.  They only need the extremal (first or
+		 * last) index page, so once we have one batch, we give up completely.
+		 */
+		if (unlikely(scan->xs_read_extremal_only) && priorBatch)
+		{
+			Assert(!hscan->xs_read_stream);
+			Assert(scan->xs_want_itup);
+			return NULL;
+		}
+
+		/*
 		 * Delay initializing stream until reading from scan's second batch.
 		 * This heuristic avoids wasting cycles on starting a read stream for
 		 * very selective index scans.  We can likely improve upon this, but
