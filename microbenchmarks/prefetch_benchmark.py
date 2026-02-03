@@ -26,7 +26,7 @@ import sys
 import time
 from collections import OrderedDict
 from datetime import datetime, timedelta
-from statistics import mean
+from statistics import mean, median
 
 import psycopg
 
@@ -46,6 +46,21 @@ from benchmark_common import (
 
 # Output directory for results
 OUTPUT_DIR = "prefetch_results"
+
+# Global flag for using median vs min (set from args)
+USE_MEDIAN = False
+
+
+def get_representative(times):
+    """Return the representative value (median or min) from a list of times."""
+    if not times:
+        return None
+    return median(times) if USE_MEDIAN else min(times)
+
+
+def get_stat_label():
+    """Return the label for the representative statistic."""
+    return "median" if USE_MEDIAN else "min"
 
 # CPU pinning settings
 BENCHMARK_CPU = 14
@@ -514,7 +529,13 @@ Examples:
         type=float,
         default=None,
         dest="exclude_ms",
-        help="Exclude queries whose master runtime (min) is below this threshold in ms from patch runs and rankings"
+        help="Exclude queries whose master runtime (min/median) is below this threshold in ms from patch runs and rankings"
+    )
+    parser.add_argument(
+        "--median",
+        action="store_true",
+        dest="use_median",
+        help="Use median instead of min as the representative value in reports and comparisons"
     )
     return parser.parse_args()
 
@@ -1683,15 +1704,18 @@ def run_benchmark(args):
 
         # Identify queries below --exclude-ms threshold (when using old master results)
         if args.exclude_ms is not None:
+            stat_label = get_stat_label()
             for query_id in selected_queries:
-                master_min = results["queries"][query_id]["master"].get("min")
-                if master_min is not None and master_min < args.exclude_ms:
+                master_times = results["queries"][query_id]["master"].get("times", [])
+                master_rep = get_representative(master_times)
+                if master_rep is not None and master_rep < args.exclude_ms:
                     excluded_query_ids.add(query_id)
 
             if excluded_query_ids:
-                print(f"\nExcluding {len(excluded_query_ids)} queries below {args.exclude_ms:.1f} ms threshold from patch runs:")
+                print(f"\nExcluding {len(excluded_query_ids)} queries below {args.exclude_ms:.1f} ms threshold ({stat_label}) from patch runs:")
                 for qid in sorted(excluded_query_ids):
-                    print(f"  {qid}: {results['queries'][qid]['master']['min']:.3f} ms")
+                    ms = get_representative(results["queries"][qid]["master"].get("times", []))
+                    print(f"  {qid}: {ms:.3f} ms")
     else:
         print(f"\n{'=' * 60}")
         print("Running all queries on MASTER")
@@ -1733,17 +1757,18 @@ def run_benchmark(args):
 
         # Identify queries below --exclude-ms threshold
         if args.exclude_ms is not None:
+            stat_label = get_stat_label()
             for query_id in selected_queries:
                 master_times = results["queries"][query_id]["master"]["times"]
                 if master_times:
-                    master_min = min(master_times)
-                    if master_min < args.exclude_ms:
+                    master_rep = get_representative(master_times)
+                    if master_rep < args.exclude_ms:
                         excluded_query_ids.add(query_id)
 
             if excluded_query_ids:
-                print(f"\nExcluding {len(excluded_query_ids)} queries below {args.exclude_ms:.1f} ms threshold from patch runs:")
+                print(f"\nExcluding {len(excluded_query_ids)} queries below {args.exclude_ms:.1f} ms threshold ({stat_label}) from patch runs:")
                 for qid in sorted(excluded_query_ids):
-                    ms = min(results["queries"][qid]["master"]["times"])
+                    ms = get_representative(results["queries"][qid]["master"]["times"])
                     print(f"  {qid}: {ms:.3f} ms")
 
     # Run all queries on patch (both prefetch=off and prefetch=on)
@@ -1828,29 +1853,31 @@ def run_benchmark(args):
             if times:
                 query_results[config]["avg"] = mean(times)
                 query_results[config]["min"] = min(times)
+                query_results[config]["median"] = median(times)
                 query_results[config]["max"] = max(times)
 
-        # Print summary for this query (using min as representative value)
-        master_min = query_results["master"]["min"]
-        patch_off_min = query_results["patch_off"]["min"]
-        patch_on_min = query_results["patch_on"]["min"]
+        # Print summary for this query (using min or median as representative value)
+        stat_label = get_stat_label()
+        master_rep = get_representative(query_results["master"]["times"])
+        patch_off_rep = get_representative(query_results["patch_off"]["times"])
+        patch_on_rep = get_representative(query_results["patch_on"]["times"])
 
         # ANSI bold escape codes
         BOLD = "\033[1m"
         RESET = "\033[0m"
 
         print(f"\n{BOLD}{query_id}: {query_results['name']}{RESET}")
-        if master_min:
-            print(f"  master (min):               {master_min:10.3f} ms "
+        if master_rep:
+            print(f"  master ({stat_label}):               {master_rep:10.3f} ms "
                   f"(avg={query_results['master']['avg']:.3f}, max={query_results['master']['max']:.3f})")
-        if patch_off_min and master_min:
-            ratio_off = patch_off_min / master_min
-            print(f"  patch (prefetch=off) (min): {patch_off_min:10.3f} ms "
+        if patch_off_rep and master_rep:
+            ratio_off = patch_off_rep / master_rep
+            print(f"  patch (prefetch=off) ({stat_label}): {patch_off_rep:10.3f} ms "
                   f"(avg={query_results['patch_off']['avg']:.3f}, max={query_results['patch_off']['max']:.3f}) "
                   f"[{BOLD}{ratio_off:.3f}x{RESET} vs master]")
-        if patch_on_min and master_min:
-            ratio_on = patch_on_min / master_min
-            print(f"  patch (prefetch=on) (min):  {patch_on_min:10.3f} ms "
+        if patch_on_rep and master_rep:
+            ratio_on = patch_on_rep / master_rep
+            print(f"  patch (prefetch=on) ({stat_label}):  {patch_on_rep:10.3f} ms "
                   f"(avg={query_results['patch_on']['avg']:.3f}, max={query_results['patch_on']['max']:.3f}) "
                   f"[{BOLD}{ratio_on:.3f}x{RESET} vs master]")
 
@@ -1904,25 +1931,26 @@ def run_benchmark(args):
         f.write(f"Mode: {results['mode']}\n")
         f.write(f"Runs per query: {results['runs']}\n\n")
 
+        stat_label = get_stat_label()
         for query_id, qr in results["queries"].items():
             f.write(f"\n{query_id}: {qr['name']}\n")
             f.write("-" * 50 + "\n")
 
-            master_min = qr["master"]["min"]
-            patch_off_min = qr["patch_off"]["min"]
-            patch_on_min = qr["patch_on"]["min"]
+            master_rep = get_representative(qr["master"]["times"])
+            patch_off_rep = get_representative(qr["patch_off"]["times"])
+            patch_on_rep = get_representative(qr["patch_on"]["times"])
 
-            if master_min:
-                f.write(f"  master (min):               {master_min:10.3f} ms "
+            if master_rep:
+                f.write(f"  master ({stat_label}):               {master_rep:10.3f} ms "
                         f"(avg={qr['master']['avg']:.3f}, max={qr['master']['max']:.3f})\n")
-            if patch_off_min and master_min:
-                ratio_off = patch_off_min / master_min
-                f.write(f"  patch (prefetch=off) (min): {patch_off_min:10.3f} ms "
+            if patch_off_rep and master_rep:
+                ratio_off = patch_off_rep / master_rep
+                f.write(f"  patch (prefetch=off) ({stat_label}): {patch_off_rep:10.3f} ms "
                         f"(avg={qr['patch_off']['avg']:.3f}, max={qr['patch_off']['max']:.3f}) "
                         f"[{ratio_off:.3f}x vs master]\n")
-            if patch_on_min and master_min:
-                ratio_on = patch_on_min / master_min
-                f.write(f"  patch (prefetch=on) (min):  {patch_on_min:10.3f} ms "
+            if patch_on_rep and master_rep:
+                ratio_on = patch_on_rep / master_rep
+                f.write(f"  patch (prefetch=on) ({stat_label}):  {patch_on_rep:10.3f} ms "
                         f"(avg={qr['patch_on']['avg']:.3f}, max={qr['patch_on']['max']:.3f}) "
                         f"[{ratio_on:.3f}x vs master]\n")
 
@@ -1981,8 +2009,9 @@ def run_benchmark(args):
     print(f"  Patch:   {patch_duration:10.1f} seconds ({format_duration(patch_duration)})")
     print(f"  Total:   {total_duration:10.1f} seconds ({format_duration(total_duration)})")
 
-    # Collect all patch runs with their ratios vs master (using min as representative)
+    # Collect all patch runs with their ratios vs master (using min or median as representative)
     # Each patch configuration (prefetch=off, prefetch=on) is treated independently
+    stat_label = get_stat_label()
     all_ratios = []
     for query_id in selected_queries:
         # Skip queries below --exclude-ms threshold
@@ -1990,34 +2019,34 @@ def run_benchmark(args):
             continue
 
         qr = results["queries"][query_id]
-        master_min = qr["master"]["min"]
-        if not master_min:
+        master_rep = get_representative(qr["master"]["times"])
+        if not master_rep:
             continue
 
         # patch (prefetch=off)
-        patch_off_min = qr["patch_off"]["min"]
-        if patch_off_min:
-            ratio = patch_off_min / master_min
+        patch_off_rep = get_representative(qr["patch_off"]["times"])
+        if patch_off_rep:
+            ratio = patch_off_rep / master_rep
             all_ratios.append({
                 "query_id": query_id,
                 "name": qr["name"],
                 "config": "prefetch=off",
                 "ratio": ratio,
-                "master_ms": master_min,
-                "patch_ms": patch_off_min,
+                "master_ms": master_rep,
+                "patch_ms": patch_off_rep,
             })
 
         # patch (prefetch=on)
-        patch_on_min = qr["patch_on"]["min"]
-        if patch_on_min:
-            ratio = patch_on_min / master_min
+        patch_on_rep = get_representative(qr["patch_on"]["times"])
+        if patch_on_rep:
+            ratio = patch_on_rep / master_rep
             all_ratios.append({
                 "query_id": query_id,
                 "name": qr["name"],
                 "config": "prefetch=on",
                 "ratio": ratio,
-                "master_ms": master_min,
-                "patch_ms": patch_on_min,
+                "master_ms": master_rep,
+                "patch_ms": patch_on_rep,
             })
 
     # Neutral: 0.99 <= ratio <= 1.01 (essentially same speed)
@@ -2034,34 +2063,34 @@ def run_benchmark(args):
 
     # Print neutral section first
     print(f"\n{'=' * 60}")
-    print(f"NEUTRAL vs MASTER (using min) [{len(neutral)} total]")
+    print(f"NEUTRAL vs MASTER (using {stat_label}) [{len(neutral)} total]")
     print(f"{'=' * 60}")
     if neutral:
         for rank, entry in enumerate(neutral[:topn], 1):
             print(f"  #{rank}  {entry['query_id']} ({entry['config']}): {entry['name']}")
-            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
+            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master ({stat_label}): {entry['master_ms']:.3f} ms, patch ({stat_label}): {entry['patch_ms']:.3f} ms")
     else:
         print("  (none)")
 
     # Print improvements section
     print(f"\n{'=' * 60}")
-    print(f"TOP {topn} IMPROVEMENTS vs MASTER (using min) [{len(improvements)} total]")
+    print(f"TOP {topn} IMPROVEMENTS vs MASTER (using {stat_label}) [{len(improvements)} total]")
     print(f"{'=' * 60}")
     if improvements:
         for rank, entry in enumerate(improvements[:topn], 1):
             print(f"  #{rank}  {entry['query_id']} ({entry['config']}): {entry['name']}")
-            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
+            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master ({stat_label}): {entry['master_ms']:.3f} ms, patch ({stat_label}): {entry['patch_ms']:.3f} ms")
     else:
         print("  (none)")
 
     # Print regressions section last
     print(f"\n{'=' * 60}")
-    print(f"TOP {topn} REGRESSIONS vs MASTER (using min) [{len(regressions)} total]")
+    print(f"TOP {topn} REGRESSIONS vs MASTER (using {stat_label}) [{len(regressions)} total]")
     print(f"{'=' * 60}")
     if regressions:
         for rank, entry in enumerate(regressions[:topn], 1):
             print(f"  #{rank}  {entry['query_id']} ({entry['config']}): {entry['name']}")
-            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master (min): {entry['master_ms']:.3f} ms, patch (min): {entry['patch_ms']:.3f} ms")
+            print(f"       {BOLD}{entry['ratio']:.3f}x{RESET} - master ({stat_label}): {entry['master_ms']:.3f} ms, patch ({stat_label}): {entry['patch_ms']:.3f} ms")
     else:
         print("  (none)")
 
@@ -2296,6 +2325,7 @@ def run_readstream_tests(args):
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
+    stat_label = get_stat_label()
     for query_id in queries.keys():
         query_results = results["queries"][query_id]
 
@@ -2305,25 +2335,26 @@ def run_readstream_tests(args):
             if times:
                 query_results[config]["avg"] = mean(times)
                 query_results[config]["min"] = min(times)
+                query_results[config]["median"] = median(times)
                 query_results[config]["max"] = max(times)
 
-        # Use min as representative value
-        master_min = query_results["master"]["min"]
-        patch_off_min = query_results["patch_off"]["min"]
-        patch_on_min = query_results["patch_on"]["min"]
+        # Use min or median as representative value
+        master_rep = get_representative(query_results["master"]["times"])
+        patch_off_rep = get_representative(query_results["patch_off"]["times"])
+        patch_on_rep = get_representative(query_results["patch_on"]["times"])
 
         print(f"\n{BOLD}{query_id}: {query_results['name']}{RESET}")
-        if master_min:
-            print(f"  master (min):               {master_min:10.3f} ms "
+        if master_rep:
+            print(f"  master ({stat_label}):               {master_rep:10.3f} ms "
                   f"(avg={query_results['master']['avg']:.3f}, max={query_results['master']['max']:.3f})")
-        if patch_off_min and master_min:
-            ratio_off = patch_off_min / master_min
-            print(f"  patch (prefetch=off) (min): {patch_off_min:10.3f} ms "
+        if patch_off_rep and master_rep:
+            ratio_off = patch_off_rep / master_rep
+            print(f"  patch (prefetch=off) ({stat_label}): {patch_off_rep:10.3f} ms "
                   f"(avg={query_results['patch_off']['avg']:.3f}, max={query_results['patch_off']['max']:.3f}) "
                   f"[{BOLD}{ratio_off:.3f}x{RESET} vs master]")
-        if patch_on_min and master_min:
-            ratio_on = patch_on_min / master_min
-            print(f"  patch (prefetch=on) (min):  {patch_on_min:10.3f} ms "
+        if patch_on_rep and master_rep:
+            ratio_on = patch_on_rep / master_rep
+            print(f"  patch (prefetch=on) ({stat_label}):  {patch_on_rep:10.3f} ms "
                   f"(avg={query_results['patch_on']['avg']:.3f}, max={query_results['patch_on']['max']:.3f}) "
                   f"[{BOLD}{ratio_on:.3f}x{RESET} vs master]")
 
@@ -2543,6 +2574,7 @@ def run_random_backwards_tests(args):
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
+    stat_label = get_stat_label()
     for query_id in queries.keys():
         query_results = results["queries"][query_id]
 
@@ -2552,25 +2584,26 @@ def run_random_backwards_tests(args):
             if times:
                 query_results[config]["avg"] = mean(times)
                 query_results[config]["min"] = min(times)
+                query_results[config]["median"] = median(times)
                 query_results[config]["max"] = max(times)
 
-        # Use min as representative value
-        master_min = query_results["master"]["min"]
-        patch_off_min = query_results["patch_off"]["min"]
-        patch_on_min = query_results["patch_on"]["min"]
+        # Use min or median as representative value
+        master_rep = get_representative(query_results["master"]["times"])
+        patch_off_rep = get_representative(query_results["patch_off"]["times"])
+        patch_on_rep = get_representative(query_results["patch_on"]["times"])
 
         print(f"\n{BOLD}{query_id}: {query_results['name']}{RESET}")
-        if master_min:
-            print(f"  master (min):               {master_min:10.3f} ms "
+        if master_rep:
+            print(f"  master ({stat_label}):               {master_rep:10.3f} ms "
                   f"(avg={query_results['master']['avg']:.3f}, max={query_results['master']['max']:.3f})")
-        if patch_off_min and master_min:
-            ratio_off = patch_off_min / master_min
-            print(f"  patch (prefetch=off) (min): {patch_off_min:10.3f} ms "
+        if patch_off_rep and master_rep:
+            ratio_off = patch_off_rep / master_rep
+            print(f"  patch (prefetch=off) ({stat_label}): {patch_off_rep:10.3f} ms "
                   f"(avg={query_results['patch_off']['avg']:.3f}, max={query_results['patch_off']['max']:.3f}) "
                   f"[{BOLD}{ratio_off:.3f}x{RESET} vs master]")
-        if patch_on_min and master_min:
-            ratio_on = patch_on_min / master_min
-            print(f"  patch (prefetch=on) (min):  {patch_on_min:10.3f} ms "
+        if patch_on_rep and master_rep:
+            ratio_on = patch_on_rep / master_rep
+            print(f"  patch (prefetch=on) ({stat_label}):  {patch_on_rep:10.3f} ms "
                   f"(avg={query_results['patch_on']['avg']:.3f}, max={query_results['patch_on']['max']:.3f}) "
                   f"[{BOLD}{ratio_on:.3f}x{RESET} vs master]")
 
@@ -3093,8 +3126,11 @@ def run_stress_test(args):
 
 
 def main():
-    global MASTER_DATA_DIR, PATCH_DATA_DIR
+    global MASTER_DATA_DIR, PATCH_DATA_DIR, USE_MEDIAN
     args = parse_arguments()
+
+    # Set global median flag
+    USE_MEDIAN = args.use_median
 
     if args.delay_pgdata:
         MASTER_DATA_DIR = "/mnt/nvme/postgresql/master/data-delay"
