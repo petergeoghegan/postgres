@@ -7081,13 +7081,12 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
  *
  * scankeys is a 1-element scankey array set up to reject nulls.
  * typLen/typByVal describe the datatype of the index's first column.
- * tableslot is a slot suitable to hold table tuples, in case we need
- * to probe the heap.
+ * tableslot is a slot suitable to hold table tuples.
  * (We could compute these values locally, but that would mean computing them
  * twice when get_actual_variable_range needs both the min and the max.)
  *
- * Failure occurs either when the index is empty, or we decide that it's
- * taking too long to find a suitable tuple.
+ * Failure occurs either when the index is empty, or when it takes too long to
+ * find a suitable tuple.
  */
 static bool
 get_actual_variable_endpoint(Relation heapRel,
@@ -7147,22 +7146,30 @@ get_actual_variable_endpoint(Relation heapRel,
 	 *
 	 * Despite all this care, there are situations where we might find many
 	 * non-visible tuples near the end of the index.  We don't want to expend
-	 * a huge amount of time here, so we give up once we've read too many heap
-	 * pages.  When we fail for that reason, the caller will end up using
-	 * whatever extremal value is recorded in pg_statistic.
-	 *
-	 * XXX This can't work with the new table_index_getnext_slot interface,
-	 * which simply won't return a tuple that isn't visible to our snapshot.
-	 * table_index_getnext_slot will need some kind of callback that provides
-	 * a way for the scan to give up when the costs start to get out of hand.
+	 * a huge amount of time here, so we give up after reading a few extremal
+	 * index leaf pages without finding matching items (generally only seen
+	 * when pages have many index tuples with set LP_DEAD bits).  When we give
+	 * up the caller will end up using whatever extremal value is recorded in
+	 * pg_statistic.
 	 */
 	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
 							  GlobalVisTestFor(heapRel));
 
+	/* Set up an index-only scan */
 	index_scan = index_beginscan(heapRel, indexRel, true,
 								 &SnapshotNonVacuumable, NULL,
 								 1, 0);
 	Assert(index_scan->xs_want_itup);
+
+	/*
+	 * Make our scan read at most 3 index leaf pages before it just gives up.
+	 * This is on the conservative side; giving up after the first leaf page
+	 * would work just as well in most cases.  But it's possible that the
+	 * index's leftmost/rightmost leaf page is one with very few index tuples
+	 * (with or without their LP_DEAD bits set).
+	 */
+	index_scan->xs_read_extremal_only = 3;
+
 	index_rescan(index_scan, scankeys, 1, NULL, 0);
 
 	/* Fetch first/next tuple in specified direction */
