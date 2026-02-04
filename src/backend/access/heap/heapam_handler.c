@@ -804,8 +804,8 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * TIDs that point to the same heap block, scanPos can actually overtake
 	 * prefetchPos (prefetchPos can't advance until the scan actually calls
 	 * read_stream_next_buffer).  Usually this doesn't require any special
-	 * handling; the standard currentPrefetchBlock tests in the loop below
-	 * will increment prefetchPos until it catches up with scanPos once again.
+	 * handling; the standard prefetch_block tests in the loop below will
+	 * increment prefetchPos until it catches up with scanPos once again.
 	 * However, that can't work when prefetchPos falls so far behind that its
 	 * batch gets freed.  We handle that case here, too.
 	 *
@@ -855,7 +855,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	for (;;)
 	{
 		BatchMatchingItem *item;
-		BlockNumber prefetchBlock;
+		BlockNumber prefetch_block;
 
 		if (fromScanPos)
 		{
@@ -915,7 +915,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			   prefetchPos->item <= prefetchBatch->lastItem);
 
 		item = &prefetchBatch->items[prefetchPos->item];
-		prefetchBlock = ItemPointerGetBlockNumber(&item->heapTid);
+		prefetch_block = ItemPointerGetBlockNumber(&item->heapTid);
 
 		if (scan->xs_want_itup)
 		{
@@ -927,19 +927,19 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				continue;
 		}
 
-		if (prefetchBlock == hscan->xs_prefetch_block)
+		if (prefetch_block == hscan->xs_prefetch_block)
 		{
 			/*
-			 * prefetchBlock matches the last prefetchPos item's TID's heap
-			 * block number; we must not return the same prefetchBlock twice
+			 * prefetch_block matches the last prefetchPos item's TID's heap
+			 * block number; we must not return the same prefetch_block twice
 			 * (twice in succession)
 			 */
 			continue;
 		}
 
 		/* We have a new heap block number to return to read stream */
-		hscan->xs_prefetch_block = prefetchBlock;
-		return prefetchBlock;
+		hscan->xs_prefetch_block = prefetch_block;
+		return prefetch_block;
 	}
 
 	return InvalidBlockNumber;
