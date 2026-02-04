@@ -782,6 +782,8 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	IndexScanBatch prefetchBatch;
 	bool		fromScanPos = false;
 
+	Assert(!hscan->xs_paused);
+
 	/*
 	 * During read_stream_reset (cleanup), we might be called scanPos is
 	 * invalid.  Just end the read stream.
@@ -789,6 +791,11 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	if (!scanPos->valid)
 		return InvalidBlockNumber;
 
+	/*
+	 * scanPos is valid, so there has to be at least one batch, loaded, for
+	 * scanBatch.  prefetchPos might not yet be valid, in which case it'll be
+	 * initialized using scanPos.
+	 */
 	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
@@ -803,15 +810,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		/* called by read_stream_reset */
 		return InvalidBlockNumber;
 	}
-
-	Assert(!hscan->xs_paused);
-
-	/*
-	 * scanPos must always be valid when we're called -- there has to be at
-	 * least one batch, loaded, for scanBatch.  prefetchPos might not yet be
-	 * valid, in which case it'll be initialized using scanPos.
-	 */
-	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
 	 * If prefetchPos has not been initialized yet, that typically indicates
