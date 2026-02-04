@@ -117,7 +117,11 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 	 */
 	hscan->xs_vm_items = 1;
 
-	hscan->xs_dir = NoMovementScanDirection;
+	/*
+	 * heapam_batch_getnext_tid may be called when we call read_stream_reset;
+	 * make sure that it'll just return InvalidBlockNumber
+	 */
+	hscan->xs_dir = NoMovementScanDirection;	/* for read_stream_reset call */
 	hscan->xs_prefetch_block = InvalidBlockNumber;
 	hscan->xs_yielded = false;
 	hscan->xs_paused = false;
@@ -768,12 +772,18 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
-	 * It is possible for the scan's direction to change, but that's handled
-	 * elsewhere.  We don't know how to deal with any variation in scan
-	 * direction here.  We assume that all loaded and newly requested batches
-	 * must use the same scan direction.
+	 * We assume that all loaded and newly requested batches must use the same
+	 * scan direction, which is established before we're first called.
+	 *
+	 * However, when read_stream_reset is called, it might call here.  Make
+	 * sure that we don't prefetch more blocks.
 	 */
-	Assert(direction != NoMovementScanDirection);
+	if (unlikely(direction == NoMovementScanDirection))
+	{
+		/* called by read_stream_reset */
+		return InvalidBlockNumber;
+	}
+
 	Assert(!hscan->xs_paused);
 
 	/*
