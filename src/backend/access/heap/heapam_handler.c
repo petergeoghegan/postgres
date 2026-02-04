@@ -765,13 +765,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	IndexScanBatch prefetchBatch;
 	bool		fromScanPos = false;
 
-	/*
-	 * During read_stream_reset (cleanup), we might be called scanPos is
-	 * invalid.  Just end the read stream.
-	 */
-	if (!scanPos->valid)
-		return InvalidBlockNumber;
-
 	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
