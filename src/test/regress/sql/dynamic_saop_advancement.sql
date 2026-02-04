@@ -8867,3 +8867,38 @@ fetch forward 24003 from c_1;
 select 1 from pg_buffercache_evict_all();
 fetch forward 88 from c_1;
 commit;
+
+--
+-- 2026-02-04 14:21 Another cursor test case failure
+--
+set client_min_messages=error;
+drop table if exists t_2;
+reset client_min_messages;
+
+create unlogged table t_2 (a bigint, b bigint, c bigint) with (fillfactor = 67);
+create index on t_2 (a, b, c) with (fillfactor = 12, deduplicate_items = off);
+
+insert into t_2
+select (i / 11), (i / 53), (i / 53)
+from generate_series(1, 1000) s(i)
+order by i + mod(i::bigint * 662056, 8), md5(i::text);
+
+vacuum (freeze, analyze) t_2;
+
+set enable_seqscan = off;
+set enable_bitmapscan = off;
+set enable_indexonlyscan = off;
+set cursor_tuple_fraction = 1.0;
+
+begin;
+declare c_2 scroll cursor for select * from t_2 order by a asc, b asc, c asc;
+
+select 1 from pg_buffercache_evict_all();
+fetch forward 231 from c_2;
+select 1 from pg_buffercache_evict_all();
+fetch backward 231 from c_2;
+select 1 from pg_buffercache_evict_all();
+fetch forward 232 from c_2;
+select 1 from pg_buffercache_evict_all();
+fetch forward 232 from c_2;
+commit;
