@@ -782,6 +782,13 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	IndexScanBatch prefetchBatch;
 	bool		fromScanPos = false;
 
+	/*
+	 * During read_stream_reset (cleanup), we might be called scanPos is
+	 * invalid.  Just end the read stream.
+	 */
+	if (!scanPos->valid)
+		return InvalidBlockNumber;
+
 	Assert(index_scan_batch_count(scan) > 0);
 
 	/*
@@ -824,6 +831,13 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	if (!prefetchPos->valid ||
 		index_scan_pos_cmp(prefetchPos, scanPos, direction) < 0)
 	{
+		IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);
+
+		/* If scanPos is already past the end of matching items, we're done */
+		if (scanPos->item < scanBatch->firstItem ||
+			scanPos->item > scanBatch->lastItem)
+			return InvalidBlockNumber;
+
 		hscan->xs_prefetch_block = InvalidBlockNumber;
 		*prefetchPos = *scanPos;
 		fromScanPos = true;
