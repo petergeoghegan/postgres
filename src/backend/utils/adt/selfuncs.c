@@ -99,7 +99,6 @@
 
 #include "access/brin.h"
 #include "access/brin_page.h"
-#include "access/genam.h"
 #include "access/gin.h"
 #include "access/table.h"
 #include "access/tableam.h"
