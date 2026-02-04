@@ -706,12 +706,25 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 	{
 		IndexScanBatch headBatch = index_scan_batch(scan,
 													batchringbuf->headBatch);
+		BatchRingItemPos *prefetchPos = &batchringbuf->prefetchPos;
 
 		/* Reset xs_yielded, since scanPos advanced to a new batch */
 		hscan->xs_yielded = false;
 
 		/* Also free obsolescent head batch (unless it is scan's markBatch) */
 		tableam_util_free_batch(scan, headBatch);
+
+		/*
+		 * If we're about to release the batch that prefetchPos currently
+		 * points to, just invalidate prefetchPos.  We'll reinitialize it
+		 * using scanPos if and when heapam_getnext_stream is next called.
+		 * (We must avoid confusing an prefetchPos->batch that's actually
+		 * before headBatch with one that's after nextBatch due to uint8
+		 * overflow; simplest way is to invalidate prefetchPos like this.)
+		 */
+		if (prefetchPos->valid &&
+			prefetchPos->batch == batchringbuf->headBatch)
+			prefetchPos->valid = false;
 
 		/* Remove the batch from the ring buffer */
 		batchringbuf->headBatch++;
@@ -807,10 +820,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * TIDs that point to the same heap block, scanPos can actually overtake
 	 * prefetchPos (prefetchPos can't advance until the scan actually calls
 	 * read_stream_next_buffer).  We handle that case here, too.
-	 *
-	 * XXX: Is this approach is robust against uint8 wraparound of ring buffer
-	 * offsets?  Can prefetchPos->batch possibly fall behind scanPos->batch by
-	 * more than INDEX_SCAN_MAX_BATCHES?
 	 */
 	if (!prefetchPos->valid ||
 		index_scan_pos_cmp(prefetchPos, scanPos, direction) < 0)
