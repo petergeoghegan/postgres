@@ -823,7 +823,6 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * too far ahead.
 	 */
 	if (!prefetchPos->valid ||
-		!index_scan_batch_loaded(scan, prefetchPos->batch) ||
 		index_scan_pos_cmp(prefetchPos, scanPos, direction) < 0)
 	{
 		IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);
