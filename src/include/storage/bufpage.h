@@ -101,33 +101,13 @@ typedef uint16 LocationIndex;
 typedef uint64 PageXLogRecPtr;
 
 #ifdef WORDS_BIGENDIAN
-
-static inline XLogRecPtr
-PageXLogRecPtrGet(PageXLogRecPtr val)
-{
-	return val;
-}
-
-static inline PageXLogRecPtr
-PageXLogRecPtrSet(XLogRecPtr lsn)
-{
-	return lsn;
-}
-
+#define PageLSNToNative(val)	(val)
 #else
-
-static inline XLogRecPtr
-PageXLogRecPtrGet(PageXLogRecPtr val)
+static inline uint64
+PageLSNToNative(uint64 val)
 {
 	return (val << 32) | (val >> 32);
 }
-
-static inline PageXLogRecPtr
-PageXLogRecPtrSet(XLogRecPtr lsn)
-{
-	return (lsn << 32) | (lsn >> 32);
-}
-
 #endif
 
 /*
@@ -406,12 +386,12 @@ PageGetMaxOffsetNumber(const PageData *page)
 static inline XLogRecPtr
 PageGetLSN(const PageData *page)
 {
-	return PageXLogRecPtrGet(((const PageHeaderData *) page)->pd_lsn);
+	return PageLSNToNative(((const PageHeaderData *) page)->pd_lsn);
 }
 static inline void
 PageSetLSN(Page page, XLogRecPtr lsn)
 {
-	((PageHeader) page)->pd_lsn = PageXLogRecPtrSet(lsn);
+	((PageHeader) page)->pd_lsn = PageLSNToNative(lsn);
 }
 
 static inline bool
