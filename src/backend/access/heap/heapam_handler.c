@@ -117,15 +117,13 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 	 */
 	hscan->xs_vm_items = 1;
 
-	/*
-	 * heapam_batch_getnext_tid may be called when we call read_stream_reset;
-	 * make sure that it'll just return InvalidBlockNumber
-	 */
-	hscan->xs_dir = NoMovementScanDirection;	/* for read_stream_reset call */
+	/* Reset read stream state */
+	hscan->xs_dir = NoMovementScanDirection;
 	hscan->xs_prefetch_block = InvalidBlockNumber;
 	hscan->xs_yielded = false;
 	hscan->xs_paused = false;
 
+	/* Reset read stream itself */
 	if (hscan->xs_read_stream)
 		read_stream_reset(hscan->xs_read_stream);
 }
@@ -447,7 +445,6 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 	if (!priorBatch)
 	{
 		/* First call for the scan */
-		Assert(pos == &batchringbuf->scanPos);
 	}
 	else if (unlikely(priorBatch->dir != direction))
 	{
@@ -457,8 +454,6 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 		 * opposite scan direction to the one used when priorBatch was
 		 * returned by amgetbatch.
 		 */
-		Assert(pos == &batchringbuf->scanPos);
-
 		tableam_util_batch_dirchange(scan);
 
 		/* priorBatch is now batchringbuf's only batch */
@@ -605,29 +600,33 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 /*
  * Handle a change in index scan direction (at the tuple granularity).
  *
- * Releases read stream, since we can't rely on scanPos continuing to agree
+ * Resets the read stream, since we can't rely on scanPos continuing to agree
  * with the blocks that read stream already consumed using prefetchPos.
  */
 static pg_noinline void
-heapam_dirchange_readstream_inval(IndexFetchHeapData *hscan,
+heapam_dirchange_readstream_reset(IndexFetchHeapData *hscan,
 								  BatchRingBuffer *batchringbuf,
 								  ScanDirection direction)
 {
-	/* First, end read stream, and reset all related state */
-	if (hscan->xs_read_stream)
-	{
-		hscan->xs_dir = NoMovementScanDirection;	/* for read_stream_end
-													 * call */
-		read_stream_end(hscan->xs_read_stream);
-		hscan->xs_read_stream = NULL;
-	}
+	/* Reset read stream state */
 	batchringbuf->prefetchPos.valid = false;
 	hscan->xs_yielded = false;
 	hscan->xs_paused = false;
 
+	/* Reset read stream itself */
+	if (hscan->xs_read_stream)
+	{
+		hscan->xs_dir = NoMovementScanDirection;	/* see note below */
+		read_stream_reset(hscan->xs_read_stream);
+	}
+
 	/*
-	 * Next remember new scan direction (we should never reach here more than
-	 * once per loaded batch).
+	 * Finally, remember new scan direction.
+	 *
+	 * Note: we needed to set xs_dir to NoMovementScanDirection momentarily to
+	 * avoid spuriously prefetching more blocks from within the read stream
+	 * callback.  Once we return, the read stream can be used to fetch blocks
+	 * in the opposite scan direction.
 	 *
 	 * Note: iff the scan _continues_ in this new direction, and actually
 	 * steps off scanBatch to an earlier index page, heapam_batch_getnext will
@@ -657,11 +656,11 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 	Assert(!scanPos->valid || batchringbuf->headBatch == scanPos->batch);
 	Assert(scanPos->valid || index_scan_batch_count(scan) == 0);
 
-	/* Handle invalidating the read stream when scan direction changes */
+	/* Handle resetting the read stream when scan direction changes */
 	if (hscan->xs_dir == NoMovementScanDirection)
 		hscan->xs_dir = direction;	/* first call */
 	else if (unlikely(hscan->xs_dir != direction))
-		heapam_dirchange_readstream_inval(hscan, batchringbuf, direction);
+		heapam_dirchange_readstream_reset(hscan, batchringbuf, direction);
 
 	/*
 	 * Check if there's an existing loaded scanBatch for us to return the next
@@ -797,26 +796,19 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *scanPos = &batchringbuf->scanPos;
 	BatchRingItemPos *prefetchPos = &batchringbuf->prefetchPos;
-	ScanDirection direction = hscan->xs_dir;
+	ScanDirection xs_dir = hscan->xs_dir;
 	IndexScanBatch prefetchBatch;
 	bool		fromScanPos = false;
 
 	Assert(!hscan->xs_paused);
 
-	/*
-	 * When read_stream_reset/read_stream_end are called they might call here.
-	 * We detect that by testing for NoMovementScanDirection -- this shouldn't
-	 * be confused with read stream knowing about direction changes; it's just
-	 * how we recognize reset/end calls.
-	 *
-	 * This callback is intentionally naive about scan direction changes: it
-	 * assumes all batches use the same direction.  Callers are responsible
-	 * for resetting the read stream when the scan direction changes, ensuring
-	 * we never have to handle mixed directions here.
-	 */
-	if (unlikely(direction == NoMovementScanDirection))
+	if (xs_dir == NoMovementScanDirection)
 	{
-		/* call made from read_stream_reset/read_stream_end */
+		/*
+		 * Called from read_stream_reset or read_stream_end.  Don't return
+		 * additional heap blocks (at least until the scan direction is set to
+		 * ForwardScanDirection/BackwardScanDirection once again).
+		 */
 		return InvalidBlockNumber;
 	}
 
@@ -854,7 +846,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * wraps around (and appears to be ahead of scanPos instead of behind it).
 	 */
 	if (!prefetchPos->valid ||
-		index_scan_pos_cmp(prefetchPos, scanPos, direction) < 0)
+		index_scan_pos_cmp(prefetchPos, scanPos, xs_dir) < 0)
 	{
 		hscan->xs_prefetch_block = InvalidBlockNumber;
 		*prefetchPos = *scanPos;
@@ -906,7 +898,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			 */
 			fromScanPos = false;
 		}
-		else if (!index_scan_pos_advance(direction, prefetchBatch, prefetchPos))
+		else if (!index_scan_pos_advance(xs_dir, prefetchBatch, prefetchPos))
 		{
 			/*
 			 * Ran out of items from prefetchBatch.  Try to advance to the
@@ -933,7 +925,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 				return read_stream_pause(stream);
 			}
 
-			prefetchBatch = heapam_batch_getnext(scan, direction,
+			prefetchBatch = heapam_batch_getnext(scan, xs_dir,
 												 prefetchBatch, prefetchPos);
 			if (!prefetchBatch)
 			{
@@ -946,7 +938,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			}
 
 			/* Position prefetchPos to the start of new prefetchBatch */
-			index_scan_pos_nextbatch(direction, prefetchBatch, prefetchPos);
+			index_scan_pos_nextbatch(xs_dir, prefetchBatch, prefetchPos);
 		}
 
 		/*
@@ -956,7 +948,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		Assert(index_scan_batch(scan, prefetchPos->batch) == prefetchBatch);
 
 		/* scanPos is always <= prefetchPos when we return */
-		Assert(index_scan_pos_cmp(scanPos, prefetchPos, direction) <= 0);
+		Assert(index_scan_pos_cmp(scanPos, prefetchPos, xs_dir) <= 0);
 		Assert(prefetchPos->item >= prefetchBatch->firstItem &&
 			   prefetchPos->item <= prefetchBatch->lastItem);
 

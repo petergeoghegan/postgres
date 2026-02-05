@@ -385,7 +385,7 @@ index_batchscan_mark_pos(IndexScanDesc scan)
  * We just discard all batches (other than markBatch/restored scanBatch),
  * except when markBatch is already the scan's current scanBatch.  We always
  * invalidate prefetchPos.  The read stream and related prefetching state are
- * handled by table_index_fetch_reset(), called before this function.  This
+ * reset by table_index_fetch_reset(), called before this function.  This
  * approach keeps things simple for table AMs: most code that deals with
  * batches is thereby able to assume that the common case where scan direction
  * never changes is the only case (tableam_util_batch_dirchange takes a
@@ -403,8 +403,8 @@ index_batchscan_restore_pos(IndexScanDesc scan)
 	/*
 	 * Restoring a mark always requires stopping prefetching.  This is similar
 	 * to the handling table AMs implement to deal with a tuple-level change
-	 * in the scan's direction.  The read stream and related state must have
-	 * already been handled (caller must have called table_index_fetch_reset).
+	 * in the scan's direction.  The read stream must have already been reset
+	 * by the caller (via table_index_fetch_reset).
 	 */
 	batchringbuf->prefetchPos.valid = false;
 
@@ -469,8 +469,8 @@ index_batchscan_restore_pos(IndexScanDesc scan)
  * from the start.  This approach isn't particularly efficient, but it works
  * well enough for what ought to be a relatively rare occurrence.
  *
- * Caller must have invalidated the scan's read stream before calling here.
- * That needs to happen as soon as the scan requests a tuple in whatever scan
+ * Caller must have reset the scan's read stream before calling here.  That
+ * needs to happen as soon as the scan requests a tuple in whatever scan
  * direction is opposite-to-current.  We only deal with the case where the
  * scan backs up by enough items to cross a batch boundary (when the scan
  * resumes scanning in its original direction/ends before crossing a boundary,
