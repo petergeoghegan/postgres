@@ -108,8 +108,11 @@ PageXLogRecPtrGet(PageXLogRecPtr val)
 	return val;
 }
 
-#define PageXLogRecPtrSet(ptr, lsn) \
-	((ptr) = (lsn))
+static inline PageXLogRecPtr
+PageXLogRecPtrSet(XLogRecPtr lsn)
+{
+	return lsn;
+}
 
 #else
 
@@ -119,8 +122,11 @@ PageXLogRecPtrGet(PageXLogRecPtr val)
 	return (val << 32) | (val >> 32);
 }
 
-#define PageXLogRecPtrSet(ptr, lsn) \
-	((ptr) = (((PageXLogRecPtr) (lsn) << 32) | ((PageXLogRecPtr) (lsn) >> 32)))
+static inline PageXLogRecPtr
+PageXLogRecPtrSet(XLogRecPtr lsn)
+{
+	return (lsn << 32) | (lsn >> 32);
+}
 
 #endif
 
@@ -183,13 +189,7 @@ typedef struct PageHeaderData
 	uint16		pd_pagesize_version;
 	TransactionId pd_prune_xid; /* oldest prunable XID, or zero if none */
 	ItemIdData	pd_linp[FLEXIBLE_ARRAY_MEMBER]; /* line pointer array */
-}
-/* If compiler understands packed and aligned pragmas, use those */
-#if defined(pg_attribute_packed) && defined(pg_attribute_aligned)
-			pg_attribute_packed()
-			pg_attribute_aligned(4)
-#endif
-PageHeaderData;
+} PageHeaderData;
 
 typedef PageHeaderData *PageHeader;
 
@@ -411,7 +411,7 @@ PageGetLSN(const PageData *page)
 static inline void
 PageSetLSN(Page page, XLogRecPtr lsn)
 {
-	PageXLogRecPtrSet(((PageHeader) page)->pd_lsn, lsn);
+	((PageHeader) page)->pd_lsn = PageXLogRecPtrSet(lsn);
 }
 
 static inline bool

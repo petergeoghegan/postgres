@@ -83,13 +83,7 @@ typedef struct GISTPageOpaqueData
 	BlockNumber rightlink;		/* next page if any */
 	uint16		flags;			/* see bit definitions above */
 	uint16		gist_page_id;	/* for identification of GiST indexes */
-}
-/* If compiler understands packed and aligned pragmas, use those */
-#if defined(pg_attribute_packed) && defined(pg_attribute_aligned)
-			pg_attribute_packed()
-			pg_attribute_aligned(4)
-#endif
-GISTPageOpaqueData;
+} GISTPageOpaqueData;
 
 typedef GISTPageOpaqueData *GISTPageOpaque;
 
@@ -193,7 +187,7 @@ typedef struct GISTENTRY
 #define GistClearFollowRight(page)	( GistPageGetOpaque(page)->flags &= ~F_FOLLOW_RIGHT)
 
 #define GistPageGetNSN(page) ( PageXLogRecPtrGet(GistPageGetOpaque(page)->nsn))
-#define GistPageSetNSN(page, val) ( PageXLogRecPtrSet(GistPageGetOpaque(page)->nsn, val))
+#define GistPageSetNSN(page, val) ( GistPageGetOpaque(page)->nsn = PageXLogRecPtrSet(val))
 
 
 /*
