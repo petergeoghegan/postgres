@@ -135,6 +135,8 @@ typedef struct IndexFetchHeapData
 	 */
 	ScanDirection xs_read_stream_dir;	/* index scan direction */
 	BlockNumber xs_prefetch_block;	/* last block returned to xs_read_stream */
+	int			xs_ascending_transitions; /* total ascending block transitions */
+	int			xs_total_transitions;	/* total block transitions */
 	bool		xs_yielded;		/* yielded until xs_blk changes? */
 	bool		xs_paused;		/* paused until next batch is read? */
 

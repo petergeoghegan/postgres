@@ -107,6 +107,8 @@ struct ReadStream
 	bool		advice_enabled;
 	bool		temporary;
 	bool		yielded;
+	int64		nios;			/* number of block reads */
+	int64		nblocks_out;	/* number of blocks returned to consumer */
 
 	/*
 	 * One-block buffer to support 'ungetting' a block number, to resolve flow
@@ -851,6 +853,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 										flags)))
 			{
 				/* Fast return. */
+				stream->nblocks_out++;
 				return buffer;
 			}
 
@@ -871,6 +874,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		}
 
 		stream->fast_path = false;
+		stream->nblocks_out++;
 		return buffer;
 	}
 #endif
@@ -930,6 +934,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 			   &stream->buffers[oldest_buffer_index]);
 
 		WaitReadBuffers(&stream->ios[io_index].op);
+		stream->nios += stream->ios[io_index].op.nblocks;
 
 		Assert(stream->ios_in_progress > 0);
 		stream->ios_in_progress--;
@@ -1027,6 +1032,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 	}
 #endif
 
+	stream->nblocks_out++;
 	return buffer;
 }
 
@@ -1138,4 +1144,15 @@ read_stream_end(ReadStream *stream)
 {
 	read_stream_reset(stream);
 	pfree(stream);
+}
+
+/*
+ * Return the cumulative number of blocks read and the cumulative number of
+ * blocks returned to the consumer for the stream
+ */
+void
+read_stream_get_counts(ReadStream *stream, int64 *io_count, int64 *block_count)
+{
+	*io_count = stream->nios;
+	*block_count = stream->nblocks_out;
 }

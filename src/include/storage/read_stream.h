@@ -104,5 +104,7 @@ extern void read_stream_resume(ReadStream *stream);
 extern BlockNumber read_stream_yield(ReadStream *stream);
 extern void read_stream_reset(ReadStream *stream);
 extern void read_stream_end(ReadStream *stream);
+extern void read_stream_get_counts(ReadStream *stream, int64 *io_count,
+								   int64 *block_count);
 
 #endif							/* READ_STREAM_H */

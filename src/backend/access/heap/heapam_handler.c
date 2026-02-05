@@ -121,6 +121,8 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 	hscan->xs_read_stream_dir = NoMovementScanDirection;	/* read_stream_reset
 															 * needs this */
 	hscan->xs_prefetch_block = InvalidBlockNumber;
+	hscan->xs_ascending_transitions = 0;
+	hscan->xs_total_transitions = 0;
 	hscan->xs_yielded = false;
 	hscan->xs_paused = false;
 
@@ -607,6 +609,8 @@ heapam_dirchange_readstream_reset(IndexFetchHeapData *hscan,
 {
 	/* Reset read stream state */
 	batchringbuf->prefetchPos.valid = false;
+	hscan->xs_ascending_transitions = 0;
+	hscan->xs_total_transitions = 0;
 	hscan->xs_yielded = false;
 	hscan->xs_paused = false;
 	hscan->xs_read_stream_dir = NoMovementScanDirection;	/* see note below */
@@ -720,9 +724,8 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		BatchRingItemPos *prefetchPos = &batchringbuf->prefetchPos;
 
 		/*
-		 * Reset xs_yielded, since scanPos advanced to a new batch.  This
-		 * ensures we return at least one tuple per batch when loading many
-		 * batches (see heapam_getnext_stream for details on yielding).
+		 * Reset xs_yielded, to allow heapam_getnext_stream to yield again for
+		 * this new batch
 		 */
 		hscan->xs_yielded = false;
 
@@ -845,30 +848,38 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	}
 
 	/*
-	 * If prefetchPos is significantly ahead of scanPos (3+ batches) and we
-	 * haven't yielded for this condition yet, do so now.  Yielding (unlike
-	 * pausing) requires no explicit resume -- prefetching will continue once
-	 * the scan requests another buffer via read_stream_next_buffer.
+	 * Adaptive yield.
 	 *
-	 * This limits how far ahead prefetching can get, which is useful when the
-	 * scan may end early without consuming all the batches we'd have loaded:
+	 * When prefetchPos is at least one batch ahead of scanPos, check whether
+	 * we should yield.  For non-ascending or I/O-heavy patterns, we
+	 * intentionally do NOT yield -- we're better off prefetching more
+	 * aggressively, for now.
 	 *
-	 * - Merge joins can end either side's scan once the other side is
-	 * exhausted, without waiting for in-progress prefetches to complete.
+	 * XXX This is somewhat at odds with the original goal of yielding here,
+	 * which was to allow the scan to return some tuples to shut down early.
+	 * We probably need to add something like that back, especially with
+	 * heavily cached queries.
 	 *
-	 * - LIMIT N queries: the risk of prefetching too many heap pages is
-	 * ameliorated.
-	 *
-	 * - Index-only scans may initially need heap fetches, but can then hit a
-	 * long run of index pages whose TIDs need no heap access because the
-	 * visibility map shows all-visible.  Without yielding, we'd load many
-	 * batches without getting any further benefit from prefetching.
+	 * xs_yielded is set per-batch to limit yields to once per batch
+	 * boundary (reset in heapam_batch_getnext_tid when scanPos advances
+	 * to a new batch).
 	 */
 	else if (!hscan->xs_yielded &&
-			 index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
+			 index_scan_pos_batch_distance(prefetchPos, scanPos) >= 1)
 	{
+		int64		io_blocks;
+		int64		total_blocks;
+
+		read_stream_get_counts(stream, &io_blocks, &total_blocks);
+
 		hscan->xs_yielded = true;
-		return read_stream_yield(stream);
+
+		if (total_blocks >= 1000 && io_blocks * 2 <= total_blocks &&
+			hscan->xs_ascending_transitions * 2 >
+			hscan->xs_total_transitions)
+			return read_stream_yield(stream);
+
+		/* Don't yield after all (at least until next batch) */
 	}
 
 	prefetchBatch = index_scan_batch(scan, prefetchPos->batch);
@@ -968,7 +979,16 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			continue;
 		}
 
-		/* We have a new heap block number to return to read stream */
+		/*
+		 * Track ascending block transitions for the adaptive yield
+		 * decision.  Each distinct block returned to the stream is a
+		 * "transition"; we count what fraction are ascending (new block >
+		 * previous block).
+		 */
+		hscan->xs_total_transitions++;
+		if (prefetch_block > hscan->xs_prefetch_block)
+			hscan->xs_ascending_transitions++;
+
 		hscan->xs_prefetch_block = prefetch_block;
 		return prefetch_block;
 	}
