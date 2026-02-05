@@ -102,7 +102,7 @@ static inline PageXLogRecPtr
 PageXLogRecPtrGet(PageXLogRecPtr pd_lsn)
 {
 #ifdef WORDS_BIGENDIAN
-	return val;
+	return pd_lsn;
 #else
 	return (pd_lsn << 32) | (pd_lsn >> 32);
 #endif
