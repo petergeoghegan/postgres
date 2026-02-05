@@ -91,45 +91,26 @@ typedef uint16 LocationIndex;
 
 
 /*
- * For historical reasons, the storage of 64-bit LSN values depends on the
- * endianess because the field used to be stored as two 32-bit values. When
- * reading and writing the LSN we need to convert between the two formats.
- *
- * We are careful to try to treat the LSN as a single uint64 so callers like
- * BufferGetLSNAtomic() can be sure there are no torn reads or writes.
+ * For historical reasons, the storage of 64-bit LSN values depends on CPU
+ * endianness; PageXLogRecPtr used to be a struct consisting of two 32-bit
+ * values.  When reading (and writing) the pd_lsn field from page headers, the
+ * caller must convert from (and convert to) the platform's native endianness.
  */
 typedef uint64 PageXLogRecPtr;
 
+/*
+ * Convert a  pd_lsn taken from a page header into its native
+ * uint64/PageXLogRecPtr representation
+ */
+static inline PageXLogRecPtr
+PageXLogRecPtrGet(PageXLogRecPtr pd_lsn)
+{
 #ifdef WORDS_BIGENDIAN
-
-static inline XLogRecPtr
-PageXLogRecPtrGet(const PageXLogRecPtr *val)
-{
-	return *val;
-}
-
-static inline void
-PageXLogRecPtrSet(PageXLogRecPtr *ptr, XLogRecPtr lsn)
-{
-	*ptr = lsn;
-}
-
+	return pd_lsn;
 #else
-
-static inline XLogRecPtr
-PageXLogRecPtrGet(const volatile PageXLogRecPtr *val)
-{
-	PageXLogRecPtr tmp = *val;
-	return (tmp << 32) | (tmp >> 32);
-}
-
-static inline void
-PageXLogRecPtrSet(volatile PageXLogRecPtr *ptr, XLogRecPtr lsn)
-{
-	*ptr = (lsn << 32) | (lsn >> 32);
-}
-
+	return (pd_lsn << 32) | (pd_lsn >> 32);
 #endif
+}
 
 /*
  * disk page organization
@@ -407,12 +388,13 @@ PageGetMaxOffsetNumber(const PageData *page)
 static inline XLogRecPtr
 PageGetLSN(const PageData *page)
 {
-	return PageXLogRecPtrGet(&((const PageHeaderData *) page)->pd_lsn);
+	return PageXLogRecPtrGet(((const PageHeaderData *) page)->pd_lsn);
 }
+
 static inline void
 PageSetLSN(Page page, XLogRecPtr lsn)
 {
-	PageXLogRecPtrSet(&((PageHeader) page)->pd_lsn, lsn);
+	((PageHeader) page)->pd_lsn = PageXLogRecPtrGet(lsn);
 }
 
 static inline bool
