@@ -99,7 +99,7 @@ typedef uint64 PageXLogRecPtr;
  * caller must convert from (and convert to) the platform's native endianness.
  */
 static inline PageXLogRecPtr
-PageLSNToXLogRecPtr(PageXLogRecPtr pd_lsn)
+PageXLogRecPtrGet(PageXLogRecPtr pd_lsn)
 {
 #ifdef WORDS_BIGENDIAN
 	return val;
@@ -385,13 +385,13 @@ PageGetMaxOffsetNumber(const PageData *page)
 static inline XLogRecPtr
 PageGetLSN(const PageData *page)
 {
-	return PageLSNToXLogRecPtr(((const PageHeaderData *) page)->pd_lsn);
+	return PageXLogRecPtrGet(((const PageHeaderData *) page)->pd_lsn);
 }
 
 static inline void
 PageSetLSN(Page page, XLogRecPtr lsn)
 {
-	((PageHeader) page)->pd_lsn = PageLSNToXLogRecPtr(lsn);
+	((PageHeader) page)->pd_lsn = PageXLogRecPtrGet(lsn);
 }
 
 static inline bool

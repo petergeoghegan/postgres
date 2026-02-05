@@ -32,7 +32,7 @@ mask_page_lsn_and_checksum(Page page)
 {
 	PageHeader	phdr = (PageHeader) page;
 
-	phdr->pd_lsn = PageLSNToXLogRecPtr((uint64) MASK_MARKER);
+	phdr->pd_lsn = PageXLogRecPtrGet((uint64) MASK_MARKER);
 	phdr->pd_checksum = MASK_MARKER;
 }
 
