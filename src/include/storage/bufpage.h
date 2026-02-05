@@ -92,7 +92,7 @@ typedef uint16 LocationIndex;
 
 /*
  * For historical reasons, the storage of 64-bit LSN values depends on the
- * endianess because the field used to be stored as two 32-bit values. When
+ * endianness because the field used to be stored as two 32-bit values. When
  * reading and writing the LSN we need to convert between the two formats.
  *
  * We are careful to try to treat the LSN as a single uint64 so callers like
@@ -103,32 +103,24 @@ typedef uint64 PageXLogRecPtr;
 #ifdef WORDS_BIGENDIAN
 
 static inline XLogRecPtr
-PageXLogRecPtrGet(const PageXLogRecPtr *val)
+PageXLogRecPtrGet(PageXLogRecPtr val)
 {
-	return *val;
+	return val;
 }
 
-static inline void
-PageXLogRecPtrSet(PageXLogRecPtr *ptr, XLogRecPtr lsn)
-{
-	*ptr = lsn;
-}
+#define PageXLogRecPtrSet(ptr, lsn) \
+	((ptr) = (lsn))
 
 #else
 
 static inline XLogRecPtr
-PageXLogRecPtrGet(const volatile PageXLogRecPtr *val)
+PageXLogRecPtrGet(PageXLogRecPtr val)
 {
-	PageXLogRecPtr tmp = *val;
-
-	return (tmp << 32) | (tmp >> 32);
+	return (val << 32) | (val >> 32);
 }
 
-static inline void
-PageXLogRecPtrSet(volatile PageXLogRecPtr *ptr, XLogRecPtr lsn)
-{
-	*ptr = (lsn << 32) | (lsn >> 32);
-}
+#define PageXLogRecPtrSet(ptr, lsn) \
+	((ptr) = (((PageXLogRecPtr) (lsn) << 32) | ((PageXLogRecPtr) (lsn) >> 32)))
 
 #endif
 
@@ -191,7 +183,13 @@ typedef struct PageHeaderData
 	uint16		pd_pagesize_version;
 	TransactionId pd_prune_xid; /* oldest prunable XID, or zero if none */
 	ItemIdData	pd_linp[FLEXIBLE_ARRAY_MEMBER]; /* line pointer array */
-} PageHeaderData;
+}
+/* If compiler understands packed and aligned pragmas, use those */
+#if defined(pg_attribute_packed) && defined(pg_attribute_aligned)
+			pg_attribute_packed()
+			pg_attribute_aligned(4)
+#endif
+PageHeaderData;
 
 typedef PageHeaderData *PageHeader;
 
@@ -408,12 +406,12 @@ PageGetMaxOffsetNumber(const PageData *page)
 static inline XLogRecPtr
 PageGetLSN(const PageData *page)
 {
-	return PageXLogRecPtrGet(&((const PageHeaderData *) page)->pd_lsn);
+	return PageXLogRecPtrGet(((const PageHeaderData *) page)->pd_lsn);
 }
 static inline void
 PageSetLSN(Page page, XLogRecPtr lsn)
 {
-	PageXLogRecPtrSet(&((PageHeader) page)->pd_lsn, lsn);
+	PageXLogRecPtrSet(((PageHeader) page)->pd_lsn, lsn);
 }
 
 static inline bool
