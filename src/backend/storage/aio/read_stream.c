@@ -1139,3 +1139,12 @@ read_stream_end(ReadStream *stream)
 	read_stream_reset(stream);
 	pfree(stream);
 }
+
+/*
+ * Return the number of buffers currently pinned by the read stream.
+ */
+int
+read_stream_pinned_buffers(ReadStream *stream)
+{
+	return stream->pinned_buffers;
+}
