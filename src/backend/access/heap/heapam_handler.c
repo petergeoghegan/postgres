@@ -618,10 +618,10 @@ heapam_dirchange_readstream_reset(IndexFetchHeapData *hscan,
 	/*
 	 * Finally, remember new scan direction.
 	 *
-	 * Note: we needed to set xs_dir to NoMovementScanDirection momentarily to
-	 * avoid spuriously prefetching more blocks from within the read stream
-	 * callback.  Once we return, the read stream can be used to fetch blocks
-	 * in the opposite scan direction.
+	 * Note: we needed to set xs_readstream_dir to NoMovementScanDirection
+	 * momentarily to avoid spuriously prefetching more blocks from within the
+	 * read stream callback.  Once we return, the read stream can be used to
+	 * fetch blocks in the opposite scan direction.
 	 *
 	 * Note: iff the scan _continues_ in this new direction, and actually
 	 * steps off scanBatch to an earlier index page, heapam_batch_getnext will
