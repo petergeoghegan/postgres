@@ -933,7 +933,8 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			}
 
 			/* Position prefetchPos to the start of new prefetchBatch */
-			index_scan_pos_nextbatch(xs_readstream_dir, prefetchBatch, prefetchPos);
+			index_scan_pos_nextbatch(xs_readstream_dir,
+									 prefetchBatch, prefetchPos);
 		}
 
 		/*
