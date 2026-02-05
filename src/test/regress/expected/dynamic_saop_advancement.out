@@ -13814,7 +13814,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
-  0
+  4
 (1 row)
 
 -- Move back to the start of the key space:
@@ -13824,7 +13824,7 @@ select pg_stat_get_xact_blocks_hit('must_not_full_scan'::regclass) as cur_blocks
 select :cur_blocks_hit - :old_blocks_hit bh;
  bh 
 ----
- 25
+ 21
 (1 row)
 
 -- See the first few rows there:
