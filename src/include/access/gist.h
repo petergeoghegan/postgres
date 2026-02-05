@@ -186,8 +186,8 @@ typedef struct GISTENTRY
 #define GistMarkFollowRight(page) ( GistPageGetOpaque(page)->flags |= F_FOLLOW_RIGHT)
 #define GistClearFollowRight(page)	( GistPageGetOpaque(page)->flags &= ~F_FOLLOW_RIGHT)
 
-#define GistPageGetNSN(page) ( PageLSNToNative(GistPageGetOpaque(page)->nsn))
-#define GistPageSetNSN(page, val) ( GistPageGetOpaque(page)->nsn = PageLSNToNative(val))
+#define GistPageGetNSN(page) ( PageLSNToXLogRecPtr(GistPageGetOpaque(page)->nsn))
+#define GistPageSetNSN(page, val) ( GistPageGetOpaque(page)->nsn = PageLSNToXLogRecPtr(val))
 
 
 /*
