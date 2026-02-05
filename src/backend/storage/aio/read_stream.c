@@ -1139,3 +1139,12 @@ read_stream_end(ReadStream *stream)
 	read_stream_reset(stream);
 	pfree(stream);
 }
+
+/*
+ * Is read stream in fast path?
+ */
+bool
+read_stream_fast_path(ReadStream *stream)
+{
+	return stream->fast_path;
+}

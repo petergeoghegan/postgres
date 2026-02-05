@@ -121,7 +121,7 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 	hscan->xs_read_stream_dir = NoMovementScanDirection;	/* read_stream_reset
 															 * needs this */
 	hscan->xs_prefetch_block = InvalidBlockNumber;
-	hscan->xs_yielded = false;
+	hscan->xs_yield_check = false;
 	hscan->xs_paused = false;
 
 	/* Reset read stream itself */
@@ -607,7 +607,7 @@ heapam_dirchange_readstream_reset(IndexFetchHeapData *hscan,
 {
 	/* Reset read stream state */
 	batchringbuf->prefetchPos.valid = false;
-	hscan->xs_yielded = false;
+	hscan->xs_yield_check = false;
 	hscan->xs_paused = false;
 	hscan->xs_read_stream_dir = NoMovementScanDirection;	/* see note below */
 
@@ -720,11 +720,10 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		BatchRingItemPos *prefetchPos = &batchringbuf->prefetchPos;
 
 		/*
-		 * Reset xs_yielded, since scanPos advanced to a new batch.  This
-		 * ensures we return at least one tuple per batch when loading many
-		 * batches (see heapam_getnext_stream for details on yielding).
+		 * Reset xs_yield_check, to allow heapam_getnext_stream to consider if
+		 * we should yield on our newly acquired batch
 		 */
-		hscan->xs_yielded = false;
+		hscan->xs_yield_check = false;
 
 		/* Also free obsolescent head batch (unless it is scan's markBatch) */
 		tableam_util_free_batch(scan, headBatch);
@@ -760,7 +759,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 
 	/* In practice scanBatch will always be the ring buffer's headBatch */
 	Assert(batchringbuf->headBatch == scanPos->batch);
-	Assert(!hscan->xs_yielded && !hscan->xs_paused);
+	Assert(!hscan->xs_yield_check && !hscan->xs_paused);
 
 	return heapam_batch_return_tid(scan, scanBatch, scanPos);
 }
@@ -846,30 +845,49 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	}
 
 	/*
-	 * If prefetchPos is significantly ahead of scanPos (3+ batches) and we
-	 * haven't yielded for this condition yet, do so now.  Yielding (unlike
-	 * pausing) requires no explicit resume -- prefetching will continue once
-	 * the scan requests another buffer via read_stream_next_buffer.
+	 * Consider if we need to yield, if we haven't already for this batch. But
+	 * only when prefetchPos is at least one batch ahead of scanPos.
 	 *
-	 * This limits how far ahead prefetching can get, which is useful when the
-	 * scan may end early without consuming all the batches we'd have loaded:
-	 *
-	 * - Merge joins can end either side's scan once the other side is
-	 * exhausted, without waiting for in-progress prefetches to complete.
-	 *
-	 * - LIMIT N queries: the risk of prefetching too many heap pages is
-	 * ameliorated.
-	 *
-	 * - Index-only scans may initially need heap fetches, but can then hit a
-	 * long run of index pages whose TIDs need no heap access because the
-	 * visibility map shows all-visible.  Without yielding, we'd load many
-	 * batches without getting any further benefit from prefetching.
+	 * When we pause, prefetching will continue once the scan requests another
+	 * buffer via read_stream_next_buffer.  We try to avoid doing this when
+	 * there is clear evidence that prefetching is struggling to keep up.
 	 */
-	else if (!hscan->xs_yielded &&
-			 index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
+	else if (!hscan->xs_yield_check)
 	{
-		hscan->xs_yielded = true;
-		return read_stream_yield(stream);
+		int8		batchdistance = index_scan_pos_batch_distance(prefetchPos,
+																  scanPos);
+
+		hscan->xs_yield_check = true;
+
+		/*
+		 * If prefetchPos is significantly ahead of scanPos (5+ batches),
+		 * always yield once per batch.  This is useful when the scan may end
+		 * early without consuming all the batches we'd have loaded.  We don't
+		 * want to waste CPU cycles on reading index pages whose batches will
+		 * never be consumed by the scan.
+		 */
+		if (batchdistance == 0)
+		{
+			/* Don't even consider yielding yet */
+		}
+		else if (batchdistance < 5)
+		{
+			if (read_stream_fast_path(stream))
+				return read_stream_yield(stream);
+
+			/*
+			 * Non-ascending or I/O-heavy heap pattern.
+			 *
+			 * Don't yield yet.  If we yield early then we won't get a high
+			 * enough prefetch distance.  Besides, heapam_index_fetch_tuple
+			 * will likely just block waiting on the next heap block.
+			 */
+		}
+		else
+		{
+			/* Always yield once when batch distance is at least 5 */
+			return read_stream_yield(stream);
+		}
 	}
 
 	prefetchBatch = index_scan_batch(scan, prefetchPos->batch);
