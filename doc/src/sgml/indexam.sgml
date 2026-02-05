@@ -679,6 +679,10 @@ ambeginscan (Relation indexRelation,
    <function>ambeginscan</function> does little beyond making that call and perhaps
    acquiring locks;
    the interesting parts of index-scan startup are in <function>amrescan</function>.
+   Index access methods that use the <function>amgetbatch</function> interface
+   must also set <literal>scan-&gt;maxitemsbatch</literal> to the maximum number
+   of items that can appear in a single batch (typically derived from the
+   index page size, e.g., <literal>MaxIndexTuplesPerPage</literal>).
   </para>
 
   <para>
