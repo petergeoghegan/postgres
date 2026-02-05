@@ -133,8 +133,8 @@ typedef struct IndexFetchHeapData
 	 * one tuple to the next, the read stream releases all previously pinned
 	 * buffers and resets the prefetch block.
 	 */
-	ScanDirection xs_dir;
-	BlockNumber xs_prefetch_block;
+	ScanDirection xs_readstream_dir;
+	BlockNumber xs_prefetch_block;	/* last block returned to xs_read_stream */
 	bool		xs_yielded;		/* yielded until xs_blk changes? */
 	bool		xs_paused;		/* paused until next batch is read? */
 
