@@ -726,6 +726,13 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 													batchringbuf->headBatch);
 		BatchRingItemPos *prefetchPos = &batchringbuf->prefetchPos;
 
+		/*
+		 * Reset xs_yielded, since scanPos advanced to a new batch.  This
+		 * ensures we return at least one tuple per batch when loading many
+		 * batches (see heapam_getnext_stream for details on yielding).
+		 */
+		hscan->xs_yielded = false;
+
 		/* Also free obsolescent head batch (unless it is scan's markBatch) */
 		tableam_util_free_batch(scan, headBatch);
 
@@ -875,12 +882,9 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	 * batches without getting any further benefit from prefetching.
 	 */
 	else if (!hscan->xs_yielded &&
-			 // hscan->xs_blk != hscan->xs_prefetch_block &&
-			 index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3 &&
-			 read_stream_pinned_buffers(stream) > 0)
+			 index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
 	{
 		hscan->xs_yielded = true;
-		// elog(WARNING, "index_scan_batch_count: %d, read_stream_pinned_buffers: %d", index_scan_batch_count(scan), read_stream_pinned_buffers(stream));
 		return read_stream_yield(stream);
 	}
 

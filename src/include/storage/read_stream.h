@@ -104,6 +104,5 @@ extern void read_stream_resume(ReadStream *stream);
 extern BlockNumber read_stream_yield(ReadStream *stream);
 extern void read_stream_reset(ReadStream *stream);
 extern void read_stream_end(ReadStream *stream);
-extern int read_stream_pinned_buffers(ReadStream *stream);
 
 #endif							/* READ_STREAM_H */
