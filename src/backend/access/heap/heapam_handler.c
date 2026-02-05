@@ -711,8 +711,8 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 #endif
 
 	/*
-	 * Remove the head batch from the batch ring buffer (unless the head batch
-	 * is also our new scanBatch, which happens on the first call here)
+	 * Remove the head batch from the batch ring buffer (except when this new
+	 * scanBatch is our only one)
 	 */
 	if (batchringbuf->headBatch != scanPos->batch)
 	{
