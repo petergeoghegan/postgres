@@ -767,9 +767,6 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 
 	/*
 	 * In practice scanBatch will always be the ring buffer's headBatch.
-	 *
-	 * Note: It's possible that prefetchPos still points to a batch that we've
-	 * already freed.  heapam_getnext_stream is prepared to deal with that.
 	 */
 	Assert(batchringbuf->headBatch == scanPos->batch);
 
