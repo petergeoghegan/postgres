@@ -909,17 +909,26 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		else if (!index_scan_pos_advance(direction, prefetchBatch, prefetchPos))
 		{
 			/*
-			 * Ran out of items from prefetchBatch.  Try to advance it to next
-			 * batch.
-			 *
-			 * If we already used the maximum number of batch slots available,
-			 * it's pointless to try loading another one. This can happen for
-			 * various reasons, e.g. for index-only scans on all-visible
-			 * table, or skipping duplicate blocks on perfectly correlated
-			 * indexes, etc.
+			 * Ran out of items from prefetchBatch.  Try to advance to the
+			 * scan's next batch.
 			 */
-			if (index_scan_batch_full(scan))
+			if (unlikely(index_scan_batch_full(scan)))
 			{
+				/*
+				 * Can't advance prefetchBatch because all available
+				 * batchringbuf batch slots are currently in use.
+				 *
+				 * Deal with this by momentarily pausing the read stream.
+				 * heapam_batch_getnext_tid will resume the read stream later,
+				 * though only after scanPos has consumed all remaining items
+				 * from scanBatch (at which point scanBatch will be freed,
+				 * making its slot available for reuse by a later batch).
+				 *
+				 * In practice we hardly ever need to do this.  It would be
+				 * possible to avoid the need to pause the read stream by
+				 * dynamically allocating batch slots instead, but that would
+				 * add complexity for no real benefit.
+				 */
 				hscan->xs_paused = true;
 				return read_stream_pause(stream);
 			}
