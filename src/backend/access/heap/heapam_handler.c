@@ -848,47 +848,57 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	}
 
 	/*
-	 * Consider if we need to yield, if we haven't already for this batch.
-	 * But only when prefetchPos is at least one batch ahead of scanPos.
+	 * Consider if we need to yield, if we haven't already for this batch. But
+	 * only when prefetchPos is at least one batch ahead of scanPos.
 	 *
 	 * When we pause, prefetching will continue once the scan requests another
 	 * buffer via read_stream_next_buffer.  We try to avoid doing this when
 	 * there is clear evidence that prefetching is struggling to keep up.
 	 */
-	else if (!hscan->xs_yield_check &&
-			 index_scan_pos_batch_distance(prefetchPos, scanPos) >= 1)
+	else if (!hscan->xs_yield_check)
 	{
-		hscan->xs_yield_check = true;
+		int8		batchdistance = index_scan_pos_batch_distance(prefetchPos,
+																  scanPos);
 
 		/*
 		 * If prefetchPos is significantly ahead of scanPos (3+ batches),
 		 * always yield once per batch.  This is useful when the scan may end
 		 * early without consuming all the batches we'd have loaded.  We don't
-		 * want to too many CPU cycles on reading index pages whose batches
-		 * will never be needed.
+		 * want to waste CPU cycles on reading index pages whose batches will
+		 * never be consumed by the scan.
 		 */
-		if (index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
-			return read_stream_yield(stream);
-		else
+		if (batchdistance == 0)
+		{
+			/* Don't even consider yielding yet */
+		}
+		else if (batchdistance < 3)
 		{
 			int64		io_blocks;
 			int64		total_blocks;
 
-			/*
-			 * For non-ascending or I/O-heavy patterns, don't yield until the
-			 * 3 batch threshold has been crossed.  If we yield too early then
-			 * heapam_index_fetch_tuple will just block waiting on the next
-			 * heap block anyway.
-			 */
+			hscan->xs_yield_check = true;
+
 			read_stream_get_counts(stream, &io_blocks, &total_blocks);
 
 			if (total_blocks >= 1000 && io_blocks * 2 <= total_blocks &&
 				hscan->xs_ascending_transitions * 2 >
 				hscan->xs_total_transitions)
 				return read_stream_yield(stream);
-		}
 
-		/* Don't yield after all (at least until we start on next batch) */
+			/*
+			 * Non-ascending or I/O-heavy heap pattern.
+			 *
+			 * Don't yield yet.  If we yield early then we won't get a high
+			 * enough prefetch distance.  Besides, heapam_index_fetch_tuple
+			 * will likely just block waiting on the next heap block.
+			 */
+		}
+		else
+		{
+			/* Always yield once when batch distance is at least 3 */
+			hscan->xs_yield_check = true;
+			return read_stream_yield(stream);
+		}
 	}
 
 	prefetchBatch = index_scan_batch(scan, prefetchPos->batch);
@@ -989,10 +999,9 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		}
 
 		/*
-		 * Track ascending block transitions for the adaptive yield
-		 * decision.  Each distinct block returned to the stream is a
-		 * "transition"; we count what fraction are ascending (new block >
-		 * previous block).
+		 * Track ascending block transitions for the adaptive yield decision.
+		 * Each distinct block returned to the stream is a "transition"; we
+		 * count what fraction are ascending (new block > previous block).
 		 */
 		hscan->xs_total_transitions++;
 		if (prefetch_block > hscan->xs_prefetch_block)
