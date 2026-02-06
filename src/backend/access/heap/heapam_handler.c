@@ -123,7 +123,7 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 	hscan->xs_prefetch_block = InvalidBlockNumber;
 	hscan->xs_ascending_transitions = 0;
 	hscan->xs_total_transitions = 0;
-	hscan->xs_yielded = false;
+	hscan->xs_yield_check = false;
 	hscan->xs_paused = false;
 
 	/* Reset read stream itself */
@@ -610,7 +610,7 @@ heapam_dirchange_readstream_reset(IndexFetchHeapData *hscan,
 	batchringbuf->prefetchPos.valid = false;
 	hscan->xs_ascending_transitions = 0;
 	hscan->xs_total_transitions = 0;
-	hscan->xs_yielded = false;
+	hscan->xs_yield_check = false;
 	hscan->xs_paused = false;
 	hscan->xs_read_stream_dir = NoMovementScanDirection;	/* see note below */
 
@@ -723,10 +723,10 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		BatchRingItemPos *prefetchPos = &batchringbuf->prefetchPos;
 
 		/*
-		 * Reset xs_yielded, to allow heapam_getnext_stream to yield again for
-		 * this new batch
+		 * Reset xs_yield_check, to allow heapam_getnext_stream to consider if
+		 * we should yield on our newly acquired batch
 		 */
-		hscan->xs_yielded = false;
+		hscan->xs_yield_check = false;
 
 		/* Also free obsolescent head batch (unless it is scan's markBatch) */
 		tableam_util_free_batch(scan, headBatch);
@@ -762,7 +762,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 
 	/* In practice scanBatch will always be the ring buffer's headBatch */
 	Assert(batchringbuf->headBatch == scanPos->batch);
-	Assert(!hscan->xs_yielded && !hscan->xs_paused);
+	Assert(!hscan->xs_yield_check && !hscan->xs_paused);
 
 	return heapam_batch_return_tid(scan, scanBatch, scanPos);
 }
@@ -848,38 +848,47 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 	}
 
 	/*
-	 * Adaptive yield.
+	 * Consider if we need to yield, if we haven't already for this batch.
+	 * But only when prefetchPos is at least one batch ahead of scanPos.
 	 *
-	 * When prefetchPos is at least one batch ahead of scanPos, check whether
-	 * we should yield.  For non-ascending or I/O-heavy patterns, we
-	 * intentionally do NOT yield -- we're better off prefetching more
-	 * aggressively, for now.
-	 *
-	 * XXX This is somewhat at odds with the original goal of yielding here,
-	 * which was to allow the scan to return some tuples to shut down early.
-	 * We probably need to add something like that back, especially with
-	 * heavily cached queries.
-	 *
-	 * xs_yielded is set per-batch to limit yields to once per batch
-	 * boundary (reset in heapam_batch_getnext_tid when scanPos advances
-	 * to a new batch).
+	 * When we pause, prefetching will continue once the scan requests another
+	 * buffer via read_stream_next_buffer.  We try to avoid doing this when
+	 * there is clear evidence that prefetching is struggling to keep up.
 	 */
-	else if (!hscan->xs_yielded &&
+	else if (!hscan->xs_yield_check &&
 			 index_scan_pos_batch_distance(prefetchPos, scanPos) >= 1)
 	{
-		int64		io_blocks;
-		int64		total_blocks;
+		hscan->xs_yield_check = true;
 
-		read_stream_get_counts(stream, &io_blocks, &total_blocks);
-
-		hscan->xs_yielded = true;
-
-		if (total_blocks >= 1000 && io_blocks * 2 <= total_blocks &&
-			hscan->xs_ascending_transitions * 2 >
-			hscan->xs_total_transitions)
+		/*
+		 * If prefetchPos is significantly ahead of scanPos (3+ batches),
+		 * always yield once per batch.  This is useful when the scan may end
+		 * early without consuming all the batches we'd have loaded.  We don't
+		 * want to too many CPU cycles on reading index pages whose batches
+		 * will never be needed.
+		 */
+		if (index_scan_pos_batch_distance(prefetchPos, scanPos) >= 3)
 			return read_stream_yield(stream);
+		else
+		{
+			int64		io_blocks;
+			int64		total_blocks;
 
-		/* Don't yield after all (at least until next batch) */
+			/*
+			 * For non-ascending or I/O-heavy patterns, don't yield until the
+			 * 3 batch threshold has been crossed.  If we yield too early then
+			 * heapam_index_fetch_tuple will just block waiting on the next
+			 * heap block anyway.
+			 */
+			read_stream_get_counts(stream, &io_blocks, &total_blocks);
+
+			if (total_blocks >= 1000 && io_blocks * 2 <= total_blocks &&
+				hscan->xs_ascending_transitions * 2 >
+				hscan->xs_total_transitions)
+				return read_stream_yield(stream);
+		}
+
+		/* Don't yield after all (at least until we start on next batch) */
 	}
 
 	prefetchBatch = index_scan_batch(scan, prefetchPos->batch);
