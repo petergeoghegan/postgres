@@ -489,7 +489,6 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 	 * buffer (batches must stay in scan order).  If it isn't then we should
 	 * have already returned some existing loaded batch earlier.
 	 */
-	Assert(!hscan->xs_paused);
 	Assert(!index_scan_batch_full(scan));
 	Assert(!priorBatch ||
 		   (index_scan_batch_count(scan) > 0 && priorBatch->dir == direction &&
