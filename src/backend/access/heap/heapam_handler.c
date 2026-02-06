@@ -762,6 +762,7 @@ heapam_batch_getnext_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 
 	/* In practice scanBatch will always be the ring buffer's headBatch */
 	Assert(batchringbuf->headBatch == scanPos->batch);
+	Assert(!hscan->xs_yielded && !hscan->xs_paused);
 
 	return heapam_batch_return_tid(scan, scanBatch, scanPos);
 }
