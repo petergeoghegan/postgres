@@ -170,7 +170,7 @@ MUNRO_QUERIES = OrderedDict([
         },
     }),
     ("MU2", {
-        "name": "Thomas Munro mid-January regression, backward index scan (fine without adaptive yield)",
+        "name": "Thomas Munro mid-January regression, backward index scan (adaptive yield must not regress)",
         "sql": """
             SELECT a FROM t_munro
             WHERE a BETWEEN 19440 AND 2068015
@@ -2852,15 +2852,18 @@ def main():
     if args.stress_test:
         run_stress_test(args)
     elif args.readstream_tests:
-        run_generic_benchmark(args, READSTREAM_QUERIES, "readstream",
+        cache_tag = "cached" if args.cached else "uncached"
+        run_generic_benchmark(args, READSTREAM_QUERIES, f"readstream_{cache_tag}",
                               "Readstream Benchmark Tests",
                               verify_readstream_data, load_readstream_data)
     elif args.random_backwards_tests:
-        run_generic_benchmark(args, RANDOM_BACKWARDS_QUERIES, "random_backwards",
+        cache_tag = "cached" if args.cached else "uncached"
+        run_generic_benchmark(args, RANDOM_BACKWARDS_QUERIES, f"random_backwards_{cache_tag}",
                               "Random Backwards Benchmark Tests",
                               verify_random_backwards_data, load_random_backwards_data)
     elif args.munro_tests:
-        run_generic_benchmark(args, MUNRO_QUERIES, "munro",
+        cache_tag = "cached" if args.cached else "uncached"
+        run_generic_benchmark(args, MUNRO_QUERIES, f"munro_{cache_tag}",
                               "Thomas Munro mid-January Regression Benchmark",
                               verify_munro_data, load_munro_data)
     else:
