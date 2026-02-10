@@ -161,7 +161,7 @@ bthandler(PG_FUNCTION_ARGS)
 		.amrescan = btrescan,
 		.amgettuple = NULL,
 		.amgetbatch = btgetbatch,
-		.amfreebatch = btfreebatch,
+		.amkillitemsbatch = btkillitemsbatch,
 		.amgetbitmap = btgetbitmap,
 		.amendscan = btendscan,
 		.amposreset = btposreset,
@@ -366,18 +366,16 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 }
 
 /*
- *	btfreebatch() -- Free batch resources
+ *	btkillitemsbatch() -- Mark killed items' index tuples LP_DEAD
  */
 void
-btfreebatch(IndexScanDesc scan, IndexScanBatch batch)
+btkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch)
 {
 	/* Table AM should have already released batch page's pin by now */
 	Assert(!BufferIsValid(batch->buf));
+	Assert(batch->numKilled > 0);
 
-	if (batch->numKilled > 0)
-		_bt_killitems(scan, batch);
-
-	indexam_util_batch_release(scan, batch);
+	_bt_killitems(scan, batch);
 }
 
 /*

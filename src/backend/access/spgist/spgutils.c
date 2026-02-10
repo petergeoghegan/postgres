@@ -89,7 +89,7 @@ spghandler(PG_FUNCTION_ARGS)
 		.amrescan = spgrescan,
 		.amgettuple = spggettuple,
 		.amgetbatch = NULL,
-		.amfreebatch = NULL,
+		.amkillitemsbatch = NULL,
 		.amgetbitmap = spggetbitmap,
 		.amendscan = spgendscan,
 		.amposreset = NULL,

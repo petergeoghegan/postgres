@@ -335,7 +335,7 @@ dihandler(PG_FUNCTION_ARGS)
 		.amrescan = direscan,
 		.amgettuple = NULL,
 		.amgetbatch = NULL,
-		.amfreebatch = NULL,
+		.amkillitemsbatch = NULL,
 		.amgetbitmap = NULL,
 		.amendscan = diendscan,
 		.amposreset = NULL,

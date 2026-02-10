@@ -104,7 +104,7 @@ gisthandler(PG_FUNCTION_ARGS)
 		.amrescan = gistrescan,
 		.amgettuple = gistgettuple,
 		.amgetbatch = NULL,
-		.amfreebatch = NULL,
+		.amkillitemsbatch = NULL,
 		.amgetbitmap = gistgetbitmap,
 		.amendscan = gistendscan,
 		.amposreset = NULL,

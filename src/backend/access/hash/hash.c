@@ -103,7 +103,7 @@ hashhandler(PG_FUNCTION_ARGS)
 		.amrescan = hashrescan,
 		.amgettuple = NULL,
 		.amgetbatch = hashgetbatch,
-		.amfreebatch = hashfreebatch,
+		.amkillitemsbatch = hashkillitemsbatch,
 		.amgetbitmap = hashgetbitmap,
 		.amendscan = hashendscan,
 		.amposreset = NULL,
@@ -387,18 +387,16 @@ hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 }
 
 /*
- *	hashfreebatch() -- Free batch resources
+ *	hashkillitemsbatch() -- Mark killed items' index tuples LP_DEAD
  */
 void
-hashfreebatch(IndexScanDesc scan, IndexScanBatch batch)
+hashkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch)
 {
 	/* Table AM should have already released batch page's pin by now */
 	Assert(!BufferIsValid(batch->buf));
+	Assert(batch->numKilled > 0);
 
-	if (batch->numKilled > 0)
-		_hash_kill_items(scan, batch);
-
-	indexam_util_batch_release(scan, batch);
+	_hash_kill_items(scan, batch);
 }
 
 /*

@@ -147,7 +147,7 @@ blhandler(PG_FUNCTION_ARGS)
 		.amrescan = blrescan,
 		.amgettuple = NULL,
 		.amgetbatch = NULL,
-		.amfreebatch = NULL,
+		.amkillitemsbatch = NULL,
 		.amgetbitmap = blgetbitmap,
 		.amendscan = blendscan,
 		.amposreset = NULL,

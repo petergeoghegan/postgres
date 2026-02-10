@@ -36,7 +36,7 @@
  * prefetchBatch in a standardized way (see heapam_handler.c for the reference
  * implementation), while table AMs assume that index AMs free and unlock
  * batches according to the conventions established here.  See indexam.sgml
- * for the full specification of the amgetbatch/amfreebatch contract.
+ * for the full specification of the amgetbatch/amkillitemsbatch contract.
  *
  * The table AM fully controls the read stream as its own private state.
  * When the scan direction changes, the table AM must immediately reset its
@@ -86,9 +86,7 @@ static int	batch_compare_int(const void *va, const void *vb);
 void
 index_batchscan_init(IndexScanDesc scan)
 {
-	/* Both amgetbatch and amfreebatch must be present together */
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
-	Assert(scan->indexRelation->rd_indam->amfreebatch != NULL);
 
 	scan->batchringbuf.scanPos.valid = false;
 	scan->batchringbuf.markPos.valid = false;
@@ -145,32 +143,6 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 	batchringbuf->prefetchPos.valid = false;
 
 	/*
-	 * Fast path for the common case: exactly one batch loaded, no markBatch,
-	 * MVCC scan (buffer already released), and no killed items.  This avoids
-	 * function call overhead through tableam_util_free_batch -> amfreebatch.
-	 */
-	if (likely(index_scan_batch_count(scan) == 1 && markBatch == NULL &&
-			   scan->MVCCScan))
-	{
-		IndexScanBatch batch = index_scan_batch(scan,
-												batchringbuf->headBatch);
-
-		if (likely(batch->numKilled == 0))
-		{
-			/* Directly release to cache, skipping amfreebatch overhead */
-			if (BufferIsValid(batch->buf))
-			{
-				ReleaseBuffer(batch->buf);
-				batch->buf = InvalidBuffer;
-			}
-			indexam_util_batch_release(scan, batch);
-			batchringbuf->headBatch = 0;
-			batchringbuf->nextBatch = 0;
-			return;
-		}
-	}
-
-	/*
 	 * When called with "complete" we must make sure that markBatch is freed,
 	 * and that all markBatch related state is reset
 	 */
@@ -224,7 +196,7 @@ index_batchscan_reset(IndexScanDesc scan, bool complete)
 void
 index_batchscan_end(IndexScanDesc scan)
 {
-	/* Call amfreebatch and all remaining loaded batches (even markBatch) */
+	/* Free all remaining loaded batches (even markBatch) */
 	scan->batchringbuf.done = true;
 	index_batchscan_reset(scan, true);
 
@@ -515,8 +487,8 @@ tableam_util_batch_dirchange(IndexScanDesc scan)
  *
  * Records an offset to the scanBatch item of the currently-read tuple, saving
  * it in scanBatch's killedItems array. The items' index tuples will later be
- * marked LP_DEAD when current scanBatch is freed by amfreebatch routine (see
- * tableam_util_free_batch wrapper function).
+ * marked LP_DEAD when current scanBatch is freed by tableam_util_free_batch
+ * (which calls the index AM's amkillitemsbatch routine when applicable).
  */
 void
 tableam_util_kill_scanpositem(IndexScanDesc scan)
@@ -543,10 +515,9 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
  * the batch, so we may need to release the pin here.  For non-MVCC snapshot
  * scans, the pin is always held until this function releases it.
  *
- * We also call the index AM's amfreebatch callback to release AM-specific
- * resources, and to set LP_DEAD bits on the batch's index page (in index AMs
- * that implement that optimization).  Every amfreebatch routine must recycle
- * the underlying batch memory by passing it to indexam_util_batch_release.
+ * When the batch has dead items (numKilled > 0) and the index AM provides an
+ * amkillitemsbatch callback, we call it to set LP_DEAD bits in the index
+ * page.  We always recycle the batch memory via indexam_util_batch_release.
  *
  * Note: Calling here when 'batch' is also batchringbuf.markBatch is a no-op.
  * Callers that don't want this should set batchringbuf.markBatch to NULL
@@ -583,21 +554,29 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 #endif
 
 	/*
+	 * Let the index AM set LP_DEAD bits in the index page, if applicable.
+	 *
 	 * batch.killedItems[] is now in whatever order the scan returned items
 	 * in.  We might have even saved the same item/TID twice.
 	 *
 	 * Sort and unique-ify killedItems[].  That way the index AM can safely
 	 * assume that items will always be in their original index page order.
 	 */
-	if (batch->numKilled > 1)
+	if (batch->numKilled > 0 &&
+		scan->indexRelation->rd_indam->amkillitemsbatch != NULL)
 	{
-		qsort(batch->killedItems, batch->numKilled, sizeof(int),
-			  batch_compare_int);
-		batch->numKilled = qunique(batch->killedItems, batch->numKilled,
-								   sizeof(int), batch_compare_int);
+		if (batch->numKilled > 1)
+		{
+			qsort(batch->killedItems, batch->numKilled, sizeof(int),
+				  batch_compare_int);
+			batch->numKilled = qunique(batch->killedItems, batch->numKilled,
+									   sizeof(int), batch_compare_int);
+		}
+
+		scan->indexRelation->rd_indam->amkillitemsbatch(scan, batch);
 	}
 
-	scan->indexRelation->rd_indam->amfreebatch(scan, batch);
+	indexam_util_batch_release(scan, batch);
 }
 
 /* ----------------------------------------------------------------
@@ -627,8 +606,8 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
  * the lock and the pin on batch's page on behalf of amgetbitmap callers.
  * Such amgetbitmap callers must be careful to free all batches with matching
  * items once they're done saving the matching TIDs (there will never be any
- * calls to amfreebatch, so amgetbitmap must call indexam_util_batch_release
- * directly, in lieu of a deferred call to amfreebatch from core code).  We
+ * calls to amkillitemsbatch, so amgetbitmap must call
+ * indexam_util_batch_release directly).  We
  * never drop the pin for an amgetbatch caller, though.
  */
 void
@@ -643,7 +622,7 @@ indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
 		Assert(scan->heapRelation != NULL);
 
 		/*
-		 * Have to set batch->lsn so that amfreebatch has a way to detect when
+		 * Have to set batch->lsn so that amkillitemsbatch has a way to detect when
 		 * concurrent heap TID recycling by VACUUM might have taken place.
 		 * It'll only be safe to set any index tuple LP_DEAD bits when the
 		 * page LSN hasn't advanced.
@@ -690,7 +669,7 @@ indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
  *
  * Index AMs that use batches should call this from either their amgetbatch or
  * amgetbitmap routines only.  Note in particular that it cannot safely be
- * called from a amfreebatch routine.
+ * called from an amkillitemsbatch routine.
  */
 IndexScanBatch
 indexam_util_batch_alloc(IndexScanDesc scan)
@@ -763,9 +742,10 @@ indexam_util_batch_alloc(IndexScanDesc scan)
  * It's safe to release a batch immediately when it was used to read a page
  * that returned no matches to the scan.  Batches actually returned by index
  * AM's amgetbatch routine (i.e. batches for pages with one or more matches)
- * must be released by calling here at the end of their amfreebatch routine.
- * Index AMs that uses batches should call here to release a batch from any of
- * their amgetbatch, amgetbitmap, and amfreebatch routines.
+ * must be released by tableam_util_free_batch, which calls here after the
+ * index AM's amkillitemsbatch routine (if any).  Index AMs that use batches
+ * should call here to release a batch from their amgetbatch or amgetbitmap
+ * routines.
  */
 void
 indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
