@@ -526,6 +526,26 @@ QUERIES = OrderedDict([
         "prewarm_indexes": ["prefetch_orders_date_idx"],
         "prewarm_tables": ["prefetch_orders"],
     }),
+    ("A26", {
+        "name": "LATERAL, breaks LIMIT heuristic",
+        "sql": """
+            SELECT c.customer_id, o.order_id, o.order_date, o.amount
+            FROM prefetch_customers c,
+            LATERAL (
+            SELECT order_id, order_date, amount
+            FROM prefetch_orders
+            WHERE customer_id = c.customer_id
+            AND order_date BETWEEN '2023-09-09' AND '2023-10-16'
+
+            ORDER BY order_date
+            LIMIT 10
+            ) o
+            WHERE c.customer_id BETWEEN 10634 AND 10636
+        """,
+        "evict": ["prefetch_orders", "prefetch_customers"],
+        "prewarm_indexes": ["prefetch_orders_cust_date_idx", "prefetch_customers_pkey"],
+        "prewarm_tables": ["prefetch_orders", "prefetch_customers"],
+    }),
 ])
 
 
