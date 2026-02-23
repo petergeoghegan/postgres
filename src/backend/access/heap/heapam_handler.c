@@ -301,6 +301,7 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	int			firstSetItem,
 				lastSetItem,
 				step;
+	bool		allbatchitemvisible;
 
 	/* Do nothing if we already resolved visibility for the item. */
 	if (batch->visInfo[posItem] & BATCH_VIS_CHECKED)
@@ -317,24 +318,19 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	if (ScanDirectionIsForward(batch->dir))
 	{
 		firstSetItem = posItem;
-		lastSetItem = Min(batch->lastItem, (posItem + hscan->xs_vm_items));
+		lastSetItem = Min(batch->lastItem + 1, (posItem + hscan->xs_vm_items));
+		allbatchitemvisible = lastSetItem > batch->lastItem;
 		step = 1;
 	}
 	else
 	{
 		firstSetItem = posItem;
-		lastSetItem = Max(batch->firstItem, (posItem - hscan->xs_vm_items));
+		lastSetItem = Max(batch->firstItem - 1, (posItem - hscan->xs_vm_items));
+		allbatchitemvisible = lastSetItem < batch->firstItem;
 		step = -1;
 	}
 
-	/*
-	 * Set visibility info for a range of items in ascending item order.
-	 *
-	 * Arguably, we should use a descending-order version of this loop during
-	 * backwards scans -- that would slightly reduce the number of repeat VM
-	 * buffer accesses in certain cases.  But we're in a hot code path that's
-	 * sensitive to code size increases, so we get by with just this one loop.
-	 */
+	/* Set visibility info for a range of items, in scan order */
 	for (int i = firstSetItem; i != lastSetItem; i += step)
 	{
 		ItemPointer tid = &batch->items[i].heapTid;
@@ -373,14 +369,13 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 
 	/*
 	 * It's safe to drop the batch's buffer pin as soon as we've resolved the
-	 * visibility status of all of its items.  If we've checked the visibility
-	 * for the batch's first and last matching items already, it follows that
-	 * we must have also done so for all the items in between them.
+	 * visibility status of all of its items
 	 */
-	if ((batch->visInfo[batch->firstItem] & BATCH_VIS_CHECKED) &&
-		(batch->visInfo[batch->lastItem] & BATCH_VIS_CHECKED) &&
-		scan->MVCCScan)
+	if (allbatchitemvisible && scan->MVCCScan)
 	{
+		Assert(batch->visInfo[batch->firstItem] & BATCH_VIS_CHECKED);
+		Assert(batch->visInfo[batch->lastItem] & BATCH_VIS_CHECKED);
+
 		ReleaseBuffer(batch->buf);
 		batch->buf = InvalidBuffer;
 	}
@@ -399,19 +394,22 @@ heapam_batch_return_tid(IndexScanDesc scan, IndexScanBatch scanBatch,
 {
 	pgstat_count_index_tuples(scan->indexRelation, 1);
 
-	if (scan->xs_want_itup)
-	{
-		heapam_batch_resolve_visibility(scan, scanBatch, scanPos);
-		scan->xs_itup = (IndexTuple) (scanBatch->currTuples +
-									  scanBatch->items[scanPos->item].tupleOffset);
-	}
+	/* Set xs_heaptid, which heapam_index_getnext_slot will need */
+	scan->xs_heaptid = scanBatch->items[scanPos->item].heapTid;
+
+	if (!scan->xs_want_itup)
+		return &scan->xs_heaptid;
 
 	/*
-	 * Set xs_heaptid and xs_visible, which heapam_index_getnext_slot needs
-	 * (xs_visible isn't needed when !xs_want_itup but set it consistently)
+	 * Index-only scan -- set visibility info for current scanPos item (plus
+	 * possibly some additional items later in the current scan direction)
 	 */
-	scan->xs_heaptid = scanBatch->items[scanPos->item].heapTid;
-	scan->xs_visible = scanBatch->visInfo != NULL &&
+	heapam_batch_resolve_visibility(scan, scanBatch, scanPos);
+	scan->xs_itup = (IndexTuple) (scanBatch->currTuples +
+								  scanBatch->items[scanPos->item].tupleOffset);
+
+	/* Set xs_heaptid, which heapam_index_getnext_slot will also need */
+	scan->xs_visible =
 		(scanBatch->visInfo[scanPos->item] & BATCH_VIS_ALL_VISIBLE);
 
 	return &scan->xs_heaptid;
