@@ -299,7 +299,8 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	int			posItem = pos->item;
 	int			firstSetItem,
-				lastSetItem;
+				lastSetItem,
+				step;
 
 	/* Do nothing if we already resolved visibility for the item. */
 	if (batch->visInfo[posItem] & BATCH_VIS_CHECKED)
@@ -316,12 +317,14 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	if (ScanDirectionIsForward(batch->dir))
 	{
 		firstSetItem = posItem;
-		lastSetItem = Min(batch->lastItem, (posItem + hscan->xs_vm_items) - 1);
+		lastSetItem = Min(batch->lastItem, (posItem + hscan->xs_vm_items));
+		step = 1;
 	}
 	else
 	{
-		lastSetItem = posItem;
-		firstSetItem = Max(batch->firstItem, (posItem - hscan->xs_vm_items) + 1);
+		firstSetItem = posItem;
+		lastSetItem = Max(batch->firstItem, (posItem - hscan->xs_vm_items));
+		step = -1;
 	}
 
 	/*
@@ -332,7 +335,7 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	 * buffer accesses in certain cases.  But we're in a hot code path that's
 	 * sensitive to code size increases, so we get by with just this one loop.
 	 */
-	for (int i = firstSetItem; i <= lastSetItem; i++)
+	for (int i = firstSetItem; i != lastSetItem; i += step)
 	{
 		ItemPointer tid = &batch->items[i].heapTid;
 		uint8		flags = BATCH_VIS_CHECKED;
