@@ -408,7 +408,7 @@ heapam_batch_return_tid(IndexScanDesc scan, IndexScanBatch scanBatch,
 	scan->xs_itup = (IndexTuple) (scanBatch->currTuples +
 								  scanBatch->items[scanPos->item].tupleOffset);
 
-	/* Set xs_heaptid, which heapam_index_getnext_slot will also need */
+	/* Set xs_visible, which heapam_index_getnext_slot will also need */
 	scan->xs_visible =
 		(scanBatch->visInfo[scanPos->item] & BATCH_VIS_ALL_VISIBLE);
 
