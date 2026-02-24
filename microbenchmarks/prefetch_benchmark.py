@@ -2404,14 +2404,20 @@ def deallocate_query(conn):
         cur.execute(f"DEALLOCATE {PREPARED_STMT_NAME}")
 
 
-def run_query(conn, query_def, cached_mode, is_master, prefetch_setting, benchmark_cpu, serialize=True, direct_io=False):
+def run_query(conn, query_def, cached_mode, is_master, prefetch_setting, benchmark_cpu, serialize=True, direct_io=False, skip_prewarm=False):
     """
     Run a single query with proper cache preparation.
     The query must already be prepared via prepare_query().
     Returns (execution_time_ms, explain_output_str) tuple.
+
+    skip_prewarm: If True, skip cache preparation entirely.  Useful in
+    cached mode where prewarming only needs to happen once before the
+    first run of a query, not on every subsequent run.
     """
     # Cache preparation
-    if cached_mode:
+    if skip_prewarm:
+        pass
+    elif cached_mode:
         # Prewarm everything
         prewarm_relations(conn, query_def.get("prewarm_indexes", []))
         prewarm_relations(conn, query_def.get("prewarm_tables", []), include_vm=True)
@@ -2746,7 +2752,8 @@ def run_generic_benchmark(args, queries_dict, mode_name, title,
                         is_master=True, prefetch_setting=None,
                         benchmark_cpu=args.benchmark_cpu,
                         serialize=not args.no_serialize,
-                        direct_io=args.direct_io
+                        direct_io=args.direct_io,
+                        skip_prewarm=(args.cached and run > 0)
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["master"]["times"].append(exec_time)
@@ -2810,7 +2817,8 @@ def run_generic_benchmark(args, queries_dict, mode_name, title,
                         is_master=False, prefetch_setting="off",
                         benchmark_cpu=args.benchmark_cpu,
                         serialize=not args.no_serialize,
-                        direct_io=args.direct_io
+                        direct_io=args.direct_io,
+                        skip_prewarm=(args.cached and run > 0)
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_off"]["times"].append(exec_time)
@@ -2827,7 +2835,8 @@ def run_generic_benchmark(args, queries_dict, mode_name, title,
                         is_master=False, prefetch_setting="on",
                         benchmark_cpu=args.benchmark_cpu,
                         serialize=not args.no_serialize,
-                        direct_io=args.direct_io
+                        direct_io=args.direct_io,
+                        skip_prewarm=(args.cached and run > 0)
                     )
                     if exec_time is not None:
                         results["queries"][query_id]["patch_on"]["times"].append(exec_time)
@@ -3296,7 +3305,8 @@ def run_stress_test(args):
                                             master_conn, query_def, args.cached,
                                             is_master=True, prefetch_setting=None,
                                             benchmark_cpu=args.benchmark_cpu,
-                                            direct_io=args.direct_io
+                                            direct_io=args.direct_io,
+                                            skip_prewarm=args.cached
                                         )
                                         if t is not None:
                                             results[query_id]["master"]["times"].append(t)
@@ -3356,7 +3366,8 @@ def run_stress_test(args):
                                     patch_conn, query_def, args.cached,
                                     is_master=False, prefetch_setting="off",
                                     benchmark_cpu=args.benchmark_cpu,
-                                    direct_io=args.direct_io
+                                    direct_io=args.direct_io,
+                                    skip_prewarm=(args.cached and run_i > 0)
                                 )
                                 if exec_time is not None:
                                     results[query_id]["patch_off"]["times"].append(exec_time)
@@ -3392,7 +3403,8 @@ def run_stress_test(args):
                                     patch_conn, query_def, args.cached,
                                     is_master=False, prefetch_setting="on",
                                     benchmark_cpu=args.benchmark_cpu,
-                                    direct_io=args.direct_io
+                                    direct_io=args.direct_io,
+                                    skip_prewarm=(args.cached and run_i > 0)
                                 )
                                 if exec_time is not None:
                                     results[query_id]["patch_on"]["times"].append(exec_time)
@@ -3512,7 +3524,8 @@ def run_stress_test(args):
                                     patch_conn, query_def, args.cached,
                                     is_master=False, prefetch_setting=prefetch_setting,
                                     benchmark_cpu=args.benchmark_cpu,
-                                    direct_io=args.direct_io
+                                    direct_io=args.direct_io,
+                                    skip_prewarm=(args.cached and run_i > 0)
                                 )
                                 if exec_time is not None:
                                     retry_times.append(exec_time)
@@ -3574,7 +3587,8 @@ def run_stress_test(args):
                                     master_conn, query_def, args.cached,
                                     is_master=True, prefetch_setting=None,
                                     benchmark_cpu=args.benchmark_cpu,
-                                    direct_io=args.direct_io
+                                    direct_io=args.direct_io,
+                                    skip_prewarm=(args.cached and run_i > 0)
                                 )
                                 if t is not None:
                                     rebaseline_master_times.append(t)
@@ -3616,7 +3630,8 @@ def run_stress_test(args):
                                     patch_conn, query_def, args.cached,
                                     is_master=False, prefetch_setting=prefetch_setting,
                                     benchmark_cpu=args.benchmark_cpu,
-                                    direct_io=args.direct_io
+                                    direct_io=args.direct_io,
+                                    skip_prewarm=(args.cached and run_i > 0)
                                 )
                                 if t is not None:
                                     rebaseline_patch_times.append(t)
