@@ -8902,3 +8902,24 @@ fetch forward 232 from c_2;
 select 1 from pg_buffercache_evict_all();
 fetch forward 232 from c_2;
 commit;
+
+--
+-- 2026-02-23 21:09 Assertion failure when lastItem visibility info hasn't
+-- been set when we go to release leaf page buffer pin
+--
+set client_min_messages=error;
+drop table if exists lastitem_vis_notset;
+reset client_min_messages;
+
+create table lastitem_vis_notset (a int);
+create index on lastitem_vis_notset (a);
+insert into lastitem_vis_notset values (1), (2), (3);
+vacuum freeze lastitem_vis_notset;
+
+begin;
+set enable_seqscan = off;
+declare visnotset scroll cursor for select * from lastitem_vis_notset order by a;
+fetch forward 1 from visnotset;
+fetch backward 1 from visnotset;
+fetch forward 2 from visnotset;
+commit;
