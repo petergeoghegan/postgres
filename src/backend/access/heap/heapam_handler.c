@@ -339,7 +339,7 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	 * (or just before the start of) the batch's 'items' array.
 	 *
 	 * We iterate this way to avoid the need for 2 direction-specific loops,
-	 * since this a hot code path that's sensitive to code size increases.
+	 * since this is a hot code path that's sensitive to code size increases.
 	 */
 	for (int setItem = posItem; setItem != noSetItem; setItem += step)
 	{
