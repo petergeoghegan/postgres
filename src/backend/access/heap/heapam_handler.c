@@ -298,8 +298,7 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	int			posItem = pos->item;
-	int			firstSetItem,
-				lastSetItem,
+	int			noSetItem,
 				step;
 	bool		allbatchitemvisible;
 
@@ -317,23 +316,34 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 	/* Determine the range of items to set visibility for */
 	if (ScanDirectionIsForward(batch->dir))
 	{
-		firstSetItem = posItem;
-		lastSetItem = Min(batch->lastItem + 1, (posItem + hscan->xs_vm_items));
-		allbatchitemvisible = lastSetItem > batch->lastItem;
+		noSetItem = Min(batch->lastItem + 1, posItem + hscan->xs_vm_items);
+		allbatchitemvisible = noSetItem > batch->lastItem &&
+			(posItem == batch->firstItem ||
+			 (batch->visInfo[batch->firstItem] & BATCH_VIS_CHECKED));
 		step = 1;
 	}
 	else
 	{
-		firstSetItem = posItem;
-		lastSetItem = Max(batch->firstItem - 1, (posItem - hscan->xs_vm_items));
-		allbatchitemvisible = lastSetItem < batch->firstItem;
+		noSetItem = Max(batch->firstItem - 1, posItem - hscan->xs_vm_items);
+		allbatchitemvisible = noSetItem < batch->firstItem &&
+			(posItem == batch->lastItem ||
+			 (batch->visInfo[batch->lastItem] & BATCH_VIS_CHECKED));
 		step = -1;
 	}
 
-	/* Set visibility info for a range of items, in scan order */
-	for (int i = firstSetItem; i != lastSetItem; i += step)
+	/*
+	 * Set visibility info for a range of items, in scan order.
+	 *
+	 * noSetItem is the first item (in the given scan direction) that won't be
+	 * set during this call.  noSetItem often points to just past the end of
+	 * (or just before the start of) the batch's 'items' array.
+	 *
+	 * We iterate this way to avoid the need for 2 direction-specific loops,
+	 * since this a hot code path that's sensitive to code size increases.
+	 */
+	for (int setItem = posItem; setItem != noSetItem; setItem += step)
 	{
-		ItemPointer tid = &batch->items[i].heapTid;
+		ItemPointer tid = &batch->items[setItem].heapTid;
 		uint8		flags = BATCH_VIS_CHECKED;
 
 		Assert(!(batch->visInfo[i] & BATCH_VIS_CHECKED));
@@ -343,7 +353,7 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, IndexScanBatch batch,
 						   &hscan->vmbuf))
 			flags |= BATCH_VIS_ALL_VISIBLE;
 
-		batch->visInfo[i] = flags;
+		batch->visInfo[setItem] = flags;
 	}
 
 #ifdef VM_RESOLVE_DEBUG
