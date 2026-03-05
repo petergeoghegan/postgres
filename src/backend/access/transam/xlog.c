@@ -9623,6 +9623,22 @@ GetXLogInsertRecPtr(void)
 }
 
 /*
+ * Get latest WAL insert pointer
+ */
+XLogRecPtr
+GetXLogInsertEndRecPtr(void)
+{
+	XLogCtlInsert *Insert = &XLogCtl->Insert;
+	uint64		current_bytepos;
+
+	SpinLockAcquire(&Insert->insertpos_lck);
+	current_bytepos = Insert->CurrBytePos;
+	SpinLockRelease(&Insert->insertpos_lck);
+
+	return XLogBytePosToEndRecPtr(current_bytepos);
+}
+
+/*
  * Get latest WAL write pointer
  */
 XLogRecPtr

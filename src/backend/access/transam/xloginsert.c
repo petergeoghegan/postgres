@@ -598,7 +598,7 @@ XLogGetFakeLSN(Relation rel)
 		 * last call.
 		 */
 		static XLogRecPtr lastlsn = InvalidXLogRecPtr;
-		XLogRecPtr	currlsn = GetXLogInsertRecPtr();
+		XLogRecPtr	currlsn = GetXLogInsertEndRecPtr();
 
 		Assert(!RelationNeedsWAL(rel));
 		Assert(RelationIsPermanent(rel));
