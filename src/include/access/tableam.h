@@ -380,11 +380,6 @@ typedef struct TableAmRoutine
 											  ScanDirection direction,
 											  TupleTableSlot *slot);
 
-	/*
-	 * Collect statistics about table scan.
-	 */
-	TableScanStats		(*scan_stats) (TableScanDesc scan);
-
 	/* ------------------------------------------------------------------------
 	 * Parallel table scan related functions.
 	 * ------------------------------------------------------------------------
@@ -501,10 +496,6 @@ typedef struct TableAmRoutine
 									  TupleTableSlot *slot,
 									  bool *call_again, bool *all_dead);
 
-	/*
-	 * Collect statistics about index scan.
-	 */
-	TableScanStats		(*index_stats) (struct IndexFetchTableData *scan);
 
 	/* ------------------------------------------------------------------------
 	 * Callbacks for non-modifying operations on individual tuples
@@ -1053,18 +1044,6 @@ table_endscan(TableScanDesc scan)
 }
 
 /*
- * Fetch statistics about table scan.
- */
-static inline TableScanStats
-table_scan_stats(TableScanDesc scan)
-{
-	if (scan->rs_rd->rd_tableam->scan_stats)
-		return scan->rs_rd->rd_tableam->scan_stats(scan);
-
-	return NULL;
-}
-
-/*
  * Restart a relation scan.
  */
 static inline void
@@ -1263,18 +1242,6 @@ static inline void
 table_index_fetch_end(struct IndexFetchTableData *scan)
 {
 	scan->rel->rd_tableam->index_fetch_end(scan);
-}
-
-/*
- * Fetch table prefetch stats for index scan.
- */
-static inline TableScanStats
-table_index_stats(struct IndexFetchTableData *scan)
-{
-	if (scan->rel->rd_tableam->index_stats)
-		return scan->rel->rd_tableam->index_stats(scan);
-
-	return NULL;
 }
 
 /*
