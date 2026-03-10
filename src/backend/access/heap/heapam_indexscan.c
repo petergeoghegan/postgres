@@ -48,6 +48,7 @@ heapam_index_fetch_begin(Relation rel, uint32 flags)
 	hscan->xs_base.rel = rel;
 	hscan->xs_base.flags = flags;
 	hscan->xs_cbuf = InvalidBuffer;
+	hscan->xs_blk = InvalidBlockNumber;
 	hscan->xs_vmbuffer = InvalidBuffer;
 
 	return &hscan->xs_base;
@@ -62,6 +63,7 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 	{
 		ReleaseBuffer(hscan->xs_cbuf);
 		hscan->xs_cbuf = InvalidBuffer;
+		hscan->xs_blk = InvalidBlockNumber;
 	}
 
 	if (BufferIsValid(hscan->xs_vmbuffer))
@@ -292,24 +294,29 @@ heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
 
 	Assert(TTS_IS_BUFFERTUPLE(slot));
 
-	/* We can skip the buffer-switching logic if we're in mid-HOT chain. */
-	if (!*heap_continue)
+	/* We can skip the buffer-switching logic if we're on the same page. */
+	if (hscan->xs_blk != ItemPointerGetBlockNumber(tid))
 	{
-		/* Switch to correct buffer if we don't have it already */
-		Buffer		prev_buf = hscan->xs_cbuf;
+		Assert(!*heap_continue);
 
-		hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
-											  hscan->xs_base.rel,
-											  ItemPointerGetBlockNumber(tid));
+		/* Remember this buffer's block number for next time */
+		hscan->xs_blk = ItemPointerGetBlockNumber(tid);
+
+		if (BufferIsValid(hscan->xs_cbuf))
+			ReleaseBuffer(hscan->xs_cbuf);
+
+		hscan->xs_cbuf = ReadBuffer(hscan->xs_base.rel, hscan->xs_blk);
 
 		/*
-		 * Prune page, but only if we weren't already on this page
+		 * Prune page when it is pinned for the first time
 		 */
-		if (prev_buf != hscan->xs_cbuf)
-			heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf,
-								&hscan->xs_vmbuffer,
-								hscan->xs_base.flags & SO_HINT_REL_READ_ONLY);
+		heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf,
+							&hscan->xs_vmbuffer,
+							hscan->xs_base.flags & SO_HINT_REL_READ_ONLY);
 	}
+
+	Assert(BufferGetBlockNumber(hscan->xs_cbuf) == hscan->xs_blk);
+	Assert(hscan->xs_blk == ItemPointerGetBlockNumber(tid));
 
 	/* Obtain share-lock on the buffer so we can examine visibility */
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);
@@ -416,11 +423,11 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 					 */
 					if (unlikely(xs_visited_pages_limit > 0))
 					{
-						BlockNumber blk = ItemPointerGetBlockNumber(tid);
+						Assert(hscan->xs_blk == ItemPointerGetBlockNumber(tid));
 
-						if (blk != last_visited_block)
+						if (hscan->xs_blk != last_visited_block)
 						{
-							last_visited_block = blk;
+							last_visited_block = hscan->xs_blk;
 							if (++n_visited_pages > xs_visited_pages_limit)
 								return false;	/* give up */
 						}
