@@ -207,6 +207,10 @@ typedef IndexScanBatch (*amgetbatch_function) (IndexScanDesc scan,
 typedef void (*amkillitemsbatch_function) (IndexScanDesc scan,
 										   IndexScanBatch batch);
 
+/* release batch resources held to prevent concurrent TID recycling */
+typedef void (*amreleasebatch_function) (IndexScanDesc scan,
+										 IndexScanBatch batch);
+
 /* fetch all valid tuples */
 typedef int64 (*amgetbitmap_function) (IndexScanDesc scan,
 									   TIDBitmap *tbm);
@@ -318,6 +322,7 @@ typedef struct IndexAmRoutine
 	amgettuple_function amgettuple; /* can be NULL */
 	amgetbatch_function amgetbatch; /* can be NULL */
 	amkillitemsbatch_function amkillitemsbatch; /* can be NULL */
+	amreleasebatch_function amreleasebatch;
 	amgetbitmap_function amgetbitmap;	/* can be NULL */
 	amendscan_function amendscan;
 	amposreset_function amposreset; /* can be NULL */

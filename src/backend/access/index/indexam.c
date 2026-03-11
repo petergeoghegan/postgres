@@ -284,6 +284,7 @@ index_beginscan(Relation heapRelation,
 	scan->instrument = instrument;
 	scan->xs_want_itup = xs_want_itup;
 	scan->usebatchring = false;
+	scan->batchImmediateRelease = (scan->MVCCScan && !xs_want_itup);
 
 	if (indexRelation->rd_indam->amgetbatch != NULL)
 		index_batchscan_init(scan);
@@ -649,6 +650,7 @@ index_beginscan_parallel(Relation heaprel, Relation indexrel,
 	scan->MVCCScan = IsMVCCSnapshot(snapshot);
 	scan->instrument = instrument;
 	scan->xs_want_itup = xs_want_itup;
+	scan->batchImmediateRelease = (scan->MVCCScan && !xs_want_itup);
 
 	if (indexrel->rd_indam->amgetbatch != NULL)
 		index_batchscan_init(scan);

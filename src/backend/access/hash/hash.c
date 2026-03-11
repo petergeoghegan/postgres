@@ -104,6 +104,7 @@ hashhandler(PG_FUNCTION_ARGS)
 		.amgettuple = NULL,
 		.amgetbatch = hashgetbatch,
 		.amkillitemsbatch = hashkillitemsbatch,
+		.amreleasebatch = hashreleasebatch,
 		.amgetbitmap = hashgetbitmap,
 		.amendscan = hashendscan,
 		.amposreset = NULL,
@@ -399,7 +400,7 @@ void
 hashkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch)
 {
 	Relation	rel = scan->indexRelation;
-	HashBatchData *hbatch = hash_batch_data(batch);
+	HashBatchData *hashbatch = HashBatchGetData(batch);
 	Buffer		buf;
 	Page		page;
 	HashPageOpaque opaque;
@@ -410,7 +411,7 @@ hashkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch)
 
 	Assert(batch->numDead > 0);
 
-	buf = _hash_getbuf(rel, hbatch->currPage, HASH_READ,
+	buf = _hash_getbuf(rel, hashbatch->currPage, HASH_READ,
 					   LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
 
 	latestlsn = BufferGetLSNAtomic(buf);
@@ -477,6 +478,25 @@ hashkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch)
 
 unlock_page:
 	_hash_relbuf(rel, buf);
+}
+
+/*
+ *	hashreleasebatch() -- Release batch's index page buffer pin
+ *
+ * Called by the table AM (via amreleasebatch) when it's safe to drop the
+ * buffer pin held to prevent concurrent TID recycling by VACUUM.
+ * Must be idempotent -- safe to call when the pin has already been released.
+ */
+void
+hashreleasebatch(IndexScanDesc scan, IndexScanBatch batch)
+{
+	HashBatchData *hashbatch = HashBatchGetData(batch);
+
+	if (BufferIsValid(hashbatch->buf))
+	{
+		ReleaseBuffer(hashbatch->buf);
+		hashbatch->buf = InvalidBuffer;
+	}
 }
 
 /*

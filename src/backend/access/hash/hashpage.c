@@ -35,7 +35,6 @@
 #include "port/pg_bitutils.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
-#include "utils/memdebug.h"
 #include "utils/rel.h"
 
 static bool _hash_alloc_buckets(Relation rel, BlockNumber firstblock,
@@ -80,9 +79,6 @@ _hash_getbuf(Relation rel, BlockNumber blkno, int access, int flags)
 	if (access != HASH_NOLOCK)
 		LockBuffer(buf, access);
 
-	if (!RelationUsesLocalBuffers(rel))
-		VALGRIND_MAKE_MEM_DEFINED(BufferGetPage(buf), BLCKSZ);
-
 	/* ref count and lock type are correct */
 
 	_hash_checkpage(rel, buf, flags);
@@ -111,9 +107,6 @@ _hash_getbuf_with_condlock_cleanup(Relation rel, BlockNumber blkno, int flags)
 		ReleaseBuffer(buf);
 		return InvalidBuffer;
 	}
-
-	if (!RelationUsesLocalBuffers(rel))
-		VALGRIND_MAKE_MEM_DEFINED(BufferGetPage(buf), BLCKSZ);
 
 	/* ref count and lock type are correct */
 

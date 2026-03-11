@@ -186,7 +186,6 @@ typedef struct BatchMatchingItem
  */
 typedef struct IndexScanBatchData
 {
-	Buffer		buf;			/* index page buf (invalid means unpinned) */
 	XLogRecPtr	lsn;			/* index page's LSN */
 
 	/* scan direction when the index page was read */
@@ -358,6 +357,8 @@ typedef struct IndexScanDescData
 	BatchRingBuffer batchringbuf;	/* amgetbatch related state */
 
 	bool		usebatchring;	/* scan uses amgetbatch/batchringbuf? */
+	bool		batchImmediateRelease;	/* AM releases batch resources in
+										 * indexam_util_batch_unlock? */
 
 	/* Cached batch for amgetbitmap callers (avoids repeated alloc/free) */
 	IndexScanBatch xs_bitmap_batch;

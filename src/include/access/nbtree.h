@@ -924,14 +924,10 @@ typedef struct BTVacuumPostingData
 
 typedef BTVacuumPostingData *BTVacuumPosting;
 
-/*
- * Per-batch data private to the btree index AM.
- *
- * Stored at a negative offset from the IndexScanBatch pointer, in the
- * index AM opaque area of each batch allocation.
- */
+/* Per-batch data private to the btree index AM */
 typedef struct BTBatchData
 {
+	Buffer		buf;			/* index page buffer pin (TID reuse interlock) */
 	BlockNumber currPage;		/* index page with matching items */
 	BlockNumber prevPage;		/* currPage's left sibling */
 	BlockNumber nextPage;		/* currPage's right sibling */
@@ -939,9 +935,13 @@ typedef struct BTBatchData
 	bool		moreRight;		/* more matching pages to the right? */
 } BTBatchData;
 
-/* Access the btree-private per-batch data from an IndexScanBatch pointer */
+/*
+ * Access the btree-private per-batch data from an IndexScanBatch pointer.
+ * This follows the standard convention for index AM opaque state: it can be
+ * found at a fixed negative offset from the IndexScanBatch pointer.
+ */
 static inline BTBatchData *
-bt_batch_data(IndexScanBatch batch)
+BTBatchGetData(IndexScanBatch batch)
 {
 	return (BTBatchData *) ((char *) batch - MAXALIGN(sizeof(BTBatchData)));
 }
@@ -1079,6 +1079,7 @@ extern int64 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 extern void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 					 ScanKey orderbys, int norderbys);
 extern void btkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch);
+extern void btreleasebatch(IndexScanDesc scan, IndexScanBatch batch);
 extern void btparallelrescan(IndexScanDesc scan);
 extern void btendscan(IndexScanDesc scan);
 extern void btposreset(IndexScanDesc scan, IndexScanBatch batch);

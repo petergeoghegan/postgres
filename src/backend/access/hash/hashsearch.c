@@ -49,7 +49,7 @@ _hash_next(IndexScanDesc scan, ScanDirection dir, IndexScanBatch priorbatch)
 {
 	Relation	rel = scan->indexRelation;
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-	HashBatchData *hpriorbatch = hash_batch_data(priorbatch);
+	HashBatchData *hashpriorbatch = HashBatchGetData(priorbatch);
 	BlockNumber blkno;
 	Buffer		buf;
 	IndexScanBatch batch;
@@ -59,9 +59,9 @@ _hash_next(IndexScanDesc scan, ScanDirection dir, IndexScanBatch priorbatch)
 	 * taken from the prior batch
 	 */
 	if (ScanDirectionIsForward(dir))
-		blkno = hpriorbatch->nextPage;
+		blkno = hashpriorbatch->nextPage;
 	else
-		blkno = hpriorbatch->prevPage;
+		blkno = hashpriorbatch->prevPage;
 
 	/*
 	 * For bitmap scan callers, release the prior batch now so that the
@@ -429,7 +429,7 @@ _hash_readpage(IndexScanDesc scan, Buffer buf, ScanDirection dir,
 {
 	Relation	rel = scan->indexRelation;
 	HashScanOpaque so = (HashScanOpaque) scan->opaque;
-	HashBatchData *hbatch = hash_batch_data(batch);
+	HashBatchData *hashbatch = HashBatchGetData(batch);
 	Page		page;
 	HashPageOpaque opaque;
 	OffsetNumber offnum;
@@ -440,8 +440,8 @@ _hash_readpage(IndexScanDesc scan, Buffer buf, ScanDirection dir,
 	page = BufferGetPage(buf);
 	opaque = HashPageGetOpaque(page);
 
-	batch->buf = buf;
-	hbatch->currPage = BufferGetBlockNumber(buf);
+	hashbatch->buf = buf;
+	hashbatch->currPage = BufferGetBlockNumber(buf);
 	batch->dir = dir;
 
 	if (ScanDirectionIsForward(dir))
@@ -463,13 +463,10 @@ _hash_readpage(IndexScanDesc scan, Buffer buf, ScanDirection dir,
 			 */
 			_hash_readnext(scan, &buf, &page, &opaque);
 			if (!BufferIsValid(buf))
-			{
-				batch->buf = InvalidBuffer;
 				return false;
-			}
 
-			batch->buf = buf;
-			hbatch->currPage = BufferGetBlockNumber(buf);
+			hashbatch->buf = buf;
+			hashbatch->currPage = BufferGetBlockNumber(buf);
 		}
 
 		batch->firstItem = 0;
@@ -494,13 +491,10 @@ _hash_readpage(IndexScanDesc scan, Buffer buf, ScanDirection dir,
 			 */
 			_hash_readprev(scan, &buf, &page, &opaque);
 			if (!BufferIsValid(buf))
-			{
-				batch->buf = InvalidBuffer;
 				return false;
-			}
 
-			batch->buf = buf;
-			hbatch->currPage = BufferGetBlockNumber(buf);
+			hashbatch->buf = buf;
+			hashbatch->currPage = BufferGetBlockNumber(buf);
 		}
 
 		batch->firstItem = itemIndex;
@@ -511,8 +505,8 @@ _hash_readpage(IndexScanDesc scan, Buffer buf, ScanDirection dir,
 	 * Saved at least one match in batch.items[].  Prepare for hashgetbatch to
 	 * return it by initializing remaining uninitialized fields.
 	 */
-	if (batch->buf == so->hashso_bucket_buf ||
-		batch->buf == so->hashso_split_bucket_buf)
+	if (hashbatch->buf == so->hashso_bucket_buf ||
+		hashbatch->buf == so->hashso_split_bucket_buf)
 	{
 		/*
 		 * Batch's buffer is either the primary bucket, or a bucket being
@@ -523,21 +517,21 @@ _hash_readpage(IndexScanDesc scan, Buffer buf, ScanDirection dir,
 		 * before the hashso_bucket_buf/hashso_split_bucket_buf references are
 		 * released.
 		 */
-		IncrBufferRefCount(batch->buf);
+		IncrBufferRefCount(hashbatch->buf);
 
 		/* Can only use opaque->hasho_nextblkno */
-		hbatch->prevPage = InvalidBlockNumber;
-		hbatch->nextPage = opaque->hasho_nextblkno;
+		hashbatch->prevPage = InvalidBlockNumber;
+		hashbatch->nextPage = opaque->hasho_nextblkno;
 	}
 	else
 	{
 		/* Can use opaque->hasho_prevblkno and opaque->hasho_nextblkno */
-		hbatch->prevPage = opaque->hasho_prevblkno;
-		hbatch->nextPage = opaque->hasho_nextblkno;
+		hashbatch->prevPage = opaque->hasho_prevblkno;
+		hashbatch->nextPage = opaque->hasho_nextblkno;
 	}
 
 	/* we saved one or more matches in batch.items[] */
-	indexam_util_batch_unlock(scan, batch);
+	indexam_util_batch_unlock(scan, batch, hashbatch->buf);
 
 	Assert(batch->firstItem <= batch->lastItem);
 	return true;

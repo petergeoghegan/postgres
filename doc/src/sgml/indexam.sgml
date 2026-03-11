@@ -169,6 +169,7 @@ typedef struct IndexAmRoutine
     amgettuple_function amgettuple;     /* can be NULL */
     amgetbatch_function amgetbatch; /* can be NULL */
     amkillitemsbatch_function amkillitemsbatch;	/* can be NULL */
+    amreleasebatch_function amreleasebatch;
     amgetbitmap_function amgetbitmap;   /* can be NULL */
     amendscan_function amendscan;
     amposreset_function amposreset; /* can be NULL */
@@ -975,6 +976,26 @@ amkillitemsbatch (IndexScanDesc scan,
 
   <para>
 <programlisting>
+void
+amreleasebatch (IndexScanDesc scan,
+                IndexScanBatch batch);
+</programlisting>
+   Called by the table AM (via <function>tableam_util_release_batch</function>)
+   when it is safe to release whatever resources the index AM holds to prevent
+   concurrent TID recycling by <command>VACUUM</command>.  For
+   <productname>PostgreSQL</productname>'s built-in B-tree and hash index
+   access methods, this means releasing a buffer pin on the batch's index leaf
+   page; other index access methods may hold different resources (or multiple
+   resources) in their per-batch opaque area.
+  </para>
+
+  <para>
+   The <function>amreleasebatch</function> function is required for any index
+   access method that provides <function>amgetbatch</function>.
+  </para>
+
+  <para>
+<programlisting>
 int64
 amgetbitmap (IndexScanDesc scan,
              TIDBitmap *tbm);
@@ -1390,10 +1411,13 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
    </para>
 
    <para>
-    Buffer pins on index pages returned by <function>amgetbatch</function> are
-    managed by the table AM.  See the <function>amgetbatch</function> and
-    <function>amkillitemsbatch</function> descriptions in <xref linkend="index-functions"/>
-    for details.
+    Index page resources held by <function>amgetbatch</function> batches
+    (typically buffer pins, stored in the index AM's per-batch opaque area)
+    are owned by the index AM but released under the table AM's control via
+    the <function>amreleasebatch</function> callback.  See the
+    <function>amgetbatch</function>, <function>amreleasebatch</function>, and
+    <function>amkillitemsbatch</function> descriptions in
+    <xref linkend="index-functions"/> for details.
    </para>
 
   </sect2>
@@ -1457,8 +1481,10 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
        backend holds a pin on that page.
        For <function>amgettuple</function> scans, the index access method
        manages this pin directly.
-       For <function>amgetbatch</function> scans, the table access method
-       controls when pins are dropped.
+       For <function>amgetbatch</function> scans, the index AM owns the
+       resources (e.g. buffer pins) in its per-batch opaque area, while the
+       table AM controls when they are released via
+       <function>amreleasebatch</function>.
        The need for this rule is explained below.
       </para>
      </listitem>
@@ -1511,12 +1537,13 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
    I/O prefetching with
    <function>amgetbatch</function> is only possible when an MVCC-compliant
    snapshot is in use.  In practice, the heap table AM (and any table AM
-   with similar concurrency rules) usually drops pins eagerly for MVCC
-   snapshot scans, but retains pins for non-MVCC snapshot scans.  Index-only
-   scans may retain pins in some cases, while plain index scans that use an
-   MVCC snapshot always drop their pins eagerly.  Index access methods that
-   implement <function>amgetbatch</function> do not control when pins are
-   dropped; that decision is delegated to the table AM.
+   with similar concurrency rules) usually releases resources eagerly for
+   plain MVCC index scans, but retains them for non-MVCC snapshot scans.
+   Index-only scans may retain resources in some cases, while plain index
+   scans that use an MVCC snapshot always release their resources eagerly.
+   The table AM decides <emphasis>when</emphasis> to call
+   <function>amreleasebatch</function>; the index AM decides
+   <emphasis>what</emphasis> to release.
   </para>
 
   <para>

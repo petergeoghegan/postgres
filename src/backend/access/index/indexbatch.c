@@ -70,7 +70,6 @@
 #include "catalog/catalog.h"
 #include "common/int.h"
 #include "lib/qunique.h"
-#include "utils/memdebug.h"
 
 static int	batch_compare_int(const void *va, const void *vb);
 
@@ -491,12 +490,12 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
  * Called by table AM's ordered index scan implementation when it is finished
  * with a batch and wishes to release its resources.
  *
- * We release the batch's buffer pin if table AM hasn't released it already.
- * For plain index scans with an MVCC snapshot, the table AM caller releases
- * the pin immediately, so we never release the pin here.  Index-only scans
- * must delay dropping the pin until visibility is resolved for all items in
- * the batch, so we may need to release the pin here.  For non-MVCC snapshot
- * scans, the pin is always held until this function releases it.
+ * We call amreleasebatch to release any index AM resources (e.g. buffer pins)
+ * that haven't been released yet.  For plain MVCC scans, the pin was already
+ * released eagerly, so amreleasebatch is a no-op.  Index-only scans must
+ * delay dropping the pin until visibility is resolved for all items in the
+ * batch, so amreleasebatch may still need to release here.  For non-MVCC
+ * snapshot scans, the pin is always held until amreleasebatch releases it.
  *
  * When the batch has dead items (numDead > 0) and the index AM provides an
  * amkillitemsbatch callback, we call it to set LP_DEAD bits in the index
@@ -509,20 +508,13 @@ tableam_util_kill_scanpositem(IndexScanDesc scan)
 void
 tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 {
-	Assert(BufferIsValid(batch->buf) || scan->MVCCScan);
-
 	/* don't free caller's batch if it is scan's current markBatch */
 	if (batch == scan->batchringbuf.markBatch)
 		return;
 
-	if (BufferIsValid(batch->buf))
-	{
-		/* table AM didn't unpin page earlier -- do it now */
-		Assert(!scan->MVCCScan || scan->xs_want_itup);
-
-		ReleaseBuffer(batch->buf);
-		batch->buf = InvalidBuffer;
-	}
+	/* Release interlock (e.g., buffer pin) when still held by index AM */
+	if (!scan->batchImmediateRelease)
+		tableam_util_release_batch(scan, batch);
 
 	/*
 	 * Let the index AM set LP_DEAD bits in the index page, if applicable.
@@ -565,6 +557,22 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
 	pfree(batch_alloc_base(batch, scan));
 }
 
+/*
+ * Release batch resources held by the index AM
+ *
+ * Called by the table AM when it's safe to release whatever resources the
+ * index AM holds to prevent unsafe concurrent TID recycling by VACUUM
+ * (typically a buffer pin on the batch's index page in batch's opaque area).
+ */
+void
+tableam_util_release_batch(IndexScanDesc scan, IndexScanBatch batch)
+{
+	/* Only supposed to be called during !batchImmediateRelease scans */
+	Assert(!scan->batchImmediateRelease);
+
+	scan->indexRelation->rd_indam->amreleasebatch(scan, batch);
+}
+
 /* ----------------------------------------------------------------
  *			utility functions called by amgetbatch index AMs
  *
@@ -575,9 +583,9 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
  */
 
 /*
- * Unlock batch's shared buffer lock
+ * Unlock batch's index page buffer lock
  *
- * Unlocks caller's batch->buf in preparation for amgetbatch returning items
+ * Unlocks the given buffer in preparation for amgetbatch returning items
  * saved in that batch.  Performs extra steps required by amgetbatch callers
  * in passing.
  *
@@ -590,12 +598,13 @@ tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch)
  * amgetbitmap to consistently use the same batch management approach, since
  * that avoids introducing special cases to lower-level code.  We drop both
  * the lock and the pin on batch's page on behalf of amgetbitmap callers.
- * Such amgetbitmap callers must be careful to free all batches with matching
- * items once they're done saving the matching TIDs.  We never drop the pin
- * for an amgetbatch caller, though -- that's up to the table AM.
+ *
+ * For amgetbatch callers, when batchImmediateRelease is set (plain MVCC
+ * scans), we also release the pin here.  Otherwise the table AM will call
+ * amreleasebatch later when it's safe to drop the pin.
  */
 void
-indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
+indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch, Buffer buf)
 {
 	/* batch must have one or more matching items returned by index AM */
 	Assert(batch->firstItem >= 0 && batch->firstItem <= batch->lastItem);
@@ -611,17 +620,22 @@ indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
 		 * place.  It'll only be safe to set any index tuple LP_DEAD bits when
 		 * the page LSN hasn't advanced.
 		 */
-		batch->lsn = BufferGetLSNAtomic(batch->buf);
+		batch->lsn = BufferGetLSNAtomic(buf);
 
 		/* Drop the lock */
-		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
+		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 
-#ifdef USE_VALGRIND
-		if (!RelationUsesLocalBuffers(scan->indexRelation))
-			VALGRIND_MAKE_MEM_NOACCESS(BufferGetPage(batch->buf), BLCKSZ);
-#endif
+		if (scan->batchImmediateRelease)
+		{
+			/*
+			 * Plain MVCC scan: release the pin now.  No amreleasebatch
+			 * callback will be needed later.  The index AM caller must clear
+			 * its own opaque buf field after we return.
+			 */
+			ReleaseBuffer(buf);
+		}
 
-		/* table AM determines when it'll be safe to drop pins on batches */
+		/* else: table AM will call amreleasebatch when ready */
 	}
 	else
 	{
@@ -629,14 +643,8 @@ indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch)
 		Assert(scan->heapRelation == NULL);
 
 		/* drop both the lock and the pin */
-		LockBuffer(batch->buf, BUFFER_LOCK_UNLOCK);
-
-#ifdef USE_VALGRIND
-		if (!RelationUsesLocalBuffers(scan->indexRelation))
-			VALGRIND_MAKE_MEM_NOACCESS(BufferGetPage(batch->buf), BLCKSZ);
-#endif
-		ReleaseBuffer(batch->buf);
-		batch->buf = InvalidBuffer;
+		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
+		ReleaseBuffer(buf);
 	}
 }
 
@@ -781,7 +789,6 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 		table_index_batch_init(scan, batch, new_alloc);
 
 	/* shared initialization */
-	batch->buf = InvalidBuffer;
 	batch->knownEndBackward = false;
 	batch->knownEndForward = false;
 	batch->firstItem = -1;
@@ -812,8 +819,6 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 void
 indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch)
 {
-	Assert(batch->buf == InvalidBuffer);
-
 	if (scan->usebatchring)
 	{
 		/* amgetbatch scan caller */

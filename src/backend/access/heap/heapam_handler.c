@@ -373,8 +373,11 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, ScanDirection direction,
 	scan->batchringbuf.vmResolveCalls++;
 #endif
 
-	/* We better still have a pin on batch's index page */
-	Assert(BufferIsValid(batch->buf));
+	/*
+	 * We better still have index AM TID recycling interlock (generally a pin
+	 * on its index page) held for this batch
+	 */
+	Assert(!scan->batchImmediateRelease);
 
 	/* Determine the range of items to set visibility for */
 	if (ScanDirectionIsForward(direction))
@@ -451,16 +454,15 @@ heapam_batch_resolve_visibility(IndexScanDesc scan, ScanDirection direction,
 #endif
 
 	/*
-	 * It's safe to drop the batch's buffer pin as soon as we've resolved the
-	 * visibility status of all of its items
+	 * It's safe to drop the batch's index AM resources as soon as we've
+	 * resolved the visibility status of all of its items
 	 */
 	if (allbatchitemvisible && scan->MVCCScan)
 	{
 		Assert(hbatch->visInfo[batch->firstItem] & BATCH_VIS_CHECKED);
 		Assert(hbatch->visInfo[batch->lastItem] & BATCH_VIS_CHECKED);
 
-		ReleaseBuffer(batch->buf);
-		batch->buf = InvalidBuffer;
+		tableam_util_release_batch(scan, batch);
 	}
 
 	/*
@@ -635,19 +637,6 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 
 		/* Append batch to the end of ring buffer/write it to buffer index */
 		index_scan_batch_append(scan, batch);
-
-		/*
-		 * Drop batch's leaf page pin for plain index scans.  Index-only scans
-		 * delay dropping the pin until heapam_batch_resolve_visibility has
-		 * cached all visibility info.  See heapam_batch_resolve_visibility
-		 * header comments for a full explanation of early pin dropping.
-		 */
-		Assert(scan->MVCCScan == IsMVCCSnapshot(scan->xs_snapshot));
-		if (scan->MVCCScan && !scan->xs_want_itup)
-		{
-			ReleaseBuffer(batch->buf);
-			batch->buf = InvalidBuffer;
-		}
 
 		/*
 		 * xs_read_extremal_only scans are used by get_actual_variable_range
@@ -946,31 +935,30 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		/*
 		 * We must avoid holding on to any batch's buffer pin for more than an
 		 * instant, to avoid undesirable interactions with the scan's read
-		 * stream.  Plain index scans always get this behavior automatically.
-		 * Index-only scans are made to drop their buffer pin eagerly through
-		 * a policy of always eagerly setting all the batch item's visibility
-		 * info in one go.
+		 * stream.  batchImmediateRelease scans always get this behavior
+		 * automatically.  Other types of scans (these are all index-only
+		 * scans in practice) are made to drop their buffer pin eagerly
+		 * through a policy of always eagerly setting all the batch item's
+		 * visibility info in one go.
 		 */
 		if (scan->xs_want_itup)
 		{
-			/* Make heapam_batch_resolve_visibility drop batch pins eagerly */
+			HeapBatchData *hbatch;
+
+			/* Make heapam_batch_resolve_visibility release resources eagerly */
 			hscan->xs_vm_items = scan->maxitemsbatch;
 
-			/* Make sure that this new prefetchBatch holds no pin */
+			/* Make sure that this new prefetchBatch has no resources held */
 			prefetchBatch = index_scan_batch(scan, prefetchPos->batch);
-			if (BufferIsValid(prefetchBatch->buf))
-			{
-				HeapBatchData *hbatch = heap_batch_data(prefetchBatch, scan);
+			hbatch = heap_batch_data(prefetchBatch, scan);
 
-				/* Set visibility info not set through scanBatch */
-				heapam_batch_resolve_visibility(scan, xs_read_stream_dir,
-												prefetchBatch, hbatch,
-												prefetchPos);
-			}
-
-			/* No buffer pin will be kept on any batch from here on */
-			Assert(!BufferIsValid(prefetchBatch->buf));
+			/* Set visibility info not set through scanBatch */
+			heapam_batch_resolve_visibility(scan, xs_read_stream_dir,
+											prefetchBatch, hbatch,
+											prefetchPos);
 		}
+		else
+			Assert(scan->batchImmediateRelease);
 	}
 
 	prefetchBatch = index_scan_batch(scan, prefetchPos->batch);
@@ -980,12 +968,12 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 		BlockNumber prefetch_block;
 
 		/*
-		 * We never call amgetbatch without immediately dropping the batch's
-		 * buffer pin (which requires special care during index-only scans).
-		 * The read stream is sensitive to buffer shortages, so we defensively
-		 * avoid anything that visibly affects the per-backend buffer limit.
+		 * We never call amgetbatch without immediately releasing the batch's
+		 * index AM resources (which requires special care during index-only
+		 * scans).  The read stream is sensitive to buffer shortages, so we
+		 * defensively avoid anything that visibly affects the per-backend
+		 * buffer limit.
 		 */
-		Assert(!BufferIsValid(prefetchBatch->buf));
 
 		if (fromScanPos)
 		{
@@ -1043,7 +1031,7 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 			index_scan_pos_nextbatch(xs_read_stream_dir,
 									 prefetchBatch, prefetchPos);
 
-			if (scan->xs_want_itup && BufferIsValid(prefetchBatch->buf))
+			if (scan->xs_want_itup)
 			{
 				HeapBatchData *hbatch = heap_batch_data(prefetchBatch, scan);
 
@@ -1052,9 +1040,8 @@ heapam_getnext_stream(ReadStream *stream, void *callback_private_data,
 												prefetchBatch, hbatch,
 												prefetchPos);
 			}
-
-			/* heapam_batch_resolve_visibility must drop buffer pin */
-			Assert(!BufferIsValid(prefetchBatch->buf));
+			else
+				Assert(scan->batchImmediateRelease);
 		}
 
 		/*

@@ -84,6 +84,7 @@ ginhandler(PG_FUNCTION_ARGS)
 		.amgettuple = NULL,
 		.amgetbatch = NULL,
 		.amkillitemsbatch = NULL,
+		.amreleasebatch = NULL,
 		.amgetbitmap = gingetbitmap,
 		.amendscan = ginendscan,
 		.amposreset = NULL,

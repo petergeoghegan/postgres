@@ -100,22 +100,22 @@ typedef HashPageOpaqueData *HashPageOpaque;
  */
 #define HASHO_PAGE_ID		0xFF80
 
-/*
- * Per-batch data private to the hash index AM.
- *
- * Stored at a negative offset from the IndexScanBatch pointer, in the
- * index AM opaque area of each batch allocation.
- */
+/* Per-batch data private to the hash index AM */
 typedef struct HashBatchData
 {
+	Buffer		buf;			/* index page buffer pin (TID reuse interlock) */
 	BlockNumber currPage;		/* index page with matching items */
 	BlockNumber prevPage;		/* currPage's left link */
 	BlockNumber nextPage;		/* currPage's right link */
 } HashBatchData;
 
-/* Access the hash-private per-batch data from an IndexScanBatch pointer */
+/*
+ * Access the hash-private per-batch data from an IndexScanBatch pointer.
+ * This follows the standard convention for index AM opaque state: it can be
+ * found at a fixed negative offset from the IndexScanBatch pointer.
+ */
 static inline HashBatchData *
-hash_batch_data(IndexScanBatch batch)
+HashBatchGetData(IndexScanBatch batch)
 {
 	return (HashBatchData *) ((char *) batch - MAXALIGN(sizeof(HashBatchData)));
 }
@@ -335,6 +335,7 @@ extern IndexScanDesc hashbeginscan(Relation rel, int nkeys, int norderbys);
 extern void hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 					   ScanKey orderbys, int norderbys);
 extern void hashkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch);
+extern void hashreleasebatch(IndexScanDesc scan, IndexScanBatch batch);
 extern void hashendscan(IndexScanDesc scan);
 extern IndexBulkDeleteResult *hashbulkdelete(IndexVacuumInfo *info,
 											 IndexBulkDeleteResult *stats,

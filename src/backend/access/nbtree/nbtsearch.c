@@ -23,9 +23,12 @@
 #include "pgstat.h"
 #include "storage/predicate.h"
 #include "utils/lsyscache.h"
+#include "utils/memdebug.h"
 #include "utils/rel.h"
 
 
+static inline void _bt_batch_unlock(IndexScanDesc scan, IndexScanBatch batch,
+									Buffer buf);
 static Buffer _bt_moveright(Relation rel, Relation heaprel, BTScanInsert key,
 							Buffer buf, bool forupdate, BTStack stack,
 							int access);
@@ -42,6 +45,28 @@ static Buffer _bt_lock_and_validate_left(Relation rel, BlockNumber *blkno,
 static IndexScanBatch _bt_endpoint(IndexScanDesc scan, ScanDirection dir,
 								   IndexScanBatch firstbatch);
 
+
+/*
+ * _bt_batch_unlock() -- nbtree wrapper for indexam_util_batch_unlock.
+ *
+ * Performs the same Valgrind instrumentation as _bt_unlockbuf.
+ */
+static inline void
+_bt_batch_unlock(IndexScanDesc scan, IndexScanBatch batch, Buffer buf)
+{
+#if defined(USE_VALGRIND)
+	Page page = BufferGetPage(buf);
+
+	VALGRIND_CHECK_MEM_IS_DEFINED(page, BLCKSZ);
+#endif
+
+	indexam_util_batch_unlock(scan, batch, buf);
+
+#if defined(USE_VALGRIND)
+	if (!RelationUsesLocalBuffers(scan->indexRelation))
+		VALGRIND_MAKE_MEM_NOACCESS(page, BLCKSZ);
+#endif
+}
 
 /*
  *	_bt_search() -- Search the tree for a particular scankey,
@@ -861,9 +886,11 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	BlockNumber blkno = InvalidBlockNumber,
 				lastcurrblkno;
 	IndexScanBatch firstbatch;
+	BTBatchData *btfirstbatch;
 
 	/* Allocate space for first batch */
 	firstbatch = indexam_util_batch_alloc(scan);
+	btfirstbatch = BTBatchGetData(firstbatch);
 
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
@@ -1480,9 +1507,9 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * position ourselves on the target leaf page.
 	 */
 	Assert(ScanDirectionIsBackward(dir) == inskey.backward);
-	_bt_search(rel, NULL, &inskey, &firstbatch->buf, BT_READ, false);
+	_bt_search(rel, NULL, &inskey, &btfirstbatch->buf, BT_READ, false);
 
-	if (unlikely(!BufferIsValid(firstbatch->buf)))
+	if (unlikely(!BufferIsValid(btfirstbatch->buf)))
 	{
 		Assert(!so->needPrimScan);
 
@@ -1498,10 +1525,10 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		if (IsolationIsSerializable())
 		{
 			PredicateLockRelation(rel, scan->xs_snapshot);
-			_bt_search(rel, NULL, &inskey, &firstbatch->buf, BT_READ, false);
+			_bt_search(rel, NULL, &inskey, &btfirstbatch->buf, BT_READ, false);
 		}
 
-		if (!BufferIsValid(firstbatch->buf))
+		if (!BufferIsValid(btfirstbatch->buf))
 		{
 			_bt_parallel_done(scan);
 			indexam_util_batch_release(scan, firstbatch);
@@ -1510,7 +1537,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	}
 
 	/* position to the precise item on the page */
-	offnum = _bt_binsrch(rel, &inskey, firstbatch->buf);
+	offnum = _bt_binsrch(rel, &inskey, btfirstbatch->buf);
 
 	/*
 	 * Now load data from the first page of the scan (usually the page
@@ -1549,7 +1576,7 @@ IndexScanBatch
 _bt_next(IndexScanDesc scan, ScanDirection dir, IndexScanBatch priorbatch)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	BTBatchData *btpriorbatch = bt_batch_data(priorbatch);
+	BTBatchData *btpriorbatch = BTBatchGetData(priorbatch);
 	BlockNumber blkno,
 				lastcurrblkno;
 	bool		moreInDir;
@@ -1625,7 +1652,7 @@ _bt_readfirstpage(IndexScanDesc scan, IndexScanBatch firstbatch,
 				  OffsetNumber offnum, ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	BTBatchData *btfirstbatch = bt_batch_data(firstbatch);
+	BTBatchData *btfirstbatch = BTBatchGetData(firstbatch);
 	BlockNumber blkno,
 				lastcurrblkno;
 
@@ -1658,13 +1685,12 @@ _bt_readfirstpage(IndexScanDesc scan, IndexScanBatch firstbatch,
 	if (_bt_readpage(scan, firstbatch, dir, offnum, true))
 	{
 		/* _bt_readpage saved one or more matches in firstbatch.items[] */
-		indexam_util_batch_unlock(scan, firstbatch);
+		_bt_batch_unlock(scan, firstbatch, btfirstbatch->buf);
 		return firstbatch;
 	}
 
 	/* There's no actually-matching data on the page */
-	_bt_relbuf(scan->indexRelation, firstbatch->buf);
-	firstbatch->buf = InvalidBuffer;
+	_bt_relbuf(scan->indexRelation, btfirstbatch->buf);
 
 	/* Walk to the next page with data */
 	if (ScanDirectionIsForward(dir))
@@ -1733,7 +1759,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 
 	/* Allocate space for next batch */
 	newbatch = indexam_util_batch_alloc(scan);
-	btnewbatch = bt_batch_data(newbatch);
+	btnewbatch = BTBatchGetData(newbatch);
 
 	/*
 	 * newbatch will be the batch for lastcurrblkno, a page to the left of
@@ -1754,14 +1780,14 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 		{
 			/* read blkno, but check for interrupts first */
 			CHECK_FOR_INTERRUPTS();
-			newbatch->buf = _bt_getbuf(rel, blkno, BT_READ);
+			btnewbatch->buf = _bt_getbuf(rel, blkno, BT_READ);
 		}
 		else
 		{
 			/* read blkno, avoiding race (also checks for interrupts) */
-			newbatch->buf = _bt_lock_and_validate_left(rel, &blkno,
-													   lastcurrblkno);
-			if (newbatch->buf == InvalidBuffer)
+			btnewbatch->buf = _bt_lock_and_validate_left(rel, &blkno,
+														 lastcurrblkno);
+			if (btnewbatch->buf == InvalidBuffer)
 			{
 				/* must have been a concurrent deletion of leftmost page */
 				_bt_parallel_done(scan);
@@ -1770,7 +1796,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 			}
 		}
 
-		page = BufferGetPage(newbatch->buf);
+		page = BufferGetPage(btnewbatch->buf);
 		opaque = BTPageGetOpaque(page);
 		lastcurrblkno = blkno;
 		if (likely(!P_IGNORE(opaque)))
@@ -1803,8 +1829,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 		}
 
 		/* no matching tuples on this page */
-		_bt_relbuf(rel, newbatch->buf);
-		newbatch->buf = InvalidBuffer;
+		_bt_relbuf(rel, btnewbatch->buf);
 
 		/* Continue the scan in this direction? */
 		if (blkno == P_NONE ||
@@ -1835,7 +1860,7 @@ _bt_readnextpage(IndexScanDesc scan, BlockNumber blkno,
 
 	/* _bt_readpage saved one or more matches in newbatch.items[] */
 	Assert(btnewbatch->currPage == blkno);
-	indexam_util_batch_unlock(scan, newbatch);
+	_bt_batch_unlock(scan, newbatch, btnewbatch->buf);
 
 	return newbatch;
 }
@@ -2067,6 +2092,7 @@ static IndexScanBatch
 _bt_endpoint(IndexScanDesc scan, ScanDirection dir, IndexScanBatch firstbatch)
 {
 	Relation	rel = scan->indexRelation;
+	BTBatchData *btfirstbatch = BTBatchGetData(firstbatch);
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber start;
@@ -2077,9 +2103,9 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir, IndexScanBatch firstbatch)
 	 * Scan down to the leftmost or rightmost leaf page.  This is a simplified
 	 * version of _bt_search().
 	 */
-	firstbatch->buf = _bt_get_endpoint(rel, 0, ScanDirectionIsBackward(dir));
+	btfirstbatch->buf = _bt_get_endpoint(rel, 0, ScanDirectionIsBackward(dir));
 
-	if (!BufferIsValid(firstbatch->buf))
+	if (!BufferIsValid(btfirstbatch->buf))
 	{
 		/*
 		 * Empty index. Lock the whole relation, as nothing finer to lock
@@ -2090,7 +2116,7 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir, IndexScanBatch firstbatch)
 		return false;
 	}
 
-	page = BufferGetPage(firstbatch->buf);
+	page = BufferGetPage(btfirstbatch->buf);
 	opaque = BTPageGetOpaque(page);
 	Assert(P_ISLEAF(opaque));
 

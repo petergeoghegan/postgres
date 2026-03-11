@@ -163,6 +163,7 @@ bthandler(PG_FUNCTION_ARGS)
 		.amgettuple = NULL,
 		.amgetbatch = btgetbatch,
 		.amkillitemsbatch = btkillitemsbatch,
+		.amreleasebatch = btreleasebatch,
 		.amgetbitmap = btgetbitmap,
 		.amendscan = btendscan,
 		.amposreset = btposreset,
@@ -379,7 +380,7 @@ void
 btkillitemsbatch(IndexScanDesc scan, IndexScanBatch batch)
 {
 	Relation	rel = scan->indexRelation;
-	BTBatchData *btbatch = bt_batch_data(batch);
+	BTBatchData *btbatch = BTBatchGetData(batch);
 	Page		page;
 	BTPageOpaque opaque;
 	OffsetNumber minoff;
@@ -522,6 +523,25 @@ unlock_page:
 }
 
 /*
+ *	btreleasebatch() -- Release batch's index page buffer pin
+ *
+ * Called by the table AM (via amreleasebatch) when it's safe to drop the
+ * buffer pin held to prevent concurrent TID recycling by VACUUM.
+ * Must be idempotent -- safe to call when the pin has already been released.
+ */
+void
+btreleasebatch(IndexScanDesc scan, IndexScanBatch batch)
+{
+	BTBatchData *btbatch = BTBatchGetData(batch);
+
+	if (BufferIsValid(btbatch->buf))
+	{
+		ReleaseBuffer(btbatch->buf);
+		btbatch->buf = InvalidBuffer;
+	}
+}
+
+/*
  *	btendscan() -- close down a scan
  */
 void
@@ -555,7 +575,7 @@ void
 btposreset(IndexScanDesc scan, IndexScanBatch batch)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	BTBatchData *btbatch = bt_batch_data(batch);
+	BTBatchData *btbatch = BTBatchGetData(batch);
 
 	if (!so->numArrayKeys)
 		return;

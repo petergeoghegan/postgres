@@ -266,11 +266,13 @@ extern void index_batchscan_restore_pos(IndexScanDesc scan);
 extern void tableam_util_batch_dirchange(IndexScanDesc scan);
 extern void tableam_util_kill_scanpositem(IndexScanDesc scan);
 extern void tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch);
+extern void tableam_util_release_batch(IndexScanDesc scan, IndexScanBatch batch);
 
 /*
  * amgetbatch utilities called by index AMs (in indexbatch.c)
  */
-extern void indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch);
+extern void indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch,
+									  Buffer buf);
 extern IndexScanBatch indexam_util_batch_alloc(IndexScanDesc scan);
 extern void indexam_util_batch_release(IndexScanDesc scan, IndexScanBatch batch);
 
