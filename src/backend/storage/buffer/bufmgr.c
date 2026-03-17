@@ -5591,6 +5591,96 @@ UnlockReleaseBuffer(Buffer buffer)
 }
 
 /*
+ * UnlockBufferGetLSN
+ *		Read a buffer's LSN, then unlock the buffer.  Optionally release the
+ *		pin too.
+ *
+ * This combines the functionality of BufferGetLSNAtomic() with
+ * UnlockReleaseBuffer, with the option of not releasing buffer pin.
+ *
+ * Used to unlock a buffer lock (and possibly to release its pin) when held on
+ * an index page.  This is needed frequently enough to justify specialization.
+ */
+XLogRecPtr
+UnlockBufferGetLSN(Buffer buffer, bool release)
+{
+	BufferDesc *buf_hdr;
+	Page		page;
+	XLogRecPtr	lsn;
+	int			mode;
+	uint64		sub;
+	uint64		lockstate;
+	PrivateRefCountEntry *ref;
+
+	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
+
+	if (BufferIsLocal(buffer))
+	{
+		buf_hdr = GetLocalBufferDescriptor(-buffer - 1);
+		page = (Page) LocalBufHdrGetBlock(buf_hdr);
+		lsn = PageGetLSN(page);
+		if (release)
+			UnpinLocalBuffer(buffer);
+		return lsn;
+	}
+
+	buf_hdr = GetBufferDescriptor(buffer - 1);
+	page = (Page) BufHdrGetBlock(buf_hdr);
+
+#ifdef PG_HAVE_8BYTE_SINGLE_COPY_ATOMICITY
+	lsn = PageGetLSN(page);
+#else
+	lsn = BufferGetLSNAtomic(buffer);
+#endif
+
+	if (!release)
+	{
+		/* Just release the lock */
+		BufferLockUnlock(buffer, buf_hdr);
+		return lsn;
+	}
+
+	/* Release both lock and pin in one atomic op */
+	ResourceOwnerForgetBuffer(CurrentResourceOwner, buffer);
+
+	mode = BufferLockDisownInternal(buffer, buf_hdr);
+
+	/* compute state modification for lock release */
+	sub = BufferLockReleaseSub(mode);
+
+	/* compute state modification for pin release */
+	ref = GetPrivateRefCountEntry(buffer, false);
+	Assert(ref != NULL);
+	Assert(ref->data.refcount > 0);
+	ref->data.refcount--;
+
+	/* no more backend local pins, reduce shared pin count */
+	if (likely(ref->data.refcount == 0))
+	{
+		/* See comment in UnpinBufferNoOwner() */
+		VALGRIND_MAKE_MEM_NOACCESS(BufHdrGetBlock(buf_hdr), BLCKSZ);
+
+		sub |= BUF_REFCOUNT_ONE;
+		ForgetPrivateRefCountEntry(ref);
+	}
+
+	/* perform the lock and pin release in one atomic op */
+	lockstate = pg_atomic_sub_fetch_u64(&buf_hdr->state, sub);
+
+	/* wake up waiters for the lock */
+	BufferLockProcessRelease(buf_hdr, mode, lockstate);
+
+	/* wake up waiter for the pin release */
+	if (lockstate & BM_PIN_COUNT_WAITER)
+		WakePinCountWaiter(buf_hdr);
+
+	RESUME_INTERRUPTS();
+
+	return lsn;
+}
+
+/*
  * IncrBufferRefCount
  *		Increment the pin count on a buffer that we have *already* pinned
  *		at least once.
