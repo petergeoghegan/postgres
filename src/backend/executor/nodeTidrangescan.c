@@ -340,6 +340,29 @@ ExecEndTidRangeScan(TidRangeScanState *node)
 {
 	TableScanDesc scan = node->ss.ss_currentScanDesc;
 
+	/*
+	 * When ending a parallel worker, copy the statistics gathered by the
+	 * worker back into shared memory so that it can be picked up by the main
+	 * process to report in EXPLAIN ANALYZE.
+	 */
+	if (node->trss_sinstrument != NULL && IsParallelWorker())
+	{
+		TidRangeScanInstrumentation *si;
+
+		Assert(ParallelWorkerNumber < node->trss_sinstrument->num_workers);
+		si = &node->trss_sinstrument->sinstrument[ParallelWorkerNumber];
+
+		/*
+		 * Here we accumulate the stats rather than performing memcpy on
+		 * node->stats into si.  When a Gather/GatherMerge node finishes it
+		 * will perform planner shutdown on the workers.  On rescan it will
+		 * spin up new workers which will have a new state and zeroed stats.
+		 */
+
+		/* collect prefetch info for this process from the read_stream */
+		ACCUMULATE_IO_STATS(&si->stats.io, &node->ss.ss_currentScanDesc->rs_instrument->io);
+	}
+
 	if (scan != NULL)
 		table_endscan(scan);
 }
@@ -433,11 +456,23 @@ void
 ExecTidRangeScanEstimate(TidRangeScanState *node, ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
+	Size		size;
 
-	node->trss_pscanlen =
-		table_parallelscan_estimate(node->ss.ss_currentRelation,
-									estate->es_snapshot);
-	shm_toc_estimate_chunk(&pcxt->estimator, node->trss_pscanlen);
+	size = table_parallelscan_estimate(node->ss.ss_currentRelation,
+									   estate->es_snapshot);
+	node->trss_pscanlen = size;
+
+	/* make sure the instrumentation is properly aligned */
+	size = MAXALIGN(size);
+
+	/* account for instrumentation, if required */
+	if (node->ss.ps.instrument && pcxt->nworkers > 0)
+	{
+		size = add_size(size, offsetof(SharedTidRangeScanInstrumentation, sinstrument));
+		size = add_size(size, mul_size(pcxt->nworkers, sizeof(TidRangeScanInstrumentation)));
+	}
+
+	shm_toc_estimate_chunk(&pcxt->estimator, size);
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
 }
 
@@ -452,8 +487,18 @@ ExecTidRangeScanInitializeDSM(TidRangeScanState *node, ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
 	ParallelTableScanDesc pscan;
+	SharedTidRangeScanInstrumentation *sinstrument = NULL;
+	Size	size;
+	char   *ptr;
 
-	pscan = shm_toc_allocate(pcxt->toc, node->trss_pscanlen);
+	size = MAXALIGN(node->trss_pscanlen);
+	if (node->ss.ps.instrument && pcxt->nworkers > 0)
+	{
+		size = add_size(size, offsetof(SharedTidRangeScanInstrumentation, sinstrument));
+		size = add_size(size, mul_size(pcxt->nworkers, sizeof(TidRangeScanInstrumentation)));
+	}
+
+	pscan = shm_toc_allocate(pcxt->toc, size);
 	table_parallelscan_initialize(node->ss.ss_currentRelation,
 								  pscan,
 								  estate->es_snapshot);
@@ -461,6 +506,23 @@ ExecTidRangeScanInitializeDSM(TidRangeScanState *node, ParallelContext *pcxt)
 	node->ss.ss_currentScanDesc =
 		table_beginscan_parallel_tidrange(node->ss.ss_currentRelation,
 										  pscan);
+
+	/* initialize the shared instrumentation (with correct alignment) */
+	ptr = (char *) pscan;
+	ptr += MAXALIGN(node->trss_pscanlen);
+	if (node->ss.ps.instrument && pcxt->nworkers > 0)
+		sinstrument = (SharedTidRangeScanInstrumentation *) ptr;
+
+	if (sinstrument)
+	{
+		sinstrument->num_workers = pcxt->nworkers;
+
+		/* ensure any unfilled slots will contain zeroes */
+		memset(sinstrument->sinstrument, 0,
+			   pcxt->nworkers * sizeof(TidRangeScanInstrumentation));
+	}
+
+	node->trss_sinstrument = sinstrument;
 }
 
 /* ----------------------------------------------------------------
@@ -489,10 +551,48 @@ void
 ExecTidRangeScanInitializeWorker(TidRangeScanState *node,
 								 ParallelWorkerContext *pwcxt)
 {
+	EState	   *estate = node->ss.ps.state;
 	ParallelTableScanDesc pscan;
+	char	   *ptr;
+	Size		size;
 
 	pscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
 	node->ss.ss_currentScanDesc =
 		table_beginscan_parallel_tidrange(node->ss.ss_currentRelation,
 										  pscan);
+
+	/*
+	 * Workers don't get the trss_pscanlen value in scan descriptor, so use
+	 * the TAM callback again. The result has to match the earlier result in
+	 * ExecTidRangeScanEstimate.
+	 */
+	size = table_parallelscan_estimate(node->ss.ss_currentRelation,
+									   estate->es_snapshot);
+	ptr = (char *) pscan;
+	ptr += MAXALIGN(size);
+
+	if (node->ss.ps.instrument)
+		node->trss_sinstrument = (SharedTidRangeScanInstrumentation *) ptr;
+}
+
+/* ----------------------------------------------------------------
+ *		ExecTidRangeScanRetrieveInstrumentation
+ *
+ *		Transfer scan statistics from DSM to private memory.
+ * ----------------------------------------------------------------
+ */
+void
+ExecTidRangeScanRetrieveInstrumentation(TidRangeScanState *node)
+{
+	SharedTidRangeScanInstrumentation *sinstrument = node->trss_sinstrument;
+	Size		size;
+
+	if (sinstrument == NULL)
+		return;
+
+	size = offsetof(SharedTidRangeScanInstrumentation, sinstrument)
+		+ sinstrument->num_workers * sizeof(TidRangeScanInstrumentation);
+
+	node->trss_sinstrument = palloc(size);
+	memcpy(node->trss_sinstrument, sinstrument, size);
 }
