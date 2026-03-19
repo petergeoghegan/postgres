@@ -344,6 +344,16 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 		 */
 		winstrument->nsearches += node->ioss_Instrument->nsearches;
 		winstrument->ntablefetches += node->ioss_Instrument->ntablefetches;
+
+		/*
+		 * collect prefetch info for this process from the read_stream
+		 *
+		 * XXX If the scan did not start yet, the descriptor is NULL.
+		 */
+		if (indexScanDesc)
+		{
+			ACCUMULATE_IO_STATS(&winstrument->io, &indexScanDesc->instrument->io);
+		}
 	}
 
 	/*
