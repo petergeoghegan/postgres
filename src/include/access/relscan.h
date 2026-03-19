@@ -367,6 +367,12 @@ typedef struct IndexScanDescData
 	bool	   *xs_orderbynulls;
 	bool		xs_recheckorderby;
 
+	/*
+	 * Limit on distinct heap pages visited before giving up (0 = no limit).
+	 * Used by selfuncs.c to bound the cost of get_actual_variable_endpoint().
+	 */
+	uint8		xs_visited_pages_limit;
+
 	/* parallel index scan information, in shared memory */
 	struct ParallelIndexScanDescData *parallel_scan;
 } IndexScanDescData;
