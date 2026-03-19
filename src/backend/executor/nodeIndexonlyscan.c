@@ -346,6 +346,13 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 		 */
 		winstrument->nsearches += node->ioss_Instrument->nsearches;
 		winstrument->ntablefetches += node->ioss_Instrument->ntablefetches;
+
+		/* collect prefetch info for this process from the read_stream */
+		if (indexScanDesc && indexScanDesc->instrument)
+		{
+			AccumulateIOStats(&winstrument->io,
+							  &indexScanDesc->instrument->io);
+		}
 	}
 
 	/*
