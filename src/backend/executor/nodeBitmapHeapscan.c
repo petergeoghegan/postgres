@@ -328,6 +328,9 @@ ExecEndBitmapHeapScan(BitmapHeapScanState *node)
 		 */
 		si->exact_pages += node->stats.exact_pages;
 		si->lossy_pages += node->stats.lossy_pages;
+
+		/* collect prefetch info for this process from the read_stream */
+		ACCUMULATE_IO_STATS(&si->stats.io, &node->ss.ss_currentScanDesc->rs_instrument->io);
 	}
 
 	/*
