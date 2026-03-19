@@ -63,11 +63,11 @@ set track_io_timing = off;
 
 explain (costs off) select 1 as a, 2 as b having false;
 select explain_filter('explain select * from int8_tbl i8');
-select explain_filter('explain (analyze, buffers off) select * from int8_tbl i8');
-select explain_filter('explain (analyze, buffers off, verbose) select * from int8_tbl i8');
-select explain_filter('explain (analyze, buffers, format text) select * from int8_tbl i8');
-select explain_filter('explain (analyze, buffers, format xml) select * from int8_tbl i8');
-select explain_filter('explain (analyze, serialize, buffers, format yaml) select * from int8_tbl i8');
+select explain_filter('explain (analyze, buffers off, io off) select * from int8_tbl i8');
+select explain_filter('explain (analyze, buffers off, io off, verbose) select * from int8_tbl i8');
+select explain_filter('explain (analyze, buffers, io off, format text) select * from int8_tbl i8');
+select explain_filter('explain (analyze, buffers, io off, format xml) select * from int8_tbl i8');
+select explain_filter('explain (analyze, serialize, buffers, io off, format yaml) select * from int8_tbl i8');
 select explain_filter('explain (buffers, format text) select * from int8_tbl i8');
 select explain_filter('explain (buffers, format json) select * from int8_tbl i8');
 
@@ -79,7 +79,7 @@ select explain_filter('explain verbose select sum(unique1) over w1, sum(unique2)
 -- Check output including I/O timings.  These fields are conditional
 -- but always set in JSON format, so check them only in this case.
 set track_io_timing = on;
-select explain_filter('explain (analyze, buffers, format json) select * from int8_tbl i8');
+select explain_filter('explain (analyze, buffers, io off, format json) select * from int8_tbl i8');
 set track_io_timing = off;
 
 -- SETTINGS option
@@ -102,9 +102,9 @@ select explain_filter('explain (analyze, generic_plan) select unique1 from tenk1
 
 -- MEMORY option
 select explain_filter('explain (memory) select * from int8_tbl i8');
-select explain_filter('explain (memory, analyze, buffers off) select * from int8_tbl i8');
+select explain_filter('explain (memory, analyze, buffers off, io off) select * from int8_tbl i8');
 select explain_filter('explain (memory, summary, format yaml) select * from int8_tbl i8');
-select explain_filter('explain (memory, analyze, format json) select * from int8_tbl i8');
+select explain_filter('explain (memory, analyze, io off, format json) select * from int8_tbl i8');
 prepare int8_query as select * from int8_tbl i8;
 select explain_filter('explain (memory) execute int8_query');
 
@@ -144,7 +144,7 @@ set min_parallel_table_scan_size=0;
 set max_parallel_workers_per_gather=4;
 
 select jsonb_pretty(
-  explain_filter_to_json('explain (analyze, verbose, buffers, format json)
+  explain_filter_to_json('explain (analyze, verbose, buffers, io off, format json)
                          select * from tenk1 order by tenthous')
   -- remove "Workers" node of the Seq Scan plan node
   #- '{0,Plan,Plans,0,Plans,0,Workers}'
@@ -174,17 +174,17 @@ select explain_filter('explain (verbose) declare test_cur cursor for select * fr
 select explain_filter('explain (verbose) create table test_ctas as select 1');
 
 -- Test SERIALIZE option
-select explain_filter('explain (analyze,buffers off,serialize) select * from int8_tbl i8');
-select explain_filter('explain (analyze,serialize text,buffers,timing off) select * from int8_tbl i8');
-select explain_filter('explain (analyze,serialize binary,buffers,timing) select * from int8_tbl i8');
+select explain_filter('explain (analyze,buffers off,io off,serialize) select * from int8_tbl i8');
+select explain_filter('explain (analyze,serialize text,buffers,io off,timing off) select * from int8_tbl i8');
+select explain_filter('explain (analyze,serialize binary,buffers,io off,timing) select * from int8_tbl i8');
 -- this tests an edge case where we have no data to return
-select explain_filter('explain (analyze,buffers off,serialize) create temp table explain_temp as select * from int8_tbl i8');
+select explain_filter('explain (analyze,buffers off,io off,serialize) create temp table explain_temp as select * from int8_tbl i8');
 
 -- Test tuplestore storage usage in Window aggregate (memory case)
-select explain_filter('explain (analyze,buffers off,costs off) select sum(n) over() from generate_series(1,10) a(n)');
+select explain_filter('explain (analyze,buffers off,io off,costs off) select sum(n) over() from generate_series(1,10) a(n)');
 -- Test tuplestore storage usage in Window aggregate (disk case)
 set work_mem to 64;
-select explain_filter('explain (analyze,buffers off,costs off) select sum(n) over() from generate_series(1,2500) a(n)');
+select explain_filter('explain (analyze,buffers off,io off,costs off) select sum(n) over() from generate_series(1,2500) a(n)');
 -- Test tuplestore storage usage in Window aggregate (memory and disk case, final result is disk)
-select explain_filter('explain (analyze,buffers off,costs off) select sum(n) over(partition by m) from (SELECT n < 3 as m, n from generate_series(1,2500) a(n))');
+select explain_filter('explain (analyze,buffers off,io off,costs off) select sum(n) over(partition by m) from (SELECT n < 3 as m, n from generate_series(1,2500) a(n))');
 reset work_mem;

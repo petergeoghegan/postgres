@@ -1644,6 +1644,7 @@ typedef struct SeqScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	Size		pscan_len;		/* size of parallel heap scan descriptor */
+	SharedSeqScanInstrumentation *sinstrument;
 } SeqScanState;
 
 /* ----------------
@@ -1893,6 +1894,7 @@ typedef struct TidRangeScanState
 	ItemPointerData trss_maxtid;
 	bool		trss_inScan;
 	Size		trss_pscanlen;
+	SharedTidRangeScanInstrumentation *trss_sinstrument;
 } TidRangeScanState;
 
 /* ----------------
