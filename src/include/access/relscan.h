@@ -381,6 +381,13 @@ typedef struct IndexScanDescData
 	bool	   *xs_orderbynulls;
 	bool		xs_recheckorderby;
 
+	/*
+	 * An approximate limit on the amount of work, measured in pages touched,
+	 * imposed on the index scan.  The default, 0, means no limit.  Used by
+	 * selfuncs.c to bound the cost of get_actual_variable_endpoint().
+	 */
+	uint8		xs_visited_pages_limit;
+
 	/* parallel index scan information, in shared memory */
 	struct ParallelIndexScanDescData *parallel_scan;
 } IndexScanDescData;
