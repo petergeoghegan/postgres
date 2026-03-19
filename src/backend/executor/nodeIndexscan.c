@@ -815,6 +815,16 @@ ExecEndIndexScan(IndexScanState *node)
 		 */
 		winstrument->nsearches += node->iss_Instrument->nsearches;
 		Assert(node->iss_Instrument->ntablefetches == 0);
+
+		/*
+		 * collect prefetch info for this process from the read_stream
+		 *
+		 * XXX If the scan did not start yet, the descriptor is NULL.
+		 */
+		if (indexScanDesc)
+		{
+			ACCUMULATE_IO_STATS(&winstrument->io, &indexScanDesc->instrument->io);
+		}
 	}
 
 	/*

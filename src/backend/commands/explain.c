@@ -141,7 +141,7 @@ static void show_hashagg_info(AggState *aggstate, ExplainState *es);
 static void show_indexscan_info(PlanState *planstate, ExplainState *es);
 static void show_tidbitmap_info(BitmapHeapScanState *planstate,
 								ExplainState *es);
-static void show_scan_io_usage(ScanState *planstate,
+static void show_scan_io_usage(PlanState *planstate,
 							   ExplainState *es);
 static void show_io_usage(PlanState *planstate,
 						  ExplainState *es,
@@ -1982,6 +1982,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			show_indexscan_info(planstate, es);
+			show_scan_io_usage(planstate, es);
 			break;
 		case T_IndexOnlyScan:
 			show_scan_qual(((IndexOnlyScan *) plan)->indexqual,
@@ -1996,6 +1997,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			show_indexscan_info(planstate, es);
+			show_scan_io_usage(planstate, es);
 			break;
 		case T_BitmapIndexScan:
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
@@ -2013,7 +2015,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			show_tidbitmap_info((BitmapHeapScanState *) planstate, es);
-			show_scan_io_usage((ScanState *) planstate, es);
+			show_scan_io_usage(planstate, es);
 			break;
 		case T_SampleScan:
 			show_tablesample(((SampleScan *) plan)->tablesample,
@@ -2032,7 +2034,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 										   planstate, es);
 			if (IsA(plan, CteScan))
 				show_ctescan_info(castNode(CteScanState, planstate), es);
-			show_scan_io_usage((ScanState *) planstate, es);
+			show_scan_io_usage(planstate, es);
 			break;
 		case T_Gather:
 			{
@@ -2149,7 +2151,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				if (plan->qual)
 					show_instrumentation_count("Rows Removed by Filter", 1,
 											   planstate, es);
-				show_scan_io_usage((ScanState *) planstate, es);
+				show_scan_io_usage(planstate, es);
 			}
 			break;
 		case T_ForeignScan:
@@ -4059,16 +4061,12 @@ print_io_usage(ExplainState *es, IOStats *stats)
  * Shows summary of stats for leader and workers (if any).
  */
 static void
-show_scan_io_usage(ScanState *planstate, ExplainState *es)
+show_scan_io_usage(PlanState *planstate, ExplainState *es)
 {
-	Plan	   *plan = planstate->ps.plan;
+	Plan	   *plan = planstate->plan;
 	IOStats		stats;
 
 	if (!es->io)
-		return;
-
-	/* scan not started, no prefetch stats */
-	if (!(planstate && planstate->ss_currentScanDesc))
 		return;
 
 	/* Initialize counters with stats from the local process first */
@@ -4076,11 +4074,15 @@ show_scan_io_usage(ScanState *planstate, ExplainState *es)
 	{
 		case T_SeqScan:
 			{
-				SharedSeqScanInstrumentation *sinstrument
-					= ((SeqScanState *) planstate)->sinstrument;
+				SeqScanState *scanstate = (SeqScanState *) planstate;
+				SharedSeqScanInstrumentation *sinstrument = scanstate->sinstrument;
+
+				/* scan not started, no prefetch stats */
+				if (!(scanstate && scanstate->ss.ss_currentScanDesc))
+					return;
 
 				/* collect prefetch statistics from the read stream */
-				stats = planstate->ss_currentScanDesc->rs_instrument->io;
+				stats = scanstate->ss.ss_currentScanDesc->rs_instrument->io;
 
 				/* get the sum of the counters set within each and every process */
 				if (sinstrument)
@@ -4096,11 +4098,15 @@ show_scan_io_usage(ScanState *planstate, ExplainState *es)
 			}
 		case T_BitmapHeapScan:
 			{
-				SharedBitmapHeapInstrumentation *sinstrument
-					= ((BitmapHeapScanState *) planstate)->sinstrument;
+				BitmapHeapScanState *scanstate = (BitmapHeapScanState *) planstate;
+				SharedBitmapHeapInstrumentation *sinstrument = scanstate->sinstrument;
+
+				/* scan not started, no prefetch stats */
+				if (!(scanstate && scanstate->ss.ss_currentScanDesc))
+					return;
 
 				/* collect prefetch statistics from the read stream */
-				stats = planstate->ss_currentScanDesc->rs_instrument->io;
+				stats = scanstate->ss.ss_currentScanDesc->rs_instrument->io;
 
 				/* get the sum of the counters set within each and every process */
 				if (sinstrument)
@@ -4116,11 +4122,15 @@ show_scan_io_usage(ScanState *planstate, ExplainState *es)
 			}
 		case T_TidRangeScan:
 			{
-				SharedTidRangeScanInstrumentation *sinstrument
-					= ((TidRangeScanState *) planstate)->trss_sinstrument;
+				TidRangeScanState *scanstate = (TidRangeScanState *) planstate;
+				SharedTidRangeScanInstrumentation *sinstrument = scanstate->trss_sinstrument;
+
+				/* scan not started, no prefetch stats */
+				if (!(scanstate && scanstate->ss.ss_currentScanDesc))
+					return;
 
 				/* collect prefetch statistics from the read stream */
-				stats = planstate->ss_currentScanDesc->rs_instrument->io;
+				stats = scanstate->ss.ss_currentScanDesc->rs_instrument->io;
 
 				/* get the sum of the counters set within each and every process */
 				if (sinstrument)
@@ -4129,6 +4139,54 @@ show_scan_io_usage(ScanState *planstate, ExplainState *es)
 					{
 						TidRangeScanInstrumentation *winstrument = &sinstrument->sinstrument[i];
 						ACCUMULATE_IO_STATS(&stats, &winstrument->stats.io);
+					}
+				}
+
+				break;
+			}
+		case T_IndexScan:
+			{
+				IndexScanState *scanstate = (IndexScanState *) planstate;
+				SharedIndexScanInstrumentation *sinstrument = scanstate->iss_SharedInfo;
+
+				/* scan not started, no prefetch stats */
+				if (!(scanstate && scanstate->iss_ScanDesc))
+					return;
+
+				/* collect prefetch statistics from the read stream */
+				stats = scanstate->iss_ScanDesc->instrument->io;
+
+				/* get the sum of the counters set within each and every process */
+				if (sinstrument)
+				{
+					for (int i = 0; i < sinstrument->num_workers; ++i)
+					{
+						IndexScanInstrumentation *winstrument = &sinstrument->winstrument[i];
+						ACCUMULATE_IO_STATS(&stats, &winstrument->io);
+					}
+				}
+
+				break;
+			}
+		case T_IndexOnlyScan:
+			{
+				IndexOnlyScanState *scanstate = (IndexOnlyScanState *) planstate;
+				SharedIndexScanInstrumentation *sinstrument = scanstate->ioss_SharedInfo;
+
+				/* scan not started, no prefetch stats */
+				if (!(scanstate && scanstate->ioss_ScanDesc))
+					return;
+
+				/* collect prefetch statistics from the read stream */
+				stats = scanstate->ioss_ScanDesc->instrument->io;
+
+				/* get the sum of the counters set within each and every process */
+				if (sinstrument)
+				{
+					for (int i = 0; i < sinstrument->num_workers; ++i)
+					{
+						IndexScanInstrumentation *winstrument = &sinstrument->winstrument[i];
+						ACCUMULATE_IO_STATS(&stats, &winstrument->io);
 					}
 				}
 
@@ -4187,6 +4245,26 @@ show_io_usage(PlanState *planstate, ExplainState *es, int worker)
 				TidRangeScanInstrumentation *instrument = &sinstrument->sinstrument[worker];
 
 				stats = &instrument->stats.io;
+
+				break;
+			}
+		case T_IndexScan:
+			{
+				IndexScanState *state = ((IndexScanState *) planstate);
+				SharedIndexScanInstrumentation *sinstrument = state->iss_SharedInfo;
+				IndexScanInstrumentation *instrument = &sinstrument->winstrument[worker];
+
+				stats = &instrument->io;
+
+				break;
+			}
+		case T_IndexOnlyScan:
+			{
+				IndexOnlyScanState *state = ((IndexOnlyScanState *) planstate);
+				SharedIndexScanInstrumentation *sinstrument = state->ioss_SharedInfo;
+				IndexScanInstrumentation *instrument = &sinstrument->winstrument[worker];
+
+				stats = &instrument->io;
 
 				break;
 			}
