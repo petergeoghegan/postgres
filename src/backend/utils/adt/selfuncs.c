@@ -7168,9 +7168,11 @@ get_actual_variable_endpoint(Relation heapRel,
 	 * pages.  When we fail for that reason, the caller will end up using
 	 * whatever extremal value is recorded in pg_statistic.
 	 *
-	 * XXX This can't work with the new table_index_getnext_slot interface,
-	 * which simply won't return a tuple that isn't visible to our snapshot.
+	 * We set xs_visited_pages_limit to tell the table AM to count distinct
+	 * heap pages visited for non-visible tuples and give up after the limit
+	 * is exceeded.
 	 */
+#define VISITED_PAGES_LIMIT 100
 	InitNonVacuumableSnapshot(SnapshotNonVacuumable,
 							  GlobalVisTestFor(heapRel));
 
@@ -7178,6 +7180,7 @@ get_actual_variable_endpoint(Relation heapRel,
 								 &SnapshotNonVacuumable, NULL,
 								 1, 0);
 	Assert(index_scan->xs_want_itup);
+	index_scan->xs_visited_pages_limit = VISITED_PAGES_LIMIT;
 	index_rescan(index_scan, scankeys, 1, NULL, 0);
 
 	/* Fetch first/next tuple in specified direction */
