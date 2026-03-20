@@ -524,7 +524,7 @@ read_stream_look_ahead(ReadStream *stream)
 		(stream->pending_read_nblocks == stream->io_combine_limit ||
 		 (stream->pending_read_nblocks >= stream->distance &&
 		  stream->pinned_buffers == 0) ||
-		 stream->distance == 0) &&
+		 stream->distance <= 0) &&
 		stream->ios_in_progress < stream->max_ios)
 		read_stream_start_pending_read(stream);
 
@@ -534,7 +534,7 @@ read_stream_look_ahead(ReadStream *stream)
 	 * stream.  In the worst case we can always make progress one buffer at a
 	 * time.
 	 */
-	Assert(stream->pinned_buffers > 0 || stream->distance == 0);
+	Assert(stream->pinned_buffers > 0 || stream->distance <= 0);
 
 	if (stream->batch_mode)
 		pgaio_exit_batchmode();
@@ -910,7 +910,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		Assert(stream->oldest_buffer_index == stream->next_buffer_index);
 
 		/* End of stream reached?  */
-		if (stream->distance == 0)
+		if (stream->distance <= 0)
 			return InvalidBuffer;
 
 		/*
@@ -924,7 +924,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		/* End of stream reached? */
 		if (stream->pinned_buffers == 0)
 		{
-			Assert(stream->distance == 0);
+			Assert(stream->distance <= 0);
 			return InvalidBuffer;
 		}
 	}
@@ -952,7 +952,27 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		Assert(stream->ios[io_index].op.buffers ==
 			   &stream->buffers[oldest_buffer_index]);
 
-		needed_wait = WaitReadBuffers(&stream->ios[io_index].op);
+		/*
+		 * If the stream has been reset, don't even wait for the IO, just
+		 * discard it.
+		 */
+		if (stream->distance < 0)
+		{
+			if (pgaio_wref_valid(&stream->ios[io_index].op.io_wref) &&
+				!stream->ios[io_index].op.foreign_io)
+			{
+				pgaio_wref_discard_result(&stream->ios[io_index].op.io_wref);
+				pgaio_wref_clear(&stream->ios[io_index].op.io_wref);
+			}
+			else
+				WaitReadBuffers(&stream->ios[io_index].op);
+
+			needed_wait = false;
+		}
+		else
+		{
+			needed_wait = WaitReadBuffers(&stream->ios[io_index].op);
+		}
 
 		Assert(stream->ios_in_progress > 0);
 		stream->ios_in_progress--;
@@ -1129,7 +1149,7 @@ read_stream_reset(ReadStream *stream)
 	Buffer		buffer;
 
 	/* Stop looking ahead. */
-	stream->distance = 0;
+	stream->distance = -1;
 
 	/* Forget buffered block number and fast path state. */
 	stream->buffered_blocknum = InvalidBlockNumber;
