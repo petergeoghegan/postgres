@@ -519,8 +519,7 @@ collect_visibility_data(Oid relid, bool include_pd)
 											MAIN_FORKNUM,
 											block_range_read_stream_cb,
 											&p,
-											0,
-											NULL);
+											0);
 	}
 
 	for (blkno = 0; blkno < nblocks; ++blkno)
@@ -740,8 +739,7 @@ collect_corrupt_items(Oid relid, bool all_visible, bool all_frozen)
 										MAIN_FORKNUM,
 										collect_corrupt_items_read_stream_next_block,
 										&p,
-										0,
-										NULL);
+										0);
 
 	/* Loop over every block in the relation. */
 	while ((buffer = read_stream_next_buffer(stream, NULL)) != InvalidBuffer)

@@ -835,8 +835,7 @@ spgvacuumscan(spgBulkDeleteState *bds)
 										MAIN_FORKNUM,
 										block_range_read_stream_cb,
 										&p,
-										0,
-										NULL);
+										0);
 
 	/*
 	 * The outer loop iterates over all index pages except the metapage, in

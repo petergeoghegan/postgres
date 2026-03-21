@@ -636,8 +636,7 @@ heapam_batch_getnext(IndexScanDesc scan, ScanDirection direction,
 			hscan->xs_read_stream =
 				read_stream_begin_relation(READ_STREAM_DEFAULT, NULL,
 										   scan->heapRelation, MAIN_FORKNUM,
-										   heapam_getnext_stream, scan, 0,
-										   (scan->instrument) ? &scan->instrument->io : NULL);
+										   heapam_getnext_stream, scan, 0);
 		}
 	}
 	else

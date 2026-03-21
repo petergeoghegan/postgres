@@ -256,8 +256,7 @@ pg_prewarm(PG_FUNCTION_ARGS)
 											forkNumber,
 											block_range_read_stream_cb,
 											&p,
-											0,
-											NULL);
+											0);
 
 		for (block = first_block; block <= last_block; ++block)
 		{

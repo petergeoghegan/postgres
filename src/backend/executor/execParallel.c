@@ -1119,12 +1119,6 @@ ExecParallelRetrieveInstrumentation(PlanState *planstate,
 		case T_BitmapHeapScanState:
 			ExecBitmapHeapRetrieveInstrumentation((BitmapHeapScanState *) planstate);
 			break;
-		case T_SeqScanState:
-			ExecSeqScanRetrieveInstrumentation((SeqScanState *) planstate);
-			break;
-		case T_TidRangeScanState:
-			ExecTidRangeScanRetrieveInstrumentation((TidRangeScanState *) planstate);
-			break;
 		default:
 			break;
 	}
