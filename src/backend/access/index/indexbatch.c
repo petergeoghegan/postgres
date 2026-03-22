@@ -691,7 +691,7 @@ indexam_util_batch_alloc(IndexScanDesc scan)
 
 	/* Let the table AM initialize its per-batch opaque area */
 	if (scan->xs_heapfetch)
-		table_index_batch_init(scan, batch, new_alloc);
+		table_index_fetch_batch_init(scan, batch, new_alloc);
 
 	/* shared initialization */
 	batch->knownEndBackward = false;

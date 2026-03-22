@@ -443,8 +443,9 @@ typedef struct TableAmRoutine
 	 * 'new_alloc' is true for freshly palloc'd batches, false for batches
 	 * recycled from the cache.
 	 */
-	void		(*index_batch_init) (IndexScanDesc scan, IndexScanBatch batch,
-									 bool new_alloc);
+	void		(*index_fetch_batch_init) (IndexScanDesc scan,
+										   IndexScanBatch batch,
+										   bool new_alloc);
 
 	/*
 	 * Fetch the next tuple from an index scan, scanning in the specified
@@ -1251,9 +1252,11 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
  * Called by indexam_util_batch_alloc for each new or recycled batch.
  */
 static inline void
-table_index_batch_init(IndexScanDesc scan, IndexScanBatch batch, bool new_alloc)
+table_index_fetch_batch_init(IndexScanDesc scan, IndexScanBatch batch,
+							 bool new_alloc)
 {
-	scan->heapRelation->rd_tableam->index_batch_init(scan, batch, new_alloc);
+	scan->heapRelation->rd_tableam->index_fetch_batch_init(scan, batch,
+														   new_alloc);
 }
 
 /*
