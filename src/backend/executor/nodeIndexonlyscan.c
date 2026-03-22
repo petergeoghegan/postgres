@@ -166,7 +166,8 @@ IndexOnlyNext(IndexOnlyScanState *node)
 			/*
 			 * Rats, we have to visit the heap to check visibility.
 			 */
-			InstrCountTuples2(node, 1);
+			if (node->ioss_Instrument)
+				node->ioss_Instrument->ntablefetches++;
 			if (!index_fetch_heap(scandesc, node->ioss_TableSlot))
 				continue;		/* no visible tuple, try next index entry */
 
@@ -434,6 +435,7 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 		 * which will have a new IndexOnlyScanState and zeroed stats.
 		 */
 		winstrument->nsearches += node->ioss_Instrument->nsearches;
+		winstrument->ntablefetches += node->ioss_Instrument->ntablefetches;
 	}
 
 	/*
