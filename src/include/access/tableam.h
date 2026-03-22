@@ -420,7 +420,7 @@ typedef struct TableAmRoutine
 	 *
 	 * Tuples for an index scan can then be fetched via one of the 4
 	 * slot-based callbacks called through table_index_getnext_slot, or via
-	 * the lower-level index_fetch_tuple interface.
+	 * the lower-level TID-based index_fetch_tuple interface.
 	 */
 	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel);
 
