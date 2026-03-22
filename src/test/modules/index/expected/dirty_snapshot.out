@@ -1,0 +1,153 @@
+Parsed test spec with 2 sessions
+
+starting permutation: w_begin w_update_val w_hotstat o_begin o_dirty o_mvcc w_commit o_dirty o_mvcc o_commit
+step w_begin: BEGIN;
+step w_update_val: UPDATE dirtysnap SET val = 20 WHERE val = 10;
+step w_hotstat: SELECT pg_stat_get_xact_tuples_hot_updated('dirtysnap'::regclass) AS hot_updated;
+hot_updated
+-----------
+          0
+(1 row)
+
+step o_begin: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,1)          
+(0,2)          
+(2 rows)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step w_commit: COMMIT;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,2)          
+(1 row)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step o_commit: COMMIT;
+
+starting permutation: w_begin w_update_val w_hotstat o_begin o_dirty o_mvcc w_rollback o_dirty o_mvcc o_commit
+step w_begin: BEGIN;
+step w_update_val: UPDATE dirtysnap SET val = 20 WHERE val = 10;
+step w_hotstat: SELECT pg_stat_get_xact_tuples_hot_updated('dirtysnap'::regclass) AS hot_updated;
+hot_updated
+-----------
+          0
+(1 row)
+
+step o_begin: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,1)          
+(0,2)          
+(2 rows)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step w_rollback: ROLLBACK;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step o_commit: COMMIT;
+
+starting permutation: w_begin w_update_note w_hotstat o_begin o_dirty o_mvcc w_commit o_dirty o_mvcc o_commit
+step w_begin: BEGIN;
+step w_update_note: UPDATE dirtysnap SET note = 'v2' WHERE val = 10;
+step w_hotstat: SELECT pg_stat_get_xact_tuples_hot_updated('dirtysnap'::regclass) AS hot_updated;
+hot_updated
+-----------
+          1
+(1 row)
+
+step o_begin: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,1)          
+(0,2)          
+(2 rows)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step w_commit: COMMIT;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,2)          
+(1 row)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step o_commit: COMMIT;
+
+starting permutation: w_begin w_update_note w_hotstat o_begin o_dirty o_mvcc w_rollback o_dirty o_mvcc o_commit
+step w_begin: BEGIN;
+step w_update_note: UPDATE dirtysnap SET note = 'v2' WHERE val = 10;
+step w_hotstat: SELECT pg_stat_get_xact_tuples_hot_updated('dirtysnap'::regclass) AS hot_updated;
+hot_updated
+-----------
+          1
+(1 row)
+
+step o_begin: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,1)          
+(0,2)          
+(2 rows)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step w_rollback: ROLLBACK;
+step o_dirty: SELECT * FROM index_scan_tids('dirtysnap_idx', 'dirty');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step o_mvcc: SELECT * FROM index_scan_tids('dirtysnap_idx', 'mvcc');
+index_scan_tids
+---------------
+(0,1)          
+(1 row)
+
+step o_commit: COMMIT;
