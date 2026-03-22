@@ -131,6 +131,9 @@ typedef struct IndexFetchHeapData
 	int			xs_vm_items;	/* # items to resolve visibility info for */
 
 	bool		xs_readonly;	/* scan is read-only? */
+
+	/* Plain index scan xs_lastinblock optimization */
+	bool		xs_lastinblock; /* last TID on this block in current batch? */
 } IndexFetchHeapData;
 
 /* Result codes for HeapTupleSatisfiesVacuum */
