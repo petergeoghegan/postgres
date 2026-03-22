@@ -418,7 +418,9 @@ typedef struct TableAmRoutine
 	 * IndexFetchTableData, which the AM will typically embed in a larger
 	 * structure with additional information.
 	 *
-	 * Tuples for an index scan can then be fetched via index_fetch_tuple.
+	 * Tuples for an index scan can then be fetched via one of the
+	 * slot-based callbacks called through table_index_getnext_slot, or via
+	 * the lower-level TID-based index_fetch_tuple interface.
 	 */
 	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel);
 
@@ -434,9 +436,28 @@ typedef struct TableAmRoutine
 	void		(*index_fetch_end) (struct IndexFetchTableData *data);
 
 	/*
+	 * Fetch the next tuple from an index scan, scanning in the specified
+	 * direction, and return true if a tuple was found, false otherwise.
+	 *
+	 * Two variants cover {plain, index-only} index scans that use amgettuple.
+	 * index_beginscan resolves which variant to use.  Callers use
+	 * table_index_getnext_slot(), which calls through that pointer directly.
+	 */
+	bool		(*index_plain_amgettuple_getnext_slot) (IndexScanDesc scan,
+														ScanDirection direction,
+														TupleTableSlot *slot);
+	bool		(*index_only_amgettuple_getnext_slot) (IndexScanDesc scan,
+													   ScanDirection direction,
+													   TupleTableSlot *slot);
+
+	/*
 	 * Fetch tuple at `tid` into `slot`, after doing a visibility test
 	 * according to `snapshot`. If a tuple was found and passed the visibility
 	 * test, return true, false otherwise.
+	 *
+	 * This is a lower-level callback that takes a TID from the caller.
+	 * Callers should favor the table_index_getnext_slot callbacks whenever
+	 * possible.
 	 *
 	 * Note that AMs that do not necessarily update indexes when indexed
 	 * columns do not change, need to return the current/correct version of
@@ -1208,6 +1229,33 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
 }
 
 /*
+ * Fetch the next tuple from an index scan into `slot`, scanning in the
+ * specified direction.  Returns true if a tuple satisfying the scan keys and
+ * the snapshot was found, false otherwise.  The tuple is stored in the
+ * specified slot.
+ *
+ * Dispatches through scan->xs_getnext_slot, which is resolved once by
+ * index_beginscan.
+ *
+ * On success, resources (like buffer pins) are likely to be held, and will be
+ * released by a future table_index_getnext_slot or index_endscan call.
+ *
+ * Note: caller must check scan->xs_recheck, and perform rechecking of the
+ * scan keys if required.  We do not do that here because we don't have
+ * enough information to do it efficiently in the general case.
+ *
+ * For index-only scans, the callback also fills xs_itup/xs_itupdesc or
+ * xs_hitup/xs_hitupdesc (or both) so that index data can be returned without
+ * a heap fetch.
+ */
+static inline bool
+table_index_getnext_slot(IndexScanDesc iscan, ScanDirection direction,
+						 TupleTableSlot *slot)
+{
+	return iscan->xs_getnext_slot(iscan, direction, slot);
+}
+
+/*
  * Fetches, as part of an index scan, tuple at `tid` into `slot`, after doing
  * a visibility test according to `snapshot`. If a tuple was found and passed
  * the visibility test, returns true, false otherwise. Note that *tid may be
@@ -1230,6 +1278,9 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
  * entry (like heap's HOT). Whereas table_tuple_fetch_row_version() only
  * evaluates the tuple exactly at `tid`. Outside of index entry ->table tuple
  * lookups, table_tuple_fetch_row_version() is what's usually needed.
+ *
+ * This is a lower-level interface that takes a TID from the caller.  Callers
+ * should favor the table_index_getnext_slot interface whenever possible.
  */
 static inline bool
 table_index_fetch_tuple(struct IndexFetchTableData *scan,

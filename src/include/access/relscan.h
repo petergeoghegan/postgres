@@ -16,6 +16,7 @@
 
 #include "access/htup_details.h"
 #include "access/itup.h"
+#include "access/sdir.h"
 #include "nodes/tidbitmap.h"
 #include "port/atomics.h"
 #include "storage/relfilelocator.h"
@@ -24,6 +25,7 @@
 
 
 struct ParallelTableScanDescData;
+struct TupleTableSlot;
 
 /*
  * Generic descriptor for table scans. This is the base-class for table scans,
@@ -149,6 +151,8 @@ typedef struct IndexScanDescData
 	bool		ignore_killed_tuples;	/* do not return killed entries */
 	bool		xactStartedInRecovery;	/* prevents killing/seeing killed
 										 * tuples */
+	/* xs_snapshot uses an MVCC snapshot? */
+	bool		MVCCScan;
 
 	/* index access method's private state */
 	void	   *opaque;			/* access-method-specific info */
@@ -160,10 +164,10 @@ typedef struct IndexScanDescData
 	struct IndexScanInstrumentation *instrument;
 
 	/*
-	 * In an index-only scan, a successful amgettuple call must fill either
-	 * xs_itup (and xs_itupdesc) or xs_hitup (and xs_hitupdesc) to provide the
-	 * data returned by the scan.  It can fill both, in which case the heap
-	 * format will be used.
+	 * In an index-only scan, a successful table_index_getnext_slot call must
+	 * fill either xs_itup (and xs_itupdesc) or xs_hitup (and xs_hitupdesc) to
+	 * provide the data returned by the scan.  It can fill both, in which case
+	 * the heap format will be used.
 	 */
 	IndexTuple	xs_itup;		/* index tuple returned by AM */
 	struct TupleDescData *xs_itupdesc;	/* rowtype descriptor of xs_itup */
@@ -171,9 +175,12 @@ typedef struct IndexScanDescData
 	struct TupleDescData *xs_hitupdesc; /* rowtype descriptor of xs_hitup */
 
 	ItemPointerData xs_heaptid; /* result */
-	bool		xs_heap_continue;	/* T if must keep walking, potential
-									 * further results */
 	IndexFetchTableData *xs_heapfetch;
+
+	/* Resolved getnext_slot implementation, set by index_beginscan */
+	bool		(*xs_getnext_slot) (struct IndexScanDescData *scan,
+									ScanDirection direction,
+									struct TupleTableSlot *slot);
 
 	bool		xs_recheck;		/* T means scan keys must be rechecked */
 
@@ -187,6 +194,13 @@ typedef struct IndexScanDescData
 	Datum	   *xs_orderbyvals;
 	bool	   *xs_orderbynulls;
 	bool		xs_recheckorderby;
+
+	/*
+	 * An approximate limit on the amount of work, measured in pages touched,
+	 * imposed on the index scan.  The default, 0, means no limit.  Used by
+	 * selfuncs.c to bound the cost of get_actual_variable_endpoint().
+	 */
+	uint8		xs_visited_pages_limit;
 
 	/* parallel index scan information, in shared memory */
 	struct ParallelIndexScanDescData *parallel_scan;
