@@ -418,7 +418,9 @@ typedef struct TableAmRoutine
 	 * IndexFetchTableData, which the AM will typically embed in a larger
 	 * structure with additional information.
 	 *
-	 * Tuples for an index scan can then be fetched via index_fetch_tuple.
+	 * Tuples for an index scan can then be fetched via one of the 4
+	 * slot-based callbacks called through table_index_getnext_slot, or via
+	 * the lower-level index_fetch_tuple interface.
 	 */
 	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel);
 
