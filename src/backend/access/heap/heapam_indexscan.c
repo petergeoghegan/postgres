@@ -75,6 +75,9 @@ heapam_index_fetch_begin(Relation rel)
 	Assert(hscan->xs_vmbuffer == InvalidBuffer);
 	hscan->xs_vm_items = 1;
 
+	/* xs_lastinblock optimization state */
+	Assert(!hscan->xs_lastinblock);
+
 	return &hscan->xs_base;
 }
 
@@ -227,6 +230,12 @@ heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
 		/* Remember this buffer's block number for next time */
 		hscan->xs_blk = ItemPointerGetBlockNumber(tid);
 
+		/*
+		 * Drop the xs_blk pin independently held on by slot (if any) now. See
+		 * comments around ExecStorePinnedBufferHeapTuple call below.
+		 */
+		ExecClearTuple(slot);
+
 		if (BufferIsValid(hscan->xs_cbuf))
 			ReleaseBuffer(hscan->xs_cbuf);
 
@@ -263,7 +272,33 @@ heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
 		*heap_continue = !IsMVCCLikeSnapshot(snapshot);
 
 		slot->tts_tableOid = RelationGetRelid(scan->rel);
-		ExecStoreBufferHeapTuple(&bslot->base.tupdata, slot, hscan->xs_cbuf);
+
+		/*
+		 * If this is the last TID on the current heap block within the batch,
+		 * transfer our buffer pin to the slot rather than having the slot
+		 * increment the pin count.  This saves a pair of IncrBufferRefCount
+		 * and ReleaseBuffer calls, since the caller would just release its
+		 * pin on xs_cbuf when switching to the next block anyway.
+		 *
+		 * We can only do this when heap_continue is false, since otherwise
+		 * the caller will need xs_cbuf to remain valid for the next call.
+		 */
+		if (hscan->xs_lastinblock && !*heap_continue)
+		{
+			ExecStorePinnedBufferHeapTuple(&bslot->base.tupdata, slot,
+										   hscan->xs_cbuf);
+			hscan->xs_cbuf = InvalidBuffer;
+			hscan->xs_blk = InvalidBlockNumber;
+
+			/*
+			 * Note: the pin now owned by the slot is expected to be released
+			 * on the next call here, via an explicit ExecClearTuple.  This
+			 * avoids churn in the backend's private refcount cache.
+			 */
+		}
+		else
+			ExecStoreBufferHeapTuple(&bslot->base.tupdata, slot,
+									 hscan->xs_cbuf);
 	}
 	else
 	{
@@ -579,10 +614,41 @@ heapam_index_return_scanpos_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 
 	if (all_visible == NULL)
 	{
+		int			nextItem;
+		bool		hasNext;
+
 		/*
 		 * Plain index scan.
+		 *
+		 * Determine if the next item in the current scan direction is on a
+		 * different heap block.  When it is, heapam_index_fetch_tuple_impl
+		 * can transfer its buffer pin to the slot instead of incrementing the
+		 * pin count, saving a pair of IncrBufferRefCount/ReleaseBuffer calls.
+		 *
+		 * Note: We cannot do this for index-only scans because all-visible
+		 * items are skipped by both the scan and the read stream callback.
+		 * Skipped items can break the block deduplication symmetry between
+		 * the stream and the scan: the stream deduplicates consecutive
+		 * non-all-visible items by block, but after invalidating xs_blk the
+		 * scan would try to re-fetch a block that the stream already returned
+		 * and deduplicated away.
 		 */
 		Assert(!scan->xs_want_itup);
+		if (ScanDirectionIsForward(direction))
+		{
+			nextItem = scanPos->item + 1;
+			hasNext = (nextItem <= scanBatch->lastItem);
+		}
+		else
+		{
+			nextItem = scanPos->item - 1;
+			hasNext = (nextItem >= scanBatch->firstItem);
+		}
+
+		hscan->xs_lastinblock = hasNext &&
+			ItemPointerGetBlockNumber(&scanBatch->items[nextItem].tableTid) !=
+			ItemPointerGetBlockNumber(&scan->xs_heaptid);
+
 		return &scan->xs_heaptid;
 	}
 
