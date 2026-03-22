@@ -1333,7 +1333,6 @@ IndexDeletePrefetchState
 IndexDoCheckCallback
 IndexElem
 IndexFetchHeapData
-IndexFetchTableData
 IndexInfo
 IndexList
 IndexOnlyScan
