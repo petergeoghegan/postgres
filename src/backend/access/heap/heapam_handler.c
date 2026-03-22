@@ -3760,12 +3760,12 @@ static const TableAmRoutine heapam_methods = {
 	.index_fetch_end = heapam_index_fetch_end,
 	.index_batch_init = heapam_index_batch_init,
 
-	.index_fetch_tuple = heapam_index_fetch_tuple,
-
 	.index_plain_ambatch_getnext_slot = heapam_index_plain_ambatch_getnext_slot,
 	.index_only_ambatch_getnext_slot = heapam_index_only_ambatch_getnext_slot,
 	.index_plain_amgettuple_getnext_slot = heapam_index_plain_amgettuple_getnext_slot,
 	.index_only_amgettuple_getnext_slot = heapam_index_only_amgettuple_getnext_slot,
+
+	.index_fetch_tuple = heapam_index_fetch_tuple,
 
 	.tuple_insert = heapam_tuple_insert,
 	.tuple_insert_speculative = heapam_tuple_insert_speculative,
