@@ -2723,7 +2723,7 @@ ri_FastPathCheck(const RI_ConstraintInfo *riinfo,
 	idx_rel = index_open(riinfo->conindid, AccessShareLock);
 
 	slot = table_slot_create(pk_rel, NULL);
-	scandesc = index_beginscan(pk_rel, idx_rel,
+	scandesc = index_beginscan(pk_rel, idx_rel, false,
 							   snapshot, NULL,
 							   riinfo->nkeys, 0,
 							   SO_NONE);
@@ -2779,7 +2779,7 @@ ri_FastPathProbeOne(Relation pk_rel, Relation idx_rel,
 
 	index_rescan(scandesc, skey, nkeys, NULL, 0);
 
-	if (index_getnext_slot(scandesc, ForwardScanDirection, slot))
+	if (table_index_getnext_slot(scandesc, ForwardScanDirection, slot))
 	{
 		bool		concurrently_updated;
 
