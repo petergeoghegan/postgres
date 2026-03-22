@@ -395,8 +395,8 @@ bt_check_every_level(Relation rel, Relation heaprel, bool heapkeyspace,
 			 RelationGetRelationName(rel));
 
 	/*
-	 * This assertion matches the one in index_getnext_tid().  See page
-	 * recycling/"visible to everyone" notes in nbtree README.
+	 * This assertion matches the one in tableam_index_getnext_tid().  See
+	 * page recycling/"visible to everyone" notes in nbtree README.
 	 */
 	Assert(TransactionIdIsValid(RecentXmin));
 
