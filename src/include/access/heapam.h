@@ -133,6 +133,7 @@ typedef struct IndexFetchHeapData
 	/* For index-only scans that must access the visibility map */
 	Buffer		xs_vmbuffer;	/* visibility map buffer */
 	int			xs_vm_items;	/* # items to resolve visibility info for */
+	bool		xs_lastinblock; /* last TID on this block in current batch? */
 
 } IndexFetchHeapData;
 
