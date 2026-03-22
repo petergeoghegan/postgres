@@ -132,6 +132,9 @@ typedef struct IndexFetchHeapData
 
 	bool		xs_readonly;	/* scan is read-only? */
 
+	/* Plain index scan xs_lastinblock optimization */
+	bool		xs_lastinblock; /* last TID on this block in current batch? */
+
 	/* Per-tuple context for padding "name" columns during index-only scans */
 	MemoryContext xs_itup_cxt;
 } IndexFetchHeapData;
