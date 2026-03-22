@@ -436,6 +436,12 @@ extern TransactionId heap_index_delete_tuples(Relation rel,
 extern IndexFetchTableData *heapam_index_fetch_begin(Relation rel);
 extern void heapam_index_fetch_reset(IndexFetchTableData *scan);
 extern void heapam_index_fetch_end(IndexFetchTableData *scan);
+extern bool heapam_index_plain_amgettuple_getnext_slot(IndexScanDesc scan,
+													   ScanDirection direction,
+													   TupleTableSlot *slot);
+extern bool heapam_index_only_amgettuple_getnext_slot(IndexScanDesc scan,
+													  ScanDirection direction,
+													  TupleTableSlot *slot);
 extern bool heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 									 ItemPointer tid, Snapshot snapshot,
 									 TupleTableSlot *slot, bool *heap_continue,
