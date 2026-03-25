@@ -128,6 +128,7 @@ typedef struct IndexFetchHeapData
 
 	/* For visibility map checks (index-only scans and on-access pruning) */
 	Buffer		xs_vmbuffer;	/* visibility map buffer */
+	int			xs_vm_items;	/* # items to resolve visibility info for */
 
 	bool		xs_readonly;	/* scan is read-only? */
 
@@ -436,8 +437,12 @@ extern TransactionId heap_index_delete_tuples(Relation rel,
 extern bool heapam_fetch_tid(Relation rel, ItemPointer tid, Snapshot snapshot,
 							 TupleTableSlot *slot, bool *all_dead);
 extern void heapam_index_fetch_begin(IndexScanDesc scan, uint32 flags);
+extern void heapam_index_fetch_batch_init(IndexScanDesc scan,
+										  IndexScanBatch batch);
 extern void heapam_index_fetch_reset(IndexScanDesc scan);
 extern void heapam_index_fetch_end(IndexScanDesc scan);
+extern void heapam_index_fetch_markpos(IndexScanDesc scan);
+extern void heapam_index_fetch_restrpos(IndexScanDesc scan);
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 								   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
 								   bool *all_dead, bool first_call);
