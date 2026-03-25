@@ -14,6 +14,7 @@ include $(top_builddir)/src/Makefile.global
 
 OBJS = \
 	amapi.o \
+	amgetbatch.o \
 	amvalidate.o \
 	genam.o \
 	indexam.o

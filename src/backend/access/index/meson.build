@@ -2,6 +2,7 @@
 
 backend_sources += files(
   'amapi.c',
+  'amgetbatch.c',
   'amvalidate.c',
   'genam.c',
   'indexam.c',
