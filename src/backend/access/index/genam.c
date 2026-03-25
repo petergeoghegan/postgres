@@ -89,6 +89,9 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 	scan->xs_snapshot = InvalidSnapshot;	/* caller must initialize this */
 	scan->numberOfKeys = nkeys;
 	scan->numberOfOrderBys = norderbys;
+	scan->usebatchring = false; /* set later for amgetbatch callers */
+	memset(&scan->batchcache, 0, sizeof(scan->batchcache));
+	scan->xs_want_itup = false; /* caller must initialize this */
 
 	/*
 	 * We allocate key workspace here, but it won't get filled until amrescan.
@@ -101,9 +104,6 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 		scan->orderByData = palloc_array(ScanKeyData, norderbys);
 	else
 		scan->orderByData = NULL;
-
-	scan->xs_want_itup = false; /* caller must initialize this */
-	scan->xs_visited_pages_limit = 0;
 
 	/*
 	 * During recovery we ignore killed tuples and don't bother to kill them
@@ -126,6 +126,11 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 	scan->xs_itupdesc = NULL;
 	scan->xs_hitup = NULL;
 	scan->xs_hitupdesc = NULL;
+	scan->xs_visited_pages_limit = 0;
+
+	scan->batch_index_opaque_size = 0;
+	scan->batch_tuples_workspace = 0;
+	scan->batch_table_offset = 0;
 
 	return scan;
 }
