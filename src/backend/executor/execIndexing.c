@@ -815,7 +815,8 @@ check_exclusion_or_unique_constraint(Relation heap, Relation index,
 retry:
 	conflict = false;
 	found_self = false;
-	index_scan = index_beginscan(heap, index, false, &DirtySnapshot, NULL, indnkeyatts, 0);
+	index_scan = index_beginscan(heap, index, false, &DirtySnapshot, NULL,
+								 indnkeyatts, 0);
 	index_rescan(index_scan, scankeys, indnkeyatts, NULL, 0);
 
 	while (table_index_getnext_slot(index_scan, ForwardScanDirection,
