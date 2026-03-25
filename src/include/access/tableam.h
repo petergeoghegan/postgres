@@ -443,9 +443,16 @@ typedef struct TableAmRoutine
 	 * flags is a bitmask of ScanOptions affecting underlying table scan
 	 * behavior. See scan_begin() for more information on passing these.
 	 *
-	 * Tuples for an index scan can then be fetched via one of the
+	 * Tuples for an index scan can then be fetched via one of the four
 	 * slot-based callbacks called through table_index_getnext_slot, or via
 	 * the lower-level TID-based index_fetch_tuple interface.
+	 *
+	 * Callback must also initialize the generic batch_opaque_size and
+	 * batch_per_item_size fields in the returned struct, to let the core code
+	 * know how much memory will be required in the opaque table AM portions
+	 * of each batch allocation.  These are the batches used during amgetbatch
+	 * index scans, which table AMs can use to cache things like per-item
+	 * visibility information.
 	 */
 	struct IndexFetchTableData *(*index_fetch_begin) (Relation rel, uint32 flags);
 
@@ -461,13 +468,33 @@ typedef struct TableAmRoutine
 	void		(*index_fetch_end) (struct IndexFetchTableData *data);
 
 	/*
+	 * Initialize table AM's per-batch opaque area within a batch allocation.
+	 *
+	 * Called by indexam_util_batch_alloc for each new or recycled batch.
+	 * Table AMs should set up its opaque area (at a negative offset from the
+	 * batch pointer) and any trailing per-item data (e.g. visibility flags).
+	 *
+	 * 'new_alloc' is true for freshly palloc'd batches, false for batches
+	 * recycled from the cache.
+	 */
+	void		(*index_fetch_batch_init) (IndexScanDesc scan,
+										   IndexScanBatch batch,
+										   bool new_alloc);
+
+	/*
 	 * Fetch the next tuple from an index scan, scanning in the specified
 	 * direction, and return true if a tuple was found, false otherwise.
 	 *
-	 * Two variants cover {plain, index-only} index scans that use amgettuple.
-	 * index_beginscan resolves which variant to use.  Callers use
+	 * Four variants cover the {plain, index-only} x {amgetbatch, amgettuple}
+	 * matrix.  index_beginscan resolves which variant to use.  Callers use
 	 * table_index_getnext_slot(), which calls through that pointer directly.
 	 */
+	bool		(*index_plain_amgetbatch_getnext_slot) (IndexScanDesc scan,
+														ScanDirection direction,
+														TupleTableSlot *slot);
+	bool		(*index_only_amgetbatch_getnext_slot) (IndexScanDesc scan,
+													   ScanDirection direction,
+													   TupleTableSlot *slot);
 	bool		(*index_plain_amgettuple_getnext_slot) (IndexScanDesc scan,
 														ScanDirection direction,
 														TupleTableSlot *slot);
@@ -1283,6 +1310,19 @@ static inline void
 table_index_fetch_end(struct IndexFetchTableData *scan)
 {
 	scan->rel->rd_tableam->index_fetch_end(scan);
+}
+
+/*
+ * Initialize table AM's per-batch opaque area within a batch allocation.
+ *
+ * Called by indexam_util_batch_alloc for each new or recycled batch.
+ */
+static inline void
+table_index_fetch_batch_init(IndexScanDesc scan, IndexScanBatch batch,
+							 bool new_alloc)
+{
+	scan->heapRelation->rd_tableam->index_fetch_batch_init(scan, batch,
+														   new_alloc);
 }
 
 /*
