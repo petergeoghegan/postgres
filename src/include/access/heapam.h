@@ -128,9 +128,39 @@ typedef struct IndexFetchHeapData
 	Buffer		xs_cbuf;
 	BlockNumber xs_blk;
 
-	/* Current heap block's corresponding page in the visibility map */
-	Buffer		xs_vmbuffer;
+	/* For visibility map checks (index-only scans and on-access pruning) */
+	Buffer		xs_vmbuffer;	/* visibility map buffer */
+	int			xs_vm_items;	/* # items to resolve visibility info for */
+
 } IndexFetchHeapData;
+
+/*
+ * Per-batch data private to the heap table AM.
+ *
+ * Stored at a negative offset from the IndexScanBatch pointer, in the
+ * table AM opaque area of each batch allocation.
+ */
+typedef struct HeapBatchData
+{
+	uint8	   *visInfo;		/* per-item visibility flags, or NULL */
+} HeapBatchData;
+
+/*
+ * Per-item visibility flags stored in HeapBatchData.visInfo array
+ */
+#define HEAP_BATCH_VIS_CHECKED		0x01	/* checked item in VM? */
+#define HEAP_BATCH_VIS_ALL_VISIBLE	0x02	/* block is known all-visible? */
+
+/*
+ * Access the heap-private fixed-size data from the beginning of an allocated
+ * IndexScanBatch, using caller's IndexScanBatch pointer
+ */
+static inline HeapBatchData *
+heap_batch_data(IndexScanDesc scan, IndexScanBatch batch)
+{
+	/* heapam's fixed-size space is at the start of the palloc'd area */
+	return (HeapBatchData *) batch_alloc_base(scan, batch);
+}
 
 /* Result codes for HeapTupleSatisfiesVacuum */
 typedef enum
@@ -432,9 +462,18 @@ extern TransactionId heap_index_delete_tuples(Relation rel,
 extern IndexFetchTableData *heapam_index_fetch_begin(Relation rel, uint32 flags);
 extern void heapam_index_fetch_reset(IndexFetchTableData *scan);
 extern void heapam_index_fetch_end(IndexFetchTableData *scan);
+extern void heapam_index_fetch_batch_init(IndexScanDesc scan,
+										  IndexScanBatch batch,
+										  bool new_alloc);
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 								   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
 								   bool *all_dead, bool first_call);
+extern bool heapam_index_plain_amgetbatch_getnext_slot(IndexScanDesc scan,
+													   ScanDirection direction,
+													   TupleTableSlot *slot);
+extern bool heapam_index_only_amgetbatch_getnext_slot(IndexScanDesc scan,
+													  ScanDirection direction,
+													  TupleTableSlot *slot);
 extern bool heapam_index_plain_amgettuple_getnext_slot(IndexScanDesc scan,
 													   ScanDirection direction,
 													   TupleTableSlot *slot);
