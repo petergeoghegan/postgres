@@ -1,0 +1,551 @@
+/*-------------------------------------------------------------------------
+ *
+ * indexbatch.h
+ *	  Batch-based index scan infrastructure for the amgetbatch interface.
+ *
+ * This module owns all code that operates on index scan batches and on the
+ * scan's batch ring buffer: elementary ring buffer, batch memory layout, and
+ * position operations, the protocol functions used by table AMs to manage an
+ * index scan's positional state, and utilities called by index AMs that
+ * implement amgetbatch.
+ *
+ * The data structures that these functions operate on are in relscan.h, not
+ * here.  relscan.h defines the data structures; this module provides utility
+ * functions used by table AMs and index AMs to operate on those structures.
+ *
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ *
+ * src/include/access/indexbatch.h
+ *
+ *-------------------------------------------------------------------------
+ */
+#ifndef INDEXBATCH_H
+#define INDEXBATCH_H
+
+#include "access/amapi.h"
+#include "access/genam.h"
+#include "access/relscan.h"
+#include "storage/buf.h"
+#include "utils/rel.h"
+
+/* ----------------------------------------------------------------------------
+ * Elementary batch ring buffer operations
+ * ----------------------------------------------------------------------------
+ */
+
+StaticAssertDecl(INDEX_SCAN_MAX_BATCHES <= PG_INT8_MAX + 1,
+				 "index_scan_batch_loaded relies on int8 ring buffer arithmetic");
+StaticAssertDecl((INDEX_SCAN_MAX_BATCHES & (INDEX_SCAN_MAX_BATCHES - 1)) == 0,
+				 "INDEX_SCAN_MAX_BATCHES must be a power of 2");
+
+/*
+ * How many batches are currently loaded in the ring buffer?
+ */
+static inline uint8
+index_scan_batch_count(IndexScanDesc scan)
+{
+	return (uint8) (scan->batchringbuf.nextBatch -
+					scan->batchringbuf.headBatch);
+}
+
+/*
+ * Do we already have a batch loaded at 'idx' offset in scan's ring buffer?
+ *
+ * NOTE: a stale batch idx can alias a currently-loaded range due to
+ * wraparound, producing a false positive.  False negatives are not possible.
+ */
+static inline bool
+index_scan_batch_loaded(IndexScanDesc scan, uint8 idx)
+{
+	return (int8) (idx - scan->batchringbuf.headBatch) >= 0 &&
+		(int8) (idx - scan->batchringbuf.nextBatch) < 0;
+}
+
+/*
+ * Have we loaded the maximum number of batches?
+ */
+static inline bool
+index_scan_batch_full(IndexScanDesc scan)
+{
+	return index_scan_batch_count(scan) == INDEX_SCAN_MAX_BATCHES;
+}
+
+/*
+ * Return batch for the provided index.
+ */
+static inline IndexScanBatch
+index_scan_batch(IndexScanDesc scan, uint8 idx)
+{
+	Assert(index_scan_batch_loaded(scan, idx));
+
+	return scan->batchbuf[idx & (INDEX_SCAN_MAX_BATCHES - 1)];
+}
+
+/*
+ * Append given batch to scan's batch ring buffer.
+ */
+static inline void
+index_scan_batch_append(IndexScanDesc scan, IndexScanBatch batch)
+{
+	BatchRingBuffer *ringbuf = &scan->batchringbuf;
+	uint8		nextBatch = ringbuf->nextBatch;
+
+	Assert(!index_scan_batch_full(scan));
+
+	scan->batchbuf[nextBatch & (INDEX_SCAN_MAX_BATCHES - 1)] = batch;
+	ringbuf->nextBatch++;
+}
+
+/* ----------------------------------------------------------------------------
+ * Batch memory layout accessors
+ *
+ * Each batch allocation has the following memory layout:
+ *
+ *   [table AM opaque area]    <- allocation base, at -(batch_base_offset)
+ *   [table AM per-item area]  <- supplemental flexible array per-item data
+ *   [index AM static opaque]  <- at -(batch_index_opaque_static)
+ *   [IndexScanBatchData]      <- batch pointer, returned by amgetbatch
+ *   [items[maxitemsbatch]]
+ *   [currTuples workspace]    <- index AM stores index tuples here for
+ *                                index-only scans (batch_tuples_workspace)
+ *
+ * batch_base_offset combines the table AM opaque area (its fixed-size header
+ * plus its per-item area), and the static index AM opaque area into a single
+ * offset from the batch pointer to the true allocation base.  The
+ * indexbatch.c utilities pfree a batch by passing pfree a pointer returned by
+ * index_scan_batch_base.  We rely on the assumption that batches have a fixed
+ * layout for the duration of an index scan (batches are cached for reuse to
+ * avoid palloc churn).
+ *
+ * The table AM accesses its opaque area using the index_scan_batch_table_area
+ * shim accessor.  The area is a single contiguous block: a fixed-size header
+ * (sized batch_opaque_size, possibly zero) immediately followed by a per-item
+ * area (sized maxitemsbatch * batch_per_item_size, which can also be zero).
+ * This lets the table AM describe the whole area with a single C struct that
+ * has a flexible array member for its per-item data.  The table AM's
+ * table_index_scan_begin callback is permitted to vary the layout of its
+ * opaque area as it sees fit, often based on the requirements of one
+ * particular scan (e.g., heapam index-only scans use it to cache visibility
+ * information, whereas heapam requires no private area during plain scans).
+ * Bitmap scans involving an amgetbitmap routine that finds it convenient to
+ * reuse batch infrastructure internally never get a table AM opaque area.
+ *
+ * An index AM gets a mandatory static area (batch_index_opaque_static), which
+ * has a size known at compile time -- MAXALIGN(sizeof(the AM's struct)) --
+ * and is accessed via index_scan_batch_index_opaque_static at that fixed
+ * offset.  This is more efficient but less flexible than the table AM scheme:
+ * every index AM uses the same generic fixed-size header.
+ * ----------------------------------------------------------------------------
+ */
+
+/*
+ * Return the true allocation base of a batch (used to pfree batches)
+ */
+static inline void *
+index_scan_batch_base(IndexScanDesc scan, IndexScanBatch batch)
+{
+	Assert(scan->batch_base_offset > 0);
+
+	return (char *) batch - scan->batch_base_offset;
+}
+
+/*
+ * Return a pointer to the table AM opaque area.
+ *
+ * This area starts with the table AM's fixed-size header (sized
+ * batch_opaque_size, which may be zero) and is immediately followed by its
+ * per-item area.
+ */
+static inline void *
+index_scan_batch_table_area(IndexScanDesc scan, IndexScanBatch batch)
+{
+	/*
+	 * The table AM opaque area is always at the beginning of the batch's
+	 * allocated space
+	 */
+	return index_scan_batch_base(scan, batch);
+}
+
+/*
+ * Return a typed pointer to the index AM's static (compile-time sized) opaque
+ * area, which sits immediately before the batch pointer.  Index AMs use their
+ * own wrapper function-style macro, built on top of this.
+ */
+#define index_scan_batch_index_opaque_static(scan, batch, type) \
+	(AssertMacro((scan)->batch_index_opaque_static == MAXALIGN(sizeof(type))), \
+	 ((type *) ((char *) (batch) - MAXALIGN(sizeof(type)))))
+
+/* ----------------------------------------------------------------------------
+ * Elementary batch position operations
+ * ----------------------------------------------------------------------------
+ */
+
+/*
+ * Advance position to its next item in the batch.
+ *
+ * Advance to the next item within the provided batch (or to the previous item,
+ * when scanning backwards).
+ *
+ * Returns true if the position could be advanced.  Returns false when there
+ * are no more items from the batch remaining in the given scan direction.
+ */
+static inline bool
+index_scan_pos_advance(ScanDirection direction,
+					   IndexScanBatch batch, BatchRingItemPos *pos)
+{
+	/*
+	 * On entry, pos->item must be valid, and must actually point to a valid
+	 * item for this batch.  There is exactly one exception: pos->item may
+	 * initially sit one step outside the batch when caller just flipped its
+	 * scan direction.  pos->item will point to a valid item once we return
+	 * (we _must_ return true when passed a just-stepped-off-batch position).
+	 *
+	 * This precondition ensures that callers actually step to the next batch
+	 * when indicated (or flip the scan direction instead, which can happen
+	 * right after a cursor tries to step off the final batch in the given
+	 * scan direction).  Table AMs must avoid ambiguous positional states.
+	 */
+	Assert(pos->valid);
+
+	if (ScanDirectionIsForward(direction))
+	{
+		/* Precondition: valid-or-just-before-start item position */
+		Assert(pos->item >= batch->firstItem - 1);
+		Assert(pos->item <= batch->lastItem);
+
+		if (++pos->item > batch->lastItem)
+			return false;
+	}
+	else						/* ScanDirectionIsBackward */
+	{
+		/* Precondition: valid-or-just-past-end item position */
+		Assert(pos->item >= batch->firstItem);
+		Assert(pos->item <= batch->lastItem + 1);
+
+		if (--pos->item < batch->firstItem)
+			return false;
+	}
+
+	/* Advanced within batch */
+	return true;
+}
+
+/*
+ * Position pos at the start of newBatch (in the given scan direction).
+ *
+ * When we're called, pos should point to a batch that caller just finished
+ * consuming from (or be invalid, when no batch has been loaded for caller's
+ * scan yet).  When we return, pos will point to newBatch, the next batch from
+ * the ring buffer.  We'll have also set pos's item offset to newBatch's
+ * initial item in the given direction (the first item when scanning forwards,
+ * the last item when scanning backwards).
+ *
+ * newBatch doesn't have to be (and often isn't) the most recently appended
+ * batch in the scan's ring buffer.  It is merely the next batch in line to be
+ * consumed from the point of view of our caller.
+ */
+static inline void
+index_scan_pos_startbatch(ScanDirection direction,
+						  IndexScanBatch newBatch, BatchRingItemPos *pos)
+{
+	Assert(newBatch->dir == direction);
+	Assert(newBatch->firstItem <= newBatch->lastItem);
+
+	/* Increment batch (might wrap), or initialize it to zero */
+	if (pos->valid)
+		pos->batch++;
+	else
+		pos->batch = 0;
+
+	pos->valid = true;
+
+	if (ScanDirectionIsForward(direction))
+		pos->item = newBatch->firstItem;
+	else
+		pos->item = newBatch->lastItem;
+}
+
+/* ----------------------------------------------------------------------------
+ * Utilities called by table AMs
+ * ----------------------------------------------------------------------------
+ */
+
+/*
+ * Sets up the batch ring buffer structure for use by an index scan.
+ *
+ * Called from table AM's index_scan_begin callback during amgetbatch scans.
+ */
+static inline void
+tableam_util_batchscan_init(IndexScanDesc scan)
+{
+	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
+
+	scan->batchringbuf.scanPos.valid = false;
+	scan->batchringbuf.markPos.valid = false;
+
+	scan->batchringbuf.markBatch = NULL;
+	scan->batchringbuf.headBatch = 0;
+	scan->batchringbuf.nextBatch = 0;
+
+	scan->usebatchring = true;
+}
+
+extern void tableam_util_batchscan_reset(IndexScanDesc scan, bool endscan);
+extern void tableam_util_batchscan_end(IndexScanDesc scan);
+extern void tableam_util_batchscan_mark_pos(IndexScanDesc scan);
+extern void tableam_util_batchscan_restore_pos(IndexScanDesc scan);
+extern void tableam_util_scanbatch_dirchange(IndexScanDesc scan);
+extern void tableam_util_scanpos_killitem(IndexScanDesc scan);
+extern void tableam_util_release_batch(IndexScanDesc scan, IndexScanBatch batch);
+extern void tableam_util_unguard_batch(IndexScanDesc scan, IndexScanBatch batch);
+
+/*
+ * Try to advance the scan's scanPos to the next matching item from the
+ * scan's existing scanBatch, moving in the given scan direction.
+ *
+ * Sets *scanBatch to the ring buffer's existing scanBatch, or to NULL when no
+ * batch has been loaded yet (the first call here for the entire scan).
+ *
+ * Returns true when scanPos was advanced, in which case the scan should
+ * process the item that scanPos now points to.  Returns false when there are
+ * no more matching items remaining in scanBatch (or when no scanBatch has
+ * been loaded yet).  Caller responds to a false return by passing *scanBatch
+ * to tableam_util_fetch_next_batch as its priorBatch argument, advancing the
+ * scan to its next batch.
+ */
+static pg_attribute_always_inline bool
+tableam_util_scanpos_advance(IndexScanDesc scan, ScanDirection direction,
+							 IndexScanBatch *scanBatch, BatchRingItemPos *scanPos)
+{
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
+
+	if (!scanPos->valid)
+	{
+		/* First call here for the entire scan */
+		Assert(index_scan_batch_count(scan) == 0);
+
+		*scanBatch = NULL;
+		return false;
+	}
+
+	/*
+	 * scanPos is valid, so scanBatch must already be loaded in batch ring
+	 * buffer.  We rely on that here.
+	 */
+	pg_assume(batchringbuf->headBatch == scanPos->batch);
+
+	*scanBatch = index_scan_batch(scan, scanPos->batch);
+
+	return index_scan_pos_advance(direction, *scanBatch, scanPos);
+}
+
+/*
+ * Fetch the next batch of matching items for the scan (or the first).
+ *
+ * Called when caller's current batch (passed to us as priorBatch) has no more
+ * matching items in the given scan direction.  Caller passes a NULL
+ * priorBatch on the first call here for the scan.
+ *
+ * Returns the next batch to be processed by caller in the given scan
+ * direction, or NULL when there are no more matches in that direction.
+ *
+ * Note: a NULL return generally leaves the scan with a valid scanPos.  The
+ * scan might still back up in the other direction, or restore a saved mark
+ * (tableam_util_batchscan_restore_pos requires the scan to have both a valid
+ * scanPos and valid markPos).
+ *
+ * This is where batches are appended to the scan's ring buffer.  We don't
+ * free any batches here, though; that is a separate step (callers shouldn't
+ * free a batch until they're definitely done with it, which is completely
+ * independent of needing the next batch in line).  The caller is responsible
+ * for advancing their own position.
+ */
+static pg_attribute_always_inline IndexScanBatch
+tableam_util_fetch_next_batch(IndexScanDesc scan, ScanDirection direction,
+							  IndexScanBatch priorBatch, BatchRingItemPos *pos)
+{
+	IndexScanBatch batch = NULL;
+	BatchRingBuffer *batchringbuf PG_USED_FOR_ASSERTS_ONLY = &scan->batchringbuf;
+
+	Assert(scan->usebatchring);
+
+	if (!priorBatch)
+	{
+		/* First call for the scan */
+		Assert(pos == &batchringbuf->scanPos);
+	}
+	else if (unlikely(priorBatch->dir != direction))
+	{
+		/*
+		 * We detected a change in scan direction across batches.  Prepare
+		 * scan's batchringbuf state for us to get the next batch for the
+		 * opposite scan direction to the one used when priorBatch was
+		 * returned by amgetbatch.
+		 */
+		tableam_util_scanbatch_dirchange(scan);
+
+		/* priorBatch is now batchringbuf's only batch */
+		Assert(pos->batch == batchringbuf->headBatch);
+		Assert(index_scan_batch_count(scan) == 1);
+	}
+	else if (index_scan_batch_loaded(scan, pos->batch + 1))
+	{
+		/* Next batch already loaded for us */
+		batch = index_scan_batch(scan, pos->batch + 1);
+
+		Assert(priorBatch->dir == direction);
+		Assert(batch->dir == direction);
+		Assert(batch->firstItem <= batch->lastItem);
+		return batch;
+	}
+
+	/*
+	 * Assert preconditions for calling amgetbatch.
+	 *
+	 * priorBatch had better be for the last valid batch currently in the ring
+	 * buffer (batches must stay in scan order).  If it isn't then we should
+	 * have already returned some existing loaded batch earlier.
+	 */
+	Assert(!index_scan_batch_full(scan));
+	Assert(!priorBatch ||
+		   (index_scan_batch_count(scan) > 0 && priorBatch->dir == direction &&
+			index_scan_batch(scan, batchringbuf->nextBatch - 1) == priorBatch));
+
+	/*
+	 * Before we call amgetbatch again, check if priorBatch is already known
+	 * to be the last batch with matching items in this scan direction
+	 */
+	if (priorBatch &&
+		(ScanDirectionIsForward(direction) ?
+		 priorBatch->knownEndForward :
+		 priorBatch->knownEndBackward))
+		return NULL;
+
+	batch = scan->indexRelation->rd_indam->amgetbatch(scan, priorBatch,
+													  direction);
+	if (batch)
+	{
+		/* We got the batch from the index AM */
+		Assert(batch->dir == direction);
+		Assert(batch->firstItem <= batch->lastItem);
+
+		/* Append batch to the end of ring buffer/write it to buffer index */
+		index_scan_batch_append(scan, batch);
+
+		/*
+		 * Theoretically we should set knownEndForward/knownEndBackward to
+		 * false (whichever is used when moving in the opposite direction)
+		 * when this is the scan's first returned batch.  We don't bother
+		 * because the index AM should always record that fact in its own
+		 * opaque area.  (These fields only exist because we don't want index
+		 * AMs setting _any_ field from any priorbatch that we pass to them.
+		 * Besides, it would be cumbersome for index AMs to keep track of
+		 * which batch is the current amgetbatch call's original priorbatch.)
+		 */
+	}
+	else
+	{
+		/* amgetbatch returned NULL */
+		if (priorBatch)
+		{
+			/*
+			 * There are no further matches to be found in the current scan
+			 * direction, following priorBatch.  Remember that priorBatch is
+			 * the last batch with matching items.
+			 */
+			if (ScanDirectionIsForward(direction))
+				priorBatch->knownEndForward = true;
+			else
+				priorBatch->knownEndBackward = true;
+		}
+	}
+
+	return batch;
+}
+
+/*
+ * Position scanPos at the start of newScanBatch (in the given scan
+ * direction), and remove the scan's old scanBatch from the ring buffer.
+ *
+ * Called after tableam_util_fetch_next_batch returns newScanBatch, the next
+ * batch that scanPos will consume matching items from.  We release the
+ * now-obsolescent old scanBatch (the ring buffer's head batch), freeing up
+ * its ring buffer slot.  (When newScanBatch is the scan's first batch, there
+ * is no old scanBatch for us to release.)
+ */
+static pg_attribute_always_inline void
+tableam_util_scanpos_nextbatch(IndexScanDesc scan, ScanDirection direction,
+							   IndexScanBatch newScanBatch)
+{
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
+	BatchRingItemPos *scanPos = &batchringbuf->scanPos;
+	bool		releaseOldHeadBatch = scanPos->valid;
+	IndexScanBatch headBatch;
+
+	/* Position scanPos to the start of new scanBatch */
+	index_scan_pos_startbatch(direction, newScanBatch, scanPos);
+	Assert(index_scan_batch(scan, scanPos->batch) == newScanBatch);
+
+	if (!releaseOldHeadBatch)
+	{
+		/* newScanBatch is the scan's first and only batch */
+		Assert(batchringbuf->headBatch == scanPos->batch);
+		return;
+	}
+
+	headBatch = index_scan_batch(scan, batchringbuf->headBatch);
+
+	Assert(headBatch != newScanBatch);
+	Assert(batchringbuf->headBatch != scanPos->batch);
+
+	/* free obsolescent head batch (unless it is scan's markBatch) */
+	tableam_util_release_batch(scan, headBatch);
+
+	/* Remove the batch from the ring buffer (even if it's markBatch) */
+	batchringbuf->headBatch++;
+
+	/* Postconditions for having freed up a ring buffer slot */
+	Assert(!index_scan_batch_full(scan));
+	Assert(batchringbuf->headBatch == scanPos->batch);
+}
+
+/*
+ * Fetch the next matching TID for the scan (or the first).
+ *
+ * This is the amgettuple equivalent of tableam_util_fetch_next_batch.
+ *
+ * There is no batch-like state for us to manage (typically that's up to the
+ * index AM when it implements amgettuple).
+ */
+static pg_attribute_always_inline ItemPointer
+tableam_util_fetch_next_tuple_tid(IndexScanDesc scan, ScanDirection direction)
+{
+	bool		found;
+
+	Assert(!scan->usebatchring);
+
+	found = scan->indexRelation->rd_indam->amgettuple(scan, direction);
+
+	/* Reset kill flag immediately for safety */
+	scan->kill_prior_tuple = false;
+	Assert(!scan->xs_heap_continue);
+
+	/* If we're out of index entries, we're done */
+	if (!found)
+		return NULL;
+
+	/* Return the TID of the tuple we found */
+	return &scan->xs_heaptid;
+}
+
+/* ----------------------------------------------------------------------------
+ * Utilities called by index AMs
+ * ----------------------------------------------------------------------------
+ */
+extern void indexam_util_unlock_batch(IndexScanDesc scan, IndexScanBatch batch,
+									  Buffer buf);
+extern IndexScanBatch indexam_util_alloc_batch(IndexScanDesc scan);
+extern void indexam_util_release_batch(IndexScanDesc scan, IndexScanBatch batch);
+
+#endif							/* INDEXBATCH_H */
