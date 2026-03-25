@@ -869,7 +869,7 @@ ExecIndexMarkPos(IndexScanState *node)
 		}
 	}
 
-	index_markpos(node->iss_ScanDesc);
+	table_index_fetch_markpos(node->iss_ScanDesc);
 }
 
 /* ----------------------------------------------------------------
@@ -898,7 +898,7 @@ ExecIndexRestrPos(IndexScanState *node)
 		}
 	}
 
-	index_restrpos(node->iss_ScanDesc);
+	table_index_fetch_restrpos(node->iss_ScanDesc);
 }
 
 /* ----------------------------------------------------------------

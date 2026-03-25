@@ -16,12 +16,32 @@
 
 #include "access/amapi.h"
 #include "access/heapam.h"
+#include "access/indexbatch.h"
 #include "access/relscan.h"
 #include "access/visibilitymap.h"
 #include "storage/predicate.h"
 #include "utils/pgstat_internal.h"
 
 
+/*
+ * The heap table AM's per-batch opaque area is simply an array of per-item
+ * visibility flags, with one uint8 entry per batch item.  There is no heapam
+ * generic fixed-size batch header, and we only request a per-item area during
+ * index-only scans.  This means that batches will only contain any kind of
+ * opaque area during index-only scans, where it is used to store a cache of
+ * visibility information that is populated using the visibility map.
+ *
+ * Per-item batchvis[] flags, stored in batch's per-item table AM opaque area:
+ */
+#define BATCH_CHECKED_VIS	0x01	/* item's info already determined? */
+#define BATCH_ALL_VIS		0x02	/* item is known all-visible? */
+
+static bool heapam_index_plain_batch_getnext_slot(IndexScanDesc scan,
+												  ScanDirection direction,
+												  TupleTableSlot *slot);
+static bool heapam_index_only_batch_getnext_slot(IndexScanDesc scan,
+												 ScanDirection direction,
+												 TupleTableSlot *slot);
 static bool heapam_index_plain_tuple_getnext_slot(IndexScanDesc scan,
 												  ScanDirection direction,
 												  TupleTableSlot *slot);
@@ -31,11 +51,28 @@ static bool heapam_index_only_tuple_getnext_slot(IndexScanDesc scan,
 static pg_attribute_always_inline bool heapam_index_getnext_slot(IndexScanDesc scan,
 																 ScanDirection direction,
 																 TupleTableSlot *slot,
-																 bool index_only);
+																 bool index_only,
+																 bool amgetbatch);
 static pg_attribute_always_inline bool heapam_index_heap_fetch(IndexScanDesc scan,
 															   IndexFetchHeapData *hscan,
 															   TupleTableSlot *slot,
-															   bool *heap_continue);
+															   bool *heap_continue,
+															   bool amgetbatch);
+static pg_attribute_always_inline ItemPointer heapam_index_getnext_scanbatch_pos(IndexScanDesc scan,
+																				 IndexFetchHeapData *hscan,
+																				 ScanDirection direction,
+																				 bool *all_visible);
+static inline ItemPointer heapam_index_return_scanpos_tid(IndexScanDesc scan,
+														  IndexFetchHeapData *hscan,
+														  ScanDirection direction,
+														  IndexScanBatch scanBatch,
+														  BatchRingItemPos *scanPos,
+														  bool *all_visible);
+static void heapam_index_batch_pos_visibility(IndexScanDesc scan,
+											  ScanDirection direction,
+											  IndexScanBatch batch,
+											  uint8 *batchvis,
+											  BatchRingItemPos *pos);
 
 /*
  * Simple, single-shot TID lookup for constraint enforcement code (unique
@@ -85,29 +122,88 @@ heapam_index_fetch_begin(IndexScanDesc scan, uint32 flags)
 {
 	IndexFetchHeapData *hscan = palloc0_object(IndexFetchHeapData);
 
-	hscan->xs_cbuf = InvalidBuffer;
+	/* heapam stores no fixed-size opaque header, no matter the scan type */
+	scan->batch_opaque_size = 0;
+	/* per-item opaque area size is set below as required */
+	scan->batch_per_item_size = 0;	/* for now */
+
+	/* Current heap block state */
+	Assert(hscan->xs_cbuf == InvalidBuffer);
 	hscan->xs_blk = InvalidBlockNumber;
-	hscan->xs_vmbuffer = InvalidBuffer;
+
+	/* VM related state */
+	Assert(hscan->xs_vmbuffer == InvalidBuffer);
+	hscan->xs_vm_items = 1;
 
 	/* Remember if scan is read-only */
 	hscan->xs_readonly = (flags & SO_HINT_REL_READ_ONLY) != 0;
 
-	/* Resolve which getnext_slot implementation to use for this scan */
-	if (scan->xs_want_itup)
-		scan->xs_getnext_slot = heapam_index_only_tuple_getnext_slot;
+	/* Resolve which xs_getnext_slot implementation to use for this scan */
+	if (scan->indexRelation->rd_indam->amgetbatch != NULL)
+	{
+		/* amgetbatch index AM */
+		if (scan->xs_want_itup)
+		{
+			scan->xs_getnext_slot = heapam_index_only_batch_getnext_slot;
+
+			/* per-item batchvis[] element size for index-only scans */
+			scan->batch_per_item_size = sizeof(uint8);
+		}
+		else
+			scan->xs_getnext_slot = heapam_index_plain_batch_getnext_slot;
+
+		/* Set up scan's batch ring buffer in passing */
+		tableam_util_batchscan_init(scan);
+	}
 	else
-		scan->xs_getnext_slot = heapam_index_plain_tuple_getnext_slot;
+	{
+		/* amgettuple index AM */
+		if (scan->xs_want_itup)
+			scan->xs_getnext_slot = heapam_index_only_tuple_getnext_slot;
+		else
+			scan->xs_getnext_slot = heapam_index_plain_tuple_getnext_slot;
+	}
 
 	/* Expose heapam's private fetch state through the scan's opaque pointer */
 	scan->xs_heapfetch = hscan;
 }
 
+/*
+ * Initialize the heap table AM's per-batch opaque area
+ */
+void
+heapam_index_fetch_batch_init(IndexScanDesc scan, IndexScanBatch batch)
+{
+	uint8	   *batchvis;
+
+	/*
+	 * The core code should only call during index-only scans.  There is no
+	 * generic fixed-size table AM header at all, and plain scans don't
+	 * request a per-item batchvis[] area.
+	 */
+	Assert(scan->xs_want_itup && scan->usebatchring);
+
+	/* Clear batchvis[] to make it safe to use/recycle batch */
+	batchvis = index_scan_batch_table_area(scan, batch);
+	memset(batchvis, 0, scan->maxitemsbatch * sizeof(uint8));
+}
+
+/*
+ * Reset table AM index scan state in preparation for a rescan
+ */
 void
 heapam_index_fetch_reset(IndexScanDesc scan)
 {
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
+
+	/* Rescans should avoid an excessive number of VM lookups */
+	hscan->xs_vm_items = 1;
+
+	/* Reset batch ring buffer state */
+	if (scan->usebatchring)
+		tableam_util_batchscan_reset(scan, false);
+
 	/*
-	 * Resets are a no-op.
-	 *
 	 * Deliberately avoid dropping pins now held in xs_cbuf and xs_vmbuffer.
 	 * This saves cycles during certain tight nested loop joins (it can avoid
 	 * repeated pinning and unpinning of the same buffer across rescans).
@@ -127,7 +223,33 @@ heapam_index_fetch_end(IndexScanDesc scan)
 	if (BufferIsValid(hscan->xs_vmbuffer))
 		ReleaseBuffer(hscan->xs_vmbuffer);
 
+	/* Free all batch related resources */
+	if (scan->usebatchring)
+		tableam_util_batchscan_end(scan);
+
 	pfree(hscan);
+}
+
+/*
+ * Save batch ring buffer's current scanPos as its markPos
+ */
+void
+heapam_index_fetch_markpos(IndexScanDesc scan)
+{
+	Assert(scan->usebatchring);
+
+	tableam_util_batchscan_mark_pos(scan);
+}
+
+/*
+ * Restore batch ring buffer's markPos into its scanPos
+ */
+void
+heapam_index_fetch_restrpos(IndexScanDesc scan)
+{
+	Assert(scan->usebatchring);
+
+	tableam_util_batchscan_restore_pos(scan);
 }
 
 /*
@@ -292,16 +414,40 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	return false;
 }
 
+/* xs_getnext_slot callback: amgetbatch, plain index scan */
+static pg_attribute_hot bool
+heapam_index_plain_batch_getnext_slot(IndexScanDesc scan,
+									  ScanDirection direction,
+									  TupleTableSlot *slot)
+{
+	Assert(!scan->xs_want_itup && scan->usebatchring);
+	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
+
+	return heapam_index_getnext_slot(scan, direction, slot, false, true);
+}
+
+/* xs_getnext_slot callback: amgetbatch, index-only scan */
+static pg_attribute_hot bool
+heapam_index_only_batch_getnext_slot(IndexScanDesc scan,
+									 ScanDirection direction,
+									 TupleTableSlot *slot)
+{
+	Assert(scan->xs_want_itup && scan->usebatchring);
+	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
+
+	return heapam_index_getnext_slot(scan, direction, slot, true, true);
+}
+
 /* xs_getnext_slot callback: amgettuple, plain index scan */
 static pg_attribute_hot bool
 heapam_index_plain_tuple_getnext_slot(IndexScanDesc scan,
 									  ScanDirection direction,
 									  TupleTableSlot *slot)
 {
-	Assert(!scan->xs_want_itup);
+	Assert(!scan->xs_want_itup && !scan->usebatchring);
 	Assert(scan->indexRelation->rd_indam->amgettuple != NULL);
 
-	return heapam_index_getnext_slot(scan, direction, slot, false);
+	return heapam_index_getnext_slot(scan, direction, slot, false, false);
 }
 
 /* xs_getnext_slot callback: amgettuple, index-only scan */
@@ -310,14 +456,14 @@ heapam_index_only_tuple_getnext_slot(IndexScanDesc scan,
 									 ScanDirection direction,
 									 TupleTableSlot *slot)
 {
-	Assert(scan->xs_want_itup);
+	Assert(scan->xs_want_itup && !scan->usebatchring);
 	Assert(scan->indexRelation->rd_indam->amgettuple != NULL);
 
-	return heapam_index_getnext_slot(scan, direction, slot, true);
+	return heapam_index_getnext_slot(scan, direction, slot, true, false);
 }
 
 /*
- * Common implementation for both heapam_index_*_getnext_slot variants.
+ * Common implementation for all four heapam_index_*_getnext_slot variants.
  *
  * The result is true if a tuple satisfying the scan keys and the snapshot was
  * found, false otherwise.  For plain index scans the tuple is stored in the
@@ -328,12 +474,13 @@ heapam_index_only_tuple_getnext_slot(IndexScanDesc scan,
  * dropped by a future call here (or by a later call to heapam_index_fetch_end
  * through index_endscan).
  *
- * The index_only parameter is a compile-time constant at each call site,
- * allowing the compiler to specialize the code for each variant.
+ * The index_only and amgetbatch parameters are compile-time constants at each
+ * call site, allowing the compiler to specialize the code for each variant.
  */
 static pg_attribute_always_inline bool
 heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
-						  TupleTableSlot *slot, bool index_only)
+						  TupleTableSlot *slot, bool index_only,
+						  bool amgetbatch)
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	bool	   *heap_continue = &scan->xs_heap_continue;
@@ -342,19 +489,29 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 	uint8		n_visited_pages = 0;
 	ItemPointer tid = NULL;
 
+	Assert(TransactionIdIsValid(RecentXmin));
+
 	for (;;)
 	{
 		if (!*heap_continue)
 		{
 			/* Get the next TID from the index */
-			tid = index_getnext_tid(scan, direction);
+			if (amgetbatch)
+				tid = heapam_index_getnext_scanbatch_pos(scan, hscan,
+														 direction,
+														 index_only ?
+														 &all_visible : NULL);
+			else
+				tid = tableam_util_fetch_next_tuple_tid(scan, direction);
 
 			/* If we're out of index entries, we're done */
 			if (tid == NULL)
 				break;
 
-			/* For index-only scans, check the visibility map */
-			if (index_only)
+			pgstat_count_index_tuples(scan->indexRelation, 1);
+
+			/* For non-batch index-only scans, check the visibility map */
+			if (index_only && !amgetbatch)
 				all_visible = VM_ALL_VISIBLE(scan->heapRelation,
 											 ItemPointerGetBlockNumber(tid),
 											 &hscan->xs_vmbuffer);
@@ -379,7 +536,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 					scan->instrument->ntabletuplefetches++;
 
 				if (!heapam_index_heap_fetch(scan, hscan, slot,
-											 heap_continue))
+											 heap_continue, amgetbatch))
 				{
 					/*
 					 * No visible tuple.  If caller set a visited-pages limit
@@ -411,7 +568,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 				 * want us to assume that just having one visible tuple in the
 				 * hot chain is always good enough.
 				 */
-				Assert(!(*heap_continue && IsMVCCSnapshot(scan->xs_snapshot)));
+				Assert(!(*heap_continue && scan->MVCCScan));
 			}
 			else
 			{
@@ -439,7 +596,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 * next TID from the index.
 			 */
 			if (heapam_index_heap_fetch(scan, hscan, slot,
-										heap_continue))
+										heap_continue, amgetbatch))
 				return true;
 		}
 	}
@@ -461,7 +618,8 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
  */
 static pg_attribute_always_inline bool
 heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
-						TupleTableSlot *slot, bool *heap_continue)
+						TupleTableSlot *slot, bool *heap_continue,
+						bool amgetbatch)
 {
 	Relation	rel = scan->heapRelation;
 	ItemPointer tid = &scan->xs_heaptid;
@@ -533,13 +691,331 @@ heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
 	 */
 	if (!scan->xactStartedInRecovery)
 	{
-		/*
-		 * Tell amgettuple-based index AM to kill its entry for that TID.
-		 * Next tableam_util_fetch_next_tuple_tid call will tell index AM to
-		 * kill the tuple it just returned to us -- the "prior" tuple.
-		 */
-		scan->kill_prior_tuple = all_dead;
+		if (amgetbatch)
+		{
+			if (all_dead)
+				tableam_util_scanpos_killitem(scan);
+		}
+		else
+		{
+			/*
+			 * Tell amgettuple-based index AM to kill its entry for that TID.
+			 * Next tableam_util_fetch_next_tuple_tid call will tell index AM
+			 * to kill the tuple it just returned to us -- the "prior" tuple.
+			 */
+			scan->kill_prior_tuple = all_dead;
+		}
 	}
 
 	return got_heap_tuple;
+}
+
+/*
+ * Get next TID from batch ring buffer, moving in the given scan direction.
+ * Also sets *all_visible for item when caller passes a non-NULL arg.
+ */
+static pg_attribute_always_inline ItemPointer
+heapam_index_getnext_scanbatch_pos(IndexScanDesc scan, IndexFetchHeapData *hscan,
+								   ScanDirection direction, bool *all_visible)
+{
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
+	BatchRingItemPos *scanPos = &batchringbuf->scanPos;
+	IndexScanBatch scanBatch = NULL;
+	bool		hadExistingScanBatch;
+
+	Assert(!scanPos->valid || batchringbuf->headBatch == scanPos->batch);
+	Assert(scanPos->valid || index_scan_batch_count(scan) == 0);
+	Assert(all_visible == NULL || scan->xs_want_itup);
+
+	/*
+	 * Check if there's an existing loaded scanBatch for us to return the next
+	 * matching item's TID/index tuple from
+	 */
+	hadExistingScanBatch = scanPos->valid;
+	if (scanPos->valid)
+	{
+		/*
+		 * scanPos is valid, so scanBatch must already be loaded in batch ring
+		 * buffer.  We rely on that here.
+		 */
+		pg_assume(batchringbuf->headBatch == scanPos->batch);
+
+		scanBatch = index_scan_batch(scan, scanPos->batch);
+
+		if (index_scan_pos_advance(direction, scanBatch, scanPos))
+			return heapam_index_return_scanpos_tid(scan, hscan, direction,
+												   scanBatch, scanPos,
+												   all_visible);
+	}
+
+	/*
+	 * Either ran out of items from our existing scanBatch, or it hasn't been
+	 * loaded yet (because this is the first call here for the entire scan).
+	 * Try to advance scanBatch to the next batch (or get the first batch).
+	 */
+	scanBatch = tableam_util_fetch_next_batch(scan, direction,
+											  scanBatch, scanPos);
+
+	if (!scanBatch)
+	{
+		/*
+		 * We're done; no more batches in the current scan direction.
+		 *
+		 * Note: scanPos is generally still valid at this point.  The scan
+		 * might still back up in the other direction, or restore a saved mark
+		 * (tableam_util_batchscan_restore_pos requires the scan to have both
+		 * a valid scanPos and valid markPos).
+		 */
+		return NULL;
+	}
+
+	/*
+	 * Advanced scanBatch.  Now position scanPos to the start of new
+	 * scanBatch.
+	 */
+	index_scan_pos_nextbatch(direction, scanBatch, scanPos);
+	Assert(index_scan_batch(scan, scanPos->batch) == scanBatch);
+
+	/*
+	 * Remove the head batch from the batch ring buffer (except when this new
+	 * scanBatch is our only one)
+	 */
+	if (hadExistingScanBatch)
+	{
+		IndexScanBatch headBatch = index_scan_batch(scan,
+													batchringbuf->headBatch);
+
+		Assert(headBatch != scanBatch);
+		Assert(batchringbuf->headBatch != scanPos->batch);
+
+		/* free obsolescent head batch (unless it is scan's markBatch) */
+		tableam_util_release_batch(scan, headBatch);
+
+		/* Remove the batch from the ring buffer (even if it's markBatch) */
+		batchringbuf->headBatch++;
+	}
+
+	/* In practice scanBatch will always be the ring buffer's headBatch */
+	Assert(batchringbuf->headBatch == scanPos->batch);
+
+	return heapam_index_return_scanpos_tid(scan, hscan, direction,
+										   scanBatch, scanPos, all_visible);
+}
+
+/*
+ * Save the current scanPos/scanBatch item's TID in scan's xs_heaptid, and
+ * return a pointer to that TID.  When all_visible isn't NULL (during an
+ * index-only scan), also sets item's visibility status in *all_visible.
+ *
+ * heapam_index_getnext_scanbatch_pos helper function.
+ */
+static inline ItemPointer
+heapam_index_return_scanpos_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
+								ScanDirection direction,
+								IndexScanBatch scanBatch,
+								BatchRingItemPos *scanPos,
+								bool *all_visible)
+{
+	uint8	   *batchvis;
+
+	/* Set xs_heaptid, which caller (and core executor) will need */
+	scan->xs_heaptid = scanBatch->items[scanPos->item].tableTid;
+
+	if (all_visible == NULL)
+	{
+		/*
+		 * Plain index scan.
+		 */
+		Assert(!scan->xs_want_itup);
+		return &scan->xs_heaptid;
+	}
+
+	/*
+	 * Index-only scan.
+	 *
+	 * Also set xs_itup, which caller also needs.
+	 */
+	Assert(scan->xs_want_itup);
+	scan->xs_itup = (IndexTuple) (scanBatch->currTuples +
+								  scanBatch->items[scanPos->item].tupleOffset);
+
+	/*
+	 * Set visibility info for the current scanPos item (plus possibly some
+	 * additional items in the current scan direction) as needed
+	 */
+	batchvis = index_scan_batch_table_area(scan, scanBatch);
+	if (!(batchvis[scanPos->item] & BATCH_CHECKED_VIS))
+		heapam_index_batch_pos_visibility(scan, direction,
+										  scanBatch, batchvis, scanPos);
+
+	/* Finally, set all_visible for caller */
+	*all_visible = (batchvis[scanPos->item] & BATCH_ALL_VIS) != 0;
+
+	return &scan->xs_heaptid;
+}
+
+/*
+ * Obtain visibility information for a TID from caller's batch.
+ *
+ * Called during amgetbatch index-only scans.  We always make sure that the
+ * visibility of caller's item (an offset into caller's batch->items[] array)
+ * has been set in its batch's batchvis[].  We might also set visibility info
+ * for other items from caller's batch more proactively when that makes sense.
+ *
+ * Every item has its batchvis[] entry set exactly once (or never).  We make
+ * sure that the scan has a fixed picture of which blocks it'll need to fetch
+ * in the near future.  If caller's position's item (or other nearby items)
+ * already have a valid batchvis[] entry, we must avoid clobbering that entry.
+ *
+ * We keep two competing considerations in balance when determining whether to
+ * check additional items: the need to keep the cost of visibility map access
+ * under control when most items will never be returned by the scan anyway
+ * (important for inner index scans of anti-joins and semi-joins), and the
+ * need to unguard batches promptly.
+ *
+ * Once we've resolved visibility for all items in a batch, we can safely
+ * unguard it by calling amunguardbatch.  This is safe with respect to
+ * concurrent VACUUM because the batch's guard (typically a buffer pin on the
+ * originating index page) blocks VACUUM from acquiring a conflicting cleanup
+ * lock on that page.  Copying the relevant visibility map data into our local
+ * cache suffices to prevent unsafe concurrent TID recycling: if any of these
+ * TIDs point to dead heap tuples, VACUUM cannot possibly return from
+ * ambulkdelete and mark the pointed-to heap pages as all-visible.  VACUUM
+ * _can_ do so once the batch is unguarded, but that's okay; we'll be working
+ * off of cached visibility info that indicates that the dead TIDs are NOT
+ * all-visible.
+ *
+ * What about the opposite case, where a page was all-visible when we cached
+ * the VM bits but tuples on it are deleted afterwards?  That is safe too: any
+ * tuple that was visible to all when we read the VM must also be visible to
+ * our MVCC snapshot, so it is correct to skip the heap fetch for those TIDs.
+ */
+static void
+heapam_index_batch_pos_visibility(IndexScanDesc scan, ScanDirection direction,
+								  IndexScanBatch batch, uint8 *batchvis,
+								  BatchRingItemPos *pos)
+{
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
+	int			posItem = pos->item;
+	bool		allbatchitemsvisible;
+	BlockNumber curvmheapblkno = InvalidBlockNumber;
+	uint8		curvmheapblkflags = 0;
+
+	Assert(batchvis == index_scan_batch_table_area(scan, batch));
+
+	/*
+	 * The batch must still be guarded whenever we're called.
+	 *
+	 * amunguardbatch can't be called until we've already set _every_ batch
+	 * item's batchvis[] status, but if we've already done so for this batch
+	 * then it shouldn't ever get passed to us again by some subsequent call.
+	 * (This relies on index-only scans always being !batchImmediateUnguard.)
+	 */
+	Assert(batch->isGuarded && !scan->batchImmediateUnguard);
+
+	/*
+	 * Set visibility info for a range of items, in scan order.
+	 *
+	 * Note: visibilitymap_get_status does not lock the visibility map buffer,
+	 * so the result could be slightly stale.  See the "Memory ordering
+	 * effects" discussion above visibilitymap_get_status for an explanation
+	 * of why this is okay.
+	 */
+	if (ScanDirectionIsForward(direction))
+	{
+		int			lastSetItem = Min(batch->lastItem,
+									  posItem + hscan->xs_vm_items - 1);
+
+		for (int setItem = posItem; setItem <= lastSetItem; setItem++)
+		{
+			ItemPointer tid = &batch->items[setItem].tableTid;
+			BlockNumber heapblkno = ItemPointerGetBlockNumber(tid);
+			uint8		flags;
+
+			/* Must never overwrite any batch item's batchvis[] */
+			if (batchvis[setItem] & BATCH_CHECKED_VIS)
+				continue;
+
+			if (heapblkno == curvmheapblkno)
+			{
+				batchvis[setItem] = curvmheapblkflags;
+				continue;
+			}
+
+			flags = BATCH_CHECKED_VIS;
+			if (VM_ALL_VISIBLE(scan->heapRelation, heapblkno, &hscan->xs_vmbuffer))
+				flags |= BATCH_ALL_VIS;
+
+			batchvis[setItem] = curvmheapblkflags = flags;
+			curvmheapblkno = heapblkno;
+		}
+
+		allbatchitemsvisible = lastSetItem >= batch->lastItem &&
+			(posItem == batch->firstItem ||
+			 (batchvis[batch->firstItem] & BATCH_CHECKED_VIS));
+	}
+	else
+	{
+		int			lastSetItem = Max(batch->firstItem,
+									  posItem - hscan->xs_vm_items + 1);
+
+		for (int setItem = posItem; setItem >= lastSetItem; setItem--)
+		{
+			ItemPointer tid = &batch->items[setItem].tableTid;
+			BlockNumber heapblkno = ItemPointerGetBlockNumber(tid);
+			uint8		flags;
+
+			/* Must never overwrite any batch item's batchvis[] */
+			if (batchvis[setItem] & BATCH_CHECKED_VIS)
+				continue;
+
+			if (heapblkno == curvmheapblkno)
+			{
+				batchvis[setItem] = curvmheapblkflags;
+				continue;
+			}
+
+			flags = BATCH_CHECKED_VIS;
+			if (VM_ALL_VISIBLE(scan->heapRelation, heapblkno, &hscan->xs_vmbuffer))
+				flags |= BATCH_ALL_VIS;
+
+			batchvis[setItem] = curvmheapblkflags = flags;
+			curvmheapblkno = heapblkno;
+		}
+
+		allbatchitemsvisible = lastSetItem <= batch->firstItem &&
+			(posItem == batch->lastItem ||
+			 (batchvis[batch->lastItem] & BATCH_CHECKED_VIS));
+	}
+
+	/*
+	 * It's safe to unguard the batch (via amunguardbatch) as soon as we've
+	 * resolved the visibility status of all of its items (unless this is a
+	 * non-MVCC scan)
+	 */
+	if (allbatchitemsvisible)
+	{
+#ifdef USE_ASSERT_CHECKING
+		for (int i = batch->firstItem; i <= batch->lastItem; i++)
+			Assert(batchvis[i] & BATCH_CHECKED_VIS);
+#endif
+
+		/*
+		 * Note: nodeIndexonlyscan.c only supports MVCC snapshots, but we
+		 * still cope with index-only scan callers with other snapshot types.
+		 * This is certainly not unexpected; selfuncs.c performs index-only
+		 * scans that use SnapshotNonVacuumable.
+		 */
+		if (scan->MVCCScan)
+			tableam_util_unguard_batch(scan, batch);
+	}
+
+	/*
+	 * Else check visibility for twice as many items next time, or all items.
+	 * We check all items in one go once we're passed the scan's first batch.
+	 */
+	else if (hscan->xs_vm_items < (batch->lastItem - batch->firstItem))
+		hscan->xs_vm_items *= 2;
+	else
+		hscan->xs_vm_items = scan->maxitemsbatch;
 }
