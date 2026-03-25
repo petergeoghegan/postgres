@@ -42,6 +42,7 @@
 #include "postgres.h"
 
 #include "access/amapi.h"
+#include "access/indexbatch.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
@@ -295,6 +296,7 @@ index_beginscan_bitmap(Relation indexRelation,
 					   int nkeys)
 {
 	Assert(snapshot != InvalidSnapshot);
+	Assert(IsMVCCLikeSnapshot(snapshot));
 
 	return index_beginscan_internal(indexRelation, nkeys, 0, snapshot, NULL,
 									false, NULL, false, instrument);
@@ -304,7 +306,7 @@ index_beginscan_bitmap(Relation indexRelation,
  * index_beginscan_internal --- common code for index_beginscan variants
  *
  * When heapRelation is not NULL, also initializes heap-side scan state:
- * getnext_slot resolution and table fetch initialization.
+ * batch ring setup, getnext_slot resolution, and table fetch initialization.
  */
 static pg_attribute_always_inline IndexScanDesc
 index_beginscan_internal(Relation indexRelation,
@@ -347,13 +349,19 @@ index_beginscan_internal(Relation indexRelation,
 	{
 		scan->heapRelation = heapRelation;
 		scan->xs_want_itup = index_only_scan;
+		scan->batchImmediateUnguard = (scan->MVCCScan && !index_only_scan);
+
+		if (indexRelation->rd_indam->amgetbatch != NULL)
+			index_batchscan_init(scan);
 
 		/* Resolve which getnext_slot implementation to use for this scan */
 		if (index_only_scan)
-			scan->xs_getnext_slot =
+			scan->xs_getnext_slot = scan->usebatchring ?
+				heapRelation->rd_tableam->index_only_amgetbatch_getnext_slot :
 				heapRelation->rd_tableam->index_only_amgettuple_getnext_slot;
 		else
-			scan->xs_getnext_slot =
+			scan->xs_getnext_slot = scan->usebatchring ?
+				heapRelation->rd_tableam->index_plain_amgetbatch_getnext_slot :
 				heapRelation->rd_tableam->index_plain_amgettuple_getnext_slot;
 
 		/* prepare to fetch index matches from table */
@@ -392,6 +400,9 @@ index_rescan(IndexScanDesc scan,
 
 	scan->kill_prior_tuple = false; /* for safety */
 
+	if (scan->usebatchring)
+		index_batchscan_reset(scan);
+
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
 											orderbys, norderbys);
 }
@@ -406,12 +417,23 @@ index_endscan(IndexScanDesc scan)
 	SCAN_CHECKS;
 	CHECK_SCAN_PROCEDURE(amendscan);
 
+	/* Free cached bitmap batch if any (bitmap scans use batchcache[0]) */
+	if (!scan->usebatchring && scan->batchcache[0] != NULL)
+	{
+		pfree(batch_alloc_base(scan->batchcache[0], scan));
+		scan->batchcache[0] = NULL;
+	}
+
 	/* Release resources (like buffer pins) from table accesses */
 	if (scan->xs_heapfetch)
 	{
 		table_index_fetch_end(scan->xs_heapfetch);
 		scan->xs_heapfetch = NULL;
 	}
+
+	/* Cleanup batching, so that the AM can release pins and so on. */
+	if (scan->usebatchring)
+		index_batchscan_end(scan);
 
 	/* End the AM's scan */
 	scan->indexRelation->rd_indam->amendscan(scan);
@@ -434,24 +456,25 @@ void
 index_markpos(IndexScanDesc scan)
 {
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(ammarkpos);
+	CHECK_SCAN_PROCEDURE(amgetbatch);
 
-	scan->indexRelation->rd_indam->ammarkpos(scan);
+	/* Only amgetbatch index AMs support mark and restore */
+	index_batchscan_mark_pos(scan);
 }
 
 /* ----------------
  *		index_restrpos	- restore a scan position
  *
- * NOTE: this only restores the internal scan state of the index AM.  See
- * comments for ExecRestrPos().
+ * NOTE: this only restores the batch positional state shared by the table and
+ * index AMs.  See comments for ExecRestrPos().
  *
  * NOTE: For heap, in the presence of HOT chains, mark/restore only works
  * correctly if the scan's snapshot is MVCC-safe; that ensures that there's at
  * most one returnable tuple in each HOT chain, and so restoring the prior
- * state at the granularity of the index AM is sufficient.  Since the only
- * current user of mark/restore functionality is nodeMergejoin.c, this
- * effectively means that merge-join plans only work for MVCC snapshots.  This
- * could be fixed if necessary, but for now it seems unimportant.
+ * state at the scan item granularity is sufficient.  Since the only current
+ * user of mark/restore functionality is nodeMergejoin.c, this effectively
+ * means that merge-join plans only work for MVCC snapshots.  This could be
+ * fixed if necessary, but for now it seems unimportant.
  * ----------------
  */
 void
@@ -460,15 +483,14 @@ index_restrpos(IndexScanDesc scan)
 	Assert(IsMVCCLikeSnapshot(scan->xs_snapshot));
 
 	SCAN_CHECKS;
-	CHECK_SCAN_PROCEDURE(amrestrpos);
+	CHECK_SCAN_PROCEDURE(amgetbatch);
 
 	/* reset table AM state for rescan */
 	if (scan->xs_heapfetch)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
-	scan->kill_prior_tuple = false; /* for safety */
-
-	scan->indexRelation->rd_indam->amrestrpos(scan);
+	/* also notify table AM and index AM */
+	index_batchscan_restore_pos(scan);
 }
 
 /*
@@ -590,6 +612,9 @@ index_parallelrescan(IndexScanDesc scan)
 	if (scan->xs_heapfetch)
 		table_index_fetch_reset(scan->xs_heapfetch);
 
+	if (scan->usebatchring)
+		index_batchscan_reset(scan);
+
 	/* amparallelrescan is optional; assume no-op if not provided by AM */
 	if (scan->indexRelation->rd_indam->amparallelrescan != NULL)
 		scan->indexRelation->rd_indam->amparallelrescan(scan);
@@ -638,6 +663,7 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 
 	SCAN_CHECKS;
 	CHECK_SCAN_PROCEDURE(amgettuple);
+	Assert(!scan->usebatchring);
 
 	/* XXX: we should assert that a snapshot is pushed or registered */
 	Assert(TransactionIdIsValid(RecentXmin));
