@@ -207,6 +207,10 @@ typedef struct IndexScanBatchData
 	 * This allows table AMs to avoid redundant amgetbatch calls with the same
 	 * priorbatch -- the index AM might need to read additional index pages to
 	 * determine there are no more matching items beyond caller's priorbatch.
+	 * In particular, during prefetching the read stream callback discovers
+	 * the end-of-scan via prefetchBatch.  tableam_util_fetch_next_batch()
+	 * checks these flags so that the scan side doesn't repeat the same
+	 * amgetbatch call when it later reaches that batch as scanBatch.
 	 */
 	bool		knownEndBackward;
 	bool		knownEndForward;
@@ -261,11 +265,20 @@ typedef struct IndexScanBatchData *IndexScanBatch;
  * to fetch table tuples in whatever order is most convenient -- provided that
  * such reordering cannot affect the order that table_index_getnext_slot later
  * returns tuples in.
+ *
+ * This data structure also provides table AMs with a way to read ahead of the
+ * current read position by _multiple_ batches/index pages.  The further out
+ * the table AM reads ahead like this, the further it can see into the future.
+ * That way the table AM is able to reorder work as aggressively as desired.
+ * For example, index scans sometimes need to readahead by as many as a few
+ * dozen amgetbatch batches in order to maintain an optimal I/O prefetch
+ * distance (distance for reading table blocks/fetching table tuples).
  */
 typedef struct BatchRingBuffer
 {
 	/* current positions in IndexScanDescData.batchbuf[] for scan */
 	BatchRingItemPos scanPos;	/* scan's read position */
+	BatchRingItemPos prefetchPos;	/* prefetching position */
 	BatchRingItemPos markPos;	/* mark/restore position */
 
 	/* markPos's batch (not in ring buffer when markBatch != scanBatch) */
@@ -499,6 +512,37 @@ index_scan_batch_append(IndexScanDescData *scan, IndexScanBatch batch)
 
 	scan->batchbuf[nextBatch & (INDEX_SCAN_MAX_BATCHES - 1)] = batch;
 	ringbuf->nextBatch++;
+}
+
+/*
+ * Compare two batch ring positions in the given scan direction.
+ *
+ * Returns negative if pos1 is behind pos2, 0 if equal, positive if pos1 is
+ * ahead of pos2.
+ */
+static inline int
+index_scan_pos_cmp(BatchRingItemPos *pos1, BatchRingItemPos *pos2,
+				   ScanDirection direction)
+{
+	int8		batchdiff;
+
+	Assert(pos1->valid && pos2->valid);
+
+	batchdiff = (int8) (pos1->batch - pos2->batch);
+	if (batchdiff != 0)
+	{
+		/* Resolve comparison using differing batch offsets */
+		return batchdiff;
+	}
+
+	/*
+	 * Resolve comparison using items[]-wise indexes from caller's positions,
+	 * since both positions point to the same ring buffer batch
+	 */
+	if (ScanDirectionIsForward(direction))
+		return pos1->item - pos2->item;
+	else
+		return pos2->item - pos1->item;
 }
 
 /*
