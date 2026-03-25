@@ -454,10 +454,11 @@ typedef struct TableAmRoutine
 	 * flags is a bitmask of ScanOptions affecting underlying table scan
 	 * behavior. See scan_begin() for more information on passing these.
 	 *
-	 * Callback is responsible for setting IndexScanDesc.xs_getnext_slot to
-	 * the appropriate slot-based callback.  Tuples can then be fetched via
-	 * table_index_getnext_slot().  No separate slot-based callback exists in
-	 * this struct!
+	 * Callback is responsible for initializing the scan's batch ring buffer
+	 * (when the scan's index AM supports the amgetbatch interface), and for
+	 * setting IndexScanDesc.xs_getnext_slot to the appropriate slot-based
+	 * callback.  Tuples can then be fetched via table_index_getnext_slot().
+	 * No separate slot-based callback exists in this struct!
 	 *
 	 * In principle a single general-purpose callback (stored here) would
 	 * suffice, but using specialized variants allows the table AM to provide
@@ -469,8 +470,23 @@ typedef struct TableAmRoutine
 	 * columns do not change, need to return the current/correct version of
 	 * the tuple that is visible to the snapshot, even if the tid points to an
 	 * older version of the tuple.
+	 *
+	 * Callback also initializes the scan descriptor's batch_opaque_size and
+	 * batch_per_item_size fields, to let the core code know how much memory
+	 * will be required in the table AM portions of each batch allocation
+	 * (during amgetbatch index scans).  See relscan.h for full details.
 	 */
 	void		(*index_fetch_begin) (IndexScanDesc scan, uint32 flags);
+
+	/*
+	 * Initialize table AM's per-batch opaque area within a batch allocation.
+	 *
+	 * Called by indexam_util_alloc_batch for each new or recycled batch, but
+	 * only when the table AM reserved an opaque area for the scan (by setting
+	 * batch_opaque_size and/or batch_per_item_size to a value > 0).
+	 */
+	void		(*index_fetch_batch_init) (IndexScanDesc scan,
+										   IndexScanBatch batch);
 
 	/*
 	 * Reset index scan for a rescan.  Resets table-owned resources.
@@ -481,6 +497,16 @@ typedef struct TableAmRoutine
 	 * Release resources and deallocate index scan state.
 	 */
 	void		(*index_fetch_end) (IndexScanDesc scan);
+
+	/*
+	 * Mark the current scan position so it can be restored later
+	 */
+	void		(*index_fetch_markpos) (IndexScanDesc scan);
+
+	/*
+	 * Restore a previously marked scan position
+	 */
+	void		(*index_fetch_restrpos) (IndexScanDesc scan);
 
 	/* ------------------------------------------------------------------------
 	 * Callbacks for non-modifying operations on individual tuples
@@ -1277,6 +1303,44 @@ table_index_fetch_reset(IndexScanDesc scan)
 }
 
 /*
+ * Mark the current scan position so it can be restored later
+ */
+static inline void
+table_index_fetch_markpos(IndexScanDesc scan)
+{
+	Assert(scan->xs_heapfetch && scan->usebatchring);
+
+	scan->heapRelation->rd_tableam->index_fetch_markpos(scan);
+}
+
+/*
+ * Restore a previously marked scan position
+ *
+ * NOTE: this only restores the batch positional state of the table AM.  See
+ * comments for ExecRestrPos().
+ */
+static inline void
+table_index_fetch_restrpos(IndexScanDesc scan)
+{
+	Assert(scan->xs_heapfetch && scan->usebatchring);
+	Assert(!scan->kill_prior_tuple);	/* not used with amgetbatch */
+
+	/*
+	 * For heap, in the presence of HOT chains, mark/restore only works
+	 * correctly if the scan's snapshot is MVCC-safe; that ensures that
+	 * there's at most one returnable tuple in each HOT chain, and so
+	 * restoring the prior state at the scan item granularity is sufficient.
+	 * Since the only current user of mark/restore functionality is
+	 * nodeMergejoin.c, this effectively means that merge-join plans only work
+	 * for MVCC snapshots.
+	 */
+	Assert(scan->MVCCScan);
+	scan->xs_heap_continue = false;
+
+	scan->heapRelation->rd_tableam->index_fetch_restrpos(scan);
+}
+
+/*
  * Release resources and deallocate the table AM's private index fetch state
  * (the scan's xs_heapfetch)
  */
@@ -1286,6 +1350,22 @@ table_index_fetch_end(IndexScanDesc scan)
 	Assert(scan->xs_heapfetch);
 
 	scan->heapRelation->rd_tableam->index_fetch_end(scan);
+}
+
+/*
+ * Initialize table AM's per-batch opaque area within a batch allocation.
+ *
+ * Called by indexam_util_alloc_batch for each new or recycled batch, but only
+ * when the table AM reserved an opaque area for the scan (see the callback's
+ * documentation).
+ */
+static inline void
+table_index_fetch_batch_init(IndexScanDesc scan, IndexScanBatch batch)
+{
+	Assert(scan->xs_heapfetch && scan->usebatchring);
+	Assert(scan->batch_opaque_size > 0 || scan->batch_per_item_size > 0);
+
+	scan->heapRelation->rd_tableam->index_fetch_batch_init(scan, batch);
 }
 
 /*
