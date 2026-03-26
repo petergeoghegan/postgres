@@ -58,18 +58,15 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
 
-	if (BufferIsValid(hscan->xs_cbuf))
-	{
-		ReleaseBuffer(hscan->xs_cbuf);
-		hscan->xs_cbuf = InvalidBuffer;
-		hscan->xs_blk = InvalidBlockNumber;
-	}
+	/* Resets are a no-op (XXX amgetbatch commit resets xs_vm_items here) */
+	(void) hscan;
 
-	if (BufferIsValid(hscan->xs_vmbuffer))
-	{
-		ReleaseBuffer(hscan->xs_vmbuffer);
-		hscan->xs_vmbuffer = InvalidBuffer;
-	}
+	/*
+	 * Deliberately avoid dropping pins now held in xs_cbuf and xs_vmbuffer.
+	 * This saves cycles during certain tight nested loop joins, and during
+	 * merge joins that frequently restore a saved mark.  It can also avoid
+	 * repeated pinning and unpinning of the same buffer across rescans.
+	 */
 }
 
 void
@@ -77,7 +74,13 @@ heapam_index_fetch_end(IndexFetchTableData *scan)
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
 
-	heapam_index_fetch_reset(scan);
+	/* drop pin if there's a pinned heap page */
+	if (BufferIsValid(hscan->xs_cbuf))
+		ReleaseBuffer(hscan->xs_cbuf);
+
+	/* drop pin if there's a pinned visibility map page */
+	if (BufferIsValid(hscan->xs_vmbuffer))
+		ReleaseBuffer(hscan->xs_vmbuffer);
 
 	pfree(hscan);
 }
