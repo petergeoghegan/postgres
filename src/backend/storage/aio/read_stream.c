@@ -386,7 +386,12 @@ read_stream_start_pending_read(ReadStream *stream)
 			{
 				if (stream->readahead_distance > 1)
 					stream->readahead_distance--;
-				/* XXX: Should we actually reduce this at any time other than a reset? */
+
+				/*
+				 * XXX: Should we actually reduce this at any time other than
+				 * a reset? For now we have to, as this is also a condition
+				 * for re-enabling fast_path.
+				 */
 				if (stream->combine_distance > 1)
 					stream->combine_distance--;
 			}
@@ -471,11 +476,16 @@ read_stream_should_look_ahead(ReadStream *stream)
 
 	/*
 	 * Allow looking further ahead if we have an the process of building a
-	 * larger IO and the IO is not yet big enough. Note that this is allowed
-	 * even if we are reaching the readahead limit (but not the buffer pin
-	 * limit).
+	 * larger IO, the IO is not yet big enough and we don't yet have IO in
+	 * flight.  Note that this is allowed even if we are reaching the
+	 * readahead limit (but not the buffer pin limit).
+	 *
+	 * This is important for cases where either effective_io_concurrency is
+	 * low or we never need to wait for IO and thus are not increasing the
+	 * distance. Without this we would end up with lots of small IOs.
 	 */
-	if (1 && stream->pending_read_nblocks > 0 &&
+	if (stream->pending_read_nblocks > 0 &&
+		stream->pinned_buffers == 0 &&
 		stream->pending_read_nblocks < stream->combine_distance)
 		return true;
 
@@ -1219,10 +1229,18 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 
 #ifndef READ_STREAM_DISABLE_FAST_PATH
 	/* See if we can take the fast path for all-cached scans next time. */
+	/*
+	 * FIXME: It's way too easy to wrongly fast path. I'm pretty sure there's
+	 * several pre-existing cases where it triggers because we are not issuing
+	 * additional prefetching (e.g. because of a small
+	 * effective_io_concurrency) and thus stream->pinned_buffers stays at 1
+	 * after read_stream_look_ahead().
+	 */
 	if (stream->ios_in_progress == 0 &&
 		stream->forwarded_buffers == 0 &&
 		stream->pinned_buffers == 1 &&
 		stream->readahead_distance == 1 &&
+		stream->combine_distance == 1 &&
 		stream->pending_read_nblocks == 0 &&
 		stream->per_buffer_data_size == 0)
 	{
