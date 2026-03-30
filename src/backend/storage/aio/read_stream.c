@@ -380,7 +380,7 @@ read_stream_start_pending_read(ReadStream *stream)
 		 */
 		if (stream->ios_in_progress == 0)
 		{
-			if (stream->distance_decay_holdoff == 0)
+			if (stream->distance_decay_holdoff > 0)
 				stream->distance_decay_holdoff--;
 			else
 			{
