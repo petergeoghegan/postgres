@@ -407,7 +407,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 						 TupleTableSlot *slot,
 						 bool *heap_continue, bool *all_dead)
 {
-
 	return heapam_index_fetch_tuple_impl(scan, tid, snapshot, slot,
 										 heap_continue, all_dead);
 }
