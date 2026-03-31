@@ -614,6 +614,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 					continue;	/* no visible tuple, try next index entry */
 				}
 
+				/* We don't actually need the heap tuple for anything */
 				ExecClearTuple(slot);
 
 				/*
