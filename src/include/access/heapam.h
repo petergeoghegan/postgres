@@ -153,7 +153,7 @@ typedef struct IndexFetchHeapData
  * Per-batch data private to the heap table AM.
  *
  * Stored at a negative offset from the IndexScanBatch pointer, in the
- * table AM opaque area of each batch allocation.
+ * fixed-size table AM opaque area of each batch allocation.
  */
 typedef struct HeapBatchData
 {
