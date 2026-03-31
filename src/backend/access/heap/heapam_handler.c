@@ -2559,7 +2559,8 @@ static const TableAmRoutine heapam_methods = {
 	.index_only_amgetbatch_getnext_slot = heapam_index_only_amgetbatch_getnext_slot,
 	.index_plain_amgettuple_getnext_slot = heapam_index_plain_amgettuple_getnext_slot,
 	.index_only_amgettuple_getnext_slot = heapam_index_only_amgettuple_getnext_slot,
-	.index_fetch_tuple = heapam_index_fetch_tuple,
+	.index_fetch_restrpos = heapam_index_fetch_restrpos,
+	.fetch_tid = heapam_fetch_tid,
 
 	.tuple_insert = heapam_tuple_insert,
 	.tuple_insert_speculative = heapam_tuple_insert_speculative,

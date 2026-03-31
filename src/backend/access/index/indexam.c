@@ -399,12 +399,9 @@ index_rescan(IndexScanDesc scan,
 
 	/* reset table AM state for rescan */
 	if (scan->xs_heapfetch)
-		table_index_fetch_reset(scan->xs_heapfetch);
+		table_index_fetch_reset(scan);
 
 	scan->kill_prior_tuple = false; /* for safety */
-
-	if (scan->usebatchring)
-		index_batchscan_reset(scan, false);
 
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
 											orderbys, norderbys);
@@ -434,13 +431,9 @@ index_endscan(IndexScanDesc scan)
 	/* Release resources (like buffer pins) from table accesses */
 	if (scan->xs_heapfetch)
 	{
-		table_index_fetch_end(scan->xs_heapfetch);
+		table_index_fetch_end(scan);
 		scan->xs_heapfetch = NULL;
 	}
-
-	/* Cleanup batch ring buffer state and scan's batch cache, if needed */
-	if (scan->usebatchring)
-		index_batchscan_end(scan);
 
 	/* End the AM's scan */
 	scan->indexRelation->rd_indam->amendscan(scan);
@@ -492,12 +485,8 @@ index_restrpos(IndexScanDesc scan)
 	SCAN_CHECKS;
 	CHECK_SCAN_PROCEDURE(amgetbatch);
 
-	/* reset table AM state for restoring the marked position */
-	if (scan->xs_heapfetch)
-		table_index_fetch_reset(scan->xs_heapfetch);
-
-	/* also notify table AM and index AM */
-	index_batchscan_restore_pos(scan);
+	/* table AM restores the marked position for us */
+	table_index_fetch_restrpos(scan);
 }
 
 /*
@@ -617,10 +606,7 @@ index_parallelrescan(IndexScanDesc scan)
 	SCAN_CHECKS;
 
 	if (scan->xs_heapfetch)
-		table_index_fetch_reset(scan->xs_heapfetch);
-
-	if (scan->usebatchring)
-		index_batchscan_reset(scan, false);
+		table_index_fetch_reset(scan);
 
 	/* amparallelrescan is optional; assume no-op if not provided by AM */
 	if (scan->indexRelation->rd_indam->amparallelrescan != NULL)
@@ -695,7 +681,7 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	{
 		/* reset table AM state */
 		if (scan->xs_heapfetch)
-			table_index_fetch_reset(scan->xs_heapfetch);
+			table_index_fetch_reset(scan);
 
 		return NULL;
 	}

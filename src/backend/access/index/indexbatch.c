@@ -159,9 +159,9 @@ index_batchscan_end(IndexScanDesc scan)
  * Set a mark from scanPos position
  *
  * Saves the current scan position and associated batch so that the scan can
- * be restored to this point later, via a call to index_batchscan_restore_pos.
- * The marked batch is retained and not freed until a new mark is set or the
- * scan ends (or until the mark is restored).
+ * be restored to this point later, via tableam_util_batch_restore_pos from
+ * the table AM.  The marked batch is retained and not freed until a new mark
+ * is set or the scan ends (or until the mark is restored).
  */
 void
 index_batchscan_mark_pos(IndexScanDesc scan)
@@ -223,14 +223,15 @@ index_batchscan_mark_pos(IndexScanDesc scan)
  * We just discard all batches (other than markBatch/restored scanBatch),
  * except when markBatch is already the scan's current scanBatch.  We always
  * invalidate prefetchPos.  The read stream and related prefetching state are
- * reset by table_index_fetch_reset(), called before this function.  This
- * approach keeps things simple for table AMs: most code that deals with
- * batches is thereby able to assume that the common case where scan direction
- * never changes is the only case (tableam_util_batch_dirchange takes a
- * similar approach to handling a cross-batch change in scan direction).
+ * reset by the table AM's index_fetch_restrpos callback (which calls this
+ * function after resetting its own state).  This approach keeps things simple
+ * for table AMs: most code that deals with batches is thereby able to assume
+ * that the common case where scan direction never changes is the only case
+ * (tableam_util_batch_dirchange takes a similar approach to handling a
+ * cross-batch change in scan direction).
  */
 void
-index_batchscan_restore_pos(IndexScanDesc scan)
+tableam_util_batch_restore_pos(IndexScanDesc scan)
 {
 	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *scanPos = &scan->batchringbuf.scanPos;

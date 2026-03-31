@@ -127,12 +127,13 @@ typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 /*
  * Base class for fetches from a table via an index. This is the base-class
  * for such scans, which needs to be embedded in the respective struct for
- * individual AMs.
+ * individual table AMs.
+ *
+ * This is essentially the table AM specific portion of IndexScanDescData,
+ * accessed through its xs_heapfetch field.
  */
 typedef struct IndexFetchTableData
 {
-	Relation	rel;
-
 	/* Table AM per-batch opaque area size (MAXALIGN'd), set by AM */
 	uint16		batch_opaque_size;
 

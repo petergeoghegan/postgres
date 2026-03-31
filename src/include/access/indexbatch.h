@@ -27,11 +27,11 @@ extern void index_batchscan_init(IndexScanDesc scan);
 extern void index_batchscan_reset(IndexScanDesc scan, bool endscan);
 extern void index_batchscan_end(IndexScanDesc scan);
 extern void index_batchscan_mark_pos(IndexScanDesc scan);
-extern void index_batchscan_restore_pos(IndexScanDesc scan);
 
 /*
  * amgetbatch utilities called by table AMs
  */
+extern void tableam_util_batch_restore_pos(IndexScanDesc scan);
 extern void tableam_util_batch_dirchange(IndexScanDesc scan);
 extern void tableam_util_kill_scanpositem(IndexScanDesc scan);
 extern void tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch);
