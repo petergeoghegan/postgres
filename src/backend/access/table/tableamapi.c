@@ -53,7 +53,9 @@ GetTableAmRoutine(Oid amhandler)
 	Assert(routine->index_fetch_begin != NULL);
 	Assert(routine->index_fetch_reset != NULL);
 	Assert(routine->index_fetch_end != NULL);
-	Assert(routine->index_fetch_tuple != NULL);
+	Assert(routine->index_fetch_batch_init != NULL);
+	Assert(routine->fetch_tid != NULL);
+	Assert(routine->index_fetch_restrpos != NULL);
 
 	Assert(routine->tuple_fetch_row_version != NULL);
 	Assert(routine->tuple_tid_valid != NULL);

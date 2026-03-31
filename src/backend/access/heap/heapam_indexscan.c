@@ -23,7 +23,8 @@
 #include "utils/pgstat_internal.h"
 
 
-static pg_attribute_always_inline bool heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
+static pg_attribute_always_inline bool heapam_index_fetch_tuple_impl(Relation rel,
+																	 IndexFetchHeapData *hscan,
 																	 ItemPointer tid,
 																	 Snapshot snapshot,
 																	 TupleTableSlot *slot,
@@ -35,6 +36,7 @@ static pg_attribute_always_inline bool heapam_index_getnext_slot(IndexScanDesc s
 																 bool index_only,
 																 bool amgetbatch);
 static pg_attribute_always_inline bool heapam_index_fetch_heap(IndexScanDesc scan,
+															   IndexFetchHeapData *hscan,
 															   TupleTableSlot *slot,
 															   bool *heap_continue,
 															   bool amgetbatch);
@@ -72,7 +74,6 @@ heapam_index_fetch_begin(Relation rel, uint32 flags)
 {
 	IndexFetchHeapData *hscan = palloc0_object(IndexFetchHeapData);
 
-	hscan->xs_base.rel = rel;
 	hscan->xs_base.batch_opaque_size = MAXALIGN(sizeof(HeapBatchData));
 	hscan->xs_base.batch_per_item_size = sizeof(uint8); /* visInfo element size */
 	hscan->xs_base.flags = flags;
@@ -96,9 +97,9 @@ heapam_index_fetch_begin(Relation rel, uint32 flags)
 }
 
 void
-heapam_index_fetch_reset(IndexFetchTableData *scan)
+heapam_index_fetch_reset(IndexScanDesc scan)
 {
-	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 
 	/* Rescans should avoid an excessive number of VM lookups */
 	hscan->xs_vm_items = 1;
@@ -108,10 +109,6 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 
 	/*
 	 * Reset read stream itself, and other associated state.
-	 *
-	 * Note: we expect the core executor to call index_batchscan_reset (when
-	 * the scan is usebatchring).  This will invalidate the scan's batch ring
-	 * buffer state, including scanPos and prefetchPos.
 	 */
 	if (hscan->xs_read_stream)
 	{
@@ -119,18 +116,39 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 		read_stream_reset(hscan->xs_read_stream);
 	}
 
+	/* Reset batch ring buffer state */
+	if (scan->usebatchring)
+		index_batchscan_reset(scan, false);
+
 	/*
 	 * Deliberately avoid dropping pins now held in xs_cbuf and xs_vmbuffer.
-	 * This saves cycles during certain tight nested loop joins, and during
-	 * merge joins that frequently restore a saved mark.  It can also avoid
-	 * repeated pinning and unpinning of the same buffer across rescans.
+	 * This saves cycles during certain tight nested loop joins.  It can also
+	 * avoid repeated pinning and unpinning of the same buffer across rescans.
 	 */
 }
 
 void
-heapam_index_fetch_end(IndexFetchTableData *scan)
+heapam_index_fetch_restrpos(IndexScanDesc scan)
 {
-	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
+
+	/*
+	 * Reset read stream itself, and other associated state.
+	 */
+	if (hscan->xs_read_stream)
+	{
+		hscan->xs_paused = false;
+		read_stream_reset(hscan->xs_read_stream);
+	}
+
+	/* Restore batch ring to previously saved mark */
+	tableam_util_batch_restore_pos(scan);
+}
+
+void
+heapam_index_fetch_end(IndexScanDesc scan)
+{
+	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 
 	/* drop pin if there's a pinned heap page */
 	if (BufferIsValid(hscan->xs_cbuf))
@@ -143,12 +161,11 @@ heapam_index_fetch_end(IndexFetchTableData *scan)
 	if (hscan->xs_read_stream)
 		read_stream_end(hscan->xs_read_stream);
 
-	pfree(hscan);
+	/* Free all batch related resources */
+	if (scan->usebatchring)
+		index_batchscan_end(scan);
 
-	/*
-	 * Note: we expect the core executor to call index_batchscan_end (when the
-	 * scan is usebatchring).  This will free all batch related resources.
-	 */
+	pfree(hscan);
 }
 
 /*
@@ -400,25 +417,52 @@ heapam_index_only_amgettuple_getnext_slot(IndexScanDesc scan,
 	return heapam_index_getnext_slot(scan, direction, slot, true, false);
 }
 
+/*
+ * Simple, single-shot TID lookup for constraint enforcement code (unique
+ * checks and similar).  This is essentially just a heap_hot_search_buffer
+ * wrapper.
+ *
+ * This doesn't actually perform index scans.  But this is just as good a
+ * place for it as any other.
+ */
 bool
-heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
-						 ItemPointer tid,
-						 Snapshot snapshot,
-						 TupleTableSlot *slot,
-						 bool *heap_continue, bool *all_dead)
+heapam_fetch_tid(Relation rel, ItemPointer tid, Snapshot snapshot,
+				 TupleTableSlot *slot, bool *all_dead)
 {
-	return heapam_index_fetch_tuple_impl(scan, tid, snapshot, slot,
-										 heap_continue, all_dead);
+	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
+	Buffer		buf;
+	bool		found;
+
+	Assert(TTS_IS_BUFFERTUPLE(slot));
+
+	buf = ReadBuffer(rel, ItemPointerGetBlockNumber(tid));
+
+	LockBuffer(buf, BUFFER_LOCK_SHARE);
+	found = heap_hot_search_buffer(tid, rel, buf, snapshot,
+								   &bslot->base.tupdata, all_dead, true);
+	bslot->base.tupdata.t_self = *tid;
+	LockBuffer(buf, BUFFER_LOCK_UNLOCK);
+
+	if (found)
+	{
+		slot->tts_tableOid = RelationGetRelid(rel);
+		ExecStorePinnedBufferHeapTuple(&bslot->base.tupdata, slot,
+									   buf);
+	}
+	else
+		ReleaseBuffer(buf);
+
+	return found;
 }
 
 static pg_attribute_always_inline bool
-heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
+heapam_index_fetch_tuple_impl(Relation rel,
+							  IndexFetchHeapData *hscan,
 							  ItemPointer tid,
 							  Snapshot snapshot,
 							  TupleTableSlot *slot,
 							  bool *heap_continue, bool *all_dead)
 {
-	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
 	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
 	bool		got_heap_tuple;
 
@@ -450,12 +494,12 @@ heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
 		if (hscan->xs_read_stream)
 			hscan->xs_cbuf = read_stream_next_buffer(hscan->xs_read_stream, NULL);
 		else
-			hscan->xs_cbuf = ReadBuffer(hscan->xs_base.rel, hscan->xs_blk);
+			hscan->xs_cbuf = ReadBuffer(rel, hscan->xs_blk);
 
 		/*
 		 * Prune page when it is pinned for the first time
 		 */
-		heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf,
+		heap_page_prune_opt(rel, hscan->xs_cbuf,
 							&hscan->xs_vmbuffer,
 							hscan->xs_base.flags & SO_HINT_REL_READ_ONLY);
 	}
@@ -466,7 +510,7 @@ heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
 	/* Obtain share-lock on the buffer so we can examine visibility */
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);
 	got_heap_tuple = heap_hot_search_buffer(tid,
-											hscan->xs_base.rel,
+											rel,
 											hscan->xs_cbuf,
 											snapshot,
 											&bslot->base.tupdata,
@@ -483,7 +527,7 @@ heapam_index_fetch_tuple_impl(struct IndexFetchTableData *scan,
 		 */
 		*heap_continue = !IsMVCCLikeSnapshot(snapshot);
 
-		slot->tts_tableOid = RelationGetRelid(scan->rel);
+		slot->tts_tableOid = RelationGetRelid(rel);
 
 		/*
 		 * If this is the last TID on the current heap block within the batch,
@@ -592,8 +636,8 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 				if (scan->instrument)
 					scan->instrument->ntablefetches++;
 
-				if (!heapam_index_fetch_heap(scan, slot, &heap_continue,
-											 amgetbatch))
+				if (!heapam_index_fetch_heap(scan, hscan, slot,
+											 &heap_continue, amgetbatch))
 				{
 					/*
 					 * No visible tuple.  If caller set a visited-pages limit
@@ -652,7 +696,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 * entry.  If we don't find anything, loop around and grab the
 			 * next TID from the index.
 			 */
-			if (heapam_index_fetch_heap(scan, slot, &heap_continue,
+			if (heapam_index_fetch_heap(scan, hscan, slot, &heap_continue,
 										amgetbatch))
 				return true;
 		}
@@ -674,13 +718,15 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
  * dropped elsewhere.
  */
 static pg_attribute_always_inline bool
-heapam_index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot,
-						bool *heap_continue, bool amgetbatch)
+heapam_index_fetch_heap(IndexScanDesc scan, IndexFetchHeapData *hscan,
+						TupleTableSlot *slot, bool *heap_continue,
+						bool amgetbatch)
 {
 	bool		all_dead = false;
 	bool		found;
 
-	found = heapam_index_fetch_tuple_impl(scan->xs_heapfetch, &scan->xs_heaptid,
+	found = heapam_index_fetch_tuple_impl(scan->heapRelation, hscan,
+										  &scan->xs_heaptid,
 										  scan->xs_snapshot, slot,
 										  heap_continue, &all_dead);
 

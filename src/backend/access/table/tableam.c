@@ -228,32 +228,25 @@ table_beginscan_parallel_tidrange(Relation relation,
  */
 
 /*
- * To perform that check simply start an index scan, create the necessary
- * slot, do the heap lookup, and shut everything down again. This could be
- * optimized, but is unlikely to matter from a performance POV. If there
- * frequently are live index pointers also matching a unique index key, the
- * CPU overhead of this routine is unlikely to matter.
+ * Convenience wrapper around table_fetch_tid() for callers that only need to
+ * know whether a live table tuple exists for a given TID.  This is used to
+ * verify if there's a conflict in a unique index.
  *
  * Note that *tid may be modified when we return true if the AM supports
  * storing multiple row versions reachable via a single index entry (like
  * heap's HOT).
  */
 bool
-table_index_fetch_tuple_check(Relation rel,
-							  ItemPointer tid,
-							  Snapshot snapshot,
-							  bool *all_dead)
+table_fetch_tid_check(Relation rel,
+					  ItemPointer tid,
+					  Snapshot snapshot,
+					  bool *all_dead)
 {
-	IndexFetchTableData *scan;
 	TupleTableSlot *slot;
-	bool		call_again = false;
 	bool		found;
 
 	slot = table_slot_create(rel, NULL);
-	scan = table_index_fetch_begin(rel, SO_NONE);
-	found = table_index_fetch_tuple(scan, tid, snapshot, slot, &call_again,
-									all_dead);
-	table_index_fetch_end(scan);
+	found = table_fetch_tid(rel, tid, snapshot, slot, all_dead);
 	ExecDropSingleTupleTableSlot(slot);
 
 	return found;
