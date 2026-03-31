@@ -136,11 +136,15 @@ typedef struct IndexFetchHeapData
 	bool		xs_lastinblock; /* last TID on this block in current batch? */
 
 	/*
-	 * The read stream is allocated at the beginning of the scan and reset on
-	 * rescan or when the scan direction changes. The scan direction is saved
-	 * each time a new tuple is requested. If the scan direction changes from
-	 * one tuple to the next, the read stream releases all previously pinned
-	 * buffers (core code resets related batchringbuf state for us, too).
+	 * The read stream is allocated early in the scan, and reset on rescan.
+	 * This reset process releases all pending pinned buffers.  The core code
+	 * will reset related batchringbuf state for us on a rescan.
+	 *
+	 * The read stream is also reset when we detect a scan direction change.
+	 * We must do this immediately, to invalidate the read stream callback's
+	 * soft assumption that all future requests will use the same direction.
+	 * We'll handle batchringbuf state invalidation ourselves, since we might
+	 * not need to discard already-loaded batches from the scan's ring buffer.
 	 */
 	bool		xs_paused;		/* paused until next batch is read? */
 	ScanDirection xs_read_stream_dir;	/* index scan direction */
