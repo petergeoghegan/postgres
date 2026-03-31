@@ -138,8 +138,7 @@ blgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 										MAIN_FORKNUM,
 										block_range_read_stream_cb,
 										&p,
-										0,
-										NULL);
+										0);
 
 	for (blkno = BLOOM_HEAD_BLKNO; blkno < npages; blkno++)
 	{

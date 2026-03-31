@@ -65,7 +65,6 @@
 
 struct ReadStream;
 typedef struct ReadStream ReadStream;
-typedef struct IOStats IOStats;
 
 /* for block_range_read_stream_cb */
 typedef struct BlockRangeReadStreamPrivate
@@ -88,8 +87,7 @@ extern ReadStream *read_stream_begin_relation(int flags,
 											  ForkNumber forknum,
 											  ReadStreamBlockNumberCB callback,
 											  void *callback_private_data,
-											  size_t per_buffer_data_size,
-											  IOStats *stat);
+											  size_t per_buffer_data_size);
 extern Buffer read_stream_next_buffer(ReadStream *stream, void **per_buffer_data);
 extern BlockNumber read_stream_next_block(ReadStream *stream,
 										  BufferAccessStrategy *strategy);
