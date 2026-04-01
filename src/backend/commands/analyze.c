@@ -1251,8 +1251,7 @@ acquire_sample_rows(Relation onerel, int elevel,
 										MAIN_FORKNUM,
 										block_sampling_read_stream_next,
 										&bs,
-										0,
-										NULL);
+										0);
 
 	/* Outer loop over blocks to sample */
 	while (table_scan_analyze_next_block(scan, stream))

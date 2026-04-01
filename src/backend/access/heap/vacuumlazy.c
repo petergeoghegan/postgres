@@ -1304,8 +1304,7 @@ lazy_scan_heap(LVRelState *vacrel)
 										MAIN_FORKNUM,
 										heap_vac_scan_next_block,
 										vacrel,
-										sizeof(bool),
-										NULL);
+										sizeof(bool));
 
 	while (true)
 	{
@@ -2664,8 +2663,7 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 										MAIN_FORKNUM,
 										vacuum_reap_lp_read_stream_next,
 										iter,
-										sizeof(TidStoreIterResult),
-										NULL);
+										sizeof(TidStoreIterResult));
 
 	while (true)
 	{
