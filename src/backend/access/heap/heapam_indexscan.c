@@ -920,7 +920,7 @@ heapam_index_return_scanpos_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 
 	pgstat_count_index_tuples(scan->indexRelation, 1);
 
-	/* Set xs_heaptid, which heapam_index_getnext_slot will need */
+	/* Set xs_heaptid, which caller (and core executor) will need */
 	scan->xs_heaptid = scanBatch->items[scanPos->item].tableTid;
 
 	if (all_visible == NULL)
@@ -967,7 +967,7 @@ heapam_index_return_scanpos_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 	/*
 	 * Index-only scan.
 	 *
-	 * Also set xs_itup, which heapam_index_getnext_slot needs too.
+	 * Also set xs_itup, which caller also needs.
 	 */
 	Assert(scan->xs_want_itup && !hscan->xs_lastinblock);
 	scan->xs_itup = (IndexTuple) (scanBatch->currTuples +
@@ -982,7 +982,7 @@ heapam_index_return_scanpos_tid(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		heapam_index_batch_pos_visibility(scan, direction, scanBatch, hbatch,
 										  scanPos);
 
-	/* Finally, set all_visible for heapam_index_getnext_slot */
+	/* Finally, set all_visible for caller */
 	*all_visible =
 		(hbatch->visInfo[scanPos->item] & HEAP_BATCH_VIS_ALL_VISIBLE) != 0;
 
