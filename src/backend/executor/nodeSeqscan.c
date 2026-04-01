@@ -65,14 +65,6 @@ SeqNext(SeqScanState *node)
 
 	if (scandesc == NULL)
 	{
-		uint32	flags = SO_NONE;
-
-		if (ScanRelIsReadOnly(&node->ss))
-			flags |= SO_HINT_REL_READ_ONLY;
-
-		if (estate->es_instrument)
-			flags |= SO_SCAN_INSTRUMENT;
-
 		/*
 		 * We reach here if the scan is not parallel, or if we're serially
 		 * executing a scan that was planned to be parallel.
@@ -80,7 +72,8 @@ SeqNext(SeqScanState *node)
 		scandesc = table_beginscan(node->ss.ss_currentRelation,
 								   estate->es_snapshot,
 								   0, NULL,
-								   flags);
+								   ScanRelIsReadOnly(&node->ss) ?
+								   SO_HINT_REL_READ_ONLY : SO_NONE);
 		node->ss.ss_currentScanDesc = scandesc;
 	}
 
@@ -305,35 +298,6 @@ ExecEndSeqScan(SeqScanState *node)
 	TableScanDesc scanDesc;
 
 	/*
-	 * When ending a parallel worker, copy the statistics gathered by the
-	 * worker back into shared memory so that it can be picked up by the main
-	 * process to report in EXPLAIN ANALYZE.
-	 */
-	if (node->sinstrument != NULL && IsParallelWorker())
-	{
-		SeqScanInstrumentation *si;
-
-		Assert(ParallelWorkerNumber < node->sinstrument->num_workers);
-		si = &node->sinstrument->sinstrument[ParallelWorkerNumber];
-
-		/*
-		 * Here we accumulate the stats rather than performing memcpy on
-		 * node->stats into si.  When a Gather/GatherMerge node finishes it
-		 * will perform planner shutdown on the workers.  On rescan it will
-		 * spin up new workers which will have a new SeqScanState and
-		 * zeroed stats.
-		 */
-
-		/* collect prefetch info for this process from the read_stream */
-		if (node->ss.ss_currentScanDesc &&
-			node->ss.ss_currentScanDesc->rs_instrument)
-		{
-			AccumulateIOStats(&si->stats.io,
-							  &node->ss.ss_currentScanDesc->rs_instrument->io);
-		}
-	}
-
-	/*
 	 * get information from node
 	 */
 	scanDesc = node->ss.ss_currentScanDesc;
@@ -387,23 +351,10 @@ ExecSeqScanEstimate(SeqScanState *node,
 					ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
-	Size		size;
 
-	size = table_parallelscan_estimate(node->ss.ss_currentRelation,
+	node->pscan_len = table_parallelscan_estimate(node->ss.ss_currentRelation,
 												  estate->es_snapshot);
-	node->pscan_len = size;
-
-	/* make sure the instrumentation is properly aligned */
-	size = MAXALIGN(size);
-
-	/* account for instrumentation, if required */
-	if (node->ss.ps.instrument && pcxt->nworkers > 0)
-	{
-		size = add_size(size, offsetof(SharedSeqScanInstrumentation, sinstrument));
-		size = add_size(size, mul_size(pcxt->nworkers, sizeof(SeqScanInstrumentation)));
-	}
-
-	shm_toc_estimate_chunk(&pcxt->estimator, size);
+	shm_toc_estimate_chunk(&pcxt->estimator, node->pscan_len);
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
 }
 
@@ -419,52 +370,17 @@ ExecSeqScanInitializeDSM(SeqScanState *node,
 {
 	EState	   *estate = node->ss.ps.state;
 	ParallelTableScanDesc pscan;
-	SharedSeqScanInstrumentation *sinstrument = NULL;
-	Size		size;
-	char	   *ptr;
-	uint32		flags = SO_NONE;
 
-	/* Recalculate the size. This needs to match ExecSeqScanEstimate. */
-	size = MAXALIGN(node->pscan_len);
-	if (node->ss.ps.instrument && pcxt->nworkers > 0)
-	{
-		size = add_size(size, offsetof(SharedSeqScanInstrumentation, sinstrument));
-		size = add_size(size, mul_size(pcxt->nworkers, sizeof(SeqScanInstrumentation)));
-	}
-
-	pscan = shm_toc_allocate(pcxt->toc, size);
-	pscan->phs_len = node->pscan_len;
-
+	pscan = shm_toc_allocate(pcxt->toc, node->pscan_len);
 	table_parallelscan_initialize(node->ss.ss_currentRelation,
 								  pscan,
 								  estate->es_snapshot);
 	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, pscan);
 
-	if (ScanRelIsReadOnly(&node->ss))
-		flags |= SO_HINT_REL_READ_ONLY;
-
-	if (estate->es_instrument)
-		flags |= SO_SCAN_INSTRUMENT;
-
 	node->ss.ss_currentScanDesc =
-		table_beginscan_parallel(node->ss.ss_currentRelation, pscan, flags);
-
-	/* initialize the shared instrumentation (with correct alignment) */
-	ptr = (char *) pscan;
-	ptr += MAXALIGN(node->pscan_len);
-	if (node->ss.ps.instrument && pcxt->nworkers > 0)
-		sinstrument = (SharedSeqScanInstrumentation *) ptr;
-
-	if (sinstrument)
-	{
-		sinstrument->num_workers = pcxt->nworkers;
-
-		/* ensure any unfilled slots will contain zeroes */
-		memset(sinstrument->sinstrument, 0,
-			   pcxt->nworkers * sizeof(SeqScanInstrumentation));
-	}
-
-	node->sinstrument = sinstrument;
+		table_beginscan_parallel(node->ss.ss_currentRelation, pscan,
+								 ScanRelIsReadOnly(&node->ss) ?
+								 SO_HINT_REL_READ_ONLY : SO_NONE);
 }
 
 /* ----------------------------------------------------------------
@@ -493,47 +409,11 @@ void
 ExecSeqScanInitializeWorker(SeqScanState *node,
 							ParallelWorkerContext *pwcxt)
 {
-	EState	   *estate = node->ss.ps.state;
 	ParallelTableScanDesc pscan;
-	char	   *ptr;
-	uint32		flags = SO_NONE;
-
-	if (ScanRelIsReadOnly(&node->ss))
-		flags |= SO_HINT_REL_READ_ONLY;
-
-	if (estate->es_instrument)
-		flags |= SO_SCAN_INSTRUMENT;
 
 	pscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
 	node->ss.ss_currentScanDesc =
-		table_beginscan_parallel(node->ss.ss_currentRelation, pscan, flags);
-
-	/* set pointer to the shared instrumentation */
-	ptr = (char *) pscan;
-	ptr += MAXALIGN(pscan->phs_len);
-
-	if (node->ss.ps.instrument)
-		node->sinstrument = (SharedSeqScanInstrumentation *) ptr;
-}
-
-/* ----------------------------------------------------------------
- *		ExecSeqScanRetrieveInstrumentation
- *
- *		Transfer seq scan statistics from DSM to private memory.
- * ----------------------------------------------------------------
- */
-void
-ExecSeqScanRetrieveInstrumentation(SeqScanState *node)
-{
-	SharedSeqScanInstrumentation *sinstrument = node->sinstrument;
-	Size		size;
-
-	if (sinstrument == NULL)
-		return;
-
-	size = offsetof(SharedSeqScanInstrumentation, sinstrument)
-		+ sinstrument->num_workers * sizeof(SeqScanInstrumentation);
-
-	node->sinstrument = palloc(size);
-	memcpy(node->sinstrument, sinstrument, size);
+		table_beginscan_parallel(node->ss.ss_currentRelation, pscan,
+								 ScanRelIsReadOnly(&node->ss) ?
+								 SO_HINT_REL_READ_ONLY : SO_NONE);
 }
