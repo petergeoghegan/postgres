@@ -593,7 +593,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 	bool		all_visible = false;
 	BlockNumber last_visited_block = InvalidBlockNumber;
 	uint8		n_visited_pages = 0;
-	ItemPointer tid;
+	ItemPointer tid = NULL;
 
 	for (;;)
 	{
