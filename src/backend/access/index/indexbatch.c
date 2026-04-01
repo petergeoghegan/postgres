@@ -5,51 +5,34 @@
  *
  * This module provides the core infrastructure for batch-based index scans,
  * which allow index AMs to return multiple matching TIDs per page in a single
- * call.  The batch ring buffer is managed by the table AM, with help from us,
- * and with help from the ring buffer inline functions in relscan.h.  This
- * approach enables efficient prefetching of table AM blocks during ordered
- * index scans.
+ * call.  The batch ring buffer is owned by the table AM, typically maintained
+ * alongside a read stream used for prefetching table blocks.
  *
- * The ring buffer loads batches in index key space order.  This allows the
- * table AM to maintain an adequate prefetch distance: its read stream
- * callback is thereby able to request table blocks referenced by index pages
- * that are well ahead of the current scan position's index page.
+ * The ring buffer loads batches in index key space/index scan order.  This
+ * allows the table AM to maintain an adequate prefetch distance: its read
+ * stream callback is thereby able to request table blocks referenced by index
+ * pages that are well ahead of the current scan position's index page.
  *
  * There's three types of functions in this module:
  *
- * 1. Core batch scan lifecycle (index_batchscan_*): Functions that manage
- *    batch scan state including initialization, reset, cleanup, and the
- *    mark/restore operations needed for merge joins.  Called by indexam.c
- *    routines that manage index scans on behalf of the core executor.
+ * 1. Core batch scan lifecycle (index_batchscan_*): Functions called by
+ *    indexam.c to manage batch scan state.  Currently just initialization
+ *    and the mark operation needed for merge joins.  (Restoring a mark is a
+ *    more complicated process which requires modifying table AM opaque state,
+ *    so the corresponding restore function is in category 2.)
  *
  * 2. Table AM utilities (tableam_util_*): Helper functions called by table
- *    AMs during amgetbatch index scans.  These handle cross-batch direction
- *    changes, recording dead items for a later call to amkillitemsbatch,
- *    freeing batches when the table AM is done with them, and calling
- *    amunguardbatch to drop the TID recycling interlock (the guard that
- *    prevents VACUUM from recycling TIDs while a scan is in flight).
+ *    AMs during amgetbatch index scans.  These manage the scan's positional
+ *    state, and help with certain aspects of resource management.
  *
  * 3. Index AM utilities (indexam_util_*): Helper functions called by index
- *    AMs that implement the amgetbatch interface.  These manage batch
- *    allocation, index page buffer lock release, and batch memory recycling.
+ *    AMs that implement the amgetbatch interface.  Helps index AM manage
+ *    resources like memory, locks, and buffer pins.
  *
- * These three layers coordinate without explicit coupling: the core lifecycle
- * functions assume that table AMs use scanPos/scanBatch and prefetchPos/
- * prefetchBatch in a standardized way (see heapam_indexscan.c for the
- * reference implementation), while table AMs assume that index AMs free and
- * unlock batches as described in indexam.sgml.
- *
- * The table AM fully controls the read stream as its own private state.
- * When the scan direction changes, the table AM must immediately reset its
- * read stream and invalidate prefetchPos -- blocks already requested via
- * prefetchPos will no longer match what scanPos needs to return.
- *
- * Crossing a batch boundary in a new scan direction is a separate process,
- * handled here: table AMs are required to call tableam_util_batch_dirchange
- * to leave the scan's batch ring buffer in a consistent state.  The current
- * implementation handles this by simply discarding most batches.  The key
- * invariant is that all loaded batches must be in a consistent scan direction
- * order.
+ * The table AM calls the table AM utility functions directly, and uses
+ * scanPos/scanBatch and prefetchPos/prefetchBatch in a standardized way (see
+ * heapam_indexscan.c for the reference implementation), while index AMs free
+ * and unlock batches as described in indexam.sgml.
  *
  * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -81,7 +64,7 @@ static int	batch_compare_int(const void *va, const void *vb);
  * initialized.
  */
 void
-index_batchscan_init(IndexScanDesc scan)
+batchscan_init(IndexScanDesc scan)
 {
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
 
@@ -97,65 +80,6 @@ index_batchscan_init(IndexScanDesc scan)
 }
 
 /*
- * Reset state used for a batch index scan
- */
-void
-index_batchscan_reset(IndexScanDesc scan, bool endscan)
-{
-	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
-	IndexScanBatch markBatch = batchringbuf->markBatch;
-	bool		markBatchFreed = false;
-
-	batchringbuf->scanPos.valid = false;
-	batchringbuf->prefetchPos.valid = false;
-	batchringbuf->markPos.valid = false;
-
-	/* Ensure batch_free won't skip the old markBatch in the loop below */
-	batchringbuf->markBatch = NULL;
-
-	for (uint8 i = batchringbuf->headBatch; i != batchringbuf->nextBatch; i++)
-	{
-		IndexScanBatch batch = index_scan_batch(scan, i);
-
-		if (batch == markBatch)
-			markBatchFreed = true;
-
-		batch_free(scan, batch, !endscan);
-	}
-
-	if (!markBatchFreed && unlikely(markBatch))
-		batch_free(scan, markBatch, !endscan);
-
-	batchringbuf->headBatch = 0;
-	batchringbuf->nextBatch = 0;
-}
-
-/*
- * Free resources at end of batch index scan
- *
- * Called when an index scan is being ended, right before the owning scan
- * descriptor goes away.  Cleans up all batch related resources.
- */
-void
-index_batchscan_end(IndexScanDesc scan)
-{
-	/* Free all remaining loaded batches (even markBatch), bypassing cache */
-	index_batchscan_reset(scan, true);
-
-	for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
-	{
-		IndexScanBatch cached = scan->batchcache[i];
-
-		if (cached == NULL)
-			continue;
-
-		if (cached->deadItems)
-			pfree(cached->deadItems);
-		pfree(batch_alloc_base(scan, cached));
-	}
-}
-
-/*
  * Set a mark from scanPos position
  *
  * Saves the current scan position and associated batch so that the scan can
@@ -164,7 +88,7 @@ index_batchscan_end(IndexScanDesc scan)
  * is set or the scan ends (or until the mark is restored).
  */
 void
-index_batchscan_mark_pos(IndexScanDesc scan)
+batchscan_mark_pos(IndexScanDesc scan)
 {
 	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *scanPos = &scan->batchringbuf.scanPos;
@@ -213,12 +137,17 @@ index_batchscan_mark_pos(IndexScanDesc scan)
 	batchringbuf->markBatch = scanBatch;
 }
 
+/* ----------------------------------------------------------------
+ *			utility functions called by table AMs
+ * ----------------------------------------------------------------
+ */
+
 /*
  * Restore mark to scanPos position
  *
- * Restores the scan to a position saved by index_batchscan_mark_pos earlier.
- * The scan's markPos becomes its scanPos.  The marked batch is restored as
- * the current scanBatch when needed.
+ * Restores the scan to a position saved by batchscan_mark_pos earlier.  The
+ * scan's markPos becomes its scanPos.  The marked batch is restored as the
+ * current scanBatch when needed.
  *
  * We just discard all batches (other than markBatch/restored scanBatch),
  * except when markBatch is already the scan's current scanBatch.  We always
@@ -227,11 +156,11 @@ index_batchscan_mark_pos(IndexScanDesc scan)
  * function after resetting its own state).  This approach keeps things simple
  * for table AMs: most code that deals with batches is thereby able to assume
  * that the common case where scan direction never changes is the only case
- * (tableam_util_batch_dirchange takes a similar approach to handling a
+ * (tableam_util_scanbatch_dirchange takes a similar approach to handling a
  * cross-batch change in scan direction).
  */
 void
-tableam_util_batch_restore_pos(IndexScanDesc scan)
+tableam_util_batchscan_restore_pos(IndexScanDesc scan)
 {
 	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	BatchRingItemPos *scanPos = &scan->batchringbuf.scanPos;
@@ -265,7 +194,7 @@ tableam_util_batch_restore_pos(IndexScanDesc scan)
 	 * anymore.  We have to deal with restoring the mark the hard way: by
 	 * invalidating all other loaded batches.  This is similar to the case
 	 * where the scan direction changes and the scan actually crosses
-	 * batch/index page boundaries (see tableam_util_batch_dirchange).
+	 * batch/index page boundaries (see tableam_util_scanbatch_dirchange).
 	 *
 	 * First, free all batches that are still in the ring buffer.
 	 */
@@ -302,10 +231,64 @@ tableam_util_batch_restore_pos(IndexScanDesc scan)
 	 */
 }
 
-/* ----------------------------------------------------------------
- *			utility functions called by table AMs
- * ----------------------------------------------------------------
+/*
+ * Reset state used for a batch index scan
  */
+void
+tableam_util_batchscan_reset(IndexScanDesc scan, bool endscan)
+{
+	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
+	IndexScanBatch markBatch = batchringbuf->markBatch;
+	bool		markBatchFreed = false;
+
+	batchringbuf->scanPos.valid = false;
+	batchringbuf->prefetchPos.valid = false;
+	batchringbuf->markPos.valid = false;
+
+	/* Ensure batch_free won't skip the old markBatch in the loop below */
+	batchringbuf->markBatch = NULL;
+
+	for (uint8 i = batchringbuf->headBatch; i != batchringbuf->nextBatch; i++)
+	{
+		IndexScanBatch batch = index_scan_batch(scan, i);
+
+		if (batch == markBatch)
+			markBatchFreed = true;
+
+		batch_free(scan, batch, !endscan);
+	}
+
+	if (!markBatchFreed && unlikely(markBatch))
+		batch_free(scan, markBatch, !endscan);
+
+	batchringbuf->headBatch = 0;
+	batchringbuf->nextBatch = 0;
+}
+
+/*
+ * Free resources at end of batch index scan
+ *
+ * Called when an index scan is being ended, right before the owning scan
+ * descriptor goes away.  Cleans up all batch related resources.
+ */
+void
+tableam_util_batchscan_end(IndexScanDesc scan)
+{
+	/* Free all remaining loaded batches (even markBatch), bypassing cache */
+	tableam_util_batchscan_reset(scan, true);
+
+	for (int i = 0; i < INDEX_SCAN_CACHE_BATCHES; i++)
+	{
+		IndexScanBatch cached = scan->batchcache[i];
+
+		if (cached == NULL)
+			continue;
+
+		if (cached->deadItems)
+			pfree(cached->deadItems);
+		pfree(batch_alloc_base(scan, cached));
+	}
+}
 
 /*
  * Handle cross-batch change in scan direction
@@ -329,7 +312,7 @@ tableam_util_batch_restore_pos(IndexScanDesc scan)
  * there isn't any need to call here).
  */
 void
-tableam_util_batch_dirchange(IndexScanDesc scan)
+tableam_util_scanbatch_dirchange(IndexScanDesc scan)
 {
 	BatchRingBuffer *batchringbuf = &scan->batchringbuf;
 	IndexScanBatch scanBatch;
@@ -371,7 +354,7 @@ tableam_util_batch_dirchange(IndexScanDesc scan)
  * marked LP_DEAD when current scanBatch is freed.
  */
 void
-tableam_util_kill_scanpositem(IndexScanDesc scan)
+tableam_util_scanpos_killitem(IndexScanDesc scan)
 {
 	BatchRingItemPos *scanPos = &scan->batchringbuf.scanPos;
 	IndexScanBatch scanBatch = index_scan_batch(scan, scanPos->batch);

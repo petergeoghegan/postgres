@@ -927,7 +927,7 @@ amkillitemsbatch (IndexScanDesc scan,
    <literal>LP_DEAD</literal> marking, though third-party index access methods
    are free to choose whether to implement this feature.
    The table AM may call
-   <function>tableam_util_kill_scanpositem</function> to mark dead items as
+   <function>tableam_util_scanpos_killitem</function> to mark dead items as
    the scan progresses.  If the batch contains any such dead items, the batch's
    <structfield>deadItems</structfield> array will have been sorted and
    deduplicated before <function>amkillitemsbatch</function> is called, with
@@ -937,7 +937,7 @@ amkillitemsbatch (IndexScanDesc scan,
    <structfield>deadItems</structfield> array can be walked in lockstep with
    the index page's item pointers, since both are in ascending offset order.
    This also means the table AM need not call
-   <function>tableam_util_kill_scanpositem</function> in any particular order.
+   <function>tableam_util_scanpos_killitem</function> in any particular order.
    (Index access methods using <function>amgettuple</function> rely on the
    <structfield>kill_prior_tuple</structfield> mechanism instead to mark dead
    tuples; the <filename>src/backend/access/gist/</filename> implementation

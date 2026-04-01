@@ -93,6 +93,11 @@ heapam_index_fetch_begin(Relation rel, uint32 flags)
 	Assert(hscan->xs_read_stream_dir == NoMovementScanDirection);
 	Assert(hscan->xs_read_stream == NULL);
 
+	/*
+	 * Return opaque state, which we'll access through the scan's.
+	 *
+	 * Note: indexam.c will call batchscan_init for us.
+	 */
 	return &hscan->xs_base;
 }
 
@@ -118,7 +123,7 @@ heapam_index_fetch_reset(IndexScanDesc scan)
 
 	/* Reset batch ring buffer state */
 	if (scan->usebatchring)
-		index_batchscan_reset(scan, false);
+		tableam_util_batchscan_reset(scan, false);
 
 	/*
 	 * Deliberately avoid dropping pins now held in xs_cbuf and xs_vmbuffer.
@@ -142,7 +147,7 @@ heapam_index_fetch_restrpos(IndexScanDesc scan)
 	}
 
 	/* Restore batch ring to previously saved mark */
-	tableam_util_batch_restore_pos(scan);
+	tableam_util_batchscan_restore_pos(scan);
 }
 
 void
@@ -163,7 +168,7 @@ heapam_index_fetch_end(IndexScanDesc scan)
 
 	/* Free all batch related resources */
 	if (scan->usebatchring)
-		index_batchscan_end(scan);
+		tableam_util_batchscan_end(scan);
 
 	pfree(hscan);
 }
@@ -739,7 +744,7 @@ heapam_index_fetch_heap(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		if (amgetbatch)
 		{
 			if (all_dead)
-				tableam_util_kill_scanpositem(scan);
+				tableam_util_scanpos_killitem(scan);
 		}
 		else
 		{

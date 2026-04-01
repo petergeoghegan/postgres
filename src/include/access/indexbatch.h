@@ -3,6 +3,14 @@
  * indexbatch.h
  *	  Batch-based index scan infrastructure for the amgetbatch interface.
  *
+ * Provides functions used by table AMs to manage an index scan's positional
+ * state (stored in IndexScanDesc.batchringbuf), and to manage underlying
+ * resources such as memory and buffer pins.  Also provides various utility
+ * functions used by index AMs for batch resource management.
+ *
+ * This module does not provide elementary operations for manipulating the
+ * scan's ring buffer (e.g., for appending a batch).  Those are implemented as
+ * inline functions defined beside IndexScanDesc and IndexScanBatch.
  *
  * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -21,19 +29,19 @@
 #include "utils/rel.h"
 
 /*
- * amgetbatch utilities called by indexam.c on behalf of core executor
+ * utilities called by indexam.c on behalf of table AMs
  */
-extern void index_batchscan_init(IndexScanDesc scan);
-extern void index_batchscan_reset(IndexScanDesc scan, bool endscan);
-extern void index_batchscan_end(IndexScanDesc scan);
-extern void index_batchscan_mark_pos(IndexScanDesc scan);
+extern void batchscan_init(IndexScanDesc scan);
+extern void batchscan_mark_pos(IndexScanDesc scan);
 
 /*
- * amgetbatch utilities called by table AMs
+ * utilities called by table AMs
  */
-extern void tableam_util_batch_restore_pos(IndexScanDesc scan);
-extern void tableam_util_batch_dirchange(IndexScanDesc scan);
-extern void tableam_util_kill_scanpositem(IndexScanDesc scan);
+extern void tableam_util_batchscan_restore_pos(IndexScanDesc scan);
+extern void tableam_util_batchscan_reset(IndexScanDesc scan, bool endscan);
+extern void tableam_util_batchscan_end(IndexScanDesc scan);
+extern void tableam_util_scanbatch_dirchange(IndexScanDesc scan);
+extern void tableam_util_scanpos_killitem(IndexScanDesc scan);
 extern void tableam_util_free_batch(IndexScanDesc scan, IndexScanBatch batch);
 extern void tableam_util_unguard_batch(IndexScanDesc scan, IndexScanBatch batch);
 
@@ -71,7 +79,7 @@ tableam_util_fetch_next_batch(IndexScanDesc scan, ScanDirection direction,
 		 * opposite scan direction to the one used when priorBatch was
 		 * returned by amgetbatch.
 		 */
-		tableam_util_batch_dirchange(scan);
+		tableam_util_scanbatch_dirchange(scan);
 
 		/* priorBatch is now batchringbuf's only batch */
 		Assert(pos->batch == batchringbuf->headBatch);
@@ -145,7 +153,7 @@ tableam_util_fetch_next_batch(IndexScanDesc scan, ScanDirection direction,
 }
 
 /*
- * amgetbatch utilities called by index AMs
+ * utilities called by index AMs
  */
 extern void indexam_util_batch_unlock(IndexScanDesc scan, IndexScanBatch batch,
 									  Buffer buf);

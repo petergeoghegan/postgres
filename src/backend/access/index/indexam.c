@@ -13,7 +13,7 @@
  * INTERFACE ROUTINES
  *		index_open		- open an index relation by relation OID
  *		index_close		- close an index relation
- *		index_beginscan - start a scan of an index with amgettuple
+ *		index_beginscan - start a scan of an index with amgetbatch/amgettuple
  *		index_beginscan_bitmap - start a scan of an index with amgetbitmap
  *		index_rescan	- restart a scan of an index
  *		index_endscan	- end a scan
@@ -255,7 +255,7 @@ index_insert_cleanup(Relation indexRelation,
 }
 
 /*
- * index_beginscan - start a scan of an index with amgettuple
+ * index_beginscan - start a scan of an index with amgetbatch/amgettuple
  *
  * Caller must be holding suitable locks on the heap and the index.
  */
@@ -355,7 +355,7 @@ index_beginscan_internal(Relation indexRelation,
 		scan->batchImmediateUnguard = (scan->MVCCScan && !index_only_scan);
 
 		if (indexRelation->rd_indam->amgetbatch != NULL)
-			index_batchscan_init(scan);
+			batchscan_init(scan);
 
 		/* Resolve which getnext_slot implementation to use for this scan */
 		if (index_only_scan)
@@ -458,15 +458,14 @@ index_markpos(IndexScanDesc scan)
 	SCAN_CHECKS;
 	CHECK_SCAN_PROCEDURE(amgetbatch);
 
-	/* Only amgetbatch index AMs support mark and restore */
-	index_batchscan_mark_pos(scan);
+	batchscan_mark_pos(scan);
 }
 
 /* ----------------
  *		index_restrpos	- restore a scan position
  *
- * NOTE: this only restores the batch positional state shared by the table and
- * index AMs.  See comments for ExecRestrPos().
+ * NOTE: this only restores the batch positional state of the table AM.  See
+ * comments for ExecRestrPos().
  *
  * NOTE: For heap, in the presence of HOT chains, mark/restore only works
  * correctly if the scan's snapshot is MVCC-safe; that ensures that there's at
