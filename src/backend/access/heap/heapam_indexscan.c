@@ -588,11 +588,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 	bool		heap_continue = false;
 	bool		all_visible = false;
 	BlockNumber last_visited_block = InvalidBlockNumber;
-	uint8		n_visited_pages = 0,
-				xs_visited_pages_limit = 0;
-
-	if (index_only)
-		xs_visited_pages_limit = scan->xs_visited_pages_limit;
+	uint8		n_visited_pages = 0;
 
 	for (;;)
 	{
@@ -644,14 +640,14 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 					 * (only selfuncs.c does this), count distinct heap pages
 					 * and give up once we've visited too many.
 					 */
-					if (unlikely(xs_visited_pages_limit > 0))
+					if (unlikely(scan->xs_visited_pages_limit > 0))
 					{
 						Assert(hscan->xs_blk == ItemPointerGetBlockNumber(tid));
 
 						if (hscan->xs_blk != last_visited_block)
 						{
 							last_visited_block = hscan->xs_blk;
-							if (++n_visited_pages > xs_visited_pages_limit)
+							if (++n_visited_pages > scan->xs_visited_pages_limit)
 								return false;	/* give up */
 						}
 					}
