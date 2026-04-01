@@ -396,7 +396,7 @@ typedef struct IndexScanDescData
 
 	IndexFetchTableData *xs_heapfetch;
 
-	/* Resolved getnext_slot implementation, set by index_beginscan */
+	/* Resolved index_*_next implementation, set by index_beginscan */
 	bool		(*xs_getnext_slot) (struct IndexScanDescData *scan,
 									ScanDirection direction,
 									struct TupleTableSlot *slot);

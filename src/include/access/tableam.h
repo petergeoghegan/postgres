@@ -488,18 +488,18 @@ typedef struct TableAmRoutine
 	 * matrix.  index_beginscan resolves which variant to use.  Callers use
 	 * table_index_getnext_slot(), which calls through that pointer directly.
 	 */
-	bool		(*index_plain_amgetbatch_getnext_slot) (IndexScanDesc scan,
-														ScanDirection direction,
-														TupleTableSlot *slot);
-	bool		(*index_only_amgetbatch_getnext_slot) (IndexScanDesc scan,
-													   ScanDirection direction,
-													   TupleTableSlot *slot);
-	bool		(*index_plain_amgettuple_getnext_slot) (IndexScanDesc scan,
-														ScanDirection direction,
-														TupleTableSlot *slot);
-	bool		(*index_only_amgettuple_getnext_slot) (IndexScanDesc scan,
-													   ScanDirection direction,
-													   TupleTableSlot *slot);
+	bool		(*index_plain_amgetbatch_next) (IndexScanDesc scan,
+												ScanDirection direction,
+												TupleTableSlot *slot);
+	bool		(*index_only_amgetbatch_next) (IndexScanDesc scan,
+											   ScanDirection direction,
+											   TupleTableSlot *slot);
+	bool		(*index_plain_amgettuple_next) (IndexScanDesc scan,
+												ScanDirection direction,
+												TupleTableSlot *slot);
+	bool		(*index_only_amgettuple_next) (IndexScanDesc scan,
+											   ScanDirection direction,
+											   TupleTableSlot *slot);
 
 	/*
 	 * Fetch tuple at `tid` into `slot`, after doing a visibility test

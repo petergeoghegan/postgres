@@ -488,18 +488,18 @@ extern void heapam_index_fetch_batch_init(IndexScanDesc scan,
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 								   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
 								   bool *all_dead, bool first_call);
-extern bool heapam_index_plain_amgetbatch_getnext_slot(IndexScanDesc scan,
-													   ScanDirection direction,
-													   TupleTableSlot *slot);
-extern bool heapam_index_only_amgetbatch_getnext_slot(IndexScanDesc scan,
-													  ScanDirection direction,
-													  TupleTableSlot *slot);
-extern bool heapam_index_plain_amgettuple_getnext_slot(IndexScanDesc scan,
-													   ScanDirection direction,
-													   TupleTableSlot *slot);
-extern bool heapam_index_only_amgettuple_getnext_slot(IndexScanDesc scan,
-													  ScanDirection direction,
-													  TupleTableSlot *slot);
+extern bool heapam_index_plain_amgetbatch_next(IndexScanDesc scan,
+											   ScanDirection direction,
+											   TupleTableSlot *slot);
+extern bool heapam_index_only_amgetbatch_next(IndexScanDesc scan,
+											  ScanDirection direction,
+											  TupleTableSlot *slot);
+extern bool heapam_index_plain_amgettuple_next(IndexScanDesc scan,
+											   ScanDirection direction,
+											   TupleTableSlot *slot);
+extern bool heapam_index_only_amgettuple_next(IndexScanDesc scan,
+											  ScanDirection direction,
+											  TupleTableSlot *slot);
 extern bool heapam_fetch_tid(Relation rel, ItemPointer tid, Snapshot snapshot,
 							 TupleTableSlot *slot, bool *all_dead);
 

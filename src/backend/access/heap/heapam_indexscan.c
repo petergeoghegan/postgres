@@ -376,9 +376,9 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 
 /* table_index_getnext_slot callback: amgetbatch, plain index scan */
 pg_attribute_hot bool
-heapam_index_plain_amgetbatch_getnext_slot(IndexScanDesc scan,
-										   ScanDirection direction,
-										   TupleTableSlot *slot)
+heapam_index_plain_amgetbatch_next(IndexScanDesc scan,
+								   ScanDirection direction,
+								   TupleTableSlot *slot)
 {
 	Assert(!scan->xs_want_itup && scan->usebatchring);
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
@@ -388,9 +388,9 @@ heapam_index_plain_amgetbatch_getnext_slot(IndexScanDesc scan,
 
 /* table_index_getnext_slot callback: amgetbatch, index-only scan */
 pg_attribute_hot bool
-heapam_index_only_amgetbatch_getnext_slot(IndexScanDesc scan,
-										  ScanDirection direction,
-										  TupleTableSlot *slot)
+heapam_index_only_amgetbatch_next(IndexScanDesc scan,
+								  ScanDirection direction,
+								  TupleTableSlot *slot)
 {
 	Assert(scan->xs_want_itup && scan->usebatchring);
 	Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
@@ -400,9 +400,9 @@ heapam_index_only_amgetbatch_getnext_slot(IndexScanDesc scan,
 
 /* table_index_getnext_slot callback: amgettuple, plain index scan */
 pg_attribute_hot bool
-heapam_index_plain_amgettuple_getnext_slot(IndexScanDesc scan,
-										   ScanDirection direction,
-										   TupleTableSlot *slot)
+heapam_index_plain_amgettuple_next(IndexScanDesc scan,
+								   ScanDirection direction,
+								   TupleTableSlot *slot)
 {
 	Assert(!scan->xs_want_itup && !scan->usebatchring);
 	Assert(scan->indexRelation->rd_indam->amgettuple != NULL);
@@ -412,9 +412,9 @@ heapam_index_plain_amgettuple_getnext_slot(IndexScanDesc scan,
 
 /* table_index_getnext_slot callback: amgettuple, index-only scan */
 pg_attribute_hot bool
-heapam_index_only_amgettuple_getnext_slot(IndexScanDesc scan,
-										  ScanDirection direction,
-										  TupleTableSlot *slot)
+heapam_index_only_amgettuple_next(IndexScanDesc scan,
+								  ScanDirection direction,
+								  TupleTableSlot *slot)
 {
 	Assert(scan->xs_want_itup && !scan->usebatchring);
 	Assert(scan->indexRelation->rd_indam->amgettuple != NULL);

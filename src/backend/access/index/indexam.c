@@ -360,12 +360,12 @@ index_beginscan_internal(Relation indexRelation,
 		/* Resolve which getnext_slot implementation to use for this scan */
 		if (index_only_scan)
 			scan->xs_getnext_slot = scan->usebatchring ?
-				heapRelation->rd_tableam->index_only_amgetbatch_getnext_slot :
-				heapRelation->rd_tableam->index_only_amgettuple_getnext_slot;
+				heapRelation->rd_tableam->index_only_amgetbatch_next :
+				heapRelation->rd_tableam->index_only_amgettuple_next;
 		else
 			scan->xs_getnext_slot = scan->usebatchring ?
-				heapRelation->rd_tableam->index_plain_amgetbatch_getnext_slot :
-				heapRelation->rd_tableam->index_plain_amgettuple_getnext_slot;
+				heapRelation->rd_tableam->index_plain_amgetbatch_next :
+				heapRelation->rd_tableam->index_plain_amgettuple_next;
 
 		/* prepare to fetch index matches from table */
 		scan->xs_heapfetch = table_index_fetch_begin(heapRelation, flags);
