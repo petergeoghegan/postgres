@@ -819,13 +819,6 @@ ExecEndIndexScan(IndexScanState *node)
 		 */
 		winstrument->nsearches += node->iss_Instrument->nsearches;
 		Assert(node->iss_Instrument->ntablefetches == 0);
-
-		/* collect prefetch info for this process from the read_stream */
-		if (indexScanDesc && indexScanDesc->instrument)
-		{
-			AccumulateIOStats(&winstrument->io,
-							  &indexScanDesc->instrument->io);
-		}
 	}
 
 	/*
