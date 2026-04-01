@@ -391,9 +391,8 @@ typedef struct IndexScanDescData
 	struct TupleDescData *xs_hitupdesc; /* rowtype descriptor of xs_hitup */
 
 	ItemPointerData xs_heaptid; /* result */
-
-	uint16		maxitemsbatch;	/* set by ambeginscan when amgetbatch used */
-
+	bool		xs_heap_continue;	/* T if must keep walking, potential
+									 * further results */
 	IndexFetchTableData *xs_heapfetch;
 
 	/* Resolved index_*_next implementation, set by index_beginscan */
@@ -403,7 +402,8 @@ typedef struct IndexScanDescData
 
 	bool		xs_recheck;		/* T means scan keys must be rechecked */
 
-	/* Per-batch opaque area sizes, set by index AM in ambeginscan */
+	/* batch size information, set once by index AM in ambeginscan */
+	uint16		maxitemsbatch;		/* size of each batch's items[] array */
 	uint16		batch_index_opaque_size;	/* MAXALIGN'd index AM opaque size */
 	uint16		batch_tuples_workspace; /* currTuples workspace size */
 

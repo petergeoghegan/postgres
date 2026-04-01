@@ -352,6 +352,7 @@ index_beginscan_internal(Relation indexRelation,
 	{
 		scan->heapRelation = heapRelation;
 		scan->xs_want_itup = index_only_scan;
+		scan->xs_heap_continue = false;
 		scan->batchImmediateUnguard = (scan->MVCCScan && !index_only_scan);
 
 		if (indexRelation->rd_indam->amgetbatch != NULL)
@@ -402,6 +403,7 @@ index_rescan(IndexScanDesc scan,
 		table_index_fetch_reset(scan);
 
 	scan->kill_prior_tuple = false; /* for safety */
+	scan->xs_heap_continue = false;
 
 	scan->indexRelation->rd_indam->amrescan(scan, keys, nkeys,
 											orderbys, norderbys);
@@ -483,6 +485,8 @@ index_restrpos(IndexScanDesc scan)
 
 	SCAN_CHECKS;
 	CHECK_SCAN_PROCEDURE(amgetbatch);
+
+	scan->xs_heap_continue = false;
 
 	/* table AM restores the marked position for us */
 	table_index_fetch_restrpos(scan);
@@ -674,6 +678,7 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 
 	/* Reset kill flag immediately for safety */
 	scan->kill_prior_tuple = false;
+	scan->xs_heap_continue = false;
 
 	/* If we're out of index entries, we're done */
 	if (!found)

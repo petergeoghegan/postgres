@@ -589,15 +589,15 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 						  bool amgetbatch)
 {
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
-	ItemPointer tid;
-	bool		heap_continue = false;
+	bool		*heap_continue = &scan->xs_heap_continue;
 	bool		all_visible = false;
 	BlockNumber last_visited_block = InvalidBlockNumber;
 	uint8		n_visited_pages = 0;
+	ItemPointer tid;
 
 	for (;;)
 	{
-		if (!heap_continue)
+		if (!*heap_continue)
 		{
 			/* Get the next TID from the index */
 			if (amgetbatch)
@@ -638,7 +638,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 					scan->instrument->ntablefetches++;
 
 				if (!heapam_index_fetch_heap(scan, hscan, slot,
-											 &heap_continue, amgetbatch))
+											 heap_continue, amgetbatch))
 				{
 					/*
 					 * No visible tuple.  If caller set a visited-pages limit
@@ -670,7 +670,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 				 * want us to assume that just having one visible tuple in the
 				 * hot chain is always good enough.
 				 */
-				Assert(!(heap_continue && IsMVCCSnapshot(scan->xs_snapshot)));
+				Assert(!(*heap_continue && IsMVCCSnapshot(scan->xs_snapshot)));
 			}
 			else
 			{
@@ -697,7 +697,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 * entry.  If we don't find anything, loop around and grab the
 			 * next TID from the index.
 			 */
-			if (heapam_index_fetch_heap(scan, hscan, slot, &heap_continue,
+			if (heapam_index_fetch_heap(scan, hscan, slot, heap_continue,
 										amgetbatch))
 				return true;
 		}
