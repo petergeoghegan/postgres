@@ -1157,7 +1157,10 @@ amposreset (IndexScanDesc scan,
    from when the batch was originally returned.  In both cases, the batch
    passed to <function>amposreset</function> is the batch that will next be
    passed to <function>amgetbatch</function> as its
-   <literal>priorbatch</literal>.
+   <literal>priorbatch</literal>.  Note in particular that the
+   <literal>priorbatch</literal>.<structfield>dir</structfield> field is
+   guaranteed to have the same scan direction as when
+   <function>amposreset</function> was called.
   </para>
 
   <para>
