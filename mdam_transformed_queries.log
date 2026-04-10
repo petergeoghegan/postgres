@@ -1,0 +1,604 @@
+-- Test Case: MDAM Paper General OR Example
+-- Transformed Query (8 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept < 2
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 2
+           AND dept < 4
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate < '1995-06-04'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate = '1995-06-04'
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 6 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate > '1995-06-04'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 7 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 5
+           AND sdate = '1995-06-04'
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 8 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 5
+           AND sdate = '1995-06-04'
+           AND item_class = 10)) AS mdam_subquery;
+
+-- Test Case: SQL docs predicate
+-- Transformed Query (5 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate < '1995-02-05'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate = '1995-02-05'
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate > '1995-02-05'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 5
+           AND sdate = '1995-02-05'
+           AND item_class IN (5, 10))) AS mdam_subquery;
+
+-- Test Case: Simple MySQL style disjunction
+-- Transformed Query (2 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate < '1995-01-10'
+           AND item_class = 1
+           AND store = 50)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 98
+           AND sdate = '1995-06-07'
+           AND item_class = 28
+           AND store = 3)) AS mdam_subquery;
+
+-- Test Case: BitmapOr SAOP conversion limitation
+-- Transformed Query (2 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 9
+           AND sdate = '1995-06-15'
+           AND item_class IN (1, 2)
+           AND store IN (50, 55))
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-06-15'
+           AND item_class = 1
+           AND store = 50)) AS mdam_subquery;
+
+-- Test Case: Multiple ORs on different columns
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept IN (10, 20)
+           AND sdate IN ('1995-01-01', '1995-01-15')
+           AND item_class IN (1, 2))) AS mdam_subquery;
+
+-- Test Case: IS_ANYTHING Shattering Scope
+-- Transformed Query (6 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate < '1995-02-01'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-02-01'
+           AND item_class IN (5, 7))
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate > '1995-02-01'
+           AND sdate < '1995-03-01'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-03-01'
+           AND item_class IN (5, 7))
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate > '1995-03-01'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 6 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 20
+           AND item_class = 1)) AS mdam_subquery;
+
+-- Test Case: Mixed IN and Range (Contradiction)
+-- Transformed Query (0 retrievals):
+SELECT dept, sdate, item_class, store
+FROM sales_mdam_paper
+WHERE 1=0;
+
+-- Test Case: Highly Combinatorial ORs
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept IN (1, 2)
+           AND sdate IN ('1995-01-01', '1995-01-15')
+           AND item_class IN (1, 2, 3)
+           AND store IN (100, 200))) AS mdam_subquery;
+
+-- Test Case: Expansion Suppression
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 10
+           AND sdate IN ('1995-01-01', '1995-01-15')
+           AND item_class = 5)) AS mdam_subquery;
+
+-- Test Case: Undetected redundant = condition
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND store >= 51
+           AND store < 53)) AS mdam_subquery;
+
+-- Test Case: Complex AND/OR Predicate
+-- Transformed Query (6 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept < 1
+           AND sdate = '1995-02-15'
+           AND item_class = 5
+           AND store > 10
+           AND store < 100)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate < '1995-02-15'
+           AND item_class = 5
+           AND store < 100)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-02-15'
+           AND store < 100)
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate > '1995-02-15'
+           AND sdate < '1995-03-01'
+           AND item_class = 5
+           AND store < 100)
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate >= '1995-03-01'
+           AND item_class = 5
+           AND store > 10
+           AND store < 100)
+      UNION ALL /* Retrieval # 6 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 1
+           AND sdate = '1995-02-15'
+           AND item_class = 5
+           AND store > 10
+           AND store < 100)) AS mdam_subquery;
+
+-- Test Case: Really Complex AND/OR Predicate
+-- Transformed Query (5 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept < 1
+           AND sdate = '1995-02-15'
+           AND store > 10
+           AND store < 100)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate < '1995-02-15'
+           AND item_class IN (5, 7)
+           AND store > 10
+           AND store < 100)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-02-15'
+           AND store > 10
+           AND store < 100)
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate > '1995-02-15'
+           AND item_class IN (5, 7)
+           AND store > 10
+           AND store < 100)
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 1
+           AND sdate = '1995-02-15'
+           AND store > 10
+           AND store < 100)) AS mdam_subquery;
+
+-- Test Case: Super Complex AND/OR Predicate
+-- Transformed Query (3 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate < '1995-01-02'
+           AND item_class IN (5, 7)
+           AND store < 10)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-01-02'
+           AND store < 10)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate > '1995-01-02'
+           AND sdate < '1995-01-03'
+           AND item_class IN (5, 7)
+           AND store < 10)) AS mdam_subquery;
+
+-- Test Case: Hairy AND/OR Predicate
+-- Transformed Query (11 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept < 1
+           AND sdate = '1995-02-15'
+           AND item_class = 5
+           AND store > 20
+           AND store < 100)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate < '1995-02-15'
+           AND item_class IN (5, 7)
+           AND store < 100)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-02-15'
+           AND item_class < 5
+           AND store > 20
+           AND store < 100)
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-02-15'
+           AND item_class = 5
+           AND store < 100)
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-02-15'
+           AND item_class > 5
+           AND item_class < 7
+           AND store > 20
+           AND store < 100)
+      UNION ALL /* Retrieval # 6 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-02-15'
+           AND item_class = 7
+           AND store < 100)
+      UNION ALL /* Retrieval # 7 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate = '1995-02-15'
+           AND item_class > 7
+           AND store > 20
+           AND store < 100)
+      UNION ALL /* Retrieval # 8 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate > '1995-02-15'
+           AND sdate < '1995-03-01'
+           AND item_class IN (5, 7)
+           AND store < 100)
+      UNION ALL /* Retrieval # 9 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate >= '1995-03-01'
+           AND item_class = 5
+           AND store > 10
+           AND store < 100)
+      UNION ALL /* Retrieval # 10 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND sdate = '1995-02-15'
+           AND store > 20
+           AND store < 100)
+      UNION ALL /* Retrieval # 11 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 2
+           AND sdate = '1995-02-15'
+           AND item_class = 5
+           AND store > 20
+           AND store < 100)) AS mdam_subquery;
+
+-- Test Case: Range Shattering
+-- Transformed Query (5 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept < 10
+           AND sdate = '1995-02-01'
+           AND item_class = 5
+           AND store IN (100, 200))
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate > '1995-01-01'
+           AND sdate < '1995-03-01'
+           AND item_class = 5
+           AND store IN (100, 200))
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 10
+           AND dept < 20
+           AND sdate = '1995-02-01'
+           AND item_class = 5
+           AND store IN (100, 200))
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 20
+           AND sdate > '1995-01-01'
+           AND sdate < '1995-03-01'
+           AND item_class = 5
+           AND store IN (100, 200))
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 20
+           AND sdate = '1995-02-01'
+           AND item_class = 5
+           AND store IN (100, 200))) AS mdam_subquery;
+
+-- Test Case: Maximal Shatter then Coalesce
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept IN (1, 2)
+           AND sdate IN ('1995-03-01', '1995-03-02')
+           AND item_class = 5
+           AND store > 100)) AS mdam_subquery;
+
+-- Test Case: IS_ANYTHING Propagation
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND store = 100)) AS mdam_subquery;
+
+-- Test Case: IN Expansion and Point Constraints
+-- Transformed Query (2 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate IN ('1995-02-01', '1995-03-01')
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 20
+           AND sdate = '1995-02-01'
+           AND item_class = 5)) AS mdam_subquery;
+
+-- Test Case: More IN Expansion Constraints
+-- Transformed Query (3 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-02-01'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-03-01'
+           AND item_class = 8)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 20
+           AND sdate = '1995-02-01'
+           AND item_class = 5)) AS mdam_subquery;
+
+-- Test Case: Ordering Conflict
+-- Transformed Query (3 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 10
+           AND sdate = '1995-03-01'
+           AND item_class < 5
+           AND store = 50)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 10
+           AND sdate = '1995-03-01'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 10
+           AND sdate = '1995-03-01'
+           AND item_class > 5
+           AND store = 50)) AS mdam_subquery;
+
+-- Test Case: Ordering Conflict Later Col
+-- Transformed Query (3 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate > '1995-02-01'
+           AND item_class < 5
+           AND store = 50)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate > '1995-02-01'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate > '1995-02-01'
+           AND item_class > 5
+           AND store = 50)) AS mdam_subquery;
+
+-- Test Case: No Ordering Conflict
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 10
+           AND sdate = '1995-03-01'
+           AND store IN (5, 50))) AS mdam_subquery;
+
+-- Test Case: Still No Ordering Conflict
+-- Transformed Query (3 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-03-01'
+           AND item_class < 5
+           AND store = 50)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-03-01'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 10
+           AND sdate = '1995-03-01'
+           AND item_class > 5
+           AND store = 50)) AS mdam_subquery;
+
+-- Test Case: MergeRetrievals Gap Splitting
+-- Transformed Query (1 retrievals):
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 1
+           AND sdate BETWEEN '1995-06-04' AND '1995-06-06'
+           AND item_class = 10)) AS mdam_subquery;
+

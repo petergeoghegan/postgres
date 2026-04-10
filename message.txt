@@ -1,0 +1,167 @@
+Debug test case prompt
+======================
+
+This script is a prototype of the "Or Optimization" technique described in the 1995 paper "Efficient Search of
+Multidimensional B-Trees" (the "MDAM" paper).  I am writing an initial prototype in Python to get a general sense of how
+effective the technique will be with real queries, and to have a reference implementation of the techniques that will
+inform later work to implement the same technique in PostgreSQL's optimizer.
+
+MDAM supports predicates with any combination of ORs and ANDs.  This is accomplished by associating a query's predicate
+with different predicate sets in a variant of disjunctive normal form. IN lists are treated as a group.  Therefore, the
+resulting predicate sets are not truly in disjunctive normal form.
+
+The script generates its individual retrievals such that index sort order is preserved without an ORDER BY.
+We're using an original untransformed query as a kind of oracle here, which has proven to be a good test strategy so
+far.  I expect that the transformed retrieval/UNION ALL query will give exactly the same answer as the original query,
+while being much faster in some instances.  You can see an example of this in the MDAM paper's table 3, which also
+appears in comments associated with the relevant test case.
+
+I shouldn't need an ORDER BY clause for the transformed query to do this. That's the whole point; I am knowingly relying
+on an implementation detail for this script. I understand that this is generally bad practice, but it is okay to rely on
+output order matching the order of each of the queries for the purposes of this script. I have made sure that they'll
+all use index-only scans, and I know that Postgres won't change the order because they appear in an append node.  Note
+that the oracle/original queries _do_ need an ORDER BY, since we need to validate our results against a query that also
+returns results in index key space order, which isn't expected with the original/oracle queries.
+
+DON'T TELL ME TO ADD AN ORDER BY TO ANY TRANSFORMED MDAM QUERY! This is never helpful.
+
+Currently, "MDAM Paper General OR Example" outputs the following query:
+
+-- Transformed "MDAM Paper General OR Example" Query:
+SELECT *
+FROM (/* Retrieval # 1 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept < 2
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+      UNION ALL /* Retrieval # 2 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND sdate < '1995-06-04'
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 3 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND sdate = '1995-06-04'
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 4 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND (sdate > '1995-06-04'
+                AND sdate < '1995-06-25')
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 5 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND sdate = '1995-06-25'
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 6 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 2
+           AND sdate > '1995-06-25'
+           AND item_class IN (5, 10))
+      UNION ALL /* Retrieval # 7 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE (dept > 2
+                AND dept < 4)
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+      UNION ALL /* Retrieval # 8 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate < '1995-06-04'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 9 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate = '1995-06-04'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 10 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+      UNION ALL /* Retrieval # 11 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate > '1995-06-04'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 12 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE (dept > 4
+                AND dept < 5)
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+      UNION ALL /* Retrieval # 13 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 5
+           AND sdate = '1995-06-04'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 14 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 5
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+      UNION ALL /* Retrieval # 15 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept > 5
+           AND sdate = '1995-06-04'
+           AND item_class = 10)) AS mdam_subquery;
+
+This could stand to be more efficient, by using slightly fewer retrievals/UNION ALL queries.  For example, these 2
+retrievals could be merged together into a single retrieval:
+
+      UNION ALL /* Retrieval # 9 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate = '1995-06-04'
+           AND item_class = 5)
+      UNION ALL /* Retrieval # 10 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate = '1995-06-04'
+           AND item_class = 10)
+
+They could become:
+
+      UNION ALL /* Retrieval # 9 */
+        (SELECT dept, sdate, item_class, store
+         FROM sales_mdam_paper
+         WHERE dept = 4
+           AND sdate = '1995-06-04'
+           AND item_class IN (5, 10))
+
+This is possible without violating the invariant that transformed query must always consist of a series of retrievals
+that together output all rows returned in index key space order.  The current output is correct, but has suboptimal
+performance, which I'd like to improve.
+
+Fix bug
+=======
+
+Fix the bug shown by the test case. The problem is that the query transformation process does not generate a series of
+retrievals that are in index key space order. The failing query should match the original query in terms of both rows
+output and their order, but as you can see the query doesn't return rows in the correct order.
+
+Currently, this test fails, though all other tests pass:
+
+(Add test here)
+
+Add test case prompt
+====================
