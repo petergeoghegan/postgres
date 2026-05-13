@@ -1,5 +1,5 @@
 drop table if exists sales_mdam_paper;
-create unlogged table sales_mdam_paper
+create table sales_mdam_paper
 (
   dept int4,
   sdate date,
