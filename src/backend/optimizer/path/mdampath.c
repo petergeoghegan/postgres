@@ -232,6 +232,8 @@ static List *mdam_expr_to_dnf(MdamContext *ctx, Expr *expr);
 static List *mdam_conjunct_from_opexpr(MdamContext *ctx, OpExpr *opexpr);
 static List *mdam_conjunct_from_saop(MdamContext *ctx,
 									 ScalarArrayOpExpr *saop);
+static List *mdam_dnf_from_not_in_saop(MdamContext *ctx,
+									   ScalarArrayOpExpr *saop);
 static List *mdam_conjunct_from_nulltest(MdamContext *ctx, NullTest *nt);
 static List *mdam_simplify_conjunct(MdamContext *ctx, List *atoms);
 static void tighten_bound(MdamContext *ctx, int colno, MdamInterval *iv,
@@ -317,6 +319,31 @@ typedef struct MdamSortEntry
  * with non-overlapping IndexScan sub-paths (which often collapses to a
  * single IndexScan once overlapping ranges are coalesced).
  */
+
+/*
+ * mdam_clause_is_disjunctive
+ *		True if the clause is logically disjunctive for MDAM's purposes:
+ *		either an explicit BoolExpr OR, or a NOT IN (ScalarArrayOpExpr with
+ *		useOr = false), which we expand into an OR of inequality ranges.
+ *
+ *		MDAM only fires when at least one such clause is present; the gate
+ *		filters out plain conjunctive predicates that ordinary index path
+ *		generation handles directly.
+ */
+static bool
+mdam_clause_is_disjunctive(RestrictInfo *rinfo)
+{
+	if (restriction_is_or_clause(rinfo))
+		return true;
+	if (IsA(rinfo->clause, ScalarArrayOpExpr))
+	{
+		ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) rinfo->clause;
+
+		return !saop->useOr;
+	}
+	return false;
+}
+
 void
 generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 {
@@ -336,16 +363,16 @@ generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 	if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
 		return;
 
-	/* Collect OR clauses from restriction list */
+	/* Collect disjunctive clauses (OR or NOT IN) from restriction list */
 	foreach(lc, rel->baserestrictinfo)
 	{
 		RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
 
-		if (restriction_is_or_clause(rinfo))
+		if (mdam_clause_is_disjunctive(rinfo))
 			or_rinfos = lappend(or_rinfos, rinfo);
 	}
 
-	MDAM_LOG("MDAM: rel %u has %d restriction clauses, %d are OR clauses",
+	MDAM_LOG("MDAM: rel %u has %d restriction clauses, %d are disjunctive",
 			 rel->relid, list_length(rel->baserestrictinfo), list_length(or_rinfos));
 
 	if (or_rinfos == NIL)
@@ -705,8 +732,9 @@ mdam_copy_atom(MdamContext *ctx, MdamAtom *src)
  * rel->baserestrictinfo and is applied as a per-branch qpqual on each
  * IndexScan child of the resulting Append by the planner's normal path
  * (qpqual = baserestrictinfo - indexclauses, see is_redundant_with_indexclauses).
- * An OR clause that itself fails DNF conversion is still a hard failure --
- * silently dropping a disjunct would lose rows.
+ * A disjunctive clause (BoolExpr OR or NOT IN) that itself fails DNF
+ * conversion is still a hard failure -- silently dropping a disjunct would
+ * lose rows.
  */
 static List *
 mdam_extract_dnf(MdamContext *ctx, List *clauses)
@@ -729,12 +757,12 @@ mdam_extract_dnf(MdamContext *ctx, List *clauses)
 		clause_dnf = mdam_expr_to_dnf(ctx, rinfo->clause);
 		if (clause_dnf == NIL)
 		{
-			if (restriction_is_or_clause(rinfo))
-				return NIL;		/* OR clause must be fully representable */
-			continue;			/* non-OR residual: leave for qpqual */
+			if (mdam_clause_is_disjunctive(rinfo))
+				return NIL;		/* disjunctive clause must be fully representable */
+			continue;			/* non-disjunctive residual: leave for qpqual */
 		}
 
-		if (restriction_is_or_clause(rinfo))
+		if (mdam_clause_is_disjunctive(rinfo))
 			found_or = true;
 
 		/*
@@ -896,8 +924,16 @@ mdam_expr_to_dnf(MdamContext *ctx, Expr *expr)
 	else if (IsA(expr, ScalarArrayOpExpr))
 	{
 		ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) expr;
-		List	   *atoms = mdam_conjunct_from_saop(ctx, saop);
+		List	   *atoms;
 
+		/*
+		 * NOT IN (i.e. "x <> ALL (array)") expands into a multi-conjunct
+		 * DNF of inequality ranges, so it has its own helper.
+		 */
+		if (!saop->useOr)
+			return mdam_dnf_from_not_in_saop(ctx, saop);
+
+		atoms = mdam_conjunct_from_saop(ctx, saop);
 		if (atoms == NIL)
 			return NIL;
 		return list_make1(atoms);
@@ -1114,6 +1150,160 @@ mdam_conjunct_from_saop(MdamContext *ctx, ScalarArrayOpExpr *saop)
 	}
 
 	return NIL;
+}
+
+/*
+ * mdam_dnf_from_not_in_saop
+ *		Convert a ScalarArrayOpExpr with useOr=false (i.e. "x <> ALL (array)",
+ *		the representation of x NOT IN (v1, v2, ..., vN)) into a DNF that
+ *		exposes the predicate to btree as an OR of inequality ranges:
+ *
+ *			(x < v[0])
+ *		 OR (v[0] < x < v[1])
+ *		 OR ...
+ *		 OR (v[N-2] < x < v[N-1])
+ *		 OR (v[N-1] < x)
+ *
+ *		Each arm is a separate conjunct, so downstream MDAM machinery can
+ *		shatter, merge, and combine these with predicates on later index
+ *		columns (e.g. "foo NOT IN (1,3) AND bar = 5" on an index (foo, bar)).
+ *
+ *		Returns a list of conjuncts (each a List of MdamAtom *) or NIL if
+ *		the predicate can't be transformed.
+ */
+static List *
+mdam_dnf_from_not_in_saop(MdamContext *ctx, ScalarArrayOpExpr *saop)
+{
+	IndexOptInfo *index = ctx->index;
+	Node	   *leftop;
+	Node	   *rightop;
+	Oid			eq_op;
+	int			match_colno = -1;
+	Oid			match_opfamily = InvalidOid;
+	Oid			coltype;
+	Const	   *arrayConst;
+	ArrayType  *arrayVal;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			nelems;
+	Oid			elemtype;
+	int16		elemlen;
+	bool		elembyval;
+	char		elemalign;
+	int			nvalid;
+	List	   *dnf;
+
+	Assert(!saop->useOr);
+
+	if (list_length(saop->args) != 2)
+		return NIL;
+
+	leftop = (Node *) linitial(saop->args);
+	rightop = (Node *) lsecond(saop->args);
+
+	/*
+	 * The btree opfamily does not contain <> directly; it contains =, and
+	 * <> is recorded as =' s negator.  Look up the negator of the SAOP's
+	 * operator and require it to be a btree equality strategy member of a
+	 * matching index column's opfamily.
+	 */
+	eq_op = get_negator(saop->opno);
+	if (!OidIsValid(eq_op))
+		return NIL;
+
+	for (int colno = 0; colno < ctx->nkeycolumns; colno++)
+	{
+		Oid			opfamily = index->opfamily[colno];
+
+		if (!match_index_to_operand(leftop, colno, index))
+			continue;
+		if (!IndexCollMatchesExprColl(index->indexcollations[colno],
+									  saop->inputcollid))
+			continue;
+		if (get_op_opfamily_strategy(eq_op, opfamily) != BTEqualStrategyNumber)
+			continue;
+		match_colno = colno;
+		match_opfamily = opfamily;
+		break;
+	}
+
+	if (match_colno < 0)
+		return NIL;
+
+	/*
+	 * The < and > operators are required for the arms.  All real btree
+	 * opfamilies provide them, but probe defensively.
+	 */
+	coltype = index->opcintype[match_colno];
+	if (!OidIsValid(get_opfamily_member(match_opfamily, coltype, coltype,
+										BTLessStrategyNumber)))
+		return NIL;
+	if (!OidIsValid(get_opfamily_member(match_opfamily, coltype, coltype,
+										BTGreaterStrategyNumber)))
+		return NIL;
+
+	if (!IsA(rightop, Const))
+		return NIL;
+	arrayConst = (Const *) rightop;
+	if (arrayConst->constisnull)
+		return NIL;
+
+	arrayVal = DatumGetArrayTypeP(arrayConst->constvalue);
+	elemtype = ARR_ELEMTYPE(arrayVal);
+	get_typlenbyvalalign(elemtype, &elemlen, &elembyval, &elemalign);
+	deconstruct_array(arrayVal, elemtype, elemlen, elembyval, elemalign,
+					  &elems, &nulls, &nelems);
+
+	/*
+	 * SQL semantics: x NOT IN (..., NULL, ...) is never true.  Bail so the
+	 * executor evaluates the predicate as a filter (it will reject every
+	 * row).  Representing an unconditional-false path inside the MDAM
+	 * pipeline would require new "contradiction" infrastructure.
+	 */
+	for (int i = 0; i < nelems; i++)
+	{
+		if (nulls[i])
+			return NIL;
+	}
+
+	if (nelems == 0)
+		return NIL;
+
+	sort_datums_canonical(ctx, match_colno, elems, nelems);
+
+	nvalid = 1;
+	for (int i = 1; i < nelems; i++)
+	{
+		if (!mdam_datum_eq(ctx, match_colno, elems[nvalid - 1], elems[i]))
+			elems[nvalid++] = elems[i];
+	}
+
+	/*
+	 * The expansion produces nvalid + 1 conjuncts; respect the DNF cap to
+	 * keep planning bounded.
+	 */
+	if (nvalid + 1 > MDAM_MAX_DNF_CONJUNCTS)
+		return NIL;
+
+	dnf = NIL;
+	dnf = lappend(dnf,
+				  list_make1(mdam_make_atom(ctx, match_colno,
+											MDAM_OP_LT, elems[0])));
+	for (int i = 0; i < nvalid - 1; i++)
+	{
+		List	   *arm;
+
+		arm = list_make2(mdam_make_atom(ctx, match_colno,
+										MDAM_OP_GT, elems[i]),
+						 mdam_make_atom(ctx, match_colno,
+										MDAM_OP_LT, elems[i + 1]));
+		dnf = lappend(dnf, arm);
+	}
+	dnf = lappend(dnf,
+				  list_make1(mdam_make_atom(ctx, match_colno,
+											MDAM_OP_GT, elems[nvalid - 1])));
+
+	return dnf;
 }
 
 /*

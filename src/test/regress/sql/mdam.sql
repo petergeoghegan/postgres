@@ -1252,6 +1252,68 @@ WHERE x = 1 AND (x IS NULL AND (y < 'a' OR y IS NOT NULL) OR y = 'q');
 
 DROP TABLE mdam_crash_mixed;
 
+--
+-- NOT IN transformation
+--
+-- NOT IN (v1, v2, ..., vN) is "x <> ALL (array)" -- ScalarArrayOpExpr with
+-- useOr = false.  MDAM expands it into the OR of inequality ranges
+--   (x < v[0]) OR (v[0] < x < v[1]) OR ... OR (v[N-1] < x)
+-- so the downstream pipeline can shatter, merge, and combine the disjuncts
+-- with predicates on later index columns.  The motivating case is
+-- "WHERE foo NOT IN (...) AND bar = X" on an (foo, bar) index when foo
+-- has relatively few distinct values; modulo cost-based path selection
+-- this becomes an Append of IndexOnlyScans, each carrying bar = X as part
+-- of its Index Cond rather than as a per-row filter.
+--
+
+-- The tests below force the Append shape with a bounding BETWEEN on the
+-- leading column.  Bounding turns the outer arms (x < v[0], x > v[N-1])
+-- into finite ranges so MDAM's per-arm scan costs stay competitive with
+-- the plain index scan + filter alternative, independent of catalog state.
+
+-- Motivating shape: bounded leading column + NOT IN + equality on later
+-- column.  Each Append child should combine the a range with b = 5 as
+-- its Index Cond.
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM mdam_test_tbl
+WHERE a BETWEEN 10 AND 16 AND a NOT IN (12, 14) AND b = 5;
+
+SELECT count(*) FROM mdam_test_tbl
+WHERE a BETWEEN 10 AND 16 AND a NOT IN (12, 14) AND b = 5;
+
+SET enable_mdam = off;
+SELECT count(*) FROM mdam_test_tbl
+WHERE a BETWEEN 10 AND 16 AND a NOT IN (12, 14) AND b = 5;
+RESET enable_mdam;
+
+-- Duplicate values in the array are deduped before the DNF is built; the
+-- Append must have the same three arms as NOT IN (12, 14).
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM mdam_test_tbl
+WHERE a BETWEEN 10 AND 16 AND a NOT IN (12, 12, 14, 14) AND b = 5;
+
+SELECT count(*) FROM mdam_test_tbl
+WHERE a BETWEEN 10 AND 16 AND a NOT IN (12, 12, 14, 14) AND b = 5;
+
+-- NULL in the array makes the predicate unsatisfiable.  MDAM bails out so
+-- the executor evaluates the NOT IN as a filter that rejects every row.
+-- Pairing with the NOT IN (12, 14) Append above: switching to a NULL-in-
+-- array form here loses the Append shape, which demonstrates that the
+-- helper rejects NULL rather than silently expanding it.
+--
+-- FIXME: the cleaner outcome is a One-Time Filter: false Result with ~0
+-- cost (same way "k NOT IN (k1, NULL, k2)" is already folded for constant
+-- LHS).  That would require a planner-level pass that folds
+-- "var <> ALL (array containing NULL)" to constant FALSE in
+-- eval_const_expressions; out of scope for the MDAM NOT IN patch, but the
+-- full-scan + filter plan below is suboptimal until it lands.
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM mdam_test_tbl
+WHERE a BETWEEN 10 AND 16 AND a NOT IN (12, NULL, 14) AND b = 5;
+
+SELECT count(*) FROM mdam_test_tbl
+WHERE a BETWEEN 10 AND 16 AND a NOT IN (12, NULL, 14) AND b = 5;
+
 -- Cleanup
 RESET enable_seqscan;
 RESET enable_bitmapscan;
