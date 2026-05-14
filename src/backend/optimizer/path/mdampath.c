@@ -308,15 +308,6 @@ static IndexPath *mdam_build_index_path(MdamContext *ctx,
 static void mdam_add_paths(MdamContext *ctx, List *retrievals,
 						   List *or_rinfos, ScanDirection scandir);
 
-#ifdef USE_ASSERT_CHECKING
-static bool mdam_check_atom_wellformed(MdamContext *ctx, MdamAtom *atom);
-static bool mdam_check_atoms_sorted_wellformed(MdamContext *ctx, List *atoms);
-static bool mdam_check_post_dnf(MdamContext *ctx, List *dnf);
-static bool mdam_check_post_retrievals(MdamContext *ctx, List *retrievals);
-static bool mdam_check_post_merge(MdamContext *ctx, List *paths);
-static bool mdam_check_post_esc(MdamContext *ctx, List *paths);
-#endif
-
 /*
  * Sort key for path ordering.  Precomputed before sort to avoid palloc inside
  * qsort comparator.
@@ -528,7 +519,6 @@ generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 			MemoryContextDelete(ctx->mdam_mcxt);
 			continue;
 		}
-		Assert(mdam_check_post_dnf(ctx, dnf));
 		MDAM_LOG("MDAM: DNF has %d conjuncts", list_length(dnf));
 
 		/* Step 2: Generate initial retrievals (shattering) */
@@ -544,7 +534,6 @@ generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 			MemoryContextDelete(ctx->mdam_mcxt);
 			continue;
 		}
-		Assert(mdam_check_post_retrievals(ctx, initial_retrievals));
 		MDAM_LOG("MDAM: %d initial retrievals", list_length(initial_retrievals));
 
 		/* Step 3: Merge retrievals */
@@ -568,7 +557,6 @@ generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 				simplified = lappend(simplified, s);
 		}
 		merged = simplified;
-		Assert(mdam_check_post_merge(ctx, merged));
 
 		/* Step 4: Expand, sort, coalesce */
 		final_paths = mdam_expand_sort_coalesce(ctx, dnf, merged);
@@ -581,7 +569,6 @@ generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 			MemoryContextDelete(ctx->mdam_mcxt);
 			continue;
 		}
-		Assert(mdam_check_post_esc(ctx, final_paths));
 
 		/*
 		 * Check for ordering conflicts.  A no-op for a single retrieval, but
@@ -4754,315 +4741,3 @@ mdam_add_paths(MdamContext *ctx, List *retrievals, List *or_rinfos,
 		add_path(rel, (Path *) appendpath);
 	}
 }
-
-
-/* ---------------------------------------------------
- * Per-stage algebraic-invariant validators (USE_ASSERT_CHECKING only)
- *
- * Each `mdam_check_post_*` function returns true when its argument
- * satisfies the structural invariants that the corresponding pipeline
- * stage is supposed to establish.  Call sites wrap them in Assert(),
- * so the compiler strips the calls entirely in non-assert builds.
- *
- * The validators are intentionally local: they reject bad shape, not
- * bad semantics.  A separate semantic-equivalence tier (out of scope
- * here) would enumerate critical points and compare the original DNF
- * against the union of final paths.
- * ---------------------------------------------------
- */
-
-#ifdef USE_ASSERT_CHECKING
-
-/*
- * Validate one MdamAtom in isolation: column index in range, op is a
- * recognized MdamOpType, and the union-style value / in_values / range
- * fields are consistent with op.  Value-bearing atoms (EQ/LT/LE/GT/GE)
- * leave the SAOP fields zero-initialized by mdam_make_atom; SAOP atoms
- * carry a non-empty sorted-ascending in_values array; RANGE_EXCL atoms
- * carry strictly ordered range bounds.
- */
-static bool
-mdam_check_atom_wellformed(MdamContext *ctx, MdamAtom *atom)
-{
-	if (atom == NULL)
-		return false;
-	if (atom->colno < 0 || atom->colno >= ctx->nkeycolumns)
-		return false;
-
-	switch (atom->op)
-	{
-		case MDAM_OP_EQ:
-		case MDAM_OP_LT:
-		case MDAM_OP_LE:
-		case MDAM_OP_GT:
-		case MDAM_OP_GE:
-			if (atom->in_values != NULL || atom->n_in_values != 0)
-				return false;
-			return true;
-		case MDAM_OP_SAOP:
-			if (atom->in_values == NULL || atom->n_in_values < 1)
-				return false;
-			for (int i = 1; i < atom->n_in_values; i++)
-			{
-				if (mdam_compare(ctx, atom->colno,
-								 atom->in_values[i - 1],
-								 atom->in_values[i]) > 0)
-					return false;
-			}
-			return true;
-		case MDAM_OP_RANGE_EXCL:
-			if (mdam_compare(ctx, atom->colno,
-							 atom->range_lo, atom->range_hi) >= 0)
-				return false;
-			return true;
-		case MDAM_OP_IS_NULL:
-		case MDAM_OP_IS_NOT_NULL:
-		case MDAM_OP_IS_ANYTHING:
-			return true;
-	}
-	return false;
-}
-
-/*
- * Validate a list of atoms intended to be in canonical (colno-ascending)
- * order, with each atom well-formed.  Used as a shared shape check by
- * stages 1-3.
- */
-static bool
-mdam_check_atoms_sorted_wellformed(MdamContext *ctx, List *atoms)
-{
-	ListCell   *lc;
-	int			prev_colno = -1;
-
-	foreach(lc, atoms)
-	{
-		MdamAtom   *atom = (MdamAtom *) lfirst(lc);
-
-		if (!mdam_check_atom_wellformed(ctx, atom))
-			return false;
-		if (atom->colno < prev_colno)
-			return false;
-		prev_colno = atom->colno;
-	}
-	return true;
-}
-
-/*
- * mdam_check_post_dnf
- *		Validate the output of mdam_extract_dnf: a list of conjuncts.
- *
- * Each conjunct must be non-empty (TRUE conjuncts collapse to an empty
- * conjunct, which should never escape simplify_conjunct), contain
- * column-sorted well-formed atoms, no IS_ANYTHING (simplify strips
- * those), and per column either carry a single SAOP atom alone or
- * a non-SAOP shape whose extract_interval is non-contradictory.
- */
-static bool
-mdam_check_post_dnf(MdamContext *ctx, List *dnf)
-{
-	ListCell   *lc;
-
-	foreach(lc, dnf)
-	{
-		List	   *conjunct = (List *) lfirst(lc);
-		ListCell   *lc2;
-
-		if (conjunct == NIL)
-			return false;
-
-		if (!mdam_check_atoms_sorted_wellformed(ctx, conjunct))
-			return false;
-
-		foreach(lc2, conjunct)
-		{
-			MdamAtom   *atom = (MdamAtom *) lfirst(lc2);
-
-			if (atom->op == MDAM_OP_IS_ANYTHING)
-				return false;
-		}
-
-		for (int col = 0; col < ctx->nkeycolumns; col++)
-		{
-			List	   *col_atoms = mdam_atoms_for_col(conjunct, col);
-			int			n = list_length(col_atoms);
-			MdamAtom   *first;
-
-			if (n == 0)
-				continue;
-			first = (MdamAtom *) linitial(col_atoms);
-
-			if (first->op == MDAM_OP_SAOP)
-			{
-				if (n != 1)
-					return false;
-				continue;
-			}
-			if (mdam_col_atoms_has_saop(col_atoms))
-				return false;
-			if (mdam_extract_interval(ctx, col, col_atoms) == NULL)
-				return false;
-		}
-	}
-	return true;
-}
-
-/*
- * mdam_check_post_retrievals
- *		Validate the output of mdam_generate_retrievals.
- *
- * Shattered paths (from the recursive enumerator) carry at most one
- * atom per column and appear in column-sorted order.  The appended
- * contradictory stash is the raw unsimplified cross-product from DNF
- * extraction, which can carry unsorted atoms or multiple atoms per
- * column -- those shapes are intentional inputs to step 3a's
- * simplification pass, so we only require per-atom well-formedness
- * (no IS_ANYTHING; valid colno/op/payload) and the per-context
- * retrieval cap.
- */
-static bool
-mdam_check_post_retrievals(MdamContext *ctx, List *retrievals)
-{
-	ListCell   *lc;
-
-	if (list_length(retrievals) > MDAM_MAX_RETRIEVALS &&
-		!ctx->retrievals_truncated)
-		return false;
-
-	foreach(lc, retrievals)
-	{
-		List	   *path = (List *) lfirst(lc);
-		ListCell   *lc2;
-
-		foreach(lc2, path)
-		{
-			MdamAtom   *atom = (MdamAtom *) lfirst(lc2);
-
-			if (!mdam_check_atom_wellformed(ctx, atom))
-				return false;
-			if (atom->op == MDAM_OP_IS_ANYTHING)
-				return false;
-		}
-	}
-	return true;
-}
-
-/*
- * mdam_check_post_merge
- *		Validate the output of merge + per-path simplify (steps 3 and 3a).
- *
- * Each surviving path is non-contradictory and has at most one
- * "effective" constraint per column: a single SAOP / EQ / IS_NULL /
- * IS_NOT_NULL atom, or a pair of bound atoms (GE/GT followed by LE/LT)
- * forming a strict range.  Paths flagged contradictory by
- * mdam_path_is_contradictory must have been pruned upstream.
- */
-static bool
-mdam_check_post_merge(MdamContext *ctx, List *paths)
-{
-	ListCell   *lc;
-
-	foreach(lc, paths)
-	{
-		List	   *path = (List *) lfirst(lc);
-		ListCell   *lc2;
-
-		if (!mdam_check_atoms_sorted_wellformed(ctx, path))
-			return false;
-
-		foreach(lc2, path)
-		{
-			MdamAtom   *atom = (MdamAtom *) lfirst(lc2);
-
-			if (atom->op == MDAM_OP_IS_ANYTHING)
-				return false;
-		}
-
-		if (mdam_path_is_contradictory(ctx, path))
-			return false;
-
-		for (int col = 0; col < ctx->nkeycolumns; col++)
-		{
-			List	   *col_atoms = mdam_atoms_for_col(path, col);
-			int			n = list_length(col_atoms);
-			MdamAtom   *first;
-			MdamAtom   *second;
-
-			if (n == 0)
-				continue;
-			if (n > 2)
-				return false;
-			if (n == 1)
-				continue;
-
-			first = (MdamAtom *) linitial(col_atoms);
-			second = (MdamAtom *) lsecond(col_atoms);
-
-			if (first->op != MDAM_OP_GE && first->op != MDAM_OP_GT)
-				return false;
-			if (second->op != MDAM_OP_LE && second->op != MDAM_OP_LT)
-				return false;
-			if (mdam_compare(ctx, col, first->value, second->value) >= 0)
-				return false;
-		}
-	}
-	return true;
-}
-
-/*
- * mdam_check_post_esc
- *		Validate the output of mdam_expand_sort_coalesce.
- *
- * Stage-3 per-path invariants still hold.  Paths are sorted ascending
- * by index-key-space order under mdam_path_sort_cmp, and no two
- * adjacent paths are byte-identical (an atom-equal duplicate
- * indicates a missed dedup in sort_by_key_space or an over-eager
- * coalesce reintroducing one).
- */
-static bool
-mdam_check_post_esc(MdamContext *ctx, List *paths)
-{
-	int			np;
-	MdamSortEntry *entries;
-	bool		ok = true;
-
-	if (!mdam_check_post_merge(ctx, paths))
-		return false;
-
-	np = list_length(paths);
-	if (np <= 1)
-		return true;
-
-	entries = palloc(sizeof(MdamSortEntry) * np);
-	for (int i = 0; i < np; i++)
-	{
-		entries[i].path = (List *) list_nth(paths, i);
-		entries[i].key = mdam_get_path_sort_key(ctx, entries[i].path);
-	}
-
-	for (int i = 0; i < np - 1; i++)
-	{
-		int			cmp = mdam_path_sort_cmp(&entries[i],
-											 &entries[i + 1], ctx);
-
-		if (cmp > 0)
-		{
-			ok = false;
-			break;
-		}
-		if (cmp == 0 &&
-			mdam_base_atoms_equal(ctx, entries[i].path,
-								  entries[i + 1].path))
-		{
-			ok = false;
-			break;
-		}
-	}
-
-	for (int i = 0; i < np; i++)
-		pfree(entries[i].key);
-	pfree(entries);
-
-	return ok;
-}
-
-#endif							/* USE_ASSERT_CHECKING */
