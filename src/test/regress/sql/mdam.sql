@@ -915,10 +915,9 @@ ANALYZE mdam_null_bug_tbl;
 -- Case 1: two arms with the same leading-column key and complementary b
 -- ranges that together cover all non-NULL b, plus a third arm to push
 -- MDAM past the cost threshold so the Append is actually chosen.  The
--- resulting Index Conds must keep an explicit b bound on the (a = 5)
--- retrievals (here split at the overlap boundary, b = 100) rather than
--- coalescing to an unconstrained "any b" scan that would admit
--- a = 5 AND b IS NULL rows.
+-- two (a = 5) retrievals collapse into a single (a = 5) AND (b IS NOT
+-- NULL) scan rather than coalescing to an unconstrained "any b" scan
+-- that would admit a = 5 AND b IS NULL rows.
 --
 SET enable_mdam = off;
 SET enable_bitmapscan = on;
@@ -968,10 +967,10 @@ SELECT count(*) AS actual FROM mdam_null_bug_tbl
 WHERE (a = 5 AND c = 10) OR (a = 10 AND b = 20);
 
 --
--- Case 3: another shape that exercises the NULL-coverage rule.  MDAM may
--- decline this on cost (or because the additional split retrievals trip
--- the ordering check); whichever plan wins, the count must match the
--- bitmap baseline.
+-- Case 3: another shape that exercises the NULL-coverage rule.  The two
+-- arms' c constraints (c >= 8 OR c < 13) overlap and together cover
+-- every non-NULL c, so for the a >= 56 region MDAM emits a single
+-- (c IS NOT NULL) scan rather than two value-bounded retrievals.
 --
 SET enable_mdam = off;
 SET enable_bitmapscan = on;

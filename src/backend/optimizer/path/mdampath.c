@@ -1936,30 +1936,23 @@ mdam_merge_interval_list(MdamContext *ctx, int colno, List *intervals)
 		 * Emitting one merged (-inf, +inf) interval would therefore wrongly
 		 * return rows where the column is NULL.
 		 *
-		 * Only trigger the split when no input interval already covers NULL
-		 * (via IS NULL or a truly-unconstrained value interval).  If some
-		 * input does cover NULL, the original predicate's union already
-		 * includes NULL rows, so merging to (-inf, +inf) is correct -- it
-		 * matches that semantics exactly.
+		 * Only apply this when no input interval already covers NULL (via IS
+		 * NULL or a truly-unconstrained value interval).  If some input does
+		 * cover NULL, the original predicate's union already includes NULL
+		 * rows, so merging to a plain unconstrained (-inf, +inf) is correct
+		 * -- it matches that semantics exactly.
 		 *
-		 * Avoid the over-broad merge by splitting at cur->lo: cap last->hi at
-		 * cur->lo with inverted inclusiveness, and keep cur as a separate
-		 * (disjoint) interval.  Together they cover the same non-NULL value
-		 * space as the would-be merge.
-		 *
-		 * The split requires a concrete cur->lo to read.  When cur is an
-		 * IS_NOT_NULL interval with lo_infinite=true, cur->lo is unset; the
-		 * union of last (value-bounded, NULL-excluding) and cur (IS_NOT_NULL)
-		 * is exactly IS_NOT_NULL, so fall through to the merge branch and let
-		 * is_not_null_interval propagate onto last there.
+		 * can_merge guarantees last and cur overlap or touch with an
+		 * inclusive boundary, so their value-space union is (-inf, +inf).
+		 * Combined with !input_covers_null this is exactly IS NOT NULL --
+		 * merge to (-inf, +inf) and mark is_not_null_interval so
+		 * mdam_interval_to_atoms emits an explicit IS NOT NULL scankey.
 		 */
 		if (cur->hi_infinite && last->lo_infinite && !last->hi_infinite &&
 			!cur->lo_infinite && !input_covers_null)
 		{
-			last->hi = cur->lo;
-			last->hi_inclusive = !cur->lo_inclusive;
-			last->hi_infinite = false;
-			merged = lappend(merged, cur);
+			last->hi_infinite = true;
+			last->is_not_null_interval = true;
 			continue;
 		}
 
@@ -3661,16 +3654,21 @@ mdam_coalesce_adjacent(MdamContext *ctx, List *paths)
 				merged_ivs = mdam_merge_interval_list(ctx, merge_col, ivs);
 
 				/*
-				 * If the basic merge split into two intervals (because iv1
-				 * and iv2 together would span (-inf, +inf) but no input
-				 * covered NULL), look for a sibling path with IS NULL on
-				 * merge_col and same base on the other columns.  Such a
-				 * sibling indicates the original predicate already includes
-				 * NULL rows on merge_col; we can then safely consolidate
-				 * iv1+iv2 to (-inf, +inf) and consume the IS NULL sibling
-				 * too, yielding a single coalesced path.
+				 * If iv1+iv2 together span (-inf, +inf) but exclude NULL --
+				 * either as two disjoint value intervals or collapsed to a
+				 * single unbounded IS NOT NULL interval -- look for a
+				 * sibling path with IS NULL on merge_col and same base on
+				 * the other columns.  Such a sibling indicates the original
+				 * predicate already includes NULL rows on merge_col; we can
+				 * then safely consolidate iv1+iv2 to a plain unconstrained
+				 * (-inf, +inf) and consume the IS NULL sibling too,
+				 * yielding a single coalesced path.
 				 */
-				if (list_length(merged_ivs) == 2)
+				if (list_length(merged_ivs) == 2 ||
+					(list_length(merged_ivs) == 1 &&
+					 ((MdamInterval *) linitial(merged_ivs))->is_not_null_interval &&
+					 ((MdamInterval *) linitial(merged_ivs))->lo_infinite &&
+					 ((MdamInterval *) linitial(merged_ivs))->hi_infinite))
 				{
 					k = 0;
 					foreach(klc, all_expanded)
@@ -3712,6 +3710,16 @@ mdam_coalesce_adjacent(MdamContext *ctx, List *paths)
 							k++;
 							continue;
 						}
+
+						/*
+						 * mdam_merge_interval_list mutates its inputs in
+						 * place, so the prior call above on [iv1, iv2] may
+						 * have widened iv1 (e.g. to an IS NOT NULL
+						 * (-inf, +inf)).  Re-extract from the original atom
+						 * lists so the retry sees the unmutated inputs.
+						 */
+						iv1 = mdam_extract_interval(ctx, merge_col, cur_col_atoms);
+						iv2 = mdam_extract_interval(ctx, merge_col, next_col_atoms);
 						retry = list_make3(iv1, iv2, k_iv);
 						merged_ivs = mdam_merge_interval_list(ctx, merge_col,
 															  retry);
@@ -3720,7 +3728,9 @@ mdam_coalesce_adjacent(MdamContext *ctx, List *paths)
 							null_sibling_idx = k;
 							break;
 						}
-						/* Retry didn't help; keep original */
+						/* Retry didn't help; re-extract and recompute. */
+						iv1 = mdam_extract_interval(ctx, merge_col, cur_col_atoms);
+						iv2 = mdam_extract_interval(ctx, merge_col, next_col_atoms);
 						ivs = list_make2(iv1, iv2);
 						merged_ivs = mdam_merge_interval_list(ctx, merge_col,
 															  ivs);
