@@ -110,6 +110,17 @@ bool		enable_mdam = true;
 /* Maximum number of DNF conjuncts after conversion */
 #define MDAM_MAX_DNF_CONJUNCTS	128
 
+/*
+ * Conservative upper bound on the DNF size implied purely by the input
+ * predicate structure (each AND multiplies, each OR sums, leaves count as
+ * 1).  When mdam_estimate_dnf_size exceeds this, generate_mdam_or_paths
+ * bails before any per-index allocation: even if the cross-product later
+ * folds many conjuncts to contradictions, the planning cost of producing
+ * and merging the un-folded retrievals dominates.  Set well below
+ * MDAM_MAX_DNF_CONJUNCTS so it triggers earlier than the in-pipeline cap.
+ */
+#define MDAM_MAX_DNF_PREESTIMATE	64
+
 #ifdef MDAM_DEBUG
 #define MDAM_LOG(...)	elog(DEBUG1, __VA_ARGS__)
 #else
@@ -353,11 +364,77 @@ mdam_clause_is_disjunctive(RestrictInfo *rinfo)
 	return false;
 }
 
+/*
+ * mdam_estimate_dnf_size
+ *		Conservative upper bound on the number of DNF conjuncts that
+ *		mdam_extract_dnf would produce for the given expression.  OR sums
+ *		its children, AND multiplies them, leaves count as 1.  Saturates at
+ *		MDAM_MAX_DNF_PREESTIMATE + 1 to avoid integer overflow and to
+ *		short-circuit further recursion once the threshold is exceeded.
+ *
+ *		This is structural only -- it never allocates, calls into the
+ *		catalog, or inspects values.  False positives (over-estimating a
+ *		predicate whose DNF would collapse via contradictions or SAOP
+ *		folding) cause an unnecessary MDAM bail; false negatives are caught
+ *		by the in-pipeline MDAM_MAX_DNF_CONJUNCTS cap.
+ */
+static int
+mdam_estimate_dnf_size(Expr *expr)
+{
+	if (expr == NULL)
+		return 1;
+
+	if (IsA(expr, RestrictInfo))
+		return mdam_estimate_dnf_size(((RestrictInfo *) expr)->clause);
+
+	if (IsA(expr, BoolExpr))
+	{
+		BoolExpr   *boolexpr = (BoolExpr *) expr;
+		ListCell   *lc;
+
+		if (boolexpr->boolop == OR_EXPR)
+		{
+			int			acc = 0;
+
+			foreach(lc, boolexpr->args)
+			{
+				acc += mdam_estimate_dnf_size((Expr *) lfirst(lc));
+				if (acc > MDAM_MAX_DNF_PREESTIMATE)
+					return MDAM_MAX_DNF_PREESTIMATE + 1;
+			}
+			return acc;
+		}
+		if (boolexpr->boolop == AND_EXPR)
+		{
+			int			acc = 1;
+
+			foreach(lc, boolexpr->args)
+			{
+				acc *= mdam_estimate_dnf_size((Expr *) lfirst(lc));
+				if (acc > MDAM_MAX_DNF_PREESTIMATE)
+					return MDAM_MAX_DNF_PREESTIMATE + 1;
+			}
+			return acc;
+		}
+		/* NOT: MDAM can't transform; treat as leaf */
+		return 1;
+	}
+
+	/*
+	 * Leaves (OpExpr, NullTest, IN-form SAOP, NOT IN, etc.) count as 1.
+	 * NOT IN actually expands to N+1 conjuncts inside the pipeline, but
+	 * the in-pipeline cap catches that; we don't peek at array lengths
+	 * here.
+	 */
+	return 1;
+}
+
 void
 generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 {
 	ListCell   *lc;
 	List	   *or_rinfos = NIL;
+	int			est;
 
 	/* GUC check */
 	if (!enable_mdam)
@@ -386,6 +463,29 @@ generate_mdam_or_paths(PlannerInfo *root, RelOptInfo *rel)
 
 	if (or_rinfos == NIL)
 		return;
+
+	/*
+	 * Bail before any per-index allocation if the structural DNF size --
+	 * the product over baserestrictinfo of each clause's OR-arm sum -- is
+	 * already too large to handle profitably.  The actual cross-product
+	 * inside mdam_extract_dnf would do non-trivial allocation and
+	 * simplification work per produced conjunct before tripping the
+	 * MDAM_MAX_DNF_CONJUNCTS cap; for the cases that would have failed
+	 * anyway, skip that work entirely.
+	 */
+	est = 1;
+	foreach(lc, rel->baserestrictinfo)
+	{
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
+
+		est *= mdam_estimate_dnf_size(rinfo->clause);
+		if (est > MDAM_MAX_DNF_PREESTIMATE)
+		{
+			MDAM_LOG("MDAM: predicted DNF size %d exceeds %d, skipping",
+					 est, MDAM_MAX_DNF_PREESTIMATE);
+			return;
+		}
+	}
 
 	/* Try each index */
 	foreach(lc, rel->indexlist)
