@@ -77,7 +77,6 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_type.h"
-#include "common/int.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/cost.h"
@@ -94,7 +93,6 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/selfuncs.h"
-#include "utils/sortsupport.h"
 
 /* GUC variable */
 bool		enable_mdam = true;
@@ -130,9 +128,7 @@ typedef struct MdamColContext
 	Oid			collid;			/* collation OID */
 	Oid			opfamily;		/* btree operator family */
 	Oid			eq_opr;			/* equality operator OID */
-	SortSupportData ssup;		/* set up from BTSORTSUPPORT_PROC or shim
-								 * around BTORDER_PROC; used for in-process
-								 * Datum comparison without fmgr overhead */
+	FmgrInfo	cmp_finfo;		/* btree ORDER proc */
 } MdamColContext;
 
 /*
@@ -552,7 +548,7 @@ mdam_init_context(PlannerInfo *root, RelOptInfo *rel, IndexOptInfo *index)
 		MdamColContext *cc = &ctx->col_ctx[i];
 		Oid			opfamily = index->opfamily[i];
 		Oid			opcintype = index->opcintype[i];
-		Oid			ssup_proc;
+		Oid			cmp_proc;
 
 		cc->colno = i;
 		cc->typid = opcintype;
@@ -565,37 +561,17 @@ mdam_init_context(PlannerInfo *root, RelOptInfo *rel, IndexOptInfo *index)
 		cc->eq_opr = get_opfamily_member(opfamily, opcintype, opcintype,
 										 BTEqualStrategyNumber);
 
-		/*
-		 * Set up SortSupport for in-process Datum comparison.  Prefer the
-		 * opclass's BTSORTSUPPORT_PROC (a direct C comparator like
-		 * btint4fastcmp), and fall back to a shim around BTORDER_PROC.  This
-		 * avoids FunctionCall2Coll overhead on every mdam_compare() call.
-		 */
-		cc->ssup.ssup_cxt = mdam_mcxt;
-		cc->ssup.ssup_collation = cc->collid;
-		cc->ssup.ssup_nulls_first = false;
-		cc->ssup.ssup_reverse = false;
-		cc->ssup.comparator = NULL;
-
-		ssup_proc = get_opfamily_proc(opfamily, opcintype, opcintype,
-									  BTSORTSUPPORT_PROC);
-		if (OidIsValid(ssup_proc))
-			OidFunctionCall1(ssup_proc, PointerGetDatum(&cc->ssup));
-
-		if (cc->ssup.comparator == NULL)
+		/* Get btree comparison support function */
+		cmp_proc = get_opfamily_proc(opfamily, opcintype, opcintype,
+									 BTORDER_PROC);
+		if (!OidIsValid(cmp_proc))
 		{
-			Oid			cmp_proc = get_opfamily_proc(opfamily, opcintype,
-													 opcintype, BTORDER_PROC);
-
-			if (!OidIsValid(cmp_proc))
-			{
-				/* Can't do MDAM without comparison function */
-				MemoryContextSwitchTo(old_mcxt);
-				MemoryContextDelete(mdam_mcxt);
-				return NULL;
-			}
-			PrepareSortSupportComparisonShim(cmp_proc, &cc->ssup);
+			/* Can't do MDAM without comparison function */
+			MemoryContextSwitchTo(old_mcxt);
+			MemoryContextDelete(mdam_mcxt);
+			return NULL;
 		}
+		fmgr_info(cmp_proc, &cc->cmp_finfo);
 	}
 
 	MemoryContextSwitchTo(old_mcxt);
@@ -604,18 +580,14 @@ mdam_init_context(PlannerInfo *root, RelOptInfo *rel, IndexOptInfo *index)
 
 /*
  * Compare two Datum values for a column. Returns <0, 0, >0.
- *
- * Atoms only carry non-null Datums (NULLs are represented via separate
- * IS_NULL atoms), so we can call the SortSupport comparator directly
- * rather than going through ApplySortComparator.  ssup_reverse is always
- * false here.
  */
 static int
 mdam_compare(MdamContext *ctx, int colno, Datum v1, Datum v2)
 {
 	MdamColContext *cc = &ctx->col_ctx[colno];
 
-	return cc->ssup.comparator(v1, v2, &cc->ssup);
+	return DatumGetInt32(FunctionCall2Coll(&cc->cmp_finfo, cc->collid,
+										   v1, v2));
 }
 
 static bool
@@ -2715,32 +2687,45 @@ mdam_atoms_except_col(List *path, int colno)
 }
 
 /*
- * Comparator for sorting MdamAtom pointers by column number.
- */
-static int
-mdam_atom_colno_cmp(const ListCell *a, const ListCell *b)
-{
-	const MdamAtom *aa = (const MdamAtom *) lfirst(a);
-	const MdamAtom *ab = (const MdamAtom *) lfirst(b);
-
-	return pg_cmp_s32(aa->colno, ab->colno);
-}
-
-/*
- * Canonical sort key for a path: sort atoms by colno (we have at most one
- * atom per column).  The input list is copied so callers needn't worry
- * about mutation of a shared list.
+ * Canonical sort key for a path: sort atoms by (colno, op, value).
  */
 static List *
 mdam_sort_path_atoms(List *path)
 {
-	List	   *result;
+	/* Simple: just sort by colno since we have at most one atom per col */
+	int			n = list_length(path);
+	MdamAtom  **arr;
+	List	   *result = NIL;
 
-	if (list_length(path) <= 1)
+	if (n <= 1)
 		return path;
 
-	result = list_copy(path);
-	list_sort(result, mdam_atom_colno_cmp);
+	arr = palloc(sizeof(MdamAtom *) * n);
+	for (int i = 0; i < n; i++)
+	{
+		arr[i] = (MdamAtom *) list_nth(path, i);
+	}
+
+	/* Insertion sort by colno */
+	for (int i = 1; i < n; i++)
+	{
+		MdamAtom   *key = arr[i];
+		int			j = i - 1;
+
+		while (j >= 0 && arr[j]->colno > key->colno)
+		{
+			arr[j + 1] = arr[j];
+			j--;
+		}
+		arr[j + 1] = key;
+	}
+
+	for (int i = 0; i < n; i++)
+	{
+		result = lappend(result, arr[i]);
+	}
+
+	pfree(arr);
 	return result;
 }
 
@@ -2824,23 +2809,12 @@ mdam_merge_retrievals(MdamContext *ctx, List *paths)
 		 * Stage 1: Interval coalescing.  Group paths by their "base" (atoms
 		 * on all columns except the current one), then merge intervals on the
 		 * current column.
-		 *
-		 * Precompute each path's base on `col` once and reuse via the bases[]
-		 * array.  Otherwise we'd recompute mdam_path_base() for every
-		 * (outer, inner) pair in the O(N^2) scan below, each call allocating
-		 * two fresh Lists.
 		 */
 		List	   *coalesced = NIL;
 		ListCell   *lc;
-		int			npaths = list_length(paths);
-		bool	   *used = palloc0(sizeof(bool) * npaths);
-		List	  **bases = palloc(sizeof(List *) * npaths);
+		bool	   *used = palloc0(sizeof(bool) * list_length(paths));
 		int			i = 0;
 
-		foreach(lc, paths)
-			bases[i++] = mdam_path_base((List *) lfirst(lc), col);
-
-		i = 0;
 		foreach(lc, paths)
 		{
 			List	   *path = (List *) lfirst(lc);
@@ -2858,7 +2832,7 @@ mdam_merge_retrievals(MdamContext *ctx, List *paths)
 			}
 			used[i] = true;
 
-			base = bases[i];
+			base = mdam_path_base(path, col);
 			col_atoms_list = mdam_atoms_for_col(path, col);
 
 			/*
@@ -2912,7 +2886,7 @@ mdam_merge_retrievals(MdamContext *ctx, List *paths)
 					continue;
 				}
 
-				other_base = bases[j];
+				other_base = mdam_path_base(other, col);
 
 				if (mdam_base_atoms_equal(ctx, base, other_base))
 				{
@@ -2968,7 +2942,6 @@ mdam_merge_retrievals(MdamContext *ctx, List *paths)
 		}
 
 		pfree(used);
-		pfree(bases);
 		paths = coalesced;
 
 		/* Stage 2: EQ-to-IN merging */
@@ -3018,21 +2991,11 @@ mdam_merge_eq_to_in(MdamContext *ctx, int colno, List *paths,
 {
 	List	   *result = NIL;
 	bool	   *used;
-	List	  **bases;
 	int			npaths = list_length(paths);
 	ListCell   *lc;
 	int			ip;
 
 	used = palloc0(sizeof(bool) * npaths);
-
-	/*
-	 * Precompute each path's base on `colno` once and reuse via bases[].
-	 * Avoids recomputing mdam_path_base() for every (outer, inner) pair in
-	 * the O(N^2) scan, where each call would allocate two fresh Lists.
-	 * Entries for paths that the outer loop short-circuits via
-	 * mdam_single_eq_on_col are left NULL.
-	 */
-	bases = palloc0(sizeof(List *) * npaths);
 
 	ip = 0;
 	foreach(lc, paths)
@@ -3060,9 +3023,7 @@ mdam_merge_eq_to_in(MdamContext *ctx, int colno, List *paths,
 			continue;
 		}
 
-		if (bases[ip] == NULL)
-			bases[ip] = mdam_path_base(path, colno);
-		base = bases[ip];
+		base = mdam_path_base(path, colno);
 		values = palloc(sizeof(Datum) * npaths);
 		values[0] = eq_atom->value;
 		nvalues = 1;
@@ -3092,9 +3053,7 @@ mdam_merge_eq_to_in(MdamContext *ctx, int colno, List *paths,
 				continue;
 			}
 
-			if (bases[j] == NULL)
-				bases[j] = mdam_path_base(other, colno);
-			other_base = bases[j];
+			other_base = mdam_path_base(other, colno);
 
 			if (mdam_base_atoms_equal(ctx, base, other_base))
 			{
@@ -3139,7 +3098,6 @@ mdam_merge_eq_to_in(MdamContext *ctx, int colno, List *paths,
 	}
 
 	pfree(used);
-	pfree(bases);
 	return result;
 }
 
