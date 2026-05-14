@@ -111,8 +111,9 @@ WHERE a > 5 AND (c = 10 OR d = 5);
    5640
 (1 row)
 
--- This similar-ish query can be transformed by MDAM machinery, since it has
--- its = conditions are on same lower-order column:
+-- Similar shape, but MDAM-transformable: the disjuncts pin the same later
+-- column (c), so the two values coalesce into c = ANY ('{3,7}') under the
+-- shared a > 5 prefix on a single IndexOnlyScan.
 EXPLAIN (COSTS OFF)
 SELECT count(*) AS actual FROM mdam_test_tbl
 WHERE a > 5 AND (c = 3 OR c = 7);
@@ -233,9 +234,9 @@ WHERE a BETWEEN 4 AND 7 OR a BETWEEN 9 AND 11;
 (5 rows)
 
 --
--- Mixed depth: one arm has 1 column, other has 2 columns.
--- Tests that expansion correctly preserves all column constraints.
--- The second arm must keep BOTH a>=9 AND a<=11 (not just a>=9).
+-- Mixed depth: one arm constrains 1 column, the other 2.  Expansion must
+-- carry both bounds of the second arm's range (a >= 9 AND a <= 11) into
+-- its Index Cond alongside b = 1.
 --
 EXPLAIN (COSTS OFF)
 SELECT * FROM mdam_test_tbl
@@ -880,11 +881,11 @@ WHERE (a = 5 AND total > 50000) OR (a = 10 AND b = 20);
 
 DROP TABLE mdam_filter_tbl;
 --
--- Cross-product contradiction: outer ANDed predicate contradicts one OR arm.
--- Mirrors the MDAM-paper shape (and the sales_mdam_paper test fixture):
--- two OR arms differing on the leading index column, plus an outer ANDed
--- equality on a middle index column that contradicts a value in the first
--- arm.  Skip-scan can't factor here because dept differs across arms.
+-- Cross-product contradiction: outer ANDed predicate contradicts one OR
+-- arm.  Mirrors the MDAM-paper shape: two OR arms differing on the
+-- leading index column, plus an outer ANDed equality on a middle index
+-- column that contradicts a value in the first arm.  Skip-scan can't
+-- factor here because dept differs across arms.
 --   ((dept=1 AND sdate=D1 AND item_class=4) OR (dept=50 AND sdate=D2))
 --     AND item_class=5
 -- After distributing AND over OR:
@@ -942,22 +943,14 @@ WHERE ((dept = 1 AND sdate = '1995-03-04' AND item_class = 4)
 
 DROP TABLE mdam_paper_tbl;
 --
--- Shattering truncation: complex OR predicates can produce a cross-product of
--- elementary intervals that exceeds MDAM_MAX_RETRIEVALS (256) during the
--- recursive enumeration in mdam_generate_recursive.  Without an explicit
--- truncation guard, the recursion silently stopped early, producing an
--- incomplete Append that returned wrong row counts (caught by the fuzz
--- tester).  The fix marks ctx->retrievals_truncated and bails MDAM out
--- cleanly so the planner falls back to a correct plan (BitmapOr/SeqScan).
---
--- This query has critical-point counts a={3,5,13,65,89,96}, b={50},
--- c={25}, d={3,6,9,14,21,23} -> 13 x 3 x 3 x 13 = 1521 elementary-interval
--- combinations, far above the 256 cap.  Result must match the bitmap
--- oracle exactly regardless of which plan the planner chose.
+-- Shattering truncation: the cross-product of per-column critical points
+-- (a={3,5,13,65,89,96}, b={50}, c={25}, d={3,6,9,14,21,23} -> 13 x 3 x 3 x
+-- 13 = 1521 elementary intervals) exceeds MDAM_MAX_RETRIEVALS (256), so
+-- mdam_generate_recursive must mark ctx->retrievals_truncated and bail
+-- rather than emit a partial Append.  The planner therefore falls back to
+-- BitmapOr (or another non-MDAM path that covers the whole predicate).
 --
 SET enable_bitmapscan = on;
--- With MDAM enabled, the planner must NOT pick the (truncated, incomplete)
--- MDAM Append; the plan should fall back to a bitmap or other complete plan.
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM mdam_test_tbl
 WHERE (a IN (3, 5, 13, 65, 89) AND b = 50 AND c = 25
@@ -997,14 +990,14 @@ WHERE (a IN (3, 5, 13, 65, 89) AND b = 50 AND c = 25
 
 SET enable_bitmapscan = off;
 --
--- Fuzz-derived: two-arm OR where one arm leaves the leading index column
--- wide open.  Index is (q, p, s, r); arm 1 constrains q (leading); arm 2
--- constrains only p (second column).  With NULLs in q, the shattered
--- partition over the leading column (q <= 95, q = 95, q > 95) silently
--- drops rows where q IS NULL but the open arm's non-leading quals match
--- (p < 42 AND r >= 5).  Larger DNFs can absorb the gap during merge, but
--- a two-arm OR cannot, so MDAM bails and the planner falls back to a
--- correct (though disabled) seq scan here.
+-- Two-arm OR where one arm is silent on the leading index column.  Index
+-- is (q, p, s, r); arm 1 constrains q, arm 2 constrains only p.  With
+-- NULLs in q, the shattered partition over q must include an explicit
+-- (q IS NULL) sub-path so the open arm's non-leading quals
+-- (p < 42 AND r >= 5) still match rows where q IS NULL.  The expected
+-- plan is an Append whose sub-paths cover (q<95), (q=95), (q>95) and
+-- (q IS NULL) for the open arm, plus the additional p/r stripes for the
+-- shared (q=95) partition.
 --
 CREATE TABLE mdam_fuzz_tbl (p int, q int, r int, s int);
 INSERT INTO mdam_fuzz_tbl
@@ -1056,30 +1049,21 @@ WHERE ((q = 95 AND r >= 54) OR (p < 42 AND r >= 5));
 RESET enable_indexonlyscan;
 DROP TABLE mdam_fuzz_tbl;
 --
--- Fuzz-derived: documents an inherent limitation of the MDAM
--- transformation.  Minimal reduction of a failure on (p, q, r, s)
--- with predicate
---   (p < 70 AND r = 19) OR (p > 53 AND q >= 68 AND r < 55).
--- Distilled to two columns and two arms:
+-- Inherent MDAM limitation: two arms whose shattered partitions share
+-- a common leading-column stripe but disagree on the trailing column.
 --   (a < 70 AND b = 19) OR (a > 53 AND b >= 68)
--- Critical points on the leading column a are {53, 70}.  After
--- shattering and column-0 splitting, the cleanest Append shape MDAM
--- could produce has four sub-paths:
+-- Critical points on a are {53, 70}.  The cleanest Append MDAM could
+-- produce is four sub-paths:
 --   (a <= 53,    b = 19)
 --   (a in (53, 70), b = 19)
 --   (a in (53, 70), b >= 68)
 --   (a >= 70,    b >= 68)
--- but sub-paths 2 and 3 share the same a stripe (53, 70).  Append
--- concatenates -- it can't interleave -- so sub-path 2 emits its
--- whole stripe (a = 54..69 with b = 19) before sub-path 3 even
--- starts (a = 54..69 with b >= 68).  At the boundary, column a
--- "rewinds" from 69 to 54: a key-space ordering violation that no
--- Append shape can fix.  The required ordering is column-a
--- interleaving across the two non-leading constraints, which only a
--- single Index Scan with the OR as a filter could deliver.
---
--- MDAM correctly detects the rewind via the post-coalesce ordering
--- check and bails.  The planner falls back to BitmapOr.
+-- but sub-paths 2 and 3 share the (53, 70) a-stripe.  Append concatenates
+-- (it can't interleave), so sub-path 2 emits its full stripe before
+-- sub-path 3 starts and a "rewinds" from 69 to 54 at the boundary -- a
+-- key-space ordering violation no Append shape can fix.  MDAM must
+-- detect the rewind via the post-coalesce ordering check and bail, so
+-- the planner falls back to BitmapOr.
 --
 CREATE TABLE mdam_open_arm_tbl (a int, b int);
 INSERT INTO mdam_open_arm_tbl
@@ -1121,25 +1105,20 @@ WHERE (a < 70 AND b = 19) OR (a > 53 AND b >= 68);
 SET enable_bitmapscan = off;
 DROP TABLE mdam_open_arm_tbl;
 --
--- Fuzz-derived: MDAM must not place a scan key on a column that the
--- original arm constrained zero times.  When another arm forces a
--- critical point on column k inside an overlapping leading-column
--- partition, MDAM currently shatters the silent arm into {k<v, k=v,
--- k>v} sub-paths.  Each sub-path applies a strict operator to k that
--- the original arm never wrote, so any row whose k IS NULL falls
--- through every sub-path even though it satisfied the original arm
--- (which never referenced k at all).
---
--- Minimal reduction (from a 4-column failure on (p, q, r, s)):
+-- MDAM must not place a scan key on a column that the original arm
+-- never constrained.  When another arm forces a critical point on
+-- column k inside an overlapping leading-column partition, shattering
+-- the silent arm into {k<v, k=v, k>v} applies a strict operator on k
+-- that the original arm never wrote, dropping rows where k IS NULL.
 --   (p = 70 AND r > 11 AND s > 12)
 --     OR
 --   (p > 61 AND q = 5 AND r > 49 AND s <= 20)
 -- Arm 1 is silent on q.  Arm 2's q = 5 is the only critical point on
 -- q, and the p = 70 partition is shared by both arms with disjoint
--- r/s constraints, forcing MDAM to shatter arm 1 there into
--- {q<5, q=5, q>5}.  Rows with q IS NULL match the original arm 1
--- but match no sub-path, so MDAM's row count is short by exactly
--- the q-IS-NULL fraction of arm 1's selectivity.
+-- r/s constraints, so MDAM must either include an explicit
+-- (q IS NULL) sub-path for arm 1's portion of the p = 70 stripe or
+-- bail.  The current plan bails to BitmapOr; row counts then match
+-- the bitmap reference regardless.
 --
 CREATE TABLE mdam_open_col_tbl (p int, q int, r int, s int);
 INSERT INTO mdam_open_col_tbl
@@ -1187,17 +1166,16 @@ WHERE (p = 70 AND r > 11 AND s > 12)
 
 DROP TABLE mdam_open_col_tbl;
 --
--- Fuzz-derived: SAOP at the last constrained column of a path must be
--- split into individual EQ paths before sort, otherwise the SAOP's
--- effective sort interval [min, max] encloses an adjacent path whose
--- range falls between the SAOP's values, and Append concatenation
--- emits the SAOP's high endpoint before the enclosed range -- a
--- key-space ordering violation that nothing in the Append fixes.
+-- SAOP at the last constrained column of a path must be split into
+-- individual EQ paths before sort.  Otherwise the SAOP's effective
+-- sort interval [min, max] encloses an adjacent path whose range falls
+-- between the SAOP's values, and Append concatenation emits the SAOP's
+-- high endpoint before the enclosed range -- a key-space ordering
+-- violation no Append can fix.
 --   (a IN (10, 50)) OR (a >= 5 AND b = 25 AND c = 25)
--- Arm 1 is a SAOP whose last constrained column is the leading col a;
--- arm 2 produces a (10, 50) range stripe on a after shattering.  The
--- expected Append has five sub-paths: a in [5, 10), a = 10, a in
--- (10, 50), a = 50, a > 50.
+-- Arm 1's SAOP is on the leading column a; arm 2 produces a (10, 50)
+-- range stripe on a after shattering.  The expected Append has five
+-- sub-paths: a in [5, 10), a = 10, a in (10, 50), a = 50, a > 50.
 --
 CREATE TABLE mdam_saop_tbl (a int, b int, c int, d int);
 INSERT INTO mdam_saop_tbl
@@ -1255,23 +1233,19 @@ WHERE (a IN (10, 50)) OR (a >= 5 AND b = 25 AND c = 25);
 (1 row)
 
 --
--- Fuzz-derived: a contradictory OR arm with an EQ + SAOP on the same
--- column (here b = 50 AND b IN (10, 80)) must not be silently widened
--- by step-4 expand/sort/coalesce.  The extract_interval ->
--- interval_to_atoms round-trip used by the multi-atom Range branch
--- collapses a SAOP to its [min,max] hull; when that hull contains the
--- conflicting EQ value (50 lies inside [10, 80]) the intersection
--- looks non-empty and the SAOP just vanishes from the resulting index
--- quals, so the Append child would match real rows the original
--- predicate excluded.  Both atoms must survive verbatim so nbtree's
--- runtime _bt_preprocess_keys detects the inconsistency.
+-- A contradictory OR arm with EQ + SAOP on the same column (here
+-- b = 50 AND b IN (10, 80)) must not be silently widened by step 4
+-- expand/sort/coalesce.  The extract_interval -> interval_to_atoms
+-- round-trip used by the multi-atom Range branch collapses a SAOP to
+-- its [min, max] hull; if that hull contains the conflicting EQ value
+-- the intersection looks non-empty and the SAOP vanishes from the
+-- resulting index quals, admitting rows the original predicate
+-- excluded.  Both atoms must survive verbatim so nbtree's runtime
+-- _bt_preprocess_keys detects the inconsistency.
 --
--- b = 25 picks rows whose c is also 25 (since c = i % 50 and b = i %
--- 100), so the over-permissive scan that drops the SAOP would happily
--- return those rows under (c >= 19 AND c < 38).  With the SAOP
--- preserved verbatim, nbtree sees b = 25 AND b = ANY ('{10,80}')
--- together and short-circuits to zero rows -- matching the bitmap
--- oracle below.
+-- With b = 25 here, b = 25 AND b = ANY ('{10,80}') is impossible, so
+-- nbtree short-circuits to zero rows -- matching the bitmap oracle
+-- below.
 SET enable_mdam = on;
 SET enable_bitmapscan = off;
 EXPLAIN (COSTS OFF)
@@ -1323,19 +1297,18 @@ SET enable_mdam = on;
 SET enable_bitmapscan = off;
 DROP TABLE mdam_saop_tbl;
 --
--- Fuzz-derived: ordering check must reject Append shapes where two
--- sub-paths' intervals strictly overlap on any column at first_diff
--- (the column where their sort keys diverge), not just on the leading
--- column.  The merge step can coalesce one conjunct's stripes into a
--- wider range when they share the same atoms on the *other* columns;
--- another conjunct that pinned that column with disjoint later-column
--- atoms now lives "inside" the wider range, and Append concatenation
--- emits one full sub-path before any of the other -- so the second
--- sub-path "rewinds" the column at the boundary.
+-- Ordering check must reject Append shapes where two sub-paths' intervals
+-- strictly overlap on any column at first_diff (where their sort keys
+-- diverge), not just on the leading column.  The merge step can coalesce
+-- one conjunct's stripes into a wider range when they share the same
+-- atoms on the other columns; another conjunct that pinned that column
+-- with disjoint later-column atoms now lives "inside" the wider range,
+-- and Append concatenation emits one full sub-path before the other --
+-- "rewinding" the column at the boundary.
 --
--- Two cases below.  The first has the divergence at the leading
--- column; the second pins a=10 in two arms (so first_diff = 1, the
--- non-leading b column) but their b intervals strictly overlap.
+-- Two cases below.  The first has the divergence at the leading column;
+-- the second pins a = 10 in two arms (so first_diff = 1, the non-leading
+-- b column) but their b intervals strictly overlap.
 --
 CREATE TABLE mdam_overlap_tbl (a int, b int, c int, d int);
 INSERT INTO mdam_overlap_tbl
@@ -1415,24 +1388,20 @@ WHERE ((a = 10 AND b < 50 AND c < 10 AND d > 2)
 
 DROP TABLE mdam_overlap_tbl;
 --
--- Fuzz-derived: a contradictory cross-product conjunct (e.g. one whose
--- per-column intersection of SAOP and EQ atoms is empty) is stashed in
--- ctx->contradictory and re-emitted as a standalone retrieval so the
--- Append remains in 1:1 correspondence with the original OR's arms --
--- nbtree's _bt_preprocess_keys then short-circuits the contradiction at
--- runtime.  Step-3 merge must not pass such a retrieval through
--- mdam_extract_interval, because that helper collapses a SAOP to its
--- closed [min,max] range and would silently lose the discrete value
--- constraint, producing an over-broad index condition that admits rows
--- the original OR never matched.
+-- A contradictory cross-product conjunct (whose per-column intersection
+-- of SAOP and EQ atoms is empty) is stashed in ctx->contradictory and
+-- re-emitted as a standalone retrieval so the Append stays in 1:1
+-- correspondence with the original OR's arms; nbtree's
+-- _bt_preprocess_keys then short-circuits the contradiction at runtime.
+-- Step 3 merge must not pass such a retrieval through
+-- mdam_extract_interval, which would collapse a SAOP to its closed
+-- [min, max] range and silently lose the discrete value constraint,
+-- producing an over-broad index condition.
 --
--- Reduction:
 --   (a IN (3, 8, 15) AND b <= 10 AND c IN (1, 5, 9) AND c = 2)
 --     OR
 --   (a >= 20 AND b IN (5, 15, 25) AND c = 2)
--- Arm 1's c constraints intersect to empty.  Without preservation, step 3
--- would emit (a in [3,15] AND b <= 10 AND c = 2) -- losing the a- and
--- c-SAOPs entirely and admitting ~130 spurious rows.
+-- Arm 1's c constraints intersect to empty.
 --
 EXPLAIN (COSTS OFF)
 SELECT * FROM mdam_test_tbl
@@ -1448,9 +1417,9 @@ WHERE (a IN (3, 8, 15) AND b <= 10 AND c IN (1, 5, 9) AND c = 2)
 (5 rows)
 
 -- Coverage check: the contradictory arm contributes zero rows; arm 2's
--- (a >= 20, b in {5,15,25}, c=2) is also empty for this data because
--- b in {5,15,25} forces c in {5,15,25} (b = i%100, c = i%50).  So a
--- correct MDAM result is zero; the bug would return ~130.
+-- (a >= 20, b in {5,15,25}, c = 2) is also empty for this data because
+-- b in {5,15,25} forces c in {5,15,25} (b = i%100, c = i%50), so the
+-- correct count is zero.
 SET enable_mdam = off;
 SET enable_bitmapscan = on;
 SELECT count(*) AS expect FROM mdam_test_tbl
@@ -1562,19 +1531,18 @@ ORDER BY a DESC, b DESC, c DESC, d DESC;
 (30 rows)
 
 --
--- Fuzz-derived: value-bounded inputs whose union spans (-inf, +inf) must not
--- merge to "no scan key on column" when the original predicate excludes NULL.
+-- Value-bounded inputs whose union spans (-inf, +inf) must not merge to
+-- "no scan key on column" when the original predicate excludes NULL.
 --
--- For each test below the OR has two arms with bounded constraints on the
--- same column that together cover every non-NULL value (e.g. b < 100 OR
--- b > 50); merging those into an unconstrained interval would emit an Index
--- Scan with no scan key on the column, admitting rows where that column is
--- NULL that the original predicate excludes.  merge_interval_list now splits
--- at the overlap boundary (and step 4c only re-consolidates when a sibling
--- IS NULL path explicitly grants NULL coverage).
---
--- Tables have NULLs in the relevant columns so the bug would manifest as
--- extra rows compared to the seqscan/bitmap baseline.
+-- Each case below has an OR with two arms whose bounded constraints on
+-- the same column together cover every non-NULL value (e.g. b < 100 OR
+-- b > 50).  Merging them into an unconstrained interval would emit an
+-- Index Scan with no scan key on the column, admitting rows where that
+-- column is NULL that the original predicate excludes.
+-- merge_interval_list splits at the overlap boundary; step 4c only
+-- re-consolidates when a sibling IS NULL path explicitly grants NULL
+-- coverage.  Tables have NULLs in the relevant columns so any failure
+-- mode shows up as extra rows vs. the bitmap baseline.
 --
 CREATE TABLE mdam_null_bug_tbl (a int, b int, c int);
 INSERT INTO mdam_null_bug_tbl
@@ -1585,12 +1553,13 @@ FROM generate_series(1, 100000) i;
 CREATE INDEX mdam_null_bug_idx ON mdam_null_bug_tbl (a, b, c);
 ANALYZE mdam_null_bug_tbl;
 --
--- Case 1: two arms with same leading-column key and complementary b ranges
--- that together cover all non-NULL b.  Without the fix, MDAM emitted a
--- single (a = 5) retrieval with no b constraint, admitting rows where
--- b IS NULL.  With the fix, MDAM splits b at the overlap boundary (100).
--- The third arm gives MDAM enough work to win the cost race over a plain
--- index scan with a Filter, so the Append IS chosen.
+-- Case 1: two arms with the same leading-column key and complementary b
+-- ranges that together cover all non-NULL b, plus a third arm to push
+-- MDAM past the cost threshold so the Append is actually chosen.  The
+-- resulting Index Conds must keep an explicit b bound on the (a = 5)
+-- retrievals (here split at the overlap boundary, b = 100) rather than
+-- coalescing to an unconstrained "any b" scan that would admit
+-- a = 5 AND b IS NULL rows.
 --
 SET enable_mdam = off;
 SET enable_bitmapscan = on;
@@ -1642,28 +1611,26 @@ WHERE (a = 5 AND b < 100) OR (a = 5 AND b > 50) OR (a = 10 AND c = 0);
    1846
 (1 row)
 
--- Sanity-check: the bug specifically over-counts rows where a = 5 AND b IS
--- NULL.  This count is the inflation that would appear in 'actual' above
--- if the bug returned.
-SELECT count(*) AS extras_if_buggy FROM mdam_null_bug_tbl
+-- Data shape: report how many rows have a = 5 AND b IS NULL.  These rows
+-- are excluded by the original predicate, so 'actual' above must not
+-- include them; the count below quantifies the gap the b-range split is
+-- preserving.
+SELECT count(*) AS a5_null_b FROM mdam_null_bug_tbl
 WHERE a = 5 AND b IS NULL;
- extras_if_buggy 
------------------
-             154
+ a5_null_b 
+-----------
+       154
 (1 row)
 
 --
--- Case 2: step 4c's IS NULL sibling logic.  The first arm is silent on b
--- (so an IS NULL pseudo-interval is generated for b during shattering); the
--- second arm constrains b.  Step 3 merges the silent arm's value-bounded
--- b retrievals back to "no b constraint" via the IS NULL input.  Step 4a
--- then re-shatters that no-b path into (b < 20), (b = 20), (b > 20), and
--- (b IS NULL) sub-paths.  Step 4c's pairwise coalesce would, with only the
--- value sub-paths in view, see the b<=20 + b>20 merge fall into the split
--- branch (no IS NULL among iv1, iv2) -- leaving 4 retrievals instead of 2.
--- The IS NULL sibling lookup fixes this: it pulls the (b IS NULL) path
--- into the merge so coalesce can collapse it back to a single (a = 5)
--- retrieval (matching the pre-bug-fix plan shape for non-nullable data).
+-- Case 2: step 4c's IS NULL sibling logic.  Arm 1 is silent on b (so
+-- shattering generates an IS NULL pseudo-interval for b), arm 2 pins
+-- b = 20.  After step 4a re-shatters the silent arm's b column into
+-- (b < 20), (b = 20), (b > 20), (b IS NULL), step 4c must recognise the
+-- (b IS NULL) sibling when coalescing b <= 20 with b > 20, otherwise the
+-- merge falls into the split branch and the Append stays at 4 retrievals
+-- instead of 2.  The expected plan is the natural 2-arm Append matching
+-- the original OR.
 --
 SET enable_mdam = off;
 SET enable_bitmapscan = on;
@@ -1712,10 +1679,10 @@ WHERE (a = 5 AND c = 10) OR (a = 10 AND b = 20);
 (1 row)
 
 --
--- Case 3: original fuzz-tester reduction.  MDAM may decline this shape on
--- cost (or due to ordering conflicts from the additional split retrievals),
--- but the result must still match -- if the bug returned and MDAM did win
--- the cost race, the count would silently inflate.
+-- Case 3: another shape that exercises the NULL-coverage rule.  MDAM may
+-- decline this on cost (or because the additional split retrievals trip
+-- the ordering check); whichever plan wins, the count must match the
+-- bitmap baseline.
 --
 SET enable_mdam = off;
 SET enable_bitmapscan = on;
@@ -1765,8 +1732,8 @@ WHERE (a >= 46 AND c >= 8) OR (a >= 56 AND c < 13);
 --
 -- Reuses mdam_null_bug_tbl: column b has NULLs (i % 13 == 0).  Each case
 -- compares an enable_mdam=off baseline (bitmap path) against the MDAM
--- plan.  EXPLAIN is included so a regression in the new NullTest handling
--- shows up as a plan-shape diff in addition to any row-count diff.
+-- plan.  EXPLAIN is included so any regression in NullTest handling shows
+-- up as a plan-shape diff in addition to a row-count diff.
 --
 -- Case A: IS NULL alongside a value predicate in a sibling arm.
 SET enable_mdam = off;
@@ -2045,26 +2012,23 @@ WHERE (a IN (1, 2) AND b IS NOT NULL) OR a = 5;
 
 DROP TABLE mdam_null_bug_tbl;
 --
--- MDAM ordering bug: an Append of two index scans both of which can emit
--- a IS NULL rows.  Reduced from mdam_fuzz_test.py.
+-- Ordering check must reject an Append where two retrievals both emit
+-- rows with a IS NULL.
 --
--- Predicate:
 --   ((a = 84 AND b >= 137 AND c IN (12, 32, 40))
 --    OR b > 92
 --    OR (a IS NULL AND b < 80))
 --
--- After merging, arm 1 is absorbed into arm 2's b > 92 (137 > 92), leaving
--- two retrievals:
+-- After merging, arm 1 is absorbed into arm 2's b > 92, leaving:
 --   R1: b > 92               -- no a constraint, scans NULL a too
 --   R2: a IS NULL AND b < 80
 --
--- Both R1 and R2 produce rows with a IS NULL: R1 emits them at the end of
--- its index-order traversal (a=NULL last under ASC NULLS LAST), R2 emits
--- only NULL-a rows.  An Append concatenates R1 || R2, so the NULL-a rows
--- from R1 (b > 92) come *before* the NULL-a rows from R2 (b < 80) -- which
--- violates the requested ORDER BY a, b, c, d.  MDAM should either reject
--- this path or arrange the retrievals so the NULL-a partition isn't split
--- across two siblings.
+-- Both produce rows with a IS NULL: R1 emits them at the end of its scan
+-- (NULLS LAST under ASC), R2 emits only NULL-a rows.  An Append
+-- concatenates R1 || R2, so R1's NULL-a rows (b > 92) come before R2's
+-- (b < 80) -- a violation of ORDER BY a, b, c, d.  MDAM must reject the
+-- Append shape; whichever plan wins instead must still respect the
+-- requested ordering.
 --
 CREATE TABLE mdam_order_bug_tbl (a int, b int, c int, d int);
 INSERT INTO mdam_order_bug_tbl
@@ -2073,14 +2037,15 @@ SELECT NULLIF((i*7+13) % 100, 0), NULLIF((i*11+3) % 200, 0),
 FROM generate_series(1, 20000) i;
 CREATE INDEX mdam_order_bug_idx ON mdam_order_bug_tbl (a, b, c, d);
 ANALYZE mdam_order_bug_tbl;
--- Nudge random_page_cost down so MDAM wins on cost at this row count;
--- under regression defaults the planner otherwise picks a plain Index Only
--- Scan + Filter and the bug doesn't manifest.
+-- Lower random_page_cost so MDAM wins the cost race at this row count;
+-- under regression defaults the planner otherwise picks an Index Only
+-- Scan + Filter and the ordering-check path is never exercised.
 SET random_page_cost = 2;
 SET enable_indexscan = on;
 SET enable_indexonlyscan = on;
 SET enable_sort = off;
--- Confirm MDAM picks the Append-of-two-IndexScans plan we care about.
+-- Plan shape: MDAM rejects the Append (R1/R2 share the NULL-a partition),
+-- so the planner falls back to a single Index Only Scan with Filter.
 EXPLAIN (COSTS OFF)
 SELECT a, b, c, d FROM mdam_order_bug_tbl
 WHERE ((a = 84 AND b >= 137 AND c IN (12, 32, 40))
@@ -2093,10 +2058,10 @@ ORDER BY a, b, c, d;
    Filter: (((a = 84) AND (b >= 137) AND (c = ANY ('{12,32,40}'::integer[]))) OR (b > 92) OR ((a IS NULL) AND (b < 80)))
 (2 rows)
 
--- The boundary lives at position 10601: the first row with a IS NULL.
--- Correctly-ordered output puts (NULL, 54, 22, 5) here (smallest b among
--- NULL-a rows).  Buggy MDAM emits NULL-a rows from R1 (b > 92) first, so
--- this position contains (NULL, 154, 22, 5) instead.
+-- Ordering check: position 10601 is the first row with a IS NULL.  A
+-- correctly-ordered result puts (NULL, 54, 22, 5) here -- the smallest b
+-- among NULL-a rows.  Any plan whose output interleaves NULL-a rows from
+-- the two predicate components would emit a larger b at this position.
 SELECT a, b, c, d FROM mdam_order_bug_tbl
 WHERE ((a = 84 AND b >= 137 AND c IN (12, 32, 40))
        OR b > 92
@@ -2114,22 +2079,19 @@ RESET enable_indexscan;
 RESET enable_indexonlyscan;
 RESET random_page_cost;
 --
--- MDAM IN-list range-hull bug: when a top-level AND combines two OR
--- branches that each constrain the same trailing column (here d),
--- shattering must keep the disjoint values as separate retrievals.
--- Instead MDAM emits an Index Cond like (d >= 446 AND d <= 804) for one
--- Append child -- the hull of two disjoint equalities (d = 446) and
--- (d = 804) -- letting rows with d strictly between the two endpoints
--- through.  Reduced from mdam_fuzz_test.py.
+-- Trailing-column disjoint values must survive shattering as discrete
+-- atoms, not collapse to their hull.  When a top-level AND combines two
+-- OR branches that each constrain the same trailing column (here d),
+-- the cross-product expansion can produce a sub-path whose d atoms are
+-- two disjoint equalities (d = 446 and d = 804); these must appear in
+-- the Index Cond as d = ANY ('{446, 804}'), not as d BETWEEN 446 AND 804
+-- (which would admit rows strictly between the endpoints).
 --
--- Predicate:
 --   (d = 446 OR (a = 4 AND d = 804))
 --   AND (b = 7 OR (b <= 16 AND d IN (758, 882)))
 --
--- The only row that legitimately matches in the data below is
--- (a, b, c, d) = (2, 7, 29, 446); MDAM additionally returns four
--- spurious rows with a = 4, b = 7, d in {472, 679, 733, 787} (all in
--- the hull [446, 804] but not equal to 446 or 804).
+-- Exactly one row in the data below satisfies the predicate:
+-- (a, b, c, d) = (2, 7, 29, 446).
 --
 CREATE TABLE mdam_inlist_bug_tbl (a int, b int, c int, d int);
 INSERT INTO mdam_inlist_bug_tbl
@@ -2174,9 +2136,10 @@ ORDER BY a, b, c, d;
 
 DROP TABLE mdam_inlist_bug_tbl;
 --
--- MDAM crash: x = 1 contradicts x IS NULL, but the combination of an
--- OR-containing-AND with a contradictory IS NULL and a trailing column
--- (y) reference crashes the planner during MDAM processing.
+-- Contradictory atoms (x = 1 vs. x IS NULL) inside an OR-containing-AND
+-- with a trailing-column (y) reference must complete planning cleanly,
+-- with the contradictory branch dropped and the surviving disjunct
+-- (y = 'q') driving the index scan.
 --
 CREATE TABLE mdam_crash_mixed (x integer, y text);
 CREATE INDEX mdam_crash_mixed_xy ON mdam_crash_mixed USING btree (x, y);
