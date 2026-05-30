@@ -3114,7 +3114,7 @@ ri_FastPathFlushArray(RI_FastPathEntry *fpentry, TupleTableSlot *fk_slot,
 	 * Walk all matches.  The index AM returns them in index order.  For each
 	 * match, find which batch item(s) it satisfies.
 	 */
-	while (table_index_getnext_slot(scandesc, ForwardScanDirection, pk_slot))
+	while (table_index_getnext_slot(scandesc, ForwardScanDirection, pk_slot, NULL))
 	{
 		Datum		found_val;
 		bool		found_null;
@@ -3187,7 +3187,7 @@ ri_FastPathProbeOne(Relation pk_rel, Relation idx_rel,
 
 	index_rescan(scandesc, skey, nkeys, NULL, 0);
 
-	if (table_index_getnext_slot(scandesc, ForwardScanDirection, slot))
+	if (table_index_getnext_slot(scandesc, ForwardScanDirection, slot, NULL))
 	{
 		bool		concurrently_updated;
 

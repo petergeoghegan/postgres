@@ -46,8 +46,6 @@
 
 
 static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node);
-static void StoreIndexTuple(IndexOnlyScanState *node, TupleTableSlot *slot,
-							IndexTuple itup, TupleDesc itupdesc);
 
 
 /* ----------------------------------------------------------------
@@ -64,6 +62,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	ScanDirection direction;
 	IndexScanDesc scandesc;
 	TupleTableSlot *slot;
+	bool		recheck;
 
 	/*
 	 * extract necessary information from index scan node
@@ -115,37 +114,14 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	/*
 	 * OK, now that we have what we need, fetch the next tuple.
 	 */
-	while (table_index_getnext_slot(scandesc, direction,
-									node->ioss_TableSlot))
+	while (table_index_getnext_slot(scandesc, direction, slot, &recheck))
 	{
 		CHECK_FOR_INTERRUPTS();
 
 		/*
-		 * Fill the scan tuple slot with data from the index.  This might be
-		 * provided in either HeapTuple or IndexTuple format.  Conceivably an
-		 * index AM might fill both fields, in which case we prefer the heap
-		 * format, since it's probably a bit cheaper to fill a slot from.
-		 */
-		if (scandesc->xs_hitup)
-		{
-			/*
-			 * We don't take the trouble to verify that the provided tuple has
-			 * exactly the slot's format, but it seems worth doing a quick
-			 * check on the number of fields.
-			 */
-			Assert(slot->tts_tupleDescriptor->natts ==
-				   scandesc->xs_hitupdesc->natts);
-			ExecForceStoreHeapTuple(scandesc->xs_hitup, slot, false);
-		}
-		else if (scandesc->xs_itup)
-			StoreIndexTuple(node, slot, scandesc->xs_itup, scandesc->xs_itupdesc);
-		else
-			elog(ERROR, "no data returned for index-only scan");
-
-		/*
 		 * If the index was lossy, we have to recheck the index quals.
 		 */
-		if (scandesc->xs_recheck)
+		if (recheck)
 		{
 			econtext->ecxt_scantuple = slot;
 			if (!ExecQualAndReset(node->recheckqual, econtext))
@@ -164,62 +140,6 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	 * the scan..
 	 */
 	return ExecClearTuple(slot);
-}
-
-/*
- * StoreIndexTuple
- *		Fill the slot with data from the index tuple.
- *
- * At some point this might be generally-useful functionality, but
- * right now we don't need it elsewhere.
- */
-static void
-StoreIndexTuple(IndexOnlyScanState *node, TupleTableSlot *slot,
-				IndexTuple itup, TupleDesc itupdesc)
-{
-	/*
-	 * Note: we must use the tupdesc supplied by the AM in index_deform_tuple,
-	 * not the slot's tupdesc, in case the latter has different datatypes
-	 * (this happens for btree name_ops in particular).  They'd better have
-	 * the same number of columns though, as well as being datatype-compatible
-	 * which is something we can't so easily check.
-	 */
-	Assert(slot->tts_tupleDescriptor->natts == itupdesc->natts);
-
-	ExecClearTuple(slot);
-	index_deform_tuple(itup, itupdesc, slot->tts_values, slot->tts_isnull);
-
-	/*
-	 * Copy all name columns stored as cstrings back into a NAMEDATALEN byte
-	 * sized allocation.  We mark this branch as unlikely as generally "name"
-	 * is used only for the system catalogs and this would have to be a user
-	 * query running on those or some other user table with an index on a name
-	 * column.
-	 */
-	if (unlikely(node->ioss_NameCStringAttNums != NULL))
-	{
-		int			attcount = node->ioss_NameCStringCount;
-
-		for (int idx = 0; idx < attcount; idx++)
-		{
-			int			attnum = node->ioss_NameCStringAttNums[idx];
-			Name		name;
-
-			/* skip null Datums */
-			if (slot->tts_isnull[attnum])
-				continue;
-
-			/* allocate the NAMEDATALEN and copy the datum into that memory */
-			name = (Name) MemoryContextAlloc(node->ss.ps.ps_ExprContext->ecxt_per_tuple_memory,
-											 NAMEDATALEN);
-
-			/* use namestrcpy to zero-pad all trailing bytes */
-			namestrcpy(name, DatumGetCString(slot->tts_values[attnum]));
-			slot->tts_values[attnum] = NameGetDatum(name);
-		}
-	}
-
-	ExecStoreVirtualTuple(slot);
 }
 
 /*
@@ -434,8 +354,6 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	Relation	indexRelation;
 	LOCKMODE	lockmode;
 	TupleDesc	tupDesc;
-	int			indnkeyatts;
-	int			namecount;
 
 	/*
 	 * create state structure
@@ -471,15 +389,6 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	ExecInitScanTupleSlot(estate, &indexstate->ss, tupDesc,
 						  &TTSOpsVirtual,
 						  0);
-
-	/*
-	 * We need another slot, in a format that's suitable for the table AM, for
-	 * when we need to fetch a tuple from the table for rechecking visibility.
-	 */
-	indexstate->ioss_TableSlot =
-		ExecAllocTableSlot(&estate->es_tupleTable,
-						   RelationGetDescr(currentRelation),
-						   table_slot_callbacks(currentRelation), 0);
 
 	/*
 	 * Initialize result type and projection info.  The node's targetlist will
@@ -569,48 +478,6 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	{
 		indexstate->ioss_RuntimeContext = NULL;
 	}
-
-	indexstate->ioss_NameCStringAttNums = NULL;
-	indnkeyatts = indexRelation->rd_index->indnkeyatts;
-	namecount = 0;
-
-	/*
-	 * The "name" type for btree uses text_ops which results in storing
-	 * cstrings in the indexed keys rather than names.  Here we detect that in
-	 * a generic way in case other index AMs want to do the same optimization.
-	 * Check for opclasses with an opcintype of NAMEOID and an index tuple
-	 * descriptor with CSTRINGOID.  If any of these are found, create an array
-	 * marking the index attribute number of each of them.  StoreIndexTuple()
-	 * handles copying the name Datums into a NAMEDATALEN-byte allocation.
-	 */
-
-	/* First, count the number of such index keys */
-	for (int attnum = 0; attnum < indnkeyatts; attnum++)
-	{
-		if (TupleDescAttr(indexRelation->rd_att, attnum)->atttypid == CSTRINGOID &&
-			indexRelation->rd_opcintype[attnum] == NAMEOID)
-			namecount++;
-	}
-
-	if (namecount > 0)
-	{
-		int			idx = 0;
-
-		/*
-		 * Now create an array to mark the attribute numbers of the keys that
-		 * need to be converted from cstring to name.
-		 */
-		indexstate->ioss_NameCStringAttNums = palloc_array(AttrNumber, namecount);
-
-		for (int attnum = 0; attnum < indnkeyatts; attnum++)
-		{
-			if (TupleDescAttr(indexRelation->rd_att, attnum)->atttypid == CSTRINGOID &&
-				indexRelation->rd_opcintype[attnum] == NAMEOID)
-				indexstate->ioss_NameCStringAttNums[idx++] = (AttrNumber) attnum;
-		}
-	}
-
-	indexstate->ioss_NameCStringCount = namecount;
 
 	/*
 	 * all done.

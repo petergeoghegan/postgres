@@ -1376,27 +1376,33 @@ table_index_fetch_batch_init(IndexScanDesc scan, IndexScanBatch batch)
  * the snapshot was found, false otherwise.  The tuple is stored in the
  * specified slot.
  *
+ * For a plain index scan the slot holds the table tuple.  For an index-only
+ * scan the table AM instead fills the slot from the index data the index AM
+ * placed in scan->xs_itup/xs_hitup.  Caller must not read xs_itup/xs_hitup
+ * IndexScanDesc fields directly.
+ *
  * Dispatches through scan->xs_getnext_slot, which is resolved once by
  * the table AM's index_fetch_begin callback.
+ *
+ * If recheck is not NULL, *recheck is set (on a true return) to indicate
+ * whether the scan keys must be rechecked against the returned tuple (XXX
+ * maybe we should make a non-NULL recheck arg mandatory?).
  *
  * On success, resources (like buffer pins) are likely to be held, and will be
  * released by a future table_index_getnext_slot or index_endscan call.
  *
- * Note: caller must check scan->xs_recheck, and perform rechecking of the
- * scan keys if required.  We do not do that here because we don't have
- * enough information to do it efficiently in the general case.
- *
- * For index-only scans, the callback also fills xs_itup/xs_itupdesc or
- * xs_hitup/xs_hitupdesc (or both) so that index data can be returned without
- * a heap fetch.
+ * Note: for ordered scans, the caller must check scan->xs_recheckorderby and
+ * recheck the ORDER BY expressions for itself. (XXX Should they have to?)
  */
 static inline bool
 table_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
-						 TupleTableSlot *slot)
+						 TupleTableSlot *slot, bool *recheck)
 {
+	Assert(TTS_IS_BUFFERTUPLE(slot) || scan->xs_want_itup);
+	Assert(TTS_IS_VIRTUAL(slot) || !scan->xs_want_itup);
 	Assert(scan->xs_heapfetch);
 
-	return scan->xs_getnext_slot(scan, direction, slot);
+	return scan->xs_getnext_slot(scan, direction, slot, recheck);
 }
 
 /*

@@ -722,12 +722,14 @@ heapam_relation_copy_for_cluster(Relation OldHeap, Relation NewHeap,
 
 		if (indexScan != NULL)
 		{
+			bool		recheck;
+
 			if (!table_index_getnext_slot(indexScan, ForwardScanDirection,
-										  slot))
+										  slot, &recheck))
 				break;
 
 			/* Since we used no scan keys, should never need to recheck */
-			if (indexScan->xs_recheck)
+			if (recheck)
 				elog(ERROR, "CLUSTER does not support lossy index conditions");
 		}
 		else

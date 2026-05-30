@@ -265,7 +265,6 @@ static bool get_actual_variable_endpoint(Relation heapRel,
 										 ScanKey scankeys,
 										 int16 typLen,
 										 bool typByVal,
-										 TupleTableSlot *tableslot,
 										 MemoryContext outercontext,
 										 Datum *endpointDatum);
 static RelOptInfo *find_join_input_rel(PlannerInfo *root, Relids relids);
@@ -7019,7 +7018,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			MemoryContext oldcontext;
 			Relation	heapRel;
 			Relation	indexRel;
-			TupleTableSlot *slot;
 			int16		typLen;
 			bool		typByVal;
 			ScanKeyData scankeys[1];
@@ -7038,7 +7036,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			indexRel = index_open(index->indexoid, NoLock);
 
 			/* build some stuff needed for indexscan execution */
-			slot = table_slot_create(heapRel, NULL);
 			get_typlenbyval(vardata->atttype, &typLen, &typByVal);
 
 			/* set up an IS NOT NULL scan key so that we ignore nulls */
@@ -7060,7 +7057,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 														 scankeys,
 														 typLen,
 														 typByVal,
-														 slot,
 														 oldcontext,
 														 min);
 			}
@@ -7080,14 +7076,11 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 														 scankeys,
 														 typLen,
 														 typByVal,
-														 slot,
 														 oldcontext,
 														 max);
 			}
 
 			/* Clean everything up */
-			ExecDropSingleTupleTableSlot(slot);
-
 			index_close(indexRel, NoLock);
 			table_close(heapRel, NoLock);
 
@@ -7110,8 +7103,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
  *
  * scankeys is a 1-element scankey array set up to reject nulls.
  * typLen/typByVal describe the datatype of the index's first column.
- * tableslot is a slot suitable to hold table tuples, in case we need
- * to probe the heap.
  * (We could compute these values locally, but that would mean computing them
  * twice when get_actual_variable_range needs both the min and the max.)
  *
@@ -7125,15 +7116,16 @@ get_actual_variable_endpoint(Relation heapRel,
 							 ScanKey scankeys,
 							 int16 typLen,
 							 bool typByVal,
-							 TupleTableSlot *tableslot,
 							 MemoryContext outercontext,
 							 Datum *endpointDatum)
 {
 	bool		have_data = false;
 	SnapshotData SnapshotNonVacuumable;
 	IndexScanDesc index_scan;
-	Datum		values[INDEX_MAX_KEYS];
-	bool		isnull[INDEX_MAX_KEYS];
+	TupleTableSlot *slot;
+	bool		recheck;
+	Datum		val;
+	bool		isnull;
 	MemoryContext oldcontext;
 
 	/*
@@ -7196,40 +7188,34 @@ get_actual_variable_endpoint(Relation heapRel,
 	index_scan->xs_visited_pages_limit = VISITED_PAGES_LIMIT;
 	index_rescan(index_scan, scankeys, 1, NULL, 0);
 
-	/* Fetch first/next tuple in specified direction */
-	while (table_index_getnext_slot(index_scan, indexscandir, tableslot))
-	{
-		/*
-		 * We expect that the index will return data in IndexTuple not
-		 * HeapTuple format.
-		 */
-		if (!index_scan->xs_itup)
-			elog(ERROR, "no data returned for index-only scan");
+	slot = MakeSingleTupleTableSlot(RelationGetDescr(indexRel), &TTSOpsVirtual);
 
+	/* Fetch first/next tuple in specified direction */
+	while (table_index_getnext_slot(index_scan, indexscandir, slot, &recheck))
+	{
 		/*
 		 * We do not yet support recheck here.
 		 */
-		if (index_scan->xs_recheck)
+		if (recheck)
 			break;
 
-		/* OK to deconstruct the index tuple */
-		index_deform_tuple(index_scan->xs_itup,
-						   index_scan->xs_itupdesc,
-						   values, isnull);
+		/* Read the index's first column value out of the slot */
+		val = slot_getattr(slot, 1, &isnull);
 
 		/* Shouldn't have got a null, but be careful */
-		if (isnull[0])
+		if (isnull)
 			elog(ERROR, "found unexpected null value in index \"%s\"",
 				 RelationGetRelationName(indexRel));
 
 		/* Copy the index column value out to caller's context */
 		oldcontext = MemoryContextSwitchTo(outercontext);
-		*endpointDatum = datumCopy(values[0], typByVal, typLen);
+		*endpointDatum = datumCopy(val, typByVal, typLen);
 		MemoryContextSwitchTo(oldcontext);
 		have_data = true;
 		break;
 	}
 
+	ExecDropSingleTupleTableSlot(slot);
 	index_endscan(index_scan);
 
 	return have_data;

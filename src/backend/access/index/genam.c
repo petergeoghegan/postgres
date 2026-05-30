@@ -128,12 +128,17 @@ RelationGetIndexScan(Relation indexRelation, int nkeys, int norderbys)
 	scan->xs_hitup = NULL;
 	scan->xs_hitupdesc = NULL;
 
+	scan->xs_getnext_slot = NULL;
+
 	scan->batch_index_opaque_static = 0;
 	scan->batch_index_opaque_dyn = 0;
 	scan->batch_tuples_workspace = 0;
 	scan->batch_opaque_size = 0;
 	scan->batch_per_item_size = 0;
 	scan->batch_base_offset = 0;
+
+	scan->xs_name_cstring_attnums = NULL;
+	scan->xs_name_cstring_count = 0;
 
 	scan->xs_visited_pages_limit = 0;
 
@@ -159,6 +164,8 @@ IndexScanEnd(IndexScanDesc scan)
 		pfree(scan->keyData);
 	if (scan->orderByData != NULL)
 		pfree(scan->orderByData);
+	if (scan->xs_name_cstring_attnums != NULL)
+		pfree(scan->xs_name_cstring_attnums);
 
 	pfree(scan);
 }
@@ -529,8 +536,10 @@ systable_getnext(SysScanDesc sysscan)
 
 	if (sysscan->irel)
 	{
+		bool		recheck;
+
 		if (table_index_getnext_slot(sysscan->iscan, ForwardScanDirection,
-									 sysscan->slot))
+									 sysscan->slot, &recheck))
 		{
 			bool		shouldFree;
 
@@ -545,7 +554,7 @@ systable_getnext(SysScanDesc sysscan)
 			 * because we still wouldn't need to support indexes on
 			 * expressions.
 			 */
-			if (sysscan->iscan->xs_recheck)
+			if (recheck)
 				elog(ERROR, "system catalog scans with lossy index conditions are not implemented");
 		}
 	}
@@ -746,13 +755,15 @@ HeapTuple
 systable_getnext_ordered(SysScanDesc sysscan, ScanDirection direction)
 {
 	HeapTuple	htup = NULL;
+	bool		recheck;
 
 	Assert(sysscan->irel);
-	if (table_index_getnext_slot(sysscan->iscan, direction, sysscan->slot))
+	if (table_index_getnext_slot(sysscan->iscan, direction, sysscan->slot,
+								 &recheck))
 		htup = ExecFetchSlotHeapTuple(sysscan->slot, false, NULL);
 
 	/* See notes in systable_getnext */
-	if (htup && sysscan->iscan->xs_recheck)
+	if (htup && recheck)
 		elog(ERROR, "system catalog scans with lossy index conditions are not implemented");
 
 	/*

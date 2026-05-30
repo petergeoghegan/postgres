@@ -377,10 +377,10 @@ typedef struct IndexScanDescData
 	struct IndexScanInstrumentation *instrument;
 
 	/*
-	 * In an index-only scan, a successful table_index_getnext_slot call must
-	 * fill either xs_itup (and xs_itupdesc) or xs_hitup (and xs_hitupdesc) to
-	 * provide the data returned by the scan.  It can fill both, in which case
-	 * the heap format will be used.
+	 * In an index-only scan, the index AM fills either xs_itup or xs_hitup
+	 * with the data to be returned by the scan (it can fill both, in which
+	 * case the heap format is used).  The table AM consumes these to fill the
+	 * caller's slot during table_index_getnext_slot.
 	 */
 	IndexTuple	xs_itup;		/* index tuple returned by AM */
 	struct TupleDescData *xs_itupdesc;	/* rowtype descriptor of xs_itup */
@@ -396,13 +396,22 @@ typedef struct IndexScanDescData
 
 	/*
 	 * Resolved table_index_getnext_slot callback, which is set by
-	 * table_index_fetch_begin at the start of amgetbatch/amgettuple scans
+	 * table_index_fetch_begin at the start of amgetbatch/amgettuple scans.
+	 * Reports via *recheck (if not NULL) whether the scan keys must be
+	 * rechecked.
 	 */
 	bool		(*xs_getnext_slot) (struct IndexScanDescData *scan,
 									ScanDirection direction,
-									struct TupleTableSlot *slot);
+									struct TupleTableSlot *slot,
+									bool *recheck);
 
-	bool		xs_recheck;		/* T means scan keys must be rechecked */
+	/*
+	 * xs_recheck is set by index AMs, and read by table AMs.
+	 *
+	 * Should not be checked by core executor nodes (they should use the
+	 * xs_getnext_slot callback's recheck argument instead).
+	 */
+	bool		xs_recheck;
 
 	/* batch size information, set once by index AM in ambeginscan */
 	uint16		maxitemsbatch;	/* size of each batch's items[] array */
@@ -426,10 +435,19 @@ typedef struct IndexScanDescData
 	 * xs_recheckorderby is true, these need to be rechecked just like the
 	 * scan keys, and the values returned here are a lower-bound on the actual
 	 * values.
+	 *
+	 * Note: unlike xs_recheck, these fields are read by core executor nodes.
 	 */
 	Datum	   *xs_orderbyvals;
 	bool	   *xs_orderbynulls;
 	bool		xs_recheckorderby;
+
+	/*
+	 * Index attributes holding "name" columns stored as cstrings, which the
+	 * table AM re-pads to NAMEDATALEN when filling a slot from xs_itup
+	 */
+	AttrNumber *xs_name_cstring_attnums;
+	int			xs_name_cstring_count;
 
 	/*
 	 * An approximate limit on the amount of work, measured in pages touched,

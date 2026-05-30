@@ -147,6 +147,9 @@ typedef struct IndexFetchHeapData
 	ScanDirection xs_read_stream_dir;	/* index scan direction */
 	BlockNumber xs_prefetch_block;	/* last block returned to xs_read_stream */
 	ReadStream *xs_read_stream; /* prefetching read stream */
+
+	/* Per-tuple context for padding "name" columns during index-only scans */
+	MemoryContext xs_itup_cxt;
 } IndexFetchHeapData;
 
 /* Result codes for HeapTupleSatisfiesVacuum */

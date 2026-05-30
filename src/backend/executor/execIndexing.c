@@ -721,6 +721,7 @@ check_exclusion_or_unique_constraint(Relation heap, Relation index,
 	int			i;
 	bool		conflict;
 	bool		found_self;
+	bool		recheck;
 	ExprContext *econtext;
 	TupleTableSlot *existing_slot;
 	TupleTableSlot *save_scantuple;
@@ -829,7 +830,7 @@ retry:
 	index_rescan(index_scan, scankeys, indnkeyatts, NULL, 0);
 
 	while (table_index_getnext_slot(index_scan, ForwardScanDirection,
-									existing_slot))
+									existing_slot, &recheck))
 	{
 		TransactionId xwait;
 		XLTW_Oper	reason_wait;
@@ -859,7 +860,7 @@ retry:
 					   existing_values, existing_isnull);
 
 		/* If lossy indexscan, must recheck the condition */
-		if (index_scan->xs_recheck)
+		if (recheck)
 		{
 			if (!index_recheck_constraint(index,
 										  constr_procs,

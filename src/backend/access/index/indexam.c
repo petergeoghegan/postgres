@@ -350,6 +350,42 @@ index_beginscan_internal(Relation indexRelation, Relation heapRelation,
 		scan->xs_heap_continue = false;
 		scan->batchImmediateUnguard = (scan->MVCCScan && !index_only_scan);
 
+		/*
+		 * For index-only scans, find any "name" columns stored as cstrings
+		 * (e.g. btree name_ops), which the table AM must re-pad to
+		 * NAMEDATALEN when filling a slot from the index tuple.  We detect
+		 * this generically by looking for index attributes whose stored type
+		 * is CSTRINGOID while their opclass input type is NAMEOID.  This is
+		 * done before table_index_fetch_begin so the table AM can size
+		 * per-tuple workspace accordingly.
+		 */
+		if (index_only_scan)
+		{
+			int			indnkeyatts = indexRelation->rd_index->indnkeyatts;
+			int			namecount = 0;
+
+			for (int attnum = 0; attnum < indnkeyatts; attnum++)
+			{
+				if (TupleDescAttr(indexRelation->rd_att, attnum)->atttypid == CSTRINGOID &&
+					indexRelation->rd_opcintype[attnum] == NAMEOID)
+					namecount++;
+			}
+
+			if (namecount > 0)
+			{
+				int			idx = 0;
+
+				scan->xs_name_cstring_attnums = palloc_array(AttrNumber, namecount);
+				for (int attnum = 0; attnum < indnkeyatts; attnum++)
+				{
+					if (TupleDescAttr(indexRelation->rd_att, attnum)->atttypid == CSTRINGOID &&
+						indexRelation->rd_opcintype[attnum] == NAMEOID)
+						scan->xs_name_cstring_attnums[idx++] = (AttrNumber) attnum;
+				}
+				scan->xs_name_cstring_count = namecount;
+			}
+		}
+
 		/* prepare to fetch index matches from table (sets xs_heapfetch) */
 		table_index_fetch_begin(scan, flags);
 
