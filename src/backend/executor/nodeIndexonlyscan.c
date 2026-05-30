@@ -115,8 +115,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	/*
 	 * OK, now that we have what we need, fetch the next tuple.
 	 */
-	while (table_index_getnext_slot(scandesc, direction,
-									node->ioss_TableSlot))
+	while (table_index_getnext_slot(scandesc, direction, NULL))
 	{
 		CHECK_FOR_INTERRUPTS();
 
@@ -483,15 +482,6 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	ExecInitScanTupleSlot(estate, &indexstate->ss, tupDesc,
 						  &TTSOpsVirtual,
 						  0);
-
-	/*
-	 * We need another slot, in a format that's suitable for the table AM, for
-	 * when we need to fetch a tuple from the table for rechecking visibility.
-	 */
-	indexstate->ioss_TableSlot =
-		ExecAllocTableSlot(&estate->es_tupleTable,
-						   RelationGetDescr(currentRelation),
-						   table_slot_callbacks(currentRelation), 0);
 
 	/*
 	 * Initialize result type and projection info.  The node's targetlist will

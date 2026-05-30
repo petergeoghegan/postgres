@@ -1388,7 +1388,8 @@ table_index_fetch_batch_init(IndexScanDesc scan, IndexScanBatch batch)
  *
  * For index-only scans, the callback also fills xs_itup/xs_itupdesc or
  * xs_hitup/xs_hitupdesc (or both) so that index data can be returned without
- * a heap fetch.
+ * a heap fetch.  Index-only scans have no use for a heap tuple (they only
+ * need the AM to confirm visibility), so they pass a NULL slot.
  */
 static inline bool
 table_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,

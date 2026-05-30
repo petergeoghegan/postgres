@@ -265,7 +265,6 @@ static bool get_actual_variable_endpoint(Relation heapRel,
 										 ScanKey scankeys,
 										 int16 typLen,
 										 bool typByVal,
-										 TupleTableSlot *tableslot,
 										 MemoryContext outercontext,
 										 Datum *endpointDatum);
 static RelOptInfo *find_join_input_rel(PlannerInfo *root, Relids relids);
@@ -7019,7 +7018,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			MemoryContext oldcontext;
 			Relation	heapRel;
 			Relation	indexRel;
-			TupleTableSlot *slot;
 			int16		typLen;
 			bool		typByVal;
 			ScanKeyData scankeys[1];
@@ -7038,7 +7036,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			indexRel = index_open(index->indexoid, NoLock);
 
 			/* build some stuff needed for indexscan execution */
-			slot = table_slot_create(heapRel, NULL);
 			get_typlenbyval(vardata->atttype, &typLen, &typByVal);
 
 			/* set up an IS NOT NULL scan key so that we ignore nulls */
@@ -7060,7 +7057,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 														 scankeys,
 														 typLen,
 														 typByVal,
-														 slot,
 														 oldcontext,
 														 min);
 			}
@@ -7080,14 +7076,11 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 														 scankeys,
 														 typLen,
 														 typByVal,
-														 slot,
 														 oldcontext,
 														 max);
 			}
 
 			/* Clean everything up */
-			ExecDropSingleTupleTableSlot(slot);
-
 			index_close(indexRel, NoLock);
 			table_close(heapRel, NoLock);
 
@@ -7110,8 +7103,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
  *
  * scankeys is a 1-element scankey array set up to reject nulls.
  * typLen/typByVal describe the datatype of the index's first column.
- * tableslot is a slot suitable to hold table tuples, in case we need
- * to probe the heap.
  * (We could compute these values locally, but that would mean computing them
  * twice when get_actual_variable_range needs both the min and the max.)
  *
@@ -7125,7 +7116,6 @@ get_actual_variable_endpoint(Relation heapRel,
 							 ScanKey scankeys,
 							 int16 typLen,
 							 bool typByVal,
-							 TupleTableSlot *tableslot,
 							 MemoryContext outercontext,
 							 Datum *endpointDatum)
 {
@@ -7197,7 +7187,7 @@ get_actual_variable_endpoint(Relation heapRel,
 	index_rescan(index_scan, scankeys, 1, NULL, 0);
 
 	/* Fetch first/next tuple in specified direction */
-	while (table_index_getnext_slot(index_scan, indexscandir, tableslot))
+	while (table_index_getnext_slot(index_scan, indexscandir, NULL))
 	{
 		/*
 		 * We expect that the index will return data in IndexTuple not

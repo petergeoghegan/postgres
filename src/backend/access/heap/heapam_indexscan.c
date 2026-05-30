@@ -54,9 +54,9 @@ static pg_attribute_always_inline bool heapam_index_getnext_slot(IndexScanDesc s
 																 TupleTableSlot *slot,
 																 bool index_only,
 																 bool amgetbatch);
-static bool heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
-									TupleTableSlot *slot, bool *heap_continue,
-									bool *all_dead);
+static pg_attribute_always_inline bool heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
+                                                               TupleTableSlot *slot, bool index_only,
+                                                               bool *heap_continue, bool *all_dead);
 static pg_attribute_always_inline void heapam_index_kill_item(IndexScanDesc scan,
 															  bool all_dead,
 															  bool amgetbatch);
@@ -505,8 +505,8 @@ heapam_index_only_tuple_getnext_slot(IndexScanDesc scan,
  *
  * The result is true if a tuple satisfying the scan keys and the snapshot was
  * found, false otherwise.  For plain index scans the tuple is stored in the
- * specified slot; for index-only scans only xs_itup/xs_hitup is meaningful
- * (the slot is cleared).
+ * specified slot; for index-only scans only xs_itup/xs_hitup is meaningful,
+ * and no slot is used at all (callers pass a NULL slot).
  *
  * On success, resources (like buffer pins) are likely to be held, and will be
  * dropped by a future call here (or by a later call to heapam_index_fetch_end
@@ -563,8 +563,10 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			/*
 			 * We can skip the heap fetch if the TID references a heap page on
 			 * which all tuples are known visible to everybody.  In any case,
-			 * our executor node caller ignores the slot we return: it fills
-			 * its result slot from the index tuple (xs_itup/xs_hitup).
+			 * the caller has no use for a heap tuple: it fills its result slot
+			 * from the index tuple (xs_itup/xs_hitup).  We therefore pass no
+			 * slot down to heapam_index_heap_fetch (it just verifies that a
+			 * visible tuple exists).
 			 */
 			if (!all_visible)
 			{
@@ -576,7 +578,8 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 				if (scan->instrument)
 					scan->instrument->ntabletuplefetches++;
 
-				got_heap_tuple = heapam_index_heap_fetch(scan, hscan, slot,
+				got_heap_tuple = heapam_index_heap_fetch(scan, hscan, NULL,
+														 index_only,
 														 heap_continue,
 														 &all_dead);
 				heapam_index_kill_item(scan, all_dead, amgetbatch);
@@ -601,9 +604,6 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 					}
 					continue;	/* no visible tuple, try next index entry */
 				}
-
-				/* We don't actually need the heap tuple for anything */
-				ExecClearTuple(slot);
 
 				/*
 				 * Only MVCC snapshots are supported with standard index-only
@@ -643,6 +643,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 * next TID from the index.
 			 */
 			got_heap_tuple = heapam_index_heap_fetch(scan, hscan, slot,
+													 index_only,
 													 heap_continue,
 													 &all_dead);
 			heapam_index_kill_item(scan, all_dead, amgetbatch);
@@ -666,20 +667,37 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
  * On success, the buffer containing the heap tup is pinned.  The pin must be
  * dropped elsewhere.
  */
-static bool
+static pg_attribute_always_inline bool
 heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
-						TupleTableSlot *slot, bool *heap_continue,
-						bool *all_dead)
+						TupleTableSlot *slot, bool index_only,
+						bool *heap_continue, bool *all_dead)
 {
 	Relation	rel = scan->heapRelation;
 	ItemPointer tid = &scan->xs_heaptid;
 	Snapshot	snapshot = scan->xs_snapshot;
-	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
+	HeapTupleData idxtupdata;
+	HeapTuple	heapTuple;
 	bool		got_heap_tuple;
 
-	Assert(TTS_IS_BUFFERTUPLE(slot));
-
 	*all_dead = false;
+
+	if (index_only)
+	{
+		/*
+		 * Index-only scans only need to know whether a visible tuple exists;
+		 * its contents are never returned to the caller.  Verify visibility
+		 * using a transient HeapTupleData on the stack, with no slot at all.
+		 */
+		Assert(slot == NULL);
+		heapTuple = &idxtupdata;
+	}
+	else
+	{
+		BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
+
+		Assert(TTS_IS_BUFFERTUPLE(slot));
+		heapTuple = &bslot->base.tupdata;
+	}
 
 	/* We can skip the buffer-switching logic if we're on the same page. */
 	if (hscan->xs_blk != ItemPointerGetBlockNumber(tid))
@@ -694,8 +712,12 @@ heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		 * before calling ReleaseBuffer.  This avoids expensive calls to
 		 * GetPrivateRefCountEntrySlow caused by ExecStoreBufferHeapTuple
 		 * failing to hit the backend's cache for the release of the old pin.
+		 *
+		 * Index-only scans never transfer a pin to a slot (they have none), so
+		 * there's nothing to drop in that case.
 		 */
-		ExecClearTuple(slot);
+		if (!index_only)
+			ExecClearTuple(slot);
 
 		if (BufferIsValid(hscan->xs_cbuf))
 			ReleaseBuffer(hscan->xs_cbuf);
@@ -725,10 +747,10 @@ heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
 											rel,
 											hscan->xs_cbuf,
 											snapshot,
-											&bslot->base.tupdata,
+											heapTuple,
 											all_dead,
 											!*heap_continue);
-	bslot->base.tupdata.t_self = *tid;
+	heapTuple->t_self = *tid;
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_UNLOCK);
 
 	if (got_heap_tuple)
@@ -739,34 +761,41 @@ heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		 */
 		*heap_continue = !IsMVCCLikeSnapshot(snapshot);
 
-		slot->tts_tableOid = RelationGetRelid(rel);
-
 		/*
-		 * If this is the last TID on the current heap block within the batch,
-		 * transfer our buffer pin to the slot rather than having the slot
-		 * increment the pin count.  This saves a pair of IncrBufferRefCount
-		 * and ReleaseBuffer calls, since the caller would just release its
-		 * pin on xs_cbuf when switching to the next block anyway.
-		 *
-		 * We can only do this when heap_continue is false, since otherwise
-		 * the caller will need xs_cbuf to remain valid for the next call.
+		 * Index-only scans are finished now: confirming that a visible tuple
+		 * exists is all they require, so there's no tuple to store in a slot.
 		 */
-		if (hscan->xs_lastinblock && !*heap_continue)
+		if (!index_only)
 		{
-			ExecStorePinnedBufferHeapTuple(&bslot->base.tupdata, slot,
-										   hscan->xs_cbuf);
-			hscan->xs_cbuf = InvalidBuffer;
-			hscan->xs_blk = InvalidBlockNumber;
+			slot->tts_tableOid = RelationGetRelid(rel);
 
 			/*
-			 * Note: the pin now owned by the slot is expected to be released
-			 * on the next call here, via an explicit ExecClearTuple.  This
-			 * avoids churn in the backend's private refcount cache.
+			 * If this is the last TID on the current heap block within the
+			 * batch, transfer our buffer pin to the slot rather than having
+			 * the slot increment the pin count.  This saves a pair of
+			 * IncrBufferRefCount and ReleaseBuffer calls, since the caller
+			 * would just release its pin on xs_cbuf when switching to the next
+			 * block anyway.
+			 *
+			 * We can only do this when heap_continue is false, since otherwise
+			 * the caller will need xs_cbuf to remain valid for the next call.
 			 */
+			if (hscan->xs_lastinblock && !*heap_continue)
+			{
+				ExecStorePinnedBufferHeapTuple(heapTuple, slot, hscan->xs_cbuf);
+				hscan->xs_cbuf = InvalidBuffer;
+				hscan->xs_blk = InvalidBlockNumber;
+
+				/*
+				 * Note: the pin now owned by the slot is expected to be
+				 * released on the next call here, via an explicit
+				 * ExecClearTuple.  This avoids churn in the backend's private
+				 * refcount cache.
+				 */
+			}
+			else
+				ExecStoreBufferHeapTuple(heapTuple, slot, hscan->xs_cbuf);
 		}
-		else
-			ExecStoreBufferHeapTuple(&bslot->base.tupdata, slot,
-									 hscan->xs_cbuf);
 
 		pgstat_count_heap_fetch(scan->indexRelation);
 	}
