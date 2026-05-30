@@ -54,11 +54,12 @@ static pg_attribute_always_inline bool heapam_index_getnext_slot(IndexScanDesc s
 																 TupleTableSlot *slot,
 																 bool index_only,
 																 bool amgetbatch);
-static pg_attribute_always_inline bool heapam_index_heap_fetch(IndexScanDesc scan,
-															   IndexFetchHeapData *hscan,
-															   TupleTableSlot *slot,
-															   bool *heap_continue,
-															   bool amgetbatch);
+static bool heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
+									TupleTableSlot *slot, bool *heap_continue,
+									bool *all_dead);
+static pg_attribute_always_inline void heapam_index_kill_item(IndexScanDesc scan,
+															  bool all_dead,
+															  bool amgetbatch);
 static pg_attribute_always_inline ItemPointer heapam_index_getnext_scanbatch_pos(IndexScanDesc scan,
 																				 IndexFetchHeapData *hscan,
 																				 ScanDirection direction,
@@ -522,6 +523,7 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan->xs_heapfetch;
 	bool	   *heap_continue = &scan->xs_heap_continue;
 	bool		all_visible = false;
+	bool		all_dead;
 	BlockNumber last_visited_block = InvalidBlockNumber;
 	uint8		n_visited_pages = 0;
 	ItemPointer tid = NULL;
@@ -566,14 +568,20 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 			 */
 			if (!all_visible)
 			{
+				bool		got_heap_tuple;
+
 				/*
 				 * Rats, we have to visit the heap to check visibility.
 				 */
 				if (scan->instrument)
 					scan->instrument->ntabletuplefetches++;
 
-				if (!heapam_index_heap_fetch(scan, hscan, slot,
-											 heap_continue, amgetbatch))
+				got_heap_tuple = heapam_index_heap_fetch(scan, hscan, slot,
+														 heap_continue,
+														 &all_dead);
+				heapam_index_kill_item(scan, all_dead, amgetbatch);
+
+				if (!got_heap_tuple)
 				{
 					/*
 					 * No visible tuple.  If caller set a visited-pages limit
@@ -627,13 +635,18 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
 		}
 		else
 		{
+			bool		got_heap_tuple;
+
 			/*
 			 * Fetch the next (or only) visible heap tuple for this index
 			 * entry.  If we don't find anything, loop around and grab the
 			 * next TID from the index.
 			 */
-			if (heapam_index_heap_fetch(scan, hscan, slot,
-										heap_continue, amgetbatch))
+			got_heap_tuple = heapam_index_heap_fetch(scan, hscan, slot,
+													 heap_continue,
+													 &all_dead);
+			heapam_index_kill_item(scan, all_dead, amgetbatch);
+			if (got_heap_tuple)
 				return true;
 		}
 	}
@@ -653,19 +666,20 @@ heapam_index_getnext_slot(IndexScanDesc scan, ScanDirection direction,
  * On success, the buffer containing the heap tup is pinned.  The pin must be
  * dropped elsewhere.
  */
-static pg_attribute_always_inline bool
+static bool
 heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
 						TupleTableSlot *slot, bool *heap_continue,
-						bool amgetbatch)
+						bool *all_dead)
 {
 	Relation	rel = scan->heapRelation;
 	ItemPointer tid = &scan->xs_heaptid;
 	Snapshot	snapshot = scan->xs_snapshot;
 	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
-	bool		all_dead = false;
 	bool		got_heap_tuple;
 
 	Assert(TTS_IS_BUFFERTUPLE(slot));
+
+	*all_dead = false;
 
 	/* We can skip the buffer-switching logic if we're on the same page. */
 	if (hscan->xs_blk != ItemPointerGetBlockNumber(tid))
@@ -712,7 +726,7 @@ heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
 											hscan->xs_cbuf,
 											snapshot,
 											&bslot->base.tupdata,
-											&all_dead,
+											all_dead,
 											!*heap_continue);
 	bslot->base.tupdata.t_self = *tid;
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_UNLOCK);
@@ -762,30 +776,34 @@ heapam_index_heap_fetch(IndexScanDesc scan, IndexFetchHeapData *hscan,
 		*heap_continue = false;
 	}
 
-	/*
-	 * If we scanned a whole HOT chain and found only dead tuples, remember it
-	 * for later.  We do not do this when in recovery because it may violate
-	 * MVCC to do so.  See comments in RelationGetIndexScan().
-	 */
-	if (!scan->xactStartedInRecovery)
-	{
-		if (amgetbatch)
-		{
-			if (all_dead)
-				tableam_util_scanpos_killitem(scan);
-		}
-		else
-		{
-			/*
-			 * Tell amgettuple-based index AM to kill its entry for that TID.
-			 * Next tableam_util_fetch_next_tuple_tid call will tell index AM
-			 * to kill the tuple it just returned to us -- the "prior" tuple.
-			 */
-			scan->kill_prior_tuple = all_dead;
-		}
-	}
-
 	return got_heap_tuple;
+}
+
+/*
+ * If we scanned a whole HOT chain and found only dead tuples, arrange for the
+ * index AM to kill its entry for that TID.  We do not do this when in recovery
+ * because it may violate MVCC to do so.  See comments in RelationGetIndexScan().
+ */
+static pg_attribute_always_inline void
+heapam_index_kill_item(IndexScanDesc scan, bool all_dead, bool amgetbatch)
+{
+	if (scan->xactStartedInRecovery)
+		return;
+
+	if (amgetbatch)
+	{
+		if (all_dead)
+			tableam_util_scanpos_killitem(scan);
+	}
+	else
+	{
+		/*
+		 * Tell amgettuple-based index AM to kill its entry for that TID.  Next
+		 * tableam_util_fetch_next_tuple_tid call will tell index AM to kill the
+		 * tuple it just returned to us -- the "prior" tuple.
+		 */
+		scan->kill_prior_tuple = all_dead;
+	}
 }
 
 /*
