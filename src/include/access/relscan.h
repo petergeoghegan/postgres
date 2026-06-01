@@ -157,6 +157,7 @@ typedef struct BatchMatchingItem
  *
  *   [table AM opaque area]    <- allocation base, at -(batch_base_offset)
  *   [table AM per-item area]  <- supplemental flexible array per-item data
+ *   [index AM dyn opaque]     <- optional, dynamically sized
  *   [index AM static opaque]  <- at -(batch_index_opaque_static)
  *   [IndexScanBatchData]      <- batch pointer, returned by amgetbatch
  *   [items[maxitemsbatch]]
@@ -164,12 +165,12 @@ typedef struct BatchMatchingItem
  *                                index-only scans (batch_tuples_workspace)
  *
  * batch_base_offset combines the table AM opaque area (its fixed-size header
- * plus its per-item area), and the static index AM opaque area into a single
- * offset from the batch pointer to the true allocation base.  The
- * indexbatch.c utilities pfree a batch by passing pfree a pointer returned by
- * index_scan_batch_base.  We rely on the assumption that batches have a fixed
- * layout for the duration of an index scan (batches are cached for reuse to
- * avoid palloc churn).
+ * plus its per-item area), the optional dynamic index AM opaque area, and the
+ * static index AM opaque area into a single offset from the batch pointer to
+ * the true allocation base.  The indexbatch.c utilities pfree a batch by
+ * passing pfree a pointer returned by index_scan_batch_base.  We rely on the
+ * assumption that batches have a fixed layout for the duration of an index
+ * scan (batches are cached for reuse to avoid palloc churn).
  *
  * The table AM accesses its opaque area using the index_scan_batch_table_area
  * shim accessor.  The area is a single contiguous block: a fixed-size header
@@ -184,11 +185,22 @@ typedef struct BatchMatchingItem
  * Bitmap scans involving an amgetbitmap routine that finds it convenient to
  * reuse batch infrastructure internally never get a table AM opaque area.
  *
- * An index AM gets a mandatory static area (batch_index_opaque_static), which
- * has a size known at compile time -- MAXALIGN(sizeof(the AM's struct)) --
- * and is accessed via indexam_util_batch_get_amdata at that fixed offset.
- * This is more efficient but less flexible than the table AM scheme: every
- * index AM uses the same generic fixed-size header.
+ * An index AM gets two opaque areas, both before the batch pointer, divided by
+ * what is known when.  The mandatory static area (batch_index_opaque_static)
+ * has a size known at compile time -- MAXALIGN(sizeof(the AM's struct)) -- and
+ * is accessed via indexam_util_batch_get_amdata at that fixed offset.  This is
+ * more efficient but less flexible than the table AM scheme: every index AM
+ * uses the same generic fixed-size header.
+ *
+ * Index AMs can use a second, optional dynamically-sized private area
+ * (batch_index_opaque_dyn) that sits just before the static area.  Its size
+ * is chosen at scan start rather than at compile time.  It is accessed via
+ * index_scan_batch_index_opaque_dyn.  This second area is generally only used
+ * during scans where large amounts of supplemental metadata are required,
+ * that cannot reasonably be allocated for every scan.  Typically, this is
+ * granular information about the batch's items for use by the index AM's
+ * amgettransform routine.  Index AMs cannot expect this space to be allocated
+ * during bitmap index scans.
  */
 typedef struct IndexScanBatchData
 {
@@ -398,6 +410,7 @@ typedef struct IndexScanDescData
 	/* batch size information, set once by index AM in ambeginscan */
 	uint16		maxitemsbatch;	/* size of each batch's items[] array */
 	uint16		batch_index_opaque_static;	/* compile-time opaque size */
+	Size		batch_index_opaque_dyn; /* optional dynamic opaque size */
 	uint16		batch_tuples_workspace; /* currTuples workspace size */
 
 	/*
@@ -547,6 +560,22 @@ index_scan_batch_table_area(IndexScanDescData *scan, IndexScanBatch batch)
 	 * allocated space
 	 */
 	return index_scan_batch_base(scan, batch);
+}
+
+/*
+ * Return a pointer to the index AM's dynamic opaque area.
+ *
+ * This optional area (sized batch_index_opaque_dyn) sits immediately before
+ * the index AM's static opaque area.  Core code treats it as a single opaque
+ * allocation; the index AM alone decides its internal structure.
+ */
+static inline void *
+index_scan_batch_index_opaque_dyn(IndexScanDescData *scan, IndexScanBatch batch)
+{
+	Assert(scan->batch_index_opaque_dyn > 0);
+
+	return (char *) batch - scan->batch_index_opaque_static -
+		MAXALIGN(scan->batch_index_opaque_dyn);
 }
 
 /*

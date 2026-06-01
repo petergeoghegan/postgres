@@ -593,13 +593,15 @@ indexam_util_alloc_batch(IndexScanDesc scan)
 		 *
 		 * This combines the table AM opaque area (its fixed-size header plus
 		 * any per-item area used during index-only scans) and the index AM's
-		 * static opaque area into a single offset used to find the true
-		 * allocation base from the batch pointer.  (This is also where the
-		 * fixed-size table AM opaque area can be found.)
+		 * opaque areas (static plus the optional dynamic) into a single
+		 * offset used to find the true allocation base from the batch
+		 * pointer.  (This is also where the fixed-size table AM opaque area
+		 * can be found.)
 		 */
 		if (scan->batch_base_offset == 0)
 		{
 			Size		table_area = 0;
+			Size		index_dyn_area;
 
 			/*
 			 * The table AM opaque area is a single contiguous block: a
@@ -619,8 +621,18 @@ indexam_util_alloc_batch(IndexScanDesc scan)
 									  (Size) scan->batch_per_item_size *
 									  scan->maxitemsbatch);
 
+			/*
+			 * The optional dynamic index AM opaque area
+			 * (batch_index_opaque_dyn bytes) sits between the table AM area
+			 * and the static index AM opaque area
+			 */
+			index_dyn_area = MAXALIGN(scan->batch_index_opaque_dyn);
 
-			scan->batch_base_offset = table_area +
+			/*
+			 * index_dyn_area is allowed to be very large, so we're careful to
+			 * not let it overflow
+			 */
+			scan->batch_base_offset = table_area + index_dyn_area +
 				scan->batch_index_opaque_static;
 		}
 
