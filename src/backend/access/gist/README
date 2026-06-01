@@ -48,7 +48,7 @@ The original algorithms were modified in several ways:
 
 * They had to be adapted to PostgreSQL conventions. For example, the SEARCH
   algorithm was considerably changed, because in PostgreSQL the search function
-  should return one tuple (next), not all tuples at once. Also, it should
+  returns matching tuples incrementally, not all at once. Also, it should
   release page locks between calls.
 * Since we added support for variable length keys, it's not possible to
   guarantee enough free space for all keys on pages after splitting. User
@@ -71,20 +71,24 @@ was not touched in the paper.
 Search Algorithm
 ----------------
 
-The search code maintains a queue of unvisited items, where an "item" is
-either a heap tuple known to satisfy the search conditions, or an index
-page that is consistent with the search conditions according to inspection
-of its parent page's downlink item.  Initially the root page is searched
-to find unvisited items in it.  Then we pull items from the queue.  A
-heap tuple pointer is just returned immediately; an index page entry
-causes that page to be searched, generating more queue entries.
+The search code maintains a queue of unvisited items.  For a plain index
+scan an "item" is always an index page that is consistent with the search
+conditions according to inspection of its parent page's downlink item;
+matching heap tuples are not queued, but are gathered into a batch as each
+leaf page is scanned (see "Returning matches in batches", below).  For a
+nearest-neighbor (ordered) scan the queue additionally holds heap tuples
+known to satisfy the search conditions, so that heap tuples and index
+pages can be interleaved in distance order.  Initially the root page is
+added to the queue.  Then we pull items from the queue: an index page
+entry causes that page to be scanned, generating more queue entries, while
+a heap tuple entry (ordered scans only) is a match to be returned.
 
-The queue is kept ordered with heap tuple items at the front, then
-index page entries, with any newly-added index page entry inserted
-before existing index page entries.  This ensures depth-first traversal
-of the index, and in particular causes the first few heap tuples to be
-returned as soon as possible.  That is helpful in case there is a LIMIT
-that requires only a few tuples to be produced.
+The queue is kept ordered so that we perform a depth-first traversal of
+the index: any newly-added index page entry is inserted before existing
+index page entries, and (for ordered scans) heap tuple items are kept at
+the front.  This causes the first few matching heap tuples to be returned
+as soon as possible, which is helpful in case there is a LIMIT that
+requires only a few tuples to be produced.
 
 To implement nearest-neighbor search, the queue entries are augmented
 with distance data: heap tuple entries are labeled with exact distance
@@ -95,7 +99,9 @@ entries having identical distances managed as stated in the previous
 paragraph.
 
 The search algorithm keeps an index page locked only long enough to scan
-its entries and queue those that satisfy the search conditions.  Since
+its entries -- queueing the child pages that satisfy the search conditions,
+and gathering any matching heap tuples (into a batch, or onto the queue for
+an ordered scan).  Since
 insertions can occur concurrently with searches, it is possible for an
 index child page to be split between the time we make a queue entry for it
 (while visiting its parent page) and the time we actually reach and scan
@@ -114,6 +120,71 @@ of scan start.  In particular, this means that we need not worry about
 cases where a parent page's downlink key is "enlarged" after we look at it.
 Any such enlargement would be to add child items that we aren't interested
 in returning anyway.
+
+
+Returning matches in batches
+----------------------------
+
+GiST implements the amgetbatch index AM interface (documented in
+doc/src/sgml/indexam.sgml; see also src/backend/access/nbtree/README).
+Rather than returning one matching heap TID per call, each call hands the
+table AM a batch of TIDs, which it then fetches from the heap (and may
+prefetch).  GiST forms two kinds of batch:
+
+* A plain (non-ordered) scan returns one "conventional" batch per leaf
+  page, holding all of that page's matching TIDs in physical order.  As in
+  nbtree and hash, the page's content lock is dropped once the page has
+  been scanned, but its buffer pin may be handed to the batch and retained
+  as an interlock against concurrent TID recycling (see below).
+
+* A nearest-neighbor (ordered) scan returns a single "virtual" batch.
+  Matches don't naturally arrive one leaf page at a time here, so instead
+  we drain the distance-ordered queue, copying matching TIDs into the batch
+  in distance order -- typically spanning many leaf pages.  We are
+  effectively pretending that the matches were found together on one leaf
+  page, in useful order, even though that isn't true.
+
+The TID recycling interlock is the same for both kinds of batch: it is the
+buffer pin(s) on the leaf page(s) that a batch's TIDs came from, held until
+the table AM no longer needs the interlock and releases it through the
+amunguardbatch callback (the GiST implementation is gistunguardbatch); see
+doc/src/sgml/indexam.sgml.  VACUUM honors the pin by taking a cleanup lock
+on the leaf page, just as nbtree does, so it cannot make the page's
+pointed-to heap TIDs LP_UNUSED while a scan still holds the pin (see "Bulk
+delete algorithm (VACUUM)", below, and src/backend/access/nbtree/README).
+
+This interlock is required for the correctness of index-only scans, and its
+absence was a longstanding bug.  An index-only scan trusts the visibility
+map instead of fetching the heap tuple, so it must stop VACUUM from
+recycling a heap TID between the moment it reads the index entry and the
+moment it consults the visibility map; otherwise it could report indexed
+values belonging to an unrelated, since-recycled heap tuple.
+
+A conventional batch comes from a single leaf page; a virtual batch spans
+many.  Neither of a virtual batch's restrictions is fundamental -- both
+stem from that one difference, and both resemble a bitmap (i.e.
+amgetbitmap) scan's:
+
+* gistkillitemsbatch does nothing for a virtual batch, so ordered scans
+  never set LP_DEAD bits (just as bitmap scans don't).  LP_DEAD marking has
+  to find each dead item back on its leaf page and confirm the page hasn't
+  changed since the item was read, by comparing the page's current LSN
+  against the value saved when it was read.  For a virtual batch that would
+  mean remembering every leaf page it drew items from, along with each
+  page's LSN, and revisiting potentially many index pages -- awkward and
+  infeasible, though not strictly impossible.
+
+* An ordered scan is never planned as an index-only scan.  The interlock
+  that makes index-only access safe is the pin on the leaf page a TID came
+  from; a virtual batch would have to hold pins on all of its leaf pages at
+  once -- an unbounded number, all the more impractical because index
+  prefetching keeps many heap buffer pins of its own.  So a virtual batch
+  drops each leaf page's pin as the page is scanned -- just as any plain
+  index scan batch drops a pin it doesn't need -- and so can never offer the
+  interlock; holding the pins would work in principle, but since we don't,
+  the planner never builds an index-only scan that uses ordering operators.
+  Those scans run as plain index scans that fetch and recheck the heap tuple
+  (and so were never subject to the bug).
 
 
 Insert Algorithm
@@ -451,6 +522,11 @@ one half of the page was moved to a position that we already scanned, we
 B-tree VACUUM uses, but because we already have NSNs on pages, to detect page
 splits during searches, we don't need a "vacuum cycle ID" concept for that
 like B-tree does.
+
+We take a full cleanup lock on every leaf page as we scan it, even leaf
+pages with no deletable tuples.  As in nbtree, this is the interlock that
+holds concurrent scans off from TID recycling; see "Returning matches in
+batches", above.
 
 While we scan all the pages, we also make note of any completely empty leaf
 pages. We will try to unlink them from the tree after the scan. We also record

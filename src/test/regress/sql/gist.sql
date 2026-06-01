@@ -164,7 +164,9 @@ explain (verbose, costs off)
 select count(*) from gist_tbl;
 select count(*) from gist_tbl;
 
--- This case isn't supported, but it should at least EXPLAIN correctly.
+-- An ordering-operator (nearest-neighbor) scan is never planned as an
+-- index-only scan, so this lossy-distance case runs as a plain index scan that
+-- rechecks the distances against the heap tuple.
 explain (verbose, costs off)
 select p from gist_tbl order by circle(p,1) <-> point(0,0) limit 1;
 select p from gist_tbl order by circle(p,1) <-> point(0,0) limit 1;

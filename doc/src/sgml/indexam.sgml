@@ -172,6 +172,7 @@ typedef struct IndexAmRoutine
     amgetbatch_function amgetbatch; /* can be NULL */
     amunguardbatch_function amunguardbatch; /* can be NULL */
     amkillitemsbatch_function amkillitemsbatch;	/* can be NULL */
+    amgettransform_function amgettransform; /* can be NULL */
     amgetbitmap_function amgetbitmap;   /* can be NULL */
     amendscan_function amendscan;
     amposreset_function amposreset; /* can be NULL */
@@ -718,6 +719,18 @@ ambeginscan (Relation indexRelation,
     </listitem>
     <listitem>
      <para>
+      <literal>scan-&gt;batch_index_opaque_dyn</literal>: the size of an
+      optional second per-batch opaque area, or 0 if the index AM does not need
+      one.  Unlike the area above, its size need not be known at compile time;
+      the index AM may choose it at the start of each scan.  It sits immediately
+      before the static area, and core code treats it as a single opaque
+      allocation that the index AM lays out however it likes (for example, to
+      carry per-item match metadata, such as a recheck flag or order-by
+      distances, that must travel with the batch).
+     </para>
+    </listitem>
+    <listitem>
+     <para>
       <literal>scan-&gt;batch_tuples_workspace</literal>: the size in bytes
       of the per-batch tuple storage workspace used for index-only scans
       (typically <literal>BLCKSZ</literal>), or 0 if the index AM does not
@@ -879,37 +892,45 @@ amgetbatch (IndexScanDesc scan,
    Index access methods using <function>amgetbatch</function> must set
    <literal>scan-&gt;xs_recheck</literal> to indicate whether rechecking of
    scan keys is required, in the same way as <function>amgettuple</function>
-   does. However, <literal>scan-&gt;xs_recheck</literal> must be set consistently
-   for an entire scan rather than varying on a per-tuple basis. This is a key
-   difference from <function>amgettuple</function>, which can set
-   <literal>scan-&gt;xs_recheck</literal> independently for each tuple it returns.
-   Index access methods that require granular control over
-   <literal>scan-&gt;xs_recheck</literal> must use the <function>amgettuple</function>
-   interface instead of <function>amgetbatch</function>.
+   does.  An <function>amgetbatch</function> access method cannot set
+   <literal>scan-&gt;xs_recheck</literal> as it returns each item the way
+   <function>amgettuple</function> does, because its interface decouples the
+   order of <function>amgetbatch</function> calls from the order in which
+   items are later returned to the scan.  When the recheck requirement is a
+   fixed property of the whole scan, the access method simply sets
+   <literal>scan-&gt;xs_recheck</literal> once (B-tree always sets it false,
+   and hash always sets it true).  When it instead varies from one matching
+   item to the next, the access method records the per-item value in the batch
+   and provides an <function>amgettransform</function> callback (see below),
+   which the table AM invokes for each returned item to set
+   <literal>scan-&gt;xs_recheck</literal> from that recorded state; GiST works
+   this way.
   </para>
 
   <para>
-   Similarly, the <function>amgetbatch</function> interface does not currently
-   support index-only scans that return data in the form of a
-   <structname>HeapTuple</structname> pointer.  Index-only scans work by
-   copying <structname>IndexTuple</structname> records from index pages into a
-   local buffer associated with each batch.  <literal>xs_itupdesc</literal>
-   works in the same way as already described for <function>amgettuple</function>.
-   The index access method must not set the <literal>scan-&gt;xs_itup</literal>
-   field itself.
-   With <function>amgettuple</function>, the index AM sets
-   <literal>scan-&gt;xs_hitup</literal> to point to a reconstructed
-   <structname>HeapTuple</structname> whose lifetime extends until the next
-   <function>amgettuple</function> call &mdash; only one tuple is valid at a
-   time.  With <function>amgetbatch</function>, multiple batches are held open
-   simultaneously and items are consumed asynchronously by the table AM, so
-   there is no equivalent single-tuple lifetime for per-item
-   <structname>HeapTuple</structname> pointers.  The batch infrastructure
-   provides per-batch storage for <structname>IndexTuple</structname> copies,
-   but has no analogous mechanism for <structname>HeapTuple</structname> data
-   (used by some index AMs for reconstructed tuples that might not fit in
-   <structname>IndexTuple</structname> format).  This limitation could be
-   addressed in a future version of <productname>PostgreSQL</productname>.
+   For index-only scans, an <function>amgetbatch</function> access method
+   normally returns the matching on-disk <structname>IndexTuple</structname>
+   directly: the batch infrastructure copies <structname>IndexTuple</structname>
+   records from index pages into a local buffer associated with each batch, and
+   the table AM exposes the current one via <literal>scan-&gt;xs_itup</literal>.
+   <literal>xs_itupdesc</literal> works in the same way as already described for
+   <function>amgettuple</function>, and the index access method must not set the
+   <literal>scan-&gt;xs_itup</literal> field itself.
+  </para>
+
+  <para>
+   An access method whose returnable values must be reconstructed (rather than
+   returned as a stored <structname>IndexTuple</structname>) instead provides an
+   <function>amgettransform</function> callback that sets
+   <literal>scan-&gt;xs_hitup</literal> to a reconstructed
+   <structname>HeapTuple</structname>.  Because prefetching keeps several
+   batches open and consumes their items asynchronously, there is no automatic
+   single-tuple lifetime as there is with <function>amgettuple</function>; the
+   access method manages this itself, typically by reconstructing into a
+   scan-lifetime memory context and freeing the previously returned tuple each
+   time <function>amgettransform</function> is called, so that only one
+   reconstructed tuple is valid at a time.  GiST uses this approach for its
+   index-only scans.
   </para>
 
   <para>
@@ -1057,6 +1078,42 @@ amkillitemsbatch (IndexScanDesc scan,
    independently verifies the page LSN and can always safely give up on
    setting <literal>LP_DEAD</literal> bits, correctness is obvious without any
    coupling between the two.
+  </para>
+
+  <para>
+<programlisting>
+void
+amgettransform (IndexScanDesc scan,
+                IndexScanBatch batch,
+                int item);
+</programlisting>
+   Called by the table AM as it returns each matching item
+   (<replaceable>item</replaceable> is an index into the batch's
+   <structfield>items</structfield> array) of an <function>amgetbatch</function>
+   scan, to set up the scan's per-tuple output from per-item state that the
+   access method recorded in the batch.  This is needed when that output cannot
+   be a fixed property of the whole scan.  An access method may use it to set
+   <structfield>xs_recheck</structfield> (when the need to recheck the scan
+   conditions varies from one matching item to the next), to set
+   <structfield>xs_orderbyvals</structfield> and
+   <structfield>xs_recheckorderby</structfield> for an ordered
+   (nearest-neighbor) scan, and to set <structfield>xs_hitup</structfield> for
+   an index-only scan whose returnable tuple must be reconstructed rather than
+   returned directly as a stored index tuple.
+  </para>
+
+  <para>
+   Implementing <function>amgettransform</function> is optional, and is only
+   meaningful together with <function>amgetbatch</function>.  An access method
+   whose per-tuple output is a fixed property of the whole scan must leave the
+   field set to <literal>NULL</literal>; B-tree and hash do so, since they use a
+   constant scan-level <structfield>xs_recheck</structfield> and (for index-only
+   scans) return the on-disk index tuple directly via
+   <structfield>xs_itup</structfield>.  GiST provides
+   <function>amgettransform</function> because its consistent function's recheck
+   flag varies from one matching item to the next, its ordered scans attach a
+   lower-bound ORDER BY distance to each item, and its index-only scans
+   reconstruct the returnable tuple from the stored index tuple.
   </para>
 
   <para>
@@ -1358,13 +1415,17 @@ amtranslatecmptype (CompareType cmptype, Oid opfamily, Oid opcintype);
   </para>
 
   <para>
-   Note that <function>amgetbatch</function> scans do not currently support
-   ordering operators.  The core executor expects <function>amgettuple</function>
-   to set <structfield>xs_orderbyvals</structfield> for each returned tuple,
-   but there is currently no mechanism to associate per-item ordering values
-   with individual items within a batch.  This would require an additional
-   layer of indirection that does not yet exist, but could be added in a
-   future version of <productname>PostgreSQL</productname>.
+   An <function>amgetbatch</function> access method can support ordering
+   operators by providing an <function>amgettransform</function> callback: it
+   records each matching item's ordering values in the batch, and the table AM
+   calls <function>amgettransform</function> as it returns each item to set
+   <structfield>xs_orderbyvals</structfield> and
+   <structfield>xs_recheckorderby</structfield> from that recorded state.  GiST
+   uses this for nearest-neighbor scans.  As with
+   <literal>scan-&gt;xs_recheck</literal>, these values cannot be set directly as
+   items are returned, because prefetching decouples the order of
+   <function>amgetbatch</function> calls from the order in which items are
+   returned to the scan.
   </para>
 
   <para>
