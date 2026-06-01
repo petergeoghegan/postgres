@@ -176,9 +176,6 @@ tableam_util_fetch_next_batch(IndexScanDesc scan, ScanDirection direction,
 		}
 	}
 
-	/* xs_hitup isn't currently supported by amgetbatch scans */
-	Assert(!scan->xs_hitup);
-
 	return batch;
 }
 
