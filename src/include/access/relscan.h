@@ -370,6 +370,7 @@ typedef struct IndexScanDescData
 	/* batch size information, set once by index AM in ambeginscan */
 	uint16		maxitemsbatch;	/* size of each batch's items[] array */
 	uint16		batch_index_opaque_static;	/* compile-time opaque size */
+	Size		batch_index_opaque_dyn; /* optional dynamic opaque size */
 	uint16		batch_tuples_workspace; /* currTuples workspace size */
 
 	/*
