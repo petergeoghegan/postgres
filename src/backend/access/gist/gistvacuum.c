@@ -326,10 +326,11 @@ restart:
 	recurse_to = InvalidBlockNumber;
 
 	/*
-	 * We are not going to stay here for a long time, aggressively grab an
-	 * exclusive lock.
+	 * Get a full cleanup lock on this page.  We must get such a lock on every
+	 * leaf page over the course of the vacuum scan, whether or not it
+	 * actually contains any deletable tuples.
 	 */
-	LockBuffer(buffer, GIST_EXCLUSIVE);
+	LockBufferForCleanup(buffer);
 	page = BufferGetPage(buffer);
 
 	if (gistPageRecyclable(page))
