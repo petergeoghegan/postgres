@@ -395,15 +395,15 @@ typedef struct IndexScanDescData
 	uint16		batch_index_opaque_size;	/* MAXALIGN'd index AM opaque size */
 	uint16		batch_tuples_workspace; /* currTuples workspace size */
 
-	/* Offset used by index_scan_batch_base (computed lazily) */
-	uint16		batch_base_offset;
-
 	/*
 	 * Table AM batch opaque sizing, set once by index_fetch_begin (except
 	 * during bitmap scans)
 	 */
 	uint16		batch_opaque_size;	/* table AM fixed-size opaque area size */
 	uint16		batch_per_item_size;	/* per-item table AM area size */
+
+	/* Offset used by index_scan_batch_base (set on first batch alloc) */
+	uint16		batch_base_offset;
 
 	/*
 	 * When fetching with an ordering operator, the values of the ORDER BY
