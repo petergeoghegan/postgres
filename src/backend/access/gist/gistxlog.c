@@ -67,14 +67,33 @@ gistRedoClearFollowRight(XLogReaderState *record, uint8 block_id)
  * redo any page update (except page split)
  */
 static void
-gistRedoPageUpdateRecord(XLogReaderState *record)
+gistRedoPageUpdateRecord(XLogReaderState *record, bool get_cleanup_lock)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
 	gistxlogPageUpdate *xldata = (gistxlogPageUpdate *) XLogRecGetData(record);
 	Buffer		buffer;
 	Page		page;
 
-	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
+	/*
+	 * VACUUM deletes leaf index tuples whose heap TIDs are about to be made
+	 * recyclable.  We must take a cleanup lock here, just like
+	 * gistvacuumpage() does during original execution, so that a concurrent
+	 * scan's pin holds VACUUM off from recycling that page's TIDs until the
+	 * scan has finished its heap visibility checks (this is what makes
+	 * index-only scans safe on a standby).  However, it isn't necessary to
+	 * exhaustively get a cleanup lock on every block in the index during
+	 * recovery; getting a cleanup lock on pages with items to delete
+	 * suffices.  See the GiST README for details.
+	 *
+	 * Plain (non-VACUUM) page updates -- ordinary inserts, which may replace
+	 * a tuple or adjust a downlink in passing -- never make heap TIDs
+	 * recyclable, so they don't need this interlock; get_cleanup_lock is
+	 * false for them, and an exclusive lock is enough.  (Taking a cleanup
+	 * lock there could needlessly stall recovery behind a hot standby scan's
+	 * pin.)
+	 */
+	if (XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, get_cleanup_lock,
+									  &buffer) == BLK_NEEDS_REDO)
 	{
 		char	   *begin;
 		char	   *data;
@@ -407,7 +426,10 @@ gist_redo(XLogReaderState *record)
 	switch (info)
 	{
 		case XLOG_GIST_PAGE_UPDATE:
-			gistRedoPageUpdateRecord(record);
+			gistRedoPageUpdateRecord(record, false);
+			break;
+		case XLOG_GIST_PAGE_VACUUM:
+			gistRedoPageUpdateRecord(record, true);
 			break;
 		case XLOG_GIST_DELETE:
 			gistRedoDeleteRecord(record);
@@ -633,6 +655,35 @@ gistXLogUpdate(Buffer buffer,
 		XLogRegisterBuffer(1, leftchildbuf, REGBUF_STANDARD);
 
 	recptr = XLogInsert(RM_GIST_ID, XLOG_GIST_PAGE_UPDATE);
+
+	return recptr;
+}
+
+/*
+ * Write XLOG record describing a VACUUM deletion of leaf index tuples.
+ *
+ * This uses the same on-page representation as gistXLogUpdate() (the deletion
+ * of a set of items from a single leaf page), but is logged under a distinct
+ * record type so that replay knows to take a cleanup lock on the target page.
+ * That cleanup lock is the standby's half of the interlock that keeps VACUUM
+ * from recycling heap TIDs out from under a concurrent index-only scan.
+ */
+XLogRecPtr
+gistXLogVacuum(Buffer buffer, OffsetNumber *todelete, int ntodelete)
+{
+	gistxlogPageUpdate xlrec;
+	XLogRecPtr	recptr;
+
+	xlrec.ntodelete = ntodelete;
+	xlrec.ntoinsert = 0;
+
+	XLogBeginInsert();
+	XLogRegisterData(&xlrec, sizeof(gistxlogPageUpdate));
+
+	XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
+	XLogRegisterBufData(0, todelete, sizeof(OffsetNumber) * ntodelete);
+
+	recptr = XLogInsert(RM_GIST_ID, XLOG_GIST_PAGE_VACUUM);
 
 	return recptr;
 }
