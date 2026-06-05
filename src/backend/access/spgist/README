@@ -352,8 +352,8 @@ target TID is not acceptable, so we have to extend the algorithm to cope
 with such cases.  We recognize that such a move might have occurred when
 we see a leaf-page REDIRECT tuple whose XID indicates it might have been
 created after the VACUUM scan started.  We add the redirection target TID
-to a "pending list" of places we need to recheck.  Between pages of the
-main sequential scan, we empty the pending list by visiting each listed
+to a "pending list" of places we need to recheck.  During the main
+sequential scan, we empty the pending list by visiting each listed
 TID.  If it points to an inner tuple (from a PickSplit), add each downlink
 TID to the pending list.  If it points to a leaf page, vacuum that page.
 (We could just vacuum the single pointed-to chain, but vacuuming the
@@ -364,6 +364,30 @@ concurrent index changes, we don't remove list entries immediately but
 only after we've completed all pending-list processing; instead we just
 mark items as done after processing them.  Adding a TID that's already in
 the list is a no-op, whether or not that item is marked done yet.
+
+On a leaf page, VACUUM takes a cleanup lock rather than a plain exclusive lock.
+This is the interlock that makes index-only scans safe against concurrent TID
+recycling: such a scan keeps a pin on the leaf page it read heap TIDs from until
+it has consulted the visibility map, and VACUUM cannot make any of that page's
+TIDs recyclable until spgbulkdelete returns, which it cannot do until it has
+cleanup-locked that page behind the scan's pin.  A non-ordered amgetbatch scan
+reads all of a batch's TIDs from one leaf page -- a leaf chain never spans pages,
+and the scan follows any redirects down to the live tuples' page before reporting
+a match -- so that single pin covers the whole batch.  This is the same interlock
+nbtree uses; see "Deleting index tuples during VACUUM" in its README.
+
+Replay of the VACUUM records (XLOG_SPGIST_VACUUM_LEAF, _ROOT, and _REDIRECT)
+takes the same cleanup lock, so that the interlock also protects index-only scans
+running on a hot standby.  As in nbtree, recovery only needs the cleanup lock on
+pages that actually have items to delete, not on every page.
+
+Pending-list processing uses the same cleanup locks, so it can run only while
+the main scan's read stream is idle:
+otherwise VACUUM could wait forever for a cleanup lock on a block its own
+read-ahead still pins.  The read stream is idle only at the end of a range it
+has been given, so the scan is done in bounded chunks and the pending list is
+emptied at each chunk boundary, which also keeps it from growing without bound
+under heavy concurrent insertion.
 
 spgbulkdelete also updates the index's free space map.
 

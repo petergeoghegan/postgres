@@ -771,7 +771,17 @@ spgRedoVacuumLeaf(XLogReaderState *record)
 	ptr += sizeof(OffsetNumber) * xldata->nChain;
 	chainDest = (OffsetNumber *) ptr;
 
-	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
+	/*
+	 * We must take a cleanup lock here, just like spgvacuumpage() does during
+	 * original execution.  VACUUM is about to make this page's heap TIDs
+	 * recyclable, so a concurrent scan's pin must hold VACUUM off until the
+	 * scan has finished its heap visibility checks; that's what makes
+	 * index-only scans safe on a standby.  It isn't necessary to exhaustively
+	 * cleanup-lock every block during recovery, only those with items to
+	 * delete (the SP-GiST README has details).
+	 */
+	if (XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, true, &buffer)
+		== BLK_NEEDS_REDO)
 	{
 		page = BufferGetPage(buffer);
 
@@ -834,7 +844,9 @@ spgRedoVacuumRoot(XLogReaderState *record)
 
 	toDelete = xldata->offsets;
 
-	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
+	/* Take a cleanup lock, as in spgRedoVacuumLeaf() */
+	if (XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, true, &buffer)
+		== BLK_NEEDS_REDO)
 	{
 		page = BufferGetPage(buffer);
 
@@ -873,7 +885,9 @@ spgRedoVacuumRedirect(XLogReaderState *record)
 											locator);
 	}
 
-	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
+	/* Take a cleanup lock, as in spgRedoVacuumLeaf() */
+	if (XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, true, &buffer)
+		== BLK_NEEDS_REDO)
 	{
 		Page		page = BufferGetPage(buffer);
 		SpGistPageOpaque opaque = SpGistPageGetOpaque(page);
