@@ -1629,7 +1629,16 @@ heapam_index_prefetch_next_block(ReadStream *stream,
 		BatchMatchingItem *lastitem = &prefetchBatch->items[prefetchPos->item];
 		BlockNumber last_block = ItemPointerGetBlockNumber(&lastitem->tableTid);
 
-		Assert(last_block == hscan->xs_prefetch_block);
+		/*
+		 * Note: when a previous call paused the read stream, prefetchPos
+		 * might point to an item whose TID doesn't match last_block.  This
+		 * can only happen when the item was never returned due to it being
+		 * all-visible.
+		 */
+		Assert(last_block == hscan->xs_prefetch_block ||
+			   (hbatch != NULL &&
+				HEAP_BATCH_VIS_CACHED(hbatch, prefetchPos->item) &&
+				hbatch->batchvis[prefetchPos->item]));
 	}
 #endif
 
@@ -1733,9 +1742,10 @@ heapam_index_prefetch_next_block(ReadStream *stream,
 				hbatch = index_scan_batch_table_area(scan, prefetchBatch);
 
 				Assert(hscan->xs_vm_items == scan->maxitemsbatch);
-				heapam_index_batch_pos_visibility(scan, xs_read_stream_dir,
-												  prefetchBatch, hbatch,
-												  prefetchPos);
+				if (prefetchBatch->isGuarded)
+					heapam_index_batch_pos_visibility(scan, xs_read_stream_dir,
+													  prefetchBatch, hbatch,
+													  prefetchPos);
 			}
 		}
 
