@@ -8927,3 +8927,83 @@ fetch forward 1 from visnotset;
 fetch backward 1 from visnotset;
 fetch forward 2 from visnotset;
 commit;
+
+--
+-- 2026-06-05 Assertion failure in heapam_index_prefetch_next_block when an
+-- index-only scan's prefetch read stream advances into a batch that's still
+-- resident in the ring buffer.  A scroll cursor that changes scan direction
+-- retains earlier batches in the ring; once their visibility is fully
+-- resolved those batches are unguarded.  When prefetching later crosses back
+-- into such a batch we must not call heapam_index_batch_pos_visibility on it,
+-- since it is no longer guarded (its visibility info is already cached).
+--
+set client_min_messages=error;
+drop table if exists unguard_assert_bug;
+reset client_min_messages;
+
+create table unguard_assert_bug (a bigint) with (fillfactor = 18);
+create index on unguard_assert_bug (a);
+insert into unguard_assert_bug
+select (i / 227)
+from generate_series(1, 97019) s(i)
+order by i + mod(i::bigint * 341039, 394), md5(i::text);
+
+set enable_seqscan = off;
+set enable_bitmapscan = off;
+set enable_indexonlyscan = on;
+set cursor_tuple_fraction = 1.0;
+
+begin;
+declare c_1 scroll cursor for
+  select * from unguard_assert_bug where a in (411,419,427) order by a desc;
+fetch forward 161 from c_1;
+fetch backward 5 from c_1;
+fetch forward 49 from c_1;
+select 1 from pg_buffercache_evict_all();
+fetch forward 111 from c_1;
+fetch backward 1 from c_1;
+fetch forward 5 from c_1;
+commit;
+
+--
+-- 2026-06-05 Assertion failure "last_block == hscan->xs_prefetch_block" in
+-- heapam_index_prefetch_next_block during an index-only scan (originally seen
+-- as a btree_gist scroll cursor crash).  When the prefetch read stream fills
+-- the batch ring (gets INDEX_SCAN_MAX_BATCHES batches ahead) and pauses, it
+-- rolls prefetchPos back to the final item of the far-ahead batch.  In an
+-- index-only scan over a mostly-all-visible table that final item can be a
+-- trailing all-visible item -- one that was skipped rather than returned -- so
+-- its heap block no longer matches xs_prefetch_block (the last block actually
+-- returned).  The next time the consumer re-enters the callback (on an earlier
+-- batch still resident in the ring) the assertion fired.
+--
+-- Reproducing it needs an index-only scan that (a) spans more than
+-- INDEX_SCAN_MAX_BATCHES leaf pages of matching items and (b) keeps the
+-- prefetch distance high, which requires the heap to be larger than
+-- shared_buffers so the read stream keeps missing shared buffers.  The padded
+-- rows below make the heap exceed a default 128MB shared_buffers; raise the
+-- row count if shared_buffers is larger.
+--
+set client_min_messages=error;
+drop table if exists prefetch_pause_allvis_bug;
+create extension if not exists btree_gist;
+reset client_min_messages;
+
+create table prefetch_pause_allvis_bug (a int, b int, c text)
+  with (autovacuum_enabled = off);
+insert into prefetch_pause_allvis_bug
+  select 87, g, repeat('x', 200) from generate_series(1, 1000000) g;   -- heap > 128MB
+create index on prefetch_pause_allvis_bug using gist (a);
+vacuum (freeze, analyze) prefetch_pause_allvis_bug;             -- all heap pages all-visible
+update prefetch_pause_allvis_bug set b = b + 1 where b % 4000 = 0;  -- sparse non-all-visible pages
+
+set enable_seqscan = off;
+set enable_bitmapscan = off;
+set enable_indexonlyscan = on;
+set effective_io_concurrency = 256;
+
+-- Cold start so the read stream keeps missing shared buffers (keeps prefetch
+-- distance high enough to fill the batch ring and pause)
+select 1 from pg_buffercache_evict_all();
+-- Index-only scan: crashes at heapam_indexscan.c:1632 without the fix
+select count(a) from prefetch_pause_allvis_bug where a = 87;
