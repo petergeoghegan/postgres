@@ -1465,7 +1465,7 @@ heapam_index_prefetch_next_block(ReadStream *stream,
 			 * batch's cached visibility information; if it were, we'd never
 			 * have been called in the first place
 			 */
-			Assert(hbatch && HEAP_BATCH_VIS_CACHED(hbatch, prefetchPos->item) &&
+			Assert(HEAP_BATCH_VIS_CACHED(hbatch, prefetchPos->item) &&
 				   !hbatch->batchvis[prefetchPos->item]);
 
 			/*
@@ -1533,7 +1533,7 @@ heapam_index_prefetch_next_block(ReadStream *stream,
 		 * all-visible.
 		 */
 		Assert(last_block == hscan->xs_prefetch_block ||
-			   (HEAP_BATCH_VIS_CACHED(hbatch, prefetchPos->item) &&
+			   (hbatch && HEAP_BATCH_VIS_CACHED(hbatch, prefetchPos->item) &&
 				hbatch->batchvis[prefetchPos->item]));
 	}
 #endif
