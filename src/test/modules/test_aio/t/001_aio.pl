@@ -51,7 +51,7 @@ foreach my $method (@methods)
 
 	$node->start();
 	test_io_method($method, $node);
-	$node->stop();
+	diag_stop_node($method, $node);
 }
 
 done_testing();
@@ -60,6 +60,73 @@ done_testing();
 ###
 # Test Helpers
 ###
+
+
+# DIAGNOSTIC (REVERT ME): instrument node shutdown to debug the intermittent
+# "Dubious, test returned 4" io_uring teardown failure on the Linux-Autoconf CI
+# task. Before stopping a node, snapshot live activity and any outstanding AIOs.
+# Then do a fast stop that does not bail on timeout; if it fails to complete,
+# dump a backtrace of every remaining server process (and the tail of the
+# server log) so CI shows exactly what is wedged, then force the node down so
+# the rest of the script can finish and the artifacts get uploaded.
+sub diag_stop_node
+{
+	my ($method, $node) = @_;
+
+	foreach my $q (
+		[
+			'pg_stat_activity',
+			q{SELECT pid, backend_type, state, wait_event_type, wait_event,
+			         left(regexp_replace(coalesce(query, ''), '\s+', ' ', 'g'), 60) AS query
+			    FROM pg_stat_activity ORDER BY backend_type, pid}
+		],
+		[ 'pg_aios', q{SELECT * FROM pg_aios ORDER BY pid, io_id} ])
+	{
+		my ($label, $sql) = @$q;
+		my $out = eval { $node->safe_psql('postgres', $sql); };
+		$out = "ERROR: $@" if $@;
+		$out = '(none)' if defined $out && $out eq '';
+		diag("[$method] $label before stop:\n$out");
+	}
+
+	# Remember the postmaster pid before stop() clears it.
+	my $pmpid = $node->{_pid};
+
+	my $ok = $node->stop('fast', fail_ok => 1, timeout => 60);
+	ok($ok, "[$method]: node stopped cleanly within timeout");
+	return if $ok;
+
+	diag("[$method] *** fast stop did NOT complete within 60s -- capturing state ***");
+
+	my @pids = ();
+	push @pids, $pmpid if defined $pmpid;
+	if (defined $pmpid)
+	{
+		my $kids = `pgrep -P $pmpid 2>/dev/null`;
+		push @pids, ($kids =~ /(\d+)/g);
+	}
+	diag("[$method] remaining server pids: @pids");
+
+	foreach my $pid (@pids)
+	{
+		my $bt = `gdb --batch -p $pid -ex 'thread apply all bt' 2>&1`;
+		$bt = "(gdb attach failed, rc=$?)\n$bt" if $? != 0;
+		diag("[$method] backtrace pid $pid:\n$bt");
+	}
+
+	my $log = eval { $node->logfile };
+	if (defined $log && -f $log)
+	{
+		my $tail = `tail -40 \Q$log\E 2>&1`;
+		diag("[$method] server log tail:\n$tail");
+	}
+
+	# Force cores too (in case gdb was unavailable), then make sure it is dead
+	# so the script can finish and upload artifacts.
+	kill 'ABRT', $_ for @pids;
+	sleep 3;
+	$node->kill9();
+}
 
 
 sub psql_like
