@@ -35,14 +35,87 @@
 #include "access/amapi.h"
 #include "access/indexbatch.h"
 #include "access/tableam.h"
+#include "access/xact.h"
 #include "common/int.h"
 #include "lib/qunique.h"
 #include "utils/memdebug.h"
+#include "utils/memutils.h"
 
 static void batch_cache_mark_undefined(IndexScanDesc scan, IndexScanBatch batch);
 static void release_and_unguard_batch(IndexScanDesc scan, IndexScanBatch batch,
 									  bool allow_cache);
 static inline bool batch_cache_store(IndexScanDesc scan, IndexScanBatch batch);
+
+/*
+ * Backend-local cache of a single batch-sized allocation, reused across
+ * scans.  Batch allocations exceed ALLOC_CHUNK_LIMIT, so without this every
+ * scan's first batch costs a malloc/free round trip in aset.c.  Point lookups
+ * allocate exactly one batch per scan, making that round trip a measurable
+ * fraction of total execution cost.
+ *
+ * One allocation (in TopMemoryContext) can be lent out at any given time.
+ * While lent, it is recorded as "outstanding" so that a top-level transaction
+ * callback can reclaim it if the owning scan is destroyed without running
+ * tableam_util_batchscan_end (elog(ERROR) unwinds without calling amendscan).
+ * Scans that find the cache empty or lent out just use palloc, as before.
+ */
+static void *batch_backend_cache = NULL;
+static Size batch_backend_cache_sz = 0;
+static void *batch_backend_outstanding = NULL;
+static Size batch_backend_outstanding_sz = 0;
+static bool batch_backend_cache_registered = false;
+
+/*
+ * Reclaim a lent-out batch allocation whose scan died without freeing it.
+ *
+ * Only top-level transaction aborts reclaim: once an abort begins, nothing
+ * dereferences scan batches again (executor state is never resumed, and
+ * portal teardown on abort doesn't run amendscan), so an outstanding
+ * allocation is provably unreachable.  Commit-time reclaim would be unsound:
+ * commit callbacks can fire while scans still hold their batches (bootstrap
+ * catalog scans, portal cleanup ordering).  A scan killed by a
+ * subtransaction abort just leaves the allocation idle until the next
+ * top-level abort; scans that end normally always return it promptly.
+ */
+static void
+batch_backend_cache_xact_cb(XactEvent event, void *arg)
+{
+	if (event != XACT_EVENT_ABORT && event != XACT_EVENT_PARALLEL_ABORT)
+		return;
+	if (batch_backend_outstanding == NULL)
+		return;
+
+	if (batch_backend_cache)
+		pfree(batch_backend_cache);
+	batch_backend_cache = batch_backend_outstanding;
+	batch_backend_cache_sz = batch_backend_outstanding_sz;
+	batch_backend_outstanding = NULL;
+	batch_backend_outstanding_sz = 0;
+}
+
+/*
+ * Free a batch's base allocation, returning the backend-cached allocation to
+ * the cache rather than freeing it.
+ *
+ * Every site that frees a batch's base allocation must call here (never
+ * plain pfree): a raw pfree of the backend-cached allocation would leave
+ * the cache dangling.
+ */
+void
+indexam_util_batch_base_free(void *base)
+{
+	if (base == batch_backend_outstanding)
+	{
+		Assert(batch_backend_cache == NULL);
+		batch_backend_cache = batch_backend_outstanding;
+		batch_backend_cache_sz = batch_backend_outstanding_sz;
+		batch_backend_outstanding = NULL;
+		batch_backend_outstanding_sz = 0;
+		return;
+	}
+	pfree(base);
+}
+
 static int	batch_compare_int(const void *va, const void *vb);
 
 /*
@@ -145,7 +218,7 @@ tableam_util_batchscan_end(IndexScanDesc scan)
 
 		if (cached->deadItems)
 			pfree(cached->deadItems);
-		pfree(index_scan_batch_base(scan, cached));
+		indexam_util_batch_base_free(index_scan_batch_base(scan, cached));
 	}
 }
 
@@ -461,10 +534,10 @@ release_and_unguard_batch(IndexScanDesc scan, IndexScanBatch batch,
 	if (allow_cache && batch_cache_store(scan, batch))
 		return;
 
-	/* just pfree the caller's batch (plus batch's deadItems, if any) */
+	/* just free the caller's batch (plus batch's deadItems, if any) */
 	if (batch->deadItems)
 		pfree(batch->deadItems);
-	pfree(index_scan_batch_base(scan, batch));
+	indexam_util_batch_base_free(index_scan_batch_base(scan, batch));
 }
 
 /*
@@ -677,7 +750,41 @@ indexam_util_alloc_batch(IndexScanDesc scan)
 		/* Total batch allocation size is the sum of our three subtotals */
 		allocsz = opaque_areas_prefix_sz + base_sz + ios_total_trailing_sz;
 		Assert(allocsz == batch_alloc_size(scan));
-		raw_batch_alloc = palloc(allocsz);
+		if (batch_backend_outstanding == NULL &&
+			batch_backend_cache != NULL &&
+			batch_backend_cache_sz == allocsz)
+		{
+			/* Reuse the backend-cached allocation */
+			raw_batch_alloc = batch_backend_cache;
+			batch_backend_outstanding = batch_backend_cache;
+			batch_backend_outstanding_sz = batch_backend_cache_sz;
+			batch_backend_cache = NULL;
+			batch_backend_cache_sz = 0;
+		}
+		else if (batch_backend_outstanding == NULL)
+		{
+			/*
+			 * Nothing lent out, but the cache is empty (or the wrong size):
+			 * make this scan's first batch the backend-cached allocation
+			 */
+			if (batch_backend_cache)
+			{
+				pfree(batch_backend_cache);
+				batch_backend_cache = NULL;
+				batch_backend_cache_sz = 0;
+			}
+			raw_batch_alloc = MemoryContextAlloc(TopMemoryContext, allocsz);
+			batch_backend_outstanding = raw_batch_alloc;
+			batch_backend_outstanding_sz = allocsz;
+			if (!batch_backend_cache_registered)
+			{
+				RegisterXactCallback(batch_backend_cache_xact_cb, NULL);
+				batch_backend_cache_registered = true;
+			}
+		}
+		else
+			raw_batch_alloc = palloc(allocsz);
+
 		batch = (IndexScanBatch) (raw_batch_alloc + opaque_areas_prefix_sz);
 		Assert(index_scan_batch_base(scan, batch) == raw_batch_alloc);
 
@@ -768,7 +875,7 @@ indexam_util_release_batch(IndexScanDesc scan, IndexScanBatch batch)
 	/* Cache full; just free the caller's batch */
 	if (batch->deadItems)
 		pfree(batch->deadItems);
-	pfree(index_scan_batch_base(scan, batch));
+	indexam_util_batch_base_free(index_scan_batch_base(scan, batch));
 }
 
 /*

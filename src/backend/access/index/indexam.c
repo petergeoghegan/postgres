@@ -457,7 +457,8 @@ index_endscan(IndexScanDesc scan)
 	{
 		Assert(scan->xs_table_opaque == NULL);
 		Assert(scan->indexRelation->rd_indam->amgetbatch != NULL);
-		pfree(index_scan_batch_base(scan, scan->batchcache[0]));
+		indexam_util_batch_base_free(index_scan_batch_base(scan,
+														   scan->batchcache[0]));
 	}
 
 	/*
