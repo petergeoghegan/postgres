@@ -344,7 +344,6 @@ tableam_util_batchscan_init(IndexScanDesc scan)
 
 extern void tableam_util_batchscan_reset(IndexScanDesc scan, bool endscan);
 extern void tableam_util_batchscan_end(IndexScanDesc scan);
-extern void indexam_util_batch_base_free(void *base);
 extern void tableam_util_batchscan_mark_pos(IndexScanDesc scan);
 extern void tableam_util_batchscan_restore_pos(IndexScanDesc scan);
 extern void tableam_util_scanbatch_dirchange(IndexScanDesc scan);
