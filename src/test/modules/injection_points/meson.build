@@ -36,6 +36,7 @@ tests += {
       'hashagg',
       'reindex_conc',
       'vacuum',
+      'hash_split',
     ],
     'regress_args': ['--dlpath', meson.project_build_root() / 'src/test/regress'],
     # The injection points are cluster-wide, so disable installcheck
@@ -44,6 +45,7 @@ tests += {
   'isolation': {
     'specs': [
       'basic',
+      'hash-split',
       'inplace',
       'repack',
       'repack_temporal',
