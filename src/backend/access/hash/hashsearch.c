@@ -22,14 +22,19 @@
 #include "storage/predicate.h"
 #include "utils/rel.h"
 
+static void _hash_readnext(IndexScanDesc scan, Buffer *bufp,
+						   Page *pagep, HashPageOpaque *opaquep);
+static void _hash_readprev(IndexScanDesc scan, Buffer *bufp, Page *pagep,
+						   HashPageOpaque *opaquep);
+static Buffer _hash_step_to_split_bucket(IndexScanDesc scan);
+static void _hash_step_to_populated_bucket(IndexScanDesc scan, Buffer *bufp,
+										   Page *pagep, HashPageOpaque *opaquep);
 static bool _hash_readpage(IndexScanDesc scan, Buffer *bufP,
 						   ScanDirection dir);
 static int	_hash_load_qualified_items(IndexScanDesc scan, Page page,
 									   OffsetNumber offnum, ScanDirection dir);
 static inline void _hash_saveitem(HashScanOpaque so, int itemIndex,
 								  OffsetNumber offnum, IndexTuple itup);
-static void _hash_readnext(IndexScanDesc scan, Buffer *bufp,
-						   Page *pagep, HashPageOpaque *opaquep);
 
 /*
  *	_hash_next() -- Get the next item in a scan.
@@ -75,6 +80,13 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 				if (!_hash_readpage(scan, &buf, dir))
 					end_of_scan = true;
 			}
+			else if (so->hashso_buc_populated && !so->hashso_buc_split)
+			{
+				buf = _hash_step_to_split_bucket(scan);
+
+				if (!_hash_readpage(scan, &buf, dir))
+					end_of_scan = true;
+			}
 			else
 				end_of_scan = true;
 		}
@@ -100,6 +112,16 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 				if (buf == so->hashso_bucket_buf ||
 					buf == so->hashso_split_bucket_buf)
 					_hash_dropbuf(rel, buf);
+
+				if (!_hash_readpage(scan, &buf, dir))
+					end_of_scan = true;
+			}
+			else if (so->hashso_buc_populated && so->hashso_buc_split)
+			{
+				Page		page;
+				HashPageOpaque opaque;
+
+				_hash_step_to_populated_bucket(scan, &buf, &page, &opaque);
 
 				if (!_hash_readpage(scan, &buf, dir))
 					end_of_scan = true;
@@ -162,23 +184,7 @@ _hash_readnext(IndexScanDesc scan,
 		 * end of bucket, scan bucket being split if there was a split in
 		 * progress at the start of scan.
 		 */
-		*bufp = so->hashso_split_bucket_buf;
-
-		/*
-		 * buffer for bucket being split must be valid as we acquire the pin
-		 * on it before the start of scan and retain it till end of scan.
-		 */
-		Assert(BufferIsValid(*bufp));
-
-		LockBuffer(*bufp, BUFFER_LOCK_SHARE);
-		PredicateLockPage(rel, BufferGetBlockNumber(*bufp), scan->xs_snapshot);
-
-		/*
-		 * setting hashso_buc_split to true indicates that we are scanning
-		 * bucket being split.
-		 */
-		so->hashso_buc_split = true;
-
+		*bufp = _hash_step_to_split_bucket(scan);
 		block_found = true;
 	}
 
@@ -245,28 +251,78 @@ _hash_readprev(IndexScanDesc scan,
 		 * end of bucket, scan bucket being populated if there was a split in
 		 * progress at the start of scan.
 		 */
-		*bufp = so->hashso_bucket_buf;
-
-		/*
-		 * buffer for bucket being populated must be valid as we acquire the
-		 * pin on it before the start of scan and retain it till end of scan.
-		 */
-		Assert(BufferIsValid(*bufp));
-
-		LockBuffer(*bufp, BUFFER_LOCK_SHARE);
-		*pagep = BufferGetPage(*bufp);
-		*opaquep = HashPageGetOpaque(*pagep);
-
-		/* move to the end of bucket chain */
-		while (BlockNumberIsValid((*opaquep)->hasho_nextblkno))
-			_hash_readnext(scan, bufp, pagep, opaquep);
-
-		/*
-		 * setting hashso_buc_split to false indicates that we are scanning
-		 * bucket being populated.
-		 */
-		so->hashso_buc_split = false;
+		_hash_step_to_populated_bucket(scan, bufp, pagep, opaquep);
 	}
+}
+
+/*
+ * Cross over from the bucket being populated to the bucket being split, on
+ * whose primary page we have held a pin since _hash_first.  Used both when
+ * a forward scan of the populated bucket's own chain runs out of pages, and
+ * (via _hash_readnext) when the chain-walk inside _hash_readpage does.
+ *
+ * Returns the split bucket's primary page, pinned and share-locked, and
+ * sets hashso_buc_split to indicate that we are now scanning that bucket.
+ */
+static Buffer
+_hash_step_to_split_bucket(IndexScanDesc scan)
+{
+	Relation	rel = scan->indexRelation;
+	HashScanOpaque so = (HashScanOpaque) scan->opaque;
+	Buffer		buf = so->hashso_split_bucket_buf;
+
+	/*
+	 * buffer for bucket being split must be valid as we acquire the pin on it
+	 * before the start of scan and retain it till end of scan.
+	 */
+	Assert(BufferIsValid(buf));
+
+	LockBuffer(buf, BUFFER_LOCK_SHARE);
+	PredicateLockPage(rel, BufferGetBlockNumber(buf), scan->xs_snapshot);
+
+	so->hashso_buc_split = true;
+
+	return buf;
+}
+
+/*
+ * Cross over from the bucket being split back to the bucket being
+ * populated, on whose primary page we have held a pin since _hash_first,
+ * and walk to the end of its chain (backward scans read chains tail to
+ * head).  Used both when a backward scan of the split bucket's own chain
+ * runs out of pages, and (via _hash_readprev) when the chain-walk inside
+ * _hash_readpage does.
+ *
+ * On return, the output parameters describe the last page in the
+ * populated bucket's chain, pinned and share-locked, and hashso_buc_split
+ * has been cleared to indicate that we are now scanning that bucket.  The
+ * flag must be cleared only after the chain walk; otherwise _hash_readnext
+ * would cross back over to the split bucket on reaching the end of the
+ * chain, instead of stopping there.
+ */
+static void
+_hash_step_to_populated_bucket(IndexScanDesc scan, Buffer *bufp,
+							   Page *pagep, HashPageOpaque *opaquep)
+{
+	HashScanOpaque so = (HashScanOpaque) scan->opaque;
+
+	*bufp = so->hashso_bucket_buf;
+
+	/*
+	 * buffer for bucket being populated must be valid as we acquire the pin
+	 * on it before the start of scan and retain it till end of scan.
+	 */
+	Assert(BufferIsValid(*bufp));
+
+	LockBuffer(*bufp, BUFFER_LOCK_SHARE);
+	*pagep = BufferGetPage(*bufp);
+	*opaquep = HashPageGetOpaque(*pagep);
+
+	/* move to the end of bucket chain */
+	while (BlockNumberIsValid((*opaquep)->hasho_nextblkno))
+		_hash_readnext(scan, bufp, pagep, opaquep);
+
+	so->hashso_buc_split = false;
 }
 
 /*
