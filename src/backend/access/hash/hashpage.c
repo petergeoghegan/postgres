@@ -35,6 +35,7 @@
 #include "port/pg_bitutils.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
+#include "utils/injection_point.h"
 #include "utils/rel.h"
 
 static bool _hash_alloc_buckets(Relation rel, BlockNumber firstblock,
@@ -1104,6 +1105,8 @@ _hash_splitbucket(Relation rel,
 	npage = BufferGetPage(nbuf);
 	nopaque = HashPageGetOpaque(npage);
 
+	INJECTION_POINT("hash-split-before-relocation", NULL);
+
 	/* Copy the predicate locks from old bucket to new bucket. */
 	PredicateLockPageSplit(rel,
 						   BufferGetBlockNumber(bucket_obuf),
@@ -1456,6 +1459,8 @@ _hash_finish_split(Relation rel, Buffer metabuf, Buffer obuf, Bucket obucket,
 	npage = BufferGetPage(bucket_nbuf);
 	npageopaque = HashPageGetOpaque(npage);
 	nbucket = npageopaque->hasho_bucket;
+
+	INJECTION_POINT("hash-finish-incomplete-split", NULL);
 
 	_hash_splitbucket(rel, metabuf, obucket,
 					  nbucket, obuf, bucket_nbuf, tidhtab,
