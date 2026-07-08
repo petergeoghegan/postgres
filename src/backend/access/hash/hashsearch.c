@@ -75,6 +75,28 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 				if (!_hash_readpage(scan, &buf, dir))
 					end_of_scan = true;
 			}
+			else if (so->hashso_buc_populated && !so->hashso_buc_split)
+			{
+				/*
+				 * end of bucket being populated: continue the scan in the
+				 * bucket being split, on whose primary page we have held a
+				 * pin since _hash_first
+				 */
+				buf = so->hashso_split_bucket_buf;
+				Assert(BufferIsValid(buf));
+				LockBuffer(buf, BUFFER_LOCK_SHARE);
+				PredicateLockPage(rel, BufferGetBlockNumber(buf),
+								  scan->xs_snapshot);
+
+				/*
+				 * setting hashso_buc_split to true indicates that we are
+				 * scanning bucket being split.
+				 */
+				so->hashso_buc_split = true;
+
+				if (!_hash_readpage(scan, &buf, dir))
+					end_of_scan = true;
+			}
 			else
 				end_of_scan = true;
 		}
@@ -100,6 +122,38 @@ _hash_next(IndexScanDesc scan, ScanDirection dir)
 				if (buf == so->hashso_bucket_buf ||
 					buf == so->hashso_split_bucket_buf)
 					_hash_dropbuf(rel, buf);
+
+				if (!_hash_readpage(scan, &buf, dir))
+					end_of_scan = true;
+			}
+			else if (so->hashso_buc_populated && so->hashso_buc_split)
+			{
+				Page		page;
+				HashPageOpaque opaque;
+
+				/*
+				 * start of bucket being split: continue the scan from the
+				 * last page in the chain of the bucket being populated, on
+				 * whose primary page we have held a pin since _hash_first
+				 */
+				buf = so->hashso_bucket_buf;
+				Assert(BufferIsValid(buf));
+				LockBuffer(buf, BUFFER_LOCK_SHARE);
+				page = BufferGetPage(buf);
+				opaque = HashPageGetOpaque(page);
+
+				/* move to the end of bucket chain */
+				while (BlockNumberIsValid(opaque->hasho_nextblkno))
+					_hash_readnext(scan, &buf, &page, &opaque);
+
+				/*
+				 * setting hashso_buc_split to false indicates that we are
+				 * scanning the bucket being populated.  Only set it after
+				 * the chain walk above; otherwise _hash_readnext would
+				 * advance to the bucket being split on reaching the end of
+				 * the chain, instead of stopping there.
+				 */
+				so->hashso_buc_split = false;
 
 				if (!_hash_readpage(scan, &buf, dir))
 					end_of_scan = true;
