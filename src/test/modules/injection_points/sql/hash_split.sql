@@ -17,8 +17,10 @@ CREATE INDEX hash_split_index ON hash_split_test USING hash (v);
 -- bucket pages, and one bitmap page.  The index's first bucket split will
 -- split bucket 0, creating bucket nbuckets.
 CREATE TEMP TABLE hash_split_geom AS
-  SELECT pg_relation_size('hash_split_index') /
-         current_setting('block_size')::bigint - 2 AS nbuckets;
+  SELECT nbuckets,
+         (current_setting('block_size')::bigint / 16) * nbuckets AS fillrows
+    FROM (SELECT pg_relation_size('hash_split_index') /
+                 current_setting('block_size')::bigint - 2 AS nbuckets) g;
 -- sanity: initial bucket counts are always powers of two
 SELECT nbuckets > 0 AND (nbuckets & (nbuckets - 1)) = 0 AS nbuckets_ok
   FROM hash_split_geom;
@@ -33,10 +35,14 @@ CREATE TEMP TABLE hash_split_key AS
 INSERT INTO hash_split_test
   SELECT k FROM hash_split_key, generate_series(1, 10);
 
--- Error out during the first bucket split, leaving it incomplete
+-- Error out during the first bucket split, leaving it incomplete.
+-- fillrows is guaranteed to cross the split threshold of ffactor * nbuckets
+-- tuples: a hash index entry occupies at least 16 bytes (line pointer
+-- included), and the default fillfactor targets 75% page fullness, so
+-- ffactor can never exceed block_size / 16 tuples per bucket.
 SELECT injection_points_attach('hash-split-before-relocation', 'error');
 INSERT INTO hash_split_test
-  SELECT 1000000 + g FROM hash_split_geom, generate_series(1, 350 * nbuckets) g;
+  SELECT 1000000 + g FROM hash_split_geom, generate_series(1, fillrows) g;
 SELECT injection_points_detach('hash-split-before-relocation');
 
 -- This insertion goes to the new bucket, which is still flagged as being

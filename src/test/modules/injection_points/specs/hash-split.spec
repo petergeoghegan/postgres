@@ -19,8 +19,10 @@ setup
     CREATE TABLE hash_split_test (v int4) WITH (autovacuum_enabled = false);
     CREATE INDEX hash_split_index ON hash_split_test USING hash (v);
     CREATE TABLE hash_split_geom AS
-      SELECT pg_relation_size('hash_split_index') /
-             current_setting('block_size')::bigint - 2 AS nbuckets;
+      SELECT nbuckets,
+             (current_setting('block_size')::bigint / 16) * nbuckets AS fillrows
+        FROM (SELECT pg_relation_size('hash_split_index') /
+                     current_setting('block_size')::bigint - 2 AS nbuckets) g;
     CREATE TABLE hash_split_key AS
       SELECT min(v)::int4 AS k
         FROM generate_series(1, 10000) v, hash_split_geom
@@ -41,10 +43,14 @@ setup
     SELECT injection_points_set_local();
     SELECT injection_points_attach('hash-split-after-relocation', 'wait');
 }
+# fillrows is guaranteed to cross the split threshold of ffactor * nbuckets
+# tuples: a hash index entry occupies at least 16 bytes (line pointer
+# included), and the default fillfactor targets 75% page fullness, so
+# ffactor can never exceed block_size / 16 tuples per bucket
 step s1_split
 {
     INSERT INTO hash_split_test
-      SELECT 1000000 + g FROM hash_split_geom, generate_series(1, 320 * nbuckets) g;
+      SELECT 1000000 + g FROM hash_split_geom, generate_series(1, fillrows) g;
 }
 step s1_noop { }
 

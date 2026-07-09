@@ -8,7 +8,7 @@ injection_points_attach
 
 step s1_split: 
     INSERT INTO hash_split_test
-      SELECT 1000000 + g FROM hash_split_geom, generate_series(1, 320 * nbuckets) g;
+      SELECT 1000000 + g FROM hash_split_geom, generate_series(1, fillrows) g;
  <waiting ...>
 step s2_insert: 
     INSERT INTO hash_split_test SELECT k FROM hash_split_key;
