@@ -44,6 +44,7 @@ tests += {
   'isolation': {
     'specs': [
       'basic',
+      'btree-empty-ssi',
       'inplace',
       'repack',
       'repack_temporal',
