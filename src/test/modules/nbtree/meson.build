@@ -14,4 +14,10 @@ tests += {
       'nbtree_incomplete_splits',
     ],
   },
+  'isolation': {
+    'specs': [
+      'backwards',
+    ],
+    'runningcheck': false, # see syscache-update-pruned
+  },
 }
