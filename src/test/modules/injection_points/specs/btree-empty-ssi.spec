@@ -22,7 +22,7 @@ teardown
 }
 
 session s1
-setup	{
+setup {
   SET debug_parallel_query = off;
   SELECT injection_points_set_local();
   SELECT injection_points_attach('btree-first-empty', 'wait');
@@ -34,20 +34,20 @@ step s1_begin	{
   SET LOCAL enable_bitmapscan = off;
 }
 # Scan with a useful insertion scan key: descends via _bt_first/_bt_search.
-step s1_scan_first		{ SELECT id FROM ssi_btree WHERE id = 2; }
+step s1_scan_first        { SELECT id FROM ssi_btree WHERE id = 2; }
 # Scan without useful insertion scan keys: starts at _bt_endpoint().
-step s1_scan_endpoint	{ SELECT id FROM ssi_btree ORDER BY id; }
-step s1_insert	{ INSERT INTO ssi_btree VALUES (1); }
-step s1_commit	{ COMMIT; }
+step s1_scan_endpoint     { SELECT id FROM ssi_btree ORDER BY id; }
+step s1_insert            { INSERT INTO ssi_btree VALUES (1); }
+step s1_commit            { COMMIT; }
 
 session s2
-step s2_begin	{ BEGIN ISOLATION LEVEL SERIALIZABLE; }
-step s2_scan	{ SELECT id FROM ssi_btree; }
-step s2_insert	{ INSERT INTO ssi_btree VALUES (2); }
-step s2_commit	{ COMMIT; }
-step s2_wakeup_first	{ SELECT injection_points_wakeup('btree-first-empty'); }
-step s2_wakeup_endpoint	{ SELECT injection_points_wakeup('btree-endpoint-empty'); }
-step s2_detach	{
+step s2_begin             { BEGIN ISOLATION LEVEL SERIALIZABLE; }
+step s2_scan              { SELECT id FROM ssi_btree; }
+step s2_insert            { INSERT INTO ssi_btree VALUES (2); }
+step s2_commit            { COMMIT; }
+step s2_wakeup_first      { SELECT injection_points_wakeup('btree-first-empty'); }
+step s2_wakeup_endpoint   { SELECT injection_points_wakeup('btree-endpoint-empty'); }
+step s2_detach  {
   SELECT injection_points_detach('btree-first-empty');
   SELECT injection_points_detach('btree-endpoint-empty');
 }
