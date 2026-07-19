@@ -11,26 +11,27 @@
 
 setup
 {
-	CREATE EXTENSION injection_points;
-	CREATE TABLE ssi_btree (id int PRIMARY KEY);
+  CREATE EXTENSION injection_points;
+  CREATE TABLE ssi_btree (id int PRIMARY KEY);
 }
 
 teardown
 {
-	DROP TABLE ssi_btree;
-	DROP EXTENSION injection_points;
+  DROP TABLE ssi_btree;
+  DROP EXTENSION injection_points;
 }
 
 session s1
 setup	{
-	SELECT injection_points_set_local();
-	SELECT injection_points_attach('btree-first-empty', 'wait');
-	SELECT injection_points_attach('btree-endpoint-empty', 'wait');
+  SET debug_parallel_query = off;
+  SELECT injection_points_set_local();
+  SELECT injection_points_attach('btree-first-empty', 'wait');
+  SELECT injection_points_attach('btree-endpoint-empty', 'wait');
 }
 step s1_begin	{
-	BEGIN ISOLATION LEVEL SERIALIZABLE;
-	SET LOCAL enable_seqscan = off;
-	SET LOCAL enable_bitmapscan = off;
+  BEGIN ISOLATION LEVEL SERIALIZABLE;
+  SET LOCAL enable_seqscan = off;
+  SET LOCAL enable_bitmapscan = off;
 }
 # Scan with a useful insertion scan key: descends via _bt_first/_bt_search.
 step s1_scan_first		{ SELECT id FROM ssi_btree WHERE id = 2; }
@@ -47,8 +48,8 @@ step s2_commit	{ COMMIT; }
 step s2_wakeup_first	{ SELECT injection_points_wakeup('btree-first-empty'); }
 step s2_wakeup_endpoint	{ SELECT injection_points_wakeup('btree-endpoint-empty'); }
 step s2_detach	{
-	SELECT injection_points_detach('btree-first-empty');
-	SELECT injection_points_detach('btree-endpoint-empty');
+  SELECT injection_points_detach('btree-first-empty');
+  SELECT injection_points_detach('btree-endpoint-empty');
 }
 
 # _bt_first()/_bt_search() path
