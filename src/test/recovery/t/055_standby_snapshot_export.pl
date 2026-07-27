@@ -82,6 +82,18 @@ $o->query_safe(
 $primary->safe_psql('postgres', 'INSERT INTO burner VALUES (0)');
 $primary->wait_for_replay_catchup($standby);
 
+# pg_current_snapshot() reads the same pair of arrays and has to make the same
+# distinction.  Reporting a running transaction as visible would contradict
+# what the very snapshot it came from shows.  Unlike the export path this
+# needs no overflow: on a standby xip is always empty.
+is($standby->safe_psql(
+		'postgres',
+		"SELECT pg_visible_in_snapshot('$u_xid'::xid8, pg_current_snapshot())"),
+	'f', 'pg_visible_in_snapshot agrees a running XID is not visible');
+
+is($standby->safe_psql('postgres', 'SELECT count(*) FROM victim WHERE k = 7'),
+	1, 'and its delete has not taken effect');
+
 my $s1 = $standby->background_psql('postgres');
 $s1->query_safe('BEGIN ISOLATION LEVEL REPEATABLE READ');
 my $snap = $s1->query_safe('SELECT pg_export_snapshot()');

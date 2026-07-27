@@ -374,14 +374,30 @@ pg_current_snapshot(PG_FUNCTION_ARGS)
 	uint32		nxip,
 				i;
 	Snapshot	cur;
+	TransactionId *xip;
 	FullTransactionId next_fxid = ReadNextFullTransactionId();
 
 	cur = GetActiveSnapshot();
 	if (cur == NULL)
 		elog(ERROR, "no active snapshot set");
 
+	/*
+	 * A snapshot taken during recovery stores all of its XIDs in subxip and
+	 * leaves xip empty, so read the in-progress set from there.  Reading xip
+	 * would report every running transaction as already completed.
+	 */
+	if (cur->takenDuringRecovery)
+	{
+		nxip = cur->subxcnt;
+		xip = cur->subxip;
+	}
+	else
+	{
+		nxip = cur->xcnt;
+		xip = cur->xip;
+	}
+
 	/* allocate */
-	nxip = cur->xcnt;
 	snap = palloc(PG_SNAPSHOT_SIZE(nxip));
 
 	/*
@@ -395,7 +411,7 @@ pg_current_snapshot(PG_FUNCTION_ARGS)
 	snap->nxip = nxip;
 	for (i = 0; i < nxip; i++)
 		snap->xip[i] =
-			FullTransactionIdFromAllowableAt(next_fxid, cur->xip[i]);
+			FullTransactionIdFromAllowableAt(next_fxid, xip[i]);
 
 	/*
 	 * We want them guaranteed to be in ascending order.  This also removes
