@@ -1,0 +1,134 @@
+Parsed test spec with 2 sessions
+
+starting permutation: v_delete_left v_attach_unlink v_vacuum c_split_left c_wakeup v_detach_unlink v_scan
+step v_delete_left: DELETE FROM vacsplit_tbl WHERE col BETWEEN 366 AND 731;
+step v_attach_unlink: 
+  SELECT injection_points_set_local();
+  SELECT injection_points_attach('nbtree-leave-page-half-dead', 'wait');
+  SELECT injection_points_attach('nbtree-unlink-halfdead-step-right', 'notice');
+
+injection_points_set_local
+--------------------------
+                          
+(1 row)
+
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+step v_vacuum: VACUUM vacsplit_tbl; <waiting ...>
+step c_split_left: INSERT INTO vacsplit_tbl SELECT 100 FROM generate_series(1, 60) i;
+step c_wakeup: 
+  SELECT injection_points_detach('nbtree-leave-page-half-dead');
+  SELECT injection_points_wakeup('nbtree-leave-page-half-dead');
+
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+injection_points_wakeup
+-----------------------
+                       
+(1 row)
+
+vacuum_session: NOTICE:  notice triggered for injection point nbtree-unlink-halfdead-step-right
+step v_vacuum: <... completed>
+step v_detach_unlink: 
+  SELECT injection_points_detach('nbtree-unlink-halfdead-step-right');
+
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+step v_scan: SELECT col FROM vacsplit_tbl
+              WHERE col % 100 = 1 AND pg_backend_pid() <> 0
+              ORDER BY col DESC;
+ col
+----
+2101
+2001
+1901
+1801
+1701
+1601
+1501
+1401
+1301
+1201
+1101
+1001
+ 901
+ 801
+ 301
+ 201
+ 101
+   1
+(18 rows)
+
+
+starting permutation: v_delete_left v_vacuum1 v_advance_xid v_vacuum2 v_delete_mid v_attach_backtrack v_vacuum c_split_reuse c_wakeup v_detach_backtrack v_count
+step v_delete_left: DELETE FROM vacsplit_tbl WHERE col BETWEEN 366 AND 731;
+step v_vacuum1: VACUUM vacsplit_tbl;
+step v_advance_xid: INSERT INTO vacsplit_tbl VALUES (2201);
+step v_vacuum2: VACUUM vacsplit_tbl;
+step v_delete_mid: DELETE FROM vacsplit_tbl WHERE col BETWEEN 1098 AND 1463 OR col BETWEEN 1700 AND 1829;
+step v_attach_backtrack: 
+  SELECT injection_points_set_local();
+  SELECT injection_points_attach('nbtree-leave-page-half-dead', 'wait');
+  SELECT injection_points_attach('nbtree-vacuum-backtrack', 'notice');
+
+injection_points_set_local
+--------------------------
+                          
+(1 row)
+
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+step v_vacuum: VACUUM vacsplit_tbl; <waiting ...>
+step c_split_reuse: INSERT INTO vacsplit_tbl SELECT 1500 FROM generate_series(1, 60) i;
+step c_wakeup: 
+  SELECT injection_points_detach('nbtree-leave-page-half-dead');
+  SELECT injection_points_wakeup('nbtree-leave-page-half-dead');
+
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+injection_points_wakeup
+-----------------------
+                       
+(1 row)
+
+vacuum_session: NOTICE:  notice triggered for injection point nbtree-vacuum-backtrack
+step v_vacuum: <... completed>
+step v_detach_backtrack: 
+  SELECT injection_points_detach('nbtree-vacuum-backtrack');
+
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+step v_count: SELECT tuple_count FROM pgstattuple('vacsplit_idx');
+tuple_count
+-----------
+       1400
+(1 row)
+

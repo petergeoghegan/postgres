@@ -2466,6 +2466,8 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 
 			CHECK_FOR_INTERRUPTS();
 
+			INJECTION_POINT("nbtree-unlink-halfdead-step-right", NULL);
+
 			/* step right one page */
 			lbuf = _bt_getbuf(rel, leftsib, BT_WRITE);
 			page = BufferGetPage(lbuf);

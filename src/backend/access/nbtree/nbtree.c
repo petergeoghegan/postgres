@@ -35,6 +35,7 @@
 #include "utils/datum.h"
 #include "utils/fmgrprotos.h"
 #include "utils/index_selfuncs.h"
+#include "utils/injection_point.h"
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
 
@@ -1491,6 +1492,8 @@ backtrack:
 			_bt_relbuf(rel, buf);
 			return scanblkno;
 		}
+
+		INJECTION_POINT("nbtree-vacuum-backtrack", NULL);
 	}
 
 	if (!opaque || BTPageIsRecyclable(page, heaprel))

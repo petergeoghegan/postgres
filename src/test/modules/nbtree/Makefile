@@ -1,12 +1,14 @@
 # src/test/modules/nbtree/Makefile
 
-EXTRA_INSTALL = src/test/modules/injection_points contrib/amcheck
+EXTRA_INSTALL = src/test/modules/injection_points contrib/amcheck \
+	contrib/pgstattuple
 
 REGRESS = nbtree_half_dead_pages \
 	nbtree_incomplete_splits
 
 ISOLATION = backwards-scan-concurrent-splits \
-	predicate-empty-index
+	predicate-empty-index \
+	vacuum-concurrent-splits
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config

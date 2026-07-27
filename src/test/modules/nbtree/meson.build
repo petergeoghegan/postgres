@@ -18,6 +18,7 @@ tests += {
     'specs': [
       'backwards-scan-concurrent-splits',
       'predicate-empty-index',
+      'vacuum-concurrent-splits',
     ],
     'runningcheck': false, # see syscache-update-pruned
   },
