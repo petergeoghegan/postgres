@@ -548,6 +548,16 @@ SetTransactionSnapshot(Snapshot sourcesnap, VirtualTransactionId *sourcevxid,
 	CurrentSnapshot->takenDuringRecovery = sourcesnap->takenDuringRecovery;
 	/* NB: curcid should NOT be copied, it's a local matter */
 
+	/*
+	 * A snapshot taken during recovery keeps every running XID in subxip, and
+	 * its xmin is the oldest of them, so an empty subxip means that nothing
+	 * was running.  Catch a source that lost the array along the way: such a
+	 * snapshot silently reports running transactions as no longer running.
+	 */
+	Assert(!CurrentSnapshot->takenDuringRecovery ||
+		   CurrentSnapshot->subxcnt > 0 ||
+		   CurrentSnapshot->xmin == CurrentSnapshot->xmax);
+
 	CurrentSnapshot->snapXactCompletionCount = 0;
 
 	/*
@@ -1223,12 +1233,53 @@ ExportSnapshot(Snapshot snapshot)
 		appendStringInfo(&buf, "xip:%u\n", topXid);
 
 	/*
+	 * The importer has to know whether the snapshot was taken during recovery
+	 * before it reads the subxid data, since that determines whether an
+	 * overflowed subxip array is still meaningful.  Emit it first.
+	 */
+	appendStringInfo(&buf, "rec:%u\n", snapshot->takenDuringRecovery);
+
+	/*
 	 * Similarly, we add our subcommitted child XIDs to the subxid data. Here,
 	 * we have to cope with possible overflow.
+	 *
+	 * Ignore the subxid array if it has overflowed, unless the snapshot was
+	 * taken during recovery - in that case, top-level XIDs are in subxip as
+	 * well, and we mustn't lose them.
+	 *
+	 * Such a snapshot usually belongs to a transaction that can have no XID,
+	 * and hence no subcommitted children, since it was taken while the server
+	 * was still in recovery.  It can outlive promotion, though: a transaction
+	 * on the promoted server can import one and then write.
 	 */
 	if (snapshot->suboverflowed ||
 		snapshot->subxcnt + nchildren > GetMaxSnapshotSubxidCount())
+	{
 		appendStringInfoString(&buf, "sof:1\n");
+		if (snapshot->takenDuringRecovery)
+		{
+			/*
+			 * The importer's array is bounded by the same value, so a snapshot
+			 * that does not fit cannot be represented at all.  Refusing to
+			 * export it is the only honest answer: an array quietly missing
+			 * entries tells the importer that transactions which are still
+			 * running have finished.
+			 */
+			if (snapshot->subxcnt + nchildren > GetMaxSnapshotSubxidCount())
+				ereport(ERROR,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("cannot export a snapshot containing %d transaction IDs",
+								snapshot->subxcnt + nchildren),
+						 errdetail("Snapshots taken during recovery record every running transaction ID, and this one exceeds the limit of %d.",
+								   GetMaxSnapshotSubxidCount())));
+
+			appendStringInfo(&buf, "sxcnt:%d\n", snapshot->subxcnt + nchildren);
+			for (int32 i = 0; i < snapshot->subxcnt; i++)
+				appendStringInfo(&buf, "sxp:%u\n", snapshot->subxip[i]);
+			for (int32 i = 0; i < nchildren; i++)
+				appendStringInfo(&buf, "sxp:%u\n", children[i]);
+		}
+	}
 	else
 	{
 		appendStringInfoString(&buf, "sof:0\n");
@@ -1238,7 +1289,6 @@ ExportSnapshot(Snapshot snapshot)
 		for (int32 i = 0; i < nchildren; i++)
 			appendStringInfo(&buf, "sxp:%u\n", children[i]);
 	}
-	appendStringInfo(&buf, "rec:%u\n", snapshot->takenDuringRecovery);
 
 	/*
 	 * Now write the text representation into a file.  We first write to a
@@ -1492,9 +1542,15 @@ ImportSnapshot(const char *idstr)
 	for (i = 0; i < xcnt; i++)
 		snapshot.xip[i] = parseXidFromText("xip:", &filebuf, path);
 
+	snapshot.takenDuringRecovery = parseIntFromText("rec:", &filebuf, path);
 	snapshot.suboverflowed = parseIntFromText("sof:", &filebuf, path);
 
-	if (!snapshot.suboverflowed)
+	/*
+	 * An overflowed subxip array carries no information and is not written
+	 * out, except for a snapshot taken during recovery: that keeps all running
+	 * XIDs there, so it is written out and must be read back.
+	 */
+	if (!snapshot.suboverflowed || snapshot.takenDuringRecovery)
 	{
 		snapshot.subxcnt = xcnt = parseIntFromText("sxcnt:", &filebuf, path);
 
@@ -1513,8 +1569,6 @@ ImportSnapshot(const char *idstr)
 		snapshot.subxcnt = 0;
 		snapshot.subxip = NULL;
 	}
-
-	snapshot.takenDuringRecovery = parseIntFromText("rec:", &filebuf, path);
 
 	/*
 	 * Do some additional sanity checking, just to protect ourselves.  We
