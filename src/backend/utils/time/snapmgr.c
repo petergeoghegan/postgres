@@ -1117,8 +1117,10 @@ ExportSnapshot(Snapshot snapshot)
 	TransactionId topXid;
 	TransactionId *children;
 	ExportedSnapshot *esnap;
+	int			nsubxids;
 	int			nchildren;
 	int			addTopXid;
+	bool		suboverflowed;
 	StringInfoData buf;
 	FILE	   *f;
 	MemoryContext oldcxt;
@@ -1223,16 +1225,29 @@ ExportSnapshot(Snapshot snapshot)
 		appendStringInfo(&buf, "xip:%u\n", topXid);
 
 	/*
-	 * Similarly, we add our subcommitted child XIDs to the subxid data. Here,
-	 * we have to cope with possible overflow.
+	 * Similarly, we add our subcommitted child XIDs to the subxid data.
+	 *
+	 * Report overflow when the snapshot overflowed, and also when our subxids
+	 * won't fit in what a snapshot can hold; claiming overflow is always
+	 * safe, since it just makes importers fall back on pg_subtrans.
 	 */
-	if (snapshot->suboverflowed ||
-		snapshot->subxcnt + nchildren > GetMaxSnapshotSubxidCount())
-		appendStringInfoString(&buf, "sof:1\n");
-	else
+	nsubxids = snapshot->subxcnt + nchildren;
+	suboverflowed = snapshot->suboverflowed ||
+		nsubxids > GetMaxSnapshotSubxidCount();
+
+	/*
+	 * Ignore the subxid array if it has overflowed, unless the snapshot was
+	 * taken during recovery - in that case, top-level XIDs are in subxip as
+	 * well, and we mustn't lose them.  CopySnapshot() and SerializeSnapshot()
+	 * make the same exception.
+	 */
+	if (suboverflowed && !snapshot->takenDuringRecovery)
+		nsubxids = 0;
+
+	appendStringInfo(&buf, "sof:%u\n", suboverflowed);
+	appendStringInfo(&buf, "sxcnt:%d\n", nsubxids);
+	if (nsubxids > 0)
 	{
-		appendStringInfoString(&buf, "sof:0\n");
-		appendStringInfo(&buf, "sxcnt:%d\n", snapshot->subxcnt + nchildren);
 		for (int32 i = 0; i < snapshot->subxcnt; i++)
 			appendStringInfo(&buf, "sxp:%u\n", snapshot->subxip[i]);
 		for (int32 i = 0; i < nchildren; i++)
@@ -1493,11 +1508,11 @@ ImportSnapshot(const char *idstr)
 		snapshot.xip[i] = parseXidFromText("xip:", &filebuf, path);
 
 	snapshot.suboverflowed = parseIntFromText("sof:", &filebuf, path);
+	snapshot.subxcnt = xcnt = parseIntFromText("sxcnt:", &filebuf, path);
+	snapshot.subxip = NULL;
 
-	if (!snapshot.suboverflowed)
+	if (snapshot.subxcnt)
 	{
-		snapshot.subxcnt = xcnt = parseIntFromText("sxcnt:", &filebuf, path);
-
 		/* sanity-check the xid count before palloc */
 		if (xcnt < 0 || xcnt > GetMaxSnapshotSubxidCount())
 			ereport(ERROR,
@@ -1507,11 +1522,6 @@ ImportSnapshot(const char *idstr)
 		snapshot.subxip = palloc_array(TransactionId, xcnt);
 		for (i = 0; i < xcnt; i++)
 			snapshot.subxip[i] = parseXidFromText("sxp:", &filebuf, path);
-	}
-	else
-	{
-		snapshot.subxcnt = 0;
-		snapshot.subxip = NULL;
 	}
 
 	snapshot.takenDuringRecovery = parseIntFromText("rec:", &filebuf, path);
