@@ -548,6 +548,16 @@ SetTransactionSnapshot(Snapshot sourcesnap, VirtualTransactionId *sourcevxid,
 	CurrentSnapshot->takenDuringRecovery = sourcesnap->takenDuringRecovery;
 	/* NB: curcid should NOT be copied, it's a local matter */
 
+	/*
+	 * A snapshot taken during recovery puts its whole in-progress set in
+	 * subxip, top-level XIDs included, and leaves xip empty.  Its xmin is the
+	 * oldest entry there, so subxip can only be empty when nothing at all was
+	 * running.
+	 */
+	Assert(!CurrentSnapshot->takenDuringRecovery ||
+		   CurrentSnapshot->subxcnt > 0 ||
+		   CurrentSnapshot->xmin == CurrentSnapshot->xmax);
+
 	CurrentSnapshot->snapXactCompletionCount = 0;
 
 	/*
@@ -1119,6 +1129,8 @@ ExportSnapshot(Snapshot snapshot)
 	ExportedSnapshot *esnap;
 	int			nchildren;
 	int			addTopXid;
+	int			nsubxids;
+	bool		suboverflowed;
 	StringInfoData buf;
 	FILE	   *f;
 	MemoryContext oldcxt;
@@ -1160,6 +1172,21 @@ ExportSnapshot(Snapshot snapshot)
 	 * XIDs to add them to the snapshot.
 	 */
 	nchildren = xactGetCommittedChildren(&children);
+
+	/*
+	 * A snapshot taken during recovery can outlive promotion: a transaction
+	 * on the promoted server can import one and then write.  Any children we
+	 * acquired that way postdate the snapshot's xmax, since we could not have
+	 * had an XID while the server was still in recovery.  Importers see them
+	 * as running through the xmax test alone, so they add nothing here.
+	 */
+	if (snapshot->takenDuringRecovery)
+	{
+		for (int32 i = 0; i < nchildren; i++)
+			Assert(TransactionIdFollowsOrEquals(children[i], snapshot->xmax));
+
+		nchildren = 0;
+	}
 
 	/*
 	 * Generate file path for the snapshot.  We start numbering of snapshots
@@ -1225,14 +1252,23 @@ ExportSnapshot(Snapshot snapshot)
 	/*
 	 * Similarly, we add our subcommitted child XIDs to the subxid data. Here,
 	 * we have to cope with possible overflow.
+	 *
+	 * Ignore the subxid array if it has overflowed, unless the snapshot was
+	 * taken during recovery - in that case, top-level XIDs are in subxip as
+	 * well, and we mustn't lose them.  CopySnapshot() and SerializeSnapshot()
+	 * make the same exception.
 	 */
-	if (snapshot->suboverflowed ||
-		snapshot->subxcnt + nchildren > GetMaxSnapshotSubxidCount())
-		appendStringInfoString(&buf, "sof:1\n");
+	suboverflowed = snapshot->suboverflowed ||
+		snapshot->subxcnt + nchildren > GetMaxSnapshotSubxidCount();
+	if (suboverflowed && !snapshot->takenDuringRecovery)
+		nsubxids = 0;
 	else
+		nsubxids = snapshot->subxcnt + nchildren;
+
+	appendStringInfo(&buf, "sof:%u\n", suboverflowed);
+	appendStringInfo(&buf, "sxcnt:%d\n", nsubxids);
+	if (nsubxids > 0)
 	{
-		appendStringInfoString(&buf, "sof:0\n");
-		appendStringInfo(&buf, "sxcnt:%d\n", snapshot->subxcnt + nchildren);
 		for (int32 i = 0; i < snapshot->subxcnt; i++)
 			appendStringInfo(&buf, "sxp:%u\n", snapshot->subxip[i]);
 		for (int32 i = 0; i < nchildren; i++)
@@ -1494,10 +1530,11 @@ ImportSnapshot(const char *idstr)
 
 	snapshot.suboverflowed = parseIntFromText("sof:", &filebuf, path);
 
-	if (!snapshot.suboverflowed)
-	{
-		snapshot.subxcnt = xcnt = parseIntFromText("sxcnt:", &filebuf, path);
+	snapshot.subxcnt = xcnt = parseIntFromText("sxcnt:", &filebuf, path);
+	snapshot.subxip = NULL;
 
+	if (snapshot.subxcnt)
+	{
 		/* sanity-check the xid count before palloc */
 		if (xcnt < 0 || xcnt > GetMaxSnapshotSubxidCount())
 			ereport(ERROR,
@@ -1507,11 +1544,6 @@ ImportSnapshot(const char *idstr)
 		snapshot.subxip = palloc_array(TransactionId, xcnt);
 		for (i = 0; i < xcnt; i++)
 			snapshot.subxip[i] = parseXidFromText("sxp:", &filebuf, path);
-	}
-	else
-	{
-		snapshot.subxcnt = 0;
-		snapshot.subxip = NULL;
 	}
 
 	snapshot.takenDuringRecovery = parseIntFromText("rec:", &filebuf, path);
