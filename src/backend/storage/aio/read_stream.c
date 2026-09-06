@@ -62,6 +62,13 @@
  * the range 42..44 requires an I/O wait before its buffers are returned, as
  * does block 60.
  *
+ * A stream created with READ_STREAM_DEDUP_RECENT also remembers the block
+ * numbers it queued most recently.  When the callback returns one of them
+ * again, no buffer is queued for it; instead a repeat entry records its place
+ * in the sequence, and the block is pinned afresh when that place is reached.
+ * Repeat entries hold no pins and no I/Os, and the pending read is free to
+ * keep growing past them.
+ *
  *
  * Portions Copyright (c) 2024-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -88,6 +95,16 @@ typedef struct InProgressIO
 	int16		buffer_index;
 	ReadBuffersOperation op;
 } InProgressIO;
+
+typedef struct ReadStreamRepeat
+{
+	BlockNumber blocknum;
+	uint32		seq;
+} ReadStreamRepeat;
+
+#define DEDUP_RING_SIZE 32
+#define DEDUP_REPEATS_PER_BUFFER 8
+#define DEDUP_MAX_REPEATS 2048
 
 /*
  * State for managing a stream of reads.
@@ -122,6 +139,7 @@ struct ReadStream
 	int			read_buffers_flags;
 	bool		sync_mode;		/* using io_method=sync */
 	bool		batch_mode;		/* READ_STREAM_USE_BATCHING */
+	bool		dedup;			/* READ_STREAM_DEDUP_RECENT */
 	bool		advice_enabled;
 	bool		temporary;
 
@@ -160,6 +178,27 @@ struct ReadStream
 
 	bool		fast_path;
 
+	/*
+	 * READ_STREAM_DEDUP_RECENT queued blocks.
+	 *
+	 * recent_blocknums is a ring of the block numbers most recently queued
+	 * for reading, unused slots holding InvalidBlockNumber.  repeats is a
+	 * circular queue of repeat entries, ordered relative to the queue of
+	 * buffers by queued_buffers, a count of the buffers queued for reading so
+	 * far: a repeat entry records the count at the time it was queued, and is
+	 * handed out, before the oldest buffer, once the buffers handed out so
+	 * far (queued_buffers less those still pinned or pending) reach it.
+	 */
+	BlockNumber *recent_blocknums;
+	int16		recent_index;	/* next ring slot to overwrite */
+	ReadStreamRepeat *repeats;
+	void	   *repeat_data;	/* per-buffer data of repeat entries */
+	int16		max_repeats;
+	int16		nrepeats;
+	int16		oldest_repeat_index;
+	int16		next_repeat_index;
+	uint32		queued_buffers;
+
 	/* Circular queue of buffers. */
 	int16		oldest_buffer_index;	/* Next pinned buffer to return */
 	int16		next_buffer_index;	/* Index of next buffer to pin */
@@ -174,6 +213,109 @@ get_per_buffer_data(ReadStream *stream, int16 buffer_index)
 {
 	return (char *) stream->per_buffer_data +
 		stream->per_buffer_data_size * buffer_index;
+}
+
+/*
+ * Return a pointer to the per-buffer data of a repeat entry by index.
+ */
+static inline void *
+get_repeat_data(ReadStream *stream, int16 repeat_index)
+{
+	return (char *) stream->repeat_data +
+		stream->per_buffer_data_size * repeat_index;
+}
+
+/*
+ * Is blocknum one of the block numbers most recently queued for reading?
+ */
+static inline bool
+read_stream_recent_block(ReadStream *stream, BlockNumber blocknum)
+{
+	int			found = 0;
+
+	Assert(stream->dedup);
+
+	/* branch-free, so that the compiler can vectorize it */
+	for (int i = 0; i < DEDUP_RING_SIZE; i++)
+		found |= (stream->recent_blocknums[i] == blocknum);
+
+	return found != 0;
+}
+
+/*
+ * Remember that blocknum has just been queued for reading, replacing the
+ * oldest entry in the ring of recent block numbers.
+ */
+static inline void
+read_stream_remember_block(ReadStream *stream, BlockNumber blocknum)
+{
+	Assert(stream->dedup);
+
+	stream->recent_blocknums[stream->recent_index] = blocknum;
+	stream->recent_index = (stream->recent_index + 1) & (DEDUP_RING_SIZE - 1);
+	stream->queued_buffers++;
+}
+
+/*
+ * Queue a repeat entry for blocknum, which the callback returned while it was
+ * still in the ring of recent block numbers, along with the per-buffer data
+ * the callback produced for it.  The entry's place in the sequence is the
+ * number of buffers queued before it.
+ */
+static inline void
+read_stream_queue_repeat(ReadStream *stream, BlockNumber blocknum,
+						 void *per_buffer_data)
+{
+	ReadStreamRepeat *repeat;
+
+	Assert(stream->dedup);
+	Assert(stream->nrepeats < stream->max_repeats);
+
+	repeat = &stream->repeats[stream->next_repeat_index];
+	repeat->blocknum = blocknum;
+	repeat->seq = stream->queued_buffers;
+
+	if (stream->per_buffer_data_size > 0)
+		memcpy(get_repeat_data(stream, stream->next_repeat_index),
+			   per_buffer_data,
+			   stream->per_buffer_data_size);
+
+	if (++stream->next_repeat_index == stream->max_repeats + 1)
+		stream->next_repeat_index = 0;
+	stream->nrepeats++;
+}
+
+/*
+ * Has the oldest repeat entry's turn come?  It has once every buffer queued
+ * before it has been handed out, i.e. once the buffers handed out so far
+ * (those queued, less those still pinned or pending) reach its seq.
+ */
+static inline bool
+read_stream_repeat_due(ReadStream *stream)
+{
+	Assert(stream->dedup);
+	Assert(stream->nrepeats > 0);
+
+	return stream->repeats[stream->oldest_repeat_index].seq ==
+		stream->queued_buffers - stream->pinned_buffers -
+		stream->pending_read_nblocks;
+}
+
+/*
+ * Forget all repeat entries (they hold no pins) and all recent block numbers.
+ */
+static void
+read_stream_dedup_reset(ReadStream *stream)
+{
+	Assert(stream->dedup);
+
+	for (int i = 0; i < DEDUP_RING_SIZE; i++)
+		stream->recent_blocknums[i] = InvalidBlockNumber;
+	stream->recent_index = 0;
+	stream->nrepeats = 0;
+	stream->oldest_repeat_index = 0;
+	stream->next_repeat_index = 0;
+	stream->queued_buffers = 0;
 }
 
 /*
@@ -562,6 +704,10 @@ read_stream_should_look_ahead(ReadStream *stream)
 	if (stream->ios_in_progress >= stream->max_ios)
 		return false;
 
+	/* never queue more repeat entries than we have space for */
+	if (stream->dedup && stream->nrepeats == stream->max_repeats)
+		return false;
+
 	/*
 	 * Allow looking further ahead if we are in the process of building a
 	 * larger IO, the IO is not yet big enough, and we don't yet have IO in
@@ -698,11 +844,24 @@ read_stream_look_ahead(ReadStream *stream)
 			break;
 		}
 
+		/*
+		 * A recently queued block is not read or pinned again in advance. Its
+		 * repeat entry will be pinned when its turn comes, and the pending
+		 * read is free to keep growing past it.
+		 */
+		if (stream->dedup && read_stream_recent_block(stream, blocknum))
+		{
+			read_stream_queue_repeat(stream, blocknum, per_buffer_data);
+			continue;
+		}
+
 		/* Can we merge it with the pending read? */
 		if (stream->pending_read_nblocks > 0 &&
 			stream->pending_read_blocknum + stream->pending_read_nblocks == blocknum)
 		{
 			stream->pending_read_nblocks++;
+			if (stream->dedup)
+				read_stream_remember_block(stream, blocknum);
 			continue;
 		}
 
@@ -723,6 +882,8 @@ read_stream_look_ahead(ReadStream *stream)
 		/* This is the start of a new pending read. */
 		stream->pending_read_blocknum = blocknum;
 		stream->pending_read_nblocks = 1;
+		if (stream->dedup)
+			read_stream_remember_block(stream, blocknum);
 	}
 
 	/*
@@ -736,15 +897,68 @@ read_stream_look_ahead(ReadStream *stream)
 		read_stream_start_pending_read(stream);
 
 	/*
-	 * There should always be something pinned when we leave this function,
-	 * whether started by this call or not, unless we've hit the end of the
-	 * stream.  In the worst case we can always make progress one buffer at a
-	 * time.
+	 * There should always be something pinned or a repeat entry queued when
+	 * we leave this function, whether started by this call or not, unless
+	 * we've hit the end of the stream.  In the worst case we can always make
+	 * progress one buffer at a time.
 	 */
-	Assert(stream->pinned_buffers > 0 || stream->readahead_distance <= 0);
+	Assert(stream->pinned_buffers > 0 || stream->nrepeats > 0 ||
+		   stream->readahead_distance <= 0);
 
 	if (stream->batch_mode)
 		pgaio_exit_batchmode();
+}
+
+/*
+ * Hand out the oldest repeat entry, whose turn has come: pin its block afresh.
+ * The block was queued recently, so this is normally a buffer mapping hit.
+ * If the buffer was evicted in the meantime, we read the block synchronously.
+ *
+ * A repeat hand-out leaves the look-ahead distances alone: the entry had no
+ * I/O of its own, and the read of the block it repeats has already been
+ * accounted for.
+ */
+static pg_noinline Buffer
+read_stream_next_repeat(ReadStream *stream, void **per_buffer_data)
+{
+	ReadStreamRepeat *repeat = &stream->repeats[stream->oldest_repeat_index];
+	ReadBuffersOperation operation;
+	Buffer		buffer = InvalidBuffer;
+	int			flags = stream->read_buffers_flags | READ_BUFFERS_SYNCHRONOUSLY;
+
+	Assert(stream->dedup);
+	Assert(read_stream_repeat_due(stream));
+
+	/* Read from the same relation, with the same strategy, as the stream */
+	operation.rel = stream->ios[0].op.rel;
+	operation.smgr = stream->ios[0].op.smgr;
+	operation.persistence = stream->ios[0].op.persistence;
+	operation.forknum = stream->ios[0].op.forknum;
+	operation.strategy = stream->ios[0].op.strategy;
+
+	if (StartReadBuffer(&operation, &buffer, repeat->blocknum, flags))
+	{
+		WaitReadBuffers(&operation);
+
+		/* update I/O stats */
+		read_stream_count_io(stream, 1, stream->ios_in_progress + 1);
+		read_stream_count_wait(stream);
+	}
+	Assert(BufferGetBlockNumber(buffer) == repeat->blocknum);
+
+	if (per_buffer_data)
+		*per_buffer_data = get_repeat_data(stream, stream->oldest_repeat_index);
+
+	read_stream_count_prefetch(stream);
+
+	if (++stream->oldest_repeat_index == stream->max_repeats + 1)
+		stream->oldest_repeat_index = 0;
+	stream->nrepeats--;
+
+	/* Prepare for the next call; there is space for one more repeat entry. */
+	read_stream_look_ahead(stream);
+
+	return buffer;
 }
 
 /*
@@ -771,6 +985,7 @@ read_stream_begin_impl(int flags,
 	size_t		size;
 	int16		queue_size;
 	int16		queue_overflow;
+	int16		repeat_queue_size;
 	int			max_ios;
 	int			strategy_pin_limit;
 	uint32		max_pinned_buffers;
@@ -867,6 +1082,17 @@ read_stream_begin_impl(int flags,
 	queue_size = max_pinned_buffers + 1;
 
 	/*
+	 * Repeat entries need the same kind of gap between head and tail for
+	 * their per-buffer data.
+	 */
+	if (flags & READ_STREAM_DEDUP_RECENT)
+		repeat_queue_size =
+			Min(max_pinned_buffers * DEDUP_REPEATS_PER_BUFFER,
+				DEDUP_MAX_REPEATS) + 1;
+	else
+		repeat_queue_size = 0;
+
+	/*
 	 * Allocate the object, the buffers, the ios and per_buffer_data space in
 	 * one big chunk.  Though we have queue_size buffers, we want to be able
 	 * to assume that all the buffers for a single read are contiguous (i.e.
@@ -878,6 +1104,14 @@ read_stream_begin_impl(int flags,
 	size += sizeof(InProgressIO) * Max(1, max_ios);
 	size += per_buffer_data_size * queue_size;
 	size += MAXIMUM_ALIGNOF * 2;
+	if (repeat_queue_size > 0)
+	{
+		size += sizeof(BlockNumber) * DEDUP_RING_SIZE;
+		size += sizeof(ReadStreamRepeat) * repeat_queue_size;
+		size += per_buffer_data_size * repeat_queue_size;
+		/* one MAXALIGN() each for the ring, the entries and their data */
+		size += MAXIMUM_ALIGNOF * 3;
+	}
 	stream = (ReadStream *) palloc(size);
 	memset(stream, 0, offsetof(ReadStream, buffers));
 	stream->ios = (InProgressIO *)
@@ -885,6 +1119,25 @@ read_stream_begin_impl(int flags,
 	if (per_buffer_data_size > 0)
 		stream->per_buffer_data = (void *)
 			MAXALIGN(&stream->ios[Max(1, max_ios)]);
+	if (repeat_queue_size > 0)
+	{
+		char	   *space;
+
+		if (per_buffer_data_size > 0)
+			space = (char *) stream->per_buffer_data +
+				per_buffer_data_size * queue_size;
+		else
+			space = (char *) &stream->ios[Max(1, max_ios)];
+		stream->recent_blocknums = (BlockNumber *) MAXALIGN(space);
+		space = (char *) &stream->recent_blocknums[DEDUP_RING_SIZE];
+		stream->repeats = (ReadStreamRepeat *) MAXALIGN(space);
+		space = (char *) &stream->repeats[repeat_queue_size];
+		if (per_buffer_data_size > 0)
+			stream->repeat_data = (void *) MAXALIGN(space);
+		stream->dedup = true;
+		stream->max_repeats = repeat_queue_size - 1;
+		read_stream_dedup_reset(stream);
+	}
 
 	stream->sync_mode = io_method == IOMETHOD_SYNC;
 	stream->batch_mode = flags & READ_STREAM_USE_BATCHING;
@@ -1053,6 +1306,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		Assert(stream->combine_distance == 1);
 		Assert(stream->pending_read_nblocks == 0);
 		Assert(stream->per_buffer_data_size == 0);
+		Assert(stream->nrepeats == 0);
 		Assert(stream->initialized_buffers > stream->oldest_buffer_index);
 
 		/* We're going to return the buffer we pinned last time. */
@@ -1117,6 +1371,16 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 			stream->seq_blocknum = next_blocknum + 1;
 
 			/*
+			 * Blocks pinned in the fast path aren't entered into the ring of
+			 * recent blocks, to keep the fast path fast; a repeat of one of
+			 * them just after leaving the fast path is pinned again like
+			 * before.  This block's read is in progress, though, so remember
+			 * it.
+			 */
+			if (stream->dedup)
+				read_stream_remember_block(stream, next_blocknum);
+
+			/*
 			 * XXX: It might be worth triggering additional read-ahead here,
 			 * to avoid having to effectively do another synchronous IO for
 			 * the next block (if it were also a miss).
@@ -1143,9 +1407,18 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 	}
 #endif
 
+	/*
+	 * A repeat entry whose turn has come goes out before the oldest pinned
+	 * buffer.  Only READ_STREAM_DEDUP_RECENT streams have any.
+	 */
+	if (stream->nrepeats > 0 &&
+		read_stream_repeat_due(stream))
+		return read_stream_next_repeat(stream, per_buffer_data);
+
 	if (unlikely(stream->pinned_buffers == 0))
 	{
 		Assert(stream->oldest_buffer_index == stream->next_buffer_index);
+		Assert(stream->nrepeats == 0);
 
 		/* End of stream / reset reached?  */
 		if (stream->readahead_distance <= 0)
@@ -1158,6 +1431,11 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		 * the handle to get started.
 		 */
 		read_stream_look_ahead(stream);
+
+		/* The callback may have started with a repeat of a recent block. */
+		if (stream->nrepeats > 0 &&
+			read_stream_repeat_due(stream))
+			return read_stream_next_repeat(stream, per_buffer_data);
 
 		/* End of stream reached? */
 		if (stream->pinned_buffers == 0)
@@ -1355,7 +1633,8 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		stream->readahead_distance == 1 &&
 		stream->combine_distance == 1 &&
 		stream->pending_read_nblocks == 0 &&
-		stream->per_buffer_data_size == 0)
+		stream->per_buffer_data_size == 0 &&
+		stream->nrepeats == 0)
 	{
 		/*
 		 * The fast path spins on one buffer entry repeatedly instead of
@@ -1458,6 +1737,10 @@ read_stream_reset(ReadStream *stream)
 	/* Forget buffered block number and fast path state. */
 	stream->buffered_blocknum = InvalidBlockNumber;
 	stream->fast_path = false;
+
+	/* Forget repeat entries and recent blocks. */
+	if (stream->dedup)
+		read_stream_dedup_reset(stream);
 
 	/* Unpin anything that wasn't consumed. */
 	while ((buffer = read_stream_next_buffer(stream, NULL)) != InvalidBuffer)

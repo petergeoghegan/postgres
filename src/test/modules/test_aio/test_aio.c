@@ -872,10 +872,12 @@ read_stream_for_blocks(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 	ArrayType  *blocksarray = PG_GETARG_ARRAYTYPE_P(1);
+	bool		dedup = PG_GETARG_BOOL(2);
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	Relation	rel;
 	BlocksReadStreamData stream_data;
 	ReadStream *stream;
+	int			flags = READ_STREAM_FULL;
 
 	InitMaterializedSRF(fcinfo, 0);
 
@@ -895,7 +897,10 @@ read_stream_for_blocks(PG_FUNCTION_ARGS)
 
 	rel = relation_open(relid, AccessShareLock);
 
-	stream = read_stream_begin_relation(READ_STREAM_FULL,
+	if (dedup)
+		flags |= READ_STREAM_DEDUP_RECENT;
+
+	stream = read_stream_begin_relation(flags,
 										NULL,
 										rel,
 										MAIN_FORKNUM,
@@ -911,6 +916,9 @@ read_stream_for_blocks(PG_FUNCTION_ARGS)
 
 		if (!BufferIsValid(buf))
 			elog(ERROR, "read_stream_next_buffer() call %d is unexpectedly invalid", i);
+		if (BufferGetBlockNumber(buf) != stream_data.blocks[i])
+			elog(ERROR, "read_stream_next_buffer() call %d returned block %u, expected block %u",
+				 i, BufferGetBlockNumber(buf), stream_data.blocks[i]);
 
 		values[0] = Int32GetDatum(i);
 		values[1] = UInt32GetDatum(stream_data.blocks[i]);

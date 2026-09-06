@@ -63,6 +63,16 @@
  */
 #define READ_STREAM_USE_BATCHING 0x08
 
+/* ---
+ * Opt-in to deduplicating recently streamed blocks.
+ *
+ * The callback may return a block number that it returned a short time
+ * before.  With this flag, the stream remembers the block numbers it queued
+ * most recently and does not read or pin them in advance a second time.
+ * ---
+ */
+#define READ_STREAM_DEDUP_RECENT 0x10
+
 struct ReadStream;
 typedef struct ReadStream ReadStream;
 struct IOStats;
