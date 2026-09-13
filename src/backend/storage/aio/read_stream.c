@@ -89,6 +89,7 @@
 #include "storage/smgr.h"
 #include "storage/read_stream.h"
 #include "utils/memdebug.h"
+#include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/spccache.h"
 
@@ -107,6 +108,7 @@ typedef struct ReadStreamRepeat
 #define DEDUP_RING_SIZE 			32
 #define DEDUP_REPEATS_PER_BUFFER 	8
 #define DEDUP_MAX_REPEATS 			2048
+#define DEDUP_INITIAL_REPEATS 		64
 
 /*
  * State for managing a stream of reads.
@@ -190,11 +192,17 @@ struct ReadStream
 	 * far: a repeat entry records the count at the time it was queued, and is
 	 * handed out, before the oldest buffer, once the buffers handed out so
 	 * far (queued_buffers less those still pinned or pending) reach it.
+	 *
+	 * repeats is allocated when the first repeat entry is queued and grows
+	 * geometrically up to repeat_cap, so that a stream whose callback never
+	 * returns a recently queued block pays nothing for it.  max_repeats is
+	 * the capacity it has now, and is 0 until it is first allocated.
 	 */
 	BlockNumber *recent_blocknums;
 	int16		recent_index;	/* next ring slot to overwrite */
 	ReadStreamRepeat *repeats;
 	int16		max_repeats;
+	int16		repeat_cap;
 	int16		nrepeats;
 	int16		oldest_repeat_index;
 	int16		next_repeat_index;
@@ -254,6 +262,52 @@ read_stream_remember_block(ReadStream *stream, BlockNumber blocknum)
 }
 
 /*
+ * Make room for one more repeat entry, allocating the circular queue if this
+ * is the first one, and otherwise doubling it, up to repeat_cap.
+ */
+static pg_noinline void
+read_stream_grow_repeats(ReadStream *stream)
+{
+	ReadStreamRepeat *repeats;
+	int16		nrepeats = stream->nrepeats;
+	int16		new_max;
+	int16		src;
+
+	Assert(stream->dedup);
+	Assert(stream->nrepeats == stream->max_repeats);
+	Assert(stream->max_repeats < stream->repeat_cap);
+
+	if (stream->max_repeats == 0)
+		new_max = Min(DEDUP_INITIAL_REPEATS, stream->repeat_cap);
+	else
+		new_max = Min(stream->max_repeats * 2, stream->repeat_cap);
+
+	/*
+	 * One slot more than the capacity, so that the look-ahead at the end of
+	 * read_stream_next_repeat() cannot queue a repeat over the entry just
+	 * handed out.  The queue lives as long as the stream does.
+	 */
+	repeats = MemoryContextAlloc(GetMemoryChunkContext(stream),
+								 sizeof(ReadStreamRepeat) * (new_max + 1));
+
+	/* Unwrap the live entries into the front of the new queue */
+	for (int16 i = 0; i < nrepeats; i++)
+	{
+		src = stream->oldest_repeat_index + i;
+		if (src > stream->max_repeats)
+			src -= stream->max_repeats + 1;
+		repeats[i] = stream->repeats[src];
+	}
+
+	if (stream->repeats != NULL)
+		pfree(stream->repeats);
+	stream->repeats = repeats;
+	stream->max_repeats = new_max;
+	stream->oldest_repeat_index = 0;
+	stream->next_repeat_index = nrepeats;
+}
+
+/*
  * Queue a repeat entry for blocknum, which the callback returned while it was
  * still in the ring of recent block numbers.  The entry's place in the
  * sequence is the number of buffers queued before it.
@@ -264,6 +318,9 @@ read_stream_queue_repeat(ReadStream *stream, BlockNumber blocknum)
 	ReadStreamRepeat *repeat;
 
 	Assert(stream->dedup);
+
+	if (unlikely(stream->nrepeats == stream->max_repeats))
+		read_stream_grow_repeats(stream);
 	Assert(stream->nrepeats < stream->max_repeats);
 
 	repeat = &stream->repeats[stream->next_repeat_index];
@@ -694,8 +751,9 @@ read_stream_should_look_ahead(ReadStream *stream)
 	if (stream->ios_in_progress >= stream->max_ios)
 		return false;
 
-	/* never queue more repeat entries than we have space for */
-	if (stream->dedup && stream->nrepeats == stream->max_repeats)
+	/* never queue more repeat entries than we can make space for */
+	if (stream->dedup && stream->nrepeats == stream->max_repeats &&
+		stream->max_repeats == stream->repeat_cap)
 		return false;
 
 	/*
@@ -972,7 +1030,7 @@ read_stream_begin_impl(int flags,
 	size_t		size;
 	int16		queue_size;
 	int16		queue_overflow;
-	int16		repeat_queue_size;
+	int16		repeat_cap;
 	int			max_ios;
 	int			strategy_pin_limit;
 	uint32		max_pinned_buffers;
@@ -1069,20 +1127,20 @@ read_stream_begin_impl(int flags,
 	queue_size = max_pinned_buffers + 1;
 
 	/*
-	 * Repeat entries get a gap of their own, so that the look-ahead at the
-	 * end of read_stream_next_repeat() cannot queue a repeat over the entry
-	 * just handed out.  Streams that deduplicate recent blocks must not use
-	 * per-buffer data at all, because a repeat entry has nowhere to keep it.
+	 * Streams that deduplicate recent blocks must not use per-buffer data at
+	 * all, because a repeat entry has nowhere to keep it.  Only the ring of
+	 * recent block numbers is carved out of the stream's own allocation; the
+	 * queue of repeat entries is allocated on demand, and repeat_cap is how
+	 * large it may grow.
 	 */
 	if (flags & READ_STREAM_DEDUP_RECENT)
 	{
 		Assert(per_buffer_data_size == 0);
-		repeat_queue_size =
-			Min(max_pinned_buffers * DEDUP_REPEATS_PER_BUFFER,
-				DEDUP_MAX_REPEATS) + 1;
+		repeat_cap = Min(max_pinned_buffers * DEDUP_REPEATS_PER_BUFFER,
+						 DEDUP_MAX_REPEATS);
 	}
 	else
-		repeat_queue_size = 0;
+		repeat_cap = 0;
 
 	/*
 	 * Allocate the object, the buffers, the ios and per_buffer_data space in
@@ -1096,11 +1154,10 @@ read_stream_begin_impl(int flags,
 	size += sizeof(InProgressIO) * Max(1, max_ios);
 	size += per_buffer_data_size * queue_size;
 	size += MAXIMUM_ALIGNOF * 2;
-	if (repeat_queue_size > 0)
+	if (repeat_cap > 0)
 	{
 		size += sizeof(BlockNumber) * DEDUP_RING_SIZE;
-		size += sizeof(ReadStreamRepeat) * repeat_queue_size;
-		size += MAXIMUM_ALIGNOF * 2;
+		size += MAXIMUM_ALIGNOF;
 	}
 	stream = (ReadStream *) palloc(size);
 	memset(stream, 0, offsetof(ReadStream, buffers));
@@ -1109,17 +1166,13 @@ read_stream_begin_impl(int flags,
 	if (per_buffer_data_size > 0)
 		stream->per_buffer_data = (void *)
 			MAXALIGN(&stream->ios[Max(1, max_ios)]);
-	if (repeat_queue_size > 0)
+	if (repeat_cap > 0)
 	{
-		char	   *space;
-
 		Assert(stream->per_buffer_data == NULL);
-		space = (char *) &stream->ios[Max(1, max_ios)];
-		stream->recent_blocknums = (BlockNumber *) MAXALIGN(space);
-		space = (char *) &stream->recent_blocknums[DEDUP_RING_SIZE];
-		stream->repeats = (ReadStreamRepeat *) MAXALIGN(space);
+		stream->recent_blocknums = (BlockNumber *)
+			MAXALIGN(&stream->ios[Max(1, max_ios)]);
 		stream->dedup = true;
-		stream->max_repeats = repeat_queue_size - 1;
+		stream->repeat_cap = repeat_cap;
 		read_stream_dedup_reset(stream);
 	}
 
@@ -1768,5 +1821,7 @@ void
 read_stream_end(ReadStream *stream)
 {
 	read_stream_reset(stream);
+	if (stream->repeats != NULL)
+		pfree(stream->repeats);
 	pfree(stream);
 }
