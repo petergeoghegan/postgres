@@ -1,0 +1,71 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_split s2_insert s2_scan s2_back s2_detach s2_wakeup s1_noop s2_scan
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+step s1_split: 
+    INSERT INTO hash_split_test
+      SELECT 1000000 + g FROM hash_split_geom, generate_series(1, fillrows) g;
+ <waiting ...>
+step s2_insert: 
+    INSERT INTO hash_split_test SELECT k FROM hash_split_key;
+
+step s2_scan: 
+    SELECT count(*) FROM hash_split_test
+     WHERE v = (SELECT k FROM hash_split_key);
+
+count
+-----
+   11
+(1 row)
+
+step s2_back: 
+    BEGIN;
+    DECLARE c SCROLL CURSOR FOR
+      SELECT v = (SELECT k FROM hash_split_key) FROM hash_split_test
+       WHERE v = (SELECT k FROM hash_split_key);
+    MOVE FORWARD ALL IN c;
+    FETCH BACKWARD ALL FROM c;
+    COMMIT;
+
+?column?
+--------
+t       
+t       
+t       
+t       
+t       
+t       
+t       
+t       
+t       
+t       
+t       
+(11 rows)
+
+step s2_detach: SELECT injection_points_detach('hash-split-after-relocation');
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+step s2_wakeup: SELECT injection_points_wakeup('hash-split-after-relocation');
+injection_points_wakeup
+-----------------------
+                       
+(1 row)
+
+step s1_split: <... completed>
+step s1_noop: 
+step s2_scan: 
+    SELECT count(*) FROM hash_split_test
+     WHERE v = (SELECT k FROM hash_split_key);
+
+count
+-----
+   11
+(1 row)
+

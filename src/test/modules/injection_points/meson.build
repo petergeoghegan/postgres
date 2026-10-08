@@ -28,6 +28,7 @@ test_install_data += files(
 
 injection_points_isolation = [
   'basic',
+  'hash-split',
   'inplace',
   'reindex_concurrently_deferred',
   'repack',
@@ -62,6 +63,7 @@ tests += {
       'hashagg',
       'reindex_conc',
       'vacuum',
+      'hash_split',
     ],
     'regress_args': ['--dlpath', meson.project_build_root() / 'src/test/regress'],
     # The injection points are cluster-wide, so disable installcheck

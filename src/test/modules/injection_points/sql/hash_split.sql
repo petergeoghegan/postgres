@@ -1,0 +1,86 @@
+-- Test hash index scans of a bucket pair whose split is incomplete
+--
+-- The behavior tested here is not specific to incomplete splits: it
+-- applies to any scan that runs while the bucket pair's split-in-progress
+-- flags are set, which is the case for the duration of every split.
+-- Interrupting a split is merely the most convenient way to hold the
+-- bucket pair in that state: it makes the tests below deterministic,
+-- without any need for a second session.  The hash-split isolation test
+-- provides equivalent coverage for scans that run during a live split.
+CREATE EXTENSION injection_points;
+SELECT injection_points_set_local();
+
+CREATE TABLE hash_split_test (v int4) WITH (autovacuum_enabled = false);
+CREATE INDEX hash_split_index ON hash_split_test USING hash (v);
+
+-- Determine the layout of the (never-split) index: one metapage, nbuckets
+-- bucket pages, and one bitmap page.  The index's first bucket split will
+-- split bucket 0, creating bucket nbuckets.
+CREATE TEMP TABLE hash_split_geom AS
+  SELECT nbuckets,
+         (current_setting('block_size')::bigint / 16) * nbuckets AS fillrows
+    FROM (SELECT pg_relation_size('hash_split_index') /
+                 current_setting('block_size')::bigint - 2 AS nbuckets) g;
+-- sanity: initial bucket counts are always powers of two
+SELECT nbuckets > 0 AND (nbuckets & (nbuckets - 1)) = 0 AS nbuckets_ok
+  FROM hash_split_geom;
+
+-- Choose a value that maps to bucket 0 before the split and to the new
+-- bucket afterwards
+CREATE TEMP TABLE hash_split_key AS
+  SELECT min(v)::int4 AS k
+    FROM generate_series(1, 10000) v, hash_split_geom
+   WHERE (hashint4(v::int4) & (2 * nbuckets - 1)) = nbuckets;
+
+INSERT INTO hash_split_test
+  SELECT k FROM hash_split_key, generate_series(1, 10);
+
+-- Error out during the first bucket split, leaving it incomplete.
+-- fillrows is guaranteed to cross the split threshold of ffactor * nbuckets
+-- tuples: a hash index entry occupies at least 16 bytes (line pointer
+-- included), and the default fillfactor targets 75% page fullness, so
+-- ffactor can never exceed block_size / 16 tuples per bucket.
+SELECT injection_points_attach('hash-split-before-relocation', 'error');
+INSERT INTO hash_split_test
+  SELECT 1000000 + g FROM hash_split_geom, generate_series(1, fillrows) g;
+SELECT injection_points_detach('hash-split-before-relocation');
+
+-- This insertion goes to the new bucket, which is still flagged as being
+-- populated by the incomplete split
+INSERT INTO hash_split_test SELECT k FROM hash_split_key;
+
+-- Scans of that bucket must visit both buckets of the incomplete split:
+-- the fresh row from the new bucket, plus the 10 older rows that remain
+-- in bucket 0
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (COSTS OFF)
+  SELECT count(*) FROM hash_split_test
+   WHERE v = (SELECT k FROM hash_split_key);
+SELECT count(*) FROM hash_split_test
+ WHERE v = (SELECT k FROM hash_split_key);
+
+-- Backward scans must visit both buckets too, in the opposite order
+BEGIN;
+DECLARE c SCROLL CURSOR FOR
+  SELECT v = (SELECT k FROM hash_split_key) FROM hash_split_test
+   WHERE v = (SELECT k FROM hash_split_key);
+MOVE FORWARD ALL IN c;
+FETCH BACKWARD ALL FROM c;
+COMMIT;
+
+-- Same count via a bitmap scan, which shares the underlying scan code
+SET enable_indexscan = off;
+SET enable_bitmapscan = on;
+SELECT count(*) FROM hash_split_test
+ WHERE v = (SELECT k FROM hash_split_key);
+-- And the ground truth, via the heap
+SET enable_bitmapscan = off;
+RESET enable_seqscan;
+SELECT count(*) FROM hash_split_test
+ WHERE v = (SELECT k FROM hash_split_key);
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+
+DROP TABLE hash_split_test;
+DROP EXTENSION injection_points;
