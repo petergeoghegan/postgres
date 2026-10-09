@@ -4,6 +4,8 @@ EXTRA_INSTALL = src/test/modules/injection_points
 
 REGRESS = hash_incomplete_splits
 
+ISOLATION = finish-incomplete-split
+
 ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

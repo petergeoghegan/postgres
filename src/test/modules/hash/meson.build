@@ -13,4 +13,10 @@ tests += {
       'hash_incomplete_splits',
     ],
   },
+  'isolation': {
+    'specs': [
+      'finish-incomplete-split',
+    ],
+    'runningcheck': false,
+  },
 }

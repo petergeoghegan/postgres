@@ -1,0 +1,69 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_incomplete s1_rearm s1_insert s2_pin s2_wakeup s1_count s2_commit
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+step s1_incomplete: 
+    INSERT INTO hash_split_test SELECT g FROM generate_series(1000001, 1005000) g;
+
+ERROR:  error triggered for injection point hash-split-before-relocation
+step s1_rearm: 
+    SELECT injection_points_detach('hash-split-before-relocation');
+    SELECT injection_points_attach('hash-finish-incomplete-split', 'notice');
+    SELECT injection_points_attach('hash-finish-split-before-cleanup-locks', 'wait');
+
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+step s1_insert: 
+    INSERT INTO hash_split_test VALUES (5);
+ <waiting ...>
+step s2_pin: 
+    BEGIN;
+    DECLARE c CURSOR FOR SELECT v FROM hash_split_test WHERE v = 6;
+    FETCH 1 FROM c;
+
+v
+-
+6
+(1 row)
+
+step s2_wakeup: 
+    SELECT injection_points_detach('hash-finish-split-before-cleanup-locks');
+    SELECT injection_points_wakeup('hash-finish-split-before-cleanup-locks');
+
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+injection_points_wakeup
+-----------------------
+                       
+(1 row)
+
+step s1_insert: <... completed>
+step s1_count: 
+    SELECT count(*) FROM hash_split_test WHERE v = 5;
+
+count
+-----
+    1
+(1 row)
+
+step s2_commit: COMMIT;
