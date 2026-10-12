@@ -589,6 +589,8 @@ select * from
 --
 -- a different check for handling of redundant sort keys in merge joins
 --
+set effective_io_concurrency = 1;
+
 explain (costs off)
 select count(*) from
   (select * from tenk1 x order by x.thousand, x.twothousand, x.fivethous) x
@@ -620,6 +622,7 @@ order by x.thousand desc, x.twothousand;
 reset enable_hashagg;
 reset enable_nestloop;
 reset enable_hashjoin;
+reset effective_io_concurrency;
 
 --
 -- Clean up

@@ -2877,9 +2877,11 @@ fetch from c;
 update bar set f2 = null where current of c;
 rollback;
 
+set effective_io_concurrency = 1;
 explain (verbose, costs off)
 delete from foo where f1 < 5 returning *;
 delete from foo where f1 < 5 returning *;
+reset effective_io_concurrency;
 explain (verbose, costs off)
 update bar set f2 = f2 + 100 returning *;
 update bar set f2 = f2 + 100 returning *;

@@ -745,6 +745,7 @@ DROP TABLE onek_with_null;
 --
 -- Check bitmap index path planning
 --
+SET effective_io_concurrency = 1;
 
 EXPLAIN (COSTS OFF)
 SELECT * FROM tenk1
@@ -850,6 +851,9 @@ EXPLAIN (COSTS OFF)
 SELECT count(*) FROM tenk1 LEFT JOIN tenk2 ON
   tenk1.hundred = 42 AND (tenk2.thousand = 42 OR tenk2.thousand = 41 OR tenk2.tenthous = 2) AND
   tenk2.hundred = tenk1.hundred;
+
+RESET effective_io_concurrency;
+
 --
 -- Check behavior with duplicate index column contents
 --

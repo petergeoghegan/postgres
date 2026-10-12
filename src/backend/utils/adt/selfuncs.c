@@ -7570,6 +7570,7 @@ genericcostestimate(PlannerInfo *root,
 	/* fetch estimated page cost for tablespace containing index */
 	get_tablespace_page_costs(index->reltablespace,
 							  &spc_random_page_cost,
+							  NULL,
 							  NULL);
 
 	/*
@@ -8806,6 +8807,7 @@ gincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	/* fetch estimated page cost for tablespace containing index */
 	get_tablespace_page_costs(index->reltablespace,
 							  &spc_random_page_cost,
+							  NULL,
 							  NULL);
 
 	/*
@@ -9101,7 +9103,8 @@ brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	/* fetch estimated page cost for the tablespace containing the index */
 	get_tablespace_page_costs(index->reltablespace,
 							  &spc_random_page_cost,
-							  &spc_seq_page_cost);
+							  &spc_seq_page_cost,
+							  NULL);
 
 	/*
 	 * Obtain some data from the index itself, if possible.  Otherwise invent

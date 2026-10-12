@@ -597,6 +597,7 @@ create index on prtx2 (b);
 create index on prtx2 (c);
 analyze prtx1;
 analyze prtx2;
+set effective_io_concurrency = 1;
 
 explain (costs off)
 select * from prtx1
@@ -619,6 +620,7 @@ select * from prtx1
 where not exists (select 1 from prtx2
                   where prtx2.a=prtx1.a and (prtx2.b=prtx1.b+1 or prtx2.c=99))
   and a<20 and c=91;
+reset effective_io_concurrency;
 
 --
 -- Test advanced partition-matching algorithm for partitioned join
