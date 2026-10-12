@@ -176,8 +176,8 @@ typedef struct
 
 static List *extract_nonindex_conditions(List *qual_clauses, List *indexclauses);
 static double prefetched_random_penalty_fraction(double pages_fetched, int eic,
-												 double random_page_cost,
-												 double seq_page_cost);
+												 double spc_random_page_cost,
+												 double spc_seq_page_cost);
 static MergeScanSelCache *cached_scansel(PlannerInfo *root,
 										 RestrictInfo *rinfo,
 										 PathKey *pathkey);
@@ -563,14 +563,15 @@ cost_gather_merge(GatherMergePath *path, PlannerInfo *root,
  */
 static double
 prefetched_random_penalty_fraction(double pages_fetched, int eic,
-								   double random_page_cost,
-								   double seq_page_cost)
+								   double spc_random_page_cost,
+								   double spc_seq_page_cost)
 {
 	double		sync_pages;
 	double		rest;
 	double		full_cost_pages;
 
-	if (eic <= 1 || pages_fetched < 2.0 || random_page_cost <= seq_page_cost)
+	if (eic <= 1 || pages_fetched < 2.0 ||
+		spc_random_page_cost <= spc_seq_page_cost)
 		return 1.0;
 
 	/* pages fetched synchronously before the read stream starts */
