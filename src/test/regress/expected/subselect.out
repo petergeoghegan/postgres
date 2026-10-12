@@ -1301,15 +1301,13 @@ where (exists(select 1 from tenk1 k where k.unique1 = t.unique2) or ten < 0)
                           QUERY PLAN                          
 --------------------------------------------------------------
  Aggregate
-   ->  Bitmap Heap Scan on tenk1 t
-         Recheck Cond: (thousand = 1)
+   ->  Index Scan using tenk1_thous_tenthous on tenk1 t
+         Index Cond: (thousand = 1)
          Filter: (EXISTS(SubPlan exists_1) OR (ten < 0))
-         ->  Bitmap Index Scan on tenk1_thous_tenthous
-               Index Cond: (thousand = 1)
          SubPlan exists_1
            ->  Index Only Scan using tenk1_unique1 on tenk1 k
                  Index Cond: (unique1 = t.unique2)
-(9 rows)
+(7 rows)
 
 select count(*) from tenk1 t
 where (exists(select 1 from tenk1 k where k.unique1 = t.unique2) or ten < 0)
@@ -1989,8 +1987,8 @@ explain (verbose, costs off)
 select * from
   (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
   where ss.v;
-                         QUERY PLAN                         
-------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Subquery Scan on ss
    Output: ss.v, ss.count
    Filter: ss.v
@@ -2000,19 +1998,17 @@ select * from
          ->  Sort
                Output: (tattle(3, tenk1.ten))
                Sort Key: (tattle(3, tenk1.ten))
-               ->  Bitmap Heap Scan on public.tenk1
+               ->  Index Scan using tenk1_unique1 on public.tenk1
                      Output: tattle(3, tenk1.ten)
-                     Recheck Cond: (tenk1.unique1 < 3)
-                     ->  Bitmap Index Scan on tenk1_unique1
-                           Index Cond: (tenk1.unique1 < 3)
-(14 rows)
+                     Index Cond: (tenk1.unique1 < 3)
+(12 rows)
 
 select * from
   (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
   where ss.v;
-NOTICE:  x = 3, y = 2
-NOTICE:  x = 3, y = 1
 NOTICE:  x = 3, y = 0
+NOTICE:  x = 3, y = 1
+NOTICE:  x = 3, y = 2
  v | count 
 ---+-------
  t |     3
@@ -2024,31 +2020,29 @@ explain (verbose, costs off)
 select * from
   (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
   where ss.v;
-                      QUERY PLAN                      
-------------------------------------------------------
+                         QUERY PLAN                         
+------------------------------------------------------------
  GroupAggregate
    Output: (tattle(3, tenk1.ten)), count(*)
    Group Key: (tattle(3, tenk1.ten))
    ->  Sort
          Output: (tattle(3, tenk1.ten))
          Sort Key: (tattle(3, tenk1.ten))
-         ->  Bitmap Heap Scan on public.tenk1
+         ->  Index Scan using tenk1_unique1 on public.tenk1
                Output: tattle(3, tenk1.ten)
-               Recheck Cond: (tenk1.unique1 < 3)
+               Index Cond: (tenk1.unique1 < 3)
                Filter: tattle(3, tenk1.ten)
-               ->  Bitmap Index Scan on tenk1_unique1
-                     Index Cond: (tenk1.unique1 < 3)
-(12 rows)
+(10 rows)
 
 select * from
   (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
   where ss.v;
-NOTICE:  x = 3, y = 2
-NOTICE:  x = 3, y = 2
-NOTICE:  x = 3, y = 1
-NOTICE:  x = 3, y = 1
 NOTICE:  x = 3, y = 0
 NOTICE:  x = 3, y = 0
+NOTICE:  x = 3, y = 1
+NOTICE:  x = 3, y = 1
+NOTICE:  x = 3, y = 2
+NOTICE:  x = 3, y = 2
  v | count 
 ---+-------
  t |     3
@@ -3318,15 +3312,11 @@ EXPLAIN (COSTS OFF)
 SELECT * FROM onek
     WHERE unique1 IN (VALUES(10000), (2), (389), (1000), (2000), (10029))
     ORDER BY unique1;
-                                       QUERY PLAN                                       
-----------------------------------------------------------------------------------------
- Sort
-   Sort Key: unique1
-   ->  Bitmap Heap Scan on onek
-         Recheck Cond: (unique1 = ANY ('{10000,2,389,1000,2000,10029}'::integer[]))
-         ->  Bitmap Index Scan on onek_unique1
-               Index Cond: (unique1 = ANY ('{10000,2,389,1000,2000,10029}'::integer[]))
-(6 rows)
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Index Scan using onek_unique1 on onek
+   Index Cond: (unique1 = ANY ('{10000,2,389,1000,2000,10029}'::integer[]))
+(2 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT * FROM onek
@@ -3356,13 +3346,11 @@ SELECT * FROM onek
 
 EXPLAIN (COSTS OFF)
 SELECT unique1, stringu1 FROM onek WHERE stringu1::name IN (VALUES('RFAAAA'), ('VJAAAA'));
-                            QUERY PLAN                            
-------------------------------------------------------------------
- Bitmap Heap Scan on onek
-   Recheck Cond: (stringu1 = ANY ('{RFAAAA,VJAAAA}'::text[]))
-   ->  Bitmap Index Scan on onek_stringu1
-         Index Cond: (stringu1 = ANY ('{RFAAAA,VJAAAA}'::text[]))
-(4 rows)
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Index Scan using onek_stringu1 on onek
+   Index Cond: (stringu1 = ANY ('{RFAAAA,VJAAAA}'::text[]))
+(2 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT unique1, stringu1 FROM onek WHERE stringu1::text IN (VALUES('RFAAAA'), ('VJAAAA'));

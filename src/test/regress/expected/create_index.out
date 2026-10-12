@@ -1232,14 +1232,12 @@ SET maintenance_work_mem = '1MB';
 CREATE INDEX hash_tuplesort_idx ON tenk1 USING hash (stringu1 name_ops) WITH (fillfactor = 10);
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM tenk1 WHERE stringu1 = 'TVAAAA';
-                      QUERY PLAN                       
--------------------------------------------------------
+                     QUERY PLAN                     
+----------------------------------------------------
  Aggregate
-   ->  Bitmap Heap Scan on tenk1
-         Recheck Cond: (stringu1 = 'TVAAAA'::name)
-         ->  Bitmap Index Scan on hash_tuplesort_idx
-               Index Cond: (stringu1 = 'TVAAAA'::name)
-(5 rows)
+   ->  Index Scan using hash_tuplesort_idx on tenk1
+         Index Cond: (stringu1 = 'TVAAAA'::name)
+(3 rows)
 
 SELECT count(*) FROM tenk1 WHERE stringu1 = 'TVAAAA';
  count 
@@ -1913,6 +1911,7 @@ DROP TABLE onek_with_null;
 --
 -- Check bitmap index path planning
 --
+SET effective_io_concurrency = 1;
 EXPLAIN (COSTS OFF)
 SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42 OR tenthous = 0);
@@ -2274,6 +2273,7 @@ SELECT count(*) FROM tenk1 LEFT JOIN tenk2 ON
                      Filter: ((thousand = 42) OR (thousand = 41) OR (tenthous = 2))
 (10 rows)
 
+RESET effective_io_concurrency;
 --
 -- Check behavior with duplicate index column contents
 --

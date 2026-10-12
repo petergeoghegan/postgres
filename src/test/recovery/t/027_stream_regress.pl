@@ -33,6 +33,11 @@ compute_query_id = 'regress'
 # some test queries.  Disable synchronized seqscans to prevent that.
 $node_primary->append_conf('postgresql.conf', 'synchronize_seqscans = off');
 
+# The small shared_buffers also makes the automatic io_max_concurrency tiny,
+# which caps effective_io_concurrency in the planner and would change the
+# plans of some test queries.  Use the value a default-size cluster gets.
+$node_primary->append_conf('postgresql.conf', 'io_max_concurrency = 64');
+
 # WAL consistency checking is resource intensive so require opt-in with the
 # PG_TEST_EXTRA environment variable.
 if (   $ENV{PG_TEST_EXTRA}

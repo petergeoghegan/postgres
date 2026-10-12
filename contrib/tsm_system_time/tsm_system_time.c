@@ -138,6 +138,7 @@ system_time_samplescangetsamplesize(PlannerInfo *root,
 	/* Get the planner's idea of cost per page read */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  &spc_random_page_cost,
+							  NULL,
 							  NULL);
 
 	/*

@@ -41,9 +41,9 @@ WHERE t2.unique1 < 1000;', false);
 ----------------------------------------------------------------------------------------------
  Aggregate (actual rows=1.00 loops=N)
    ->  Nested Loop (actual rows=1000.00 loops=N)
-         ->  Seq Scan on tenk1 t2 (actual rows=1000.00 loops=N)
-               Filter: (unique1 < 1000)
-               Rows Removed by Filter: 9000
+         ->  Index Scan using tenk1_unique1 on tenk1 t2 (actual rows=1000.00 loops=N)
+               Index Cond: (unique1 < 1000)
+               Index Searches: N
          ->  Memoize (actual rows=1.00 loops=N)
                Cache Key: t2.twenty
                Cache Mode: logical
@@ -73,9 +73,9 @@ WHERE t1.unique1 < 1000;', false);
 ----------------------------------------------------------------------------------------------
  Aggregate (actual rows=1.00 loops=N)
    ->  Nested Loop (actual rows=1000.00 loops=N)
-         ->  Seq Scan on tenk1 t1 (actual rows=1000.00 loops=N)
-               Filter: (unique1 < 1000)
-               Rows Removed by Filter: 9000
+         ->  Index Scan using tenk1_unique1 on tenk1 t1 (actual rows=1000.00 loops=N)
+               Index Cond: (unique1 < 1000)
+               Index Searches: N
          ->  Memoize (actual rows=1.00 loops=N)
                Cache Key: t1.twenty
                Cache Mode: binary
@@ -144,9 +144,9 @@ WHERE s.c1 = s.c2 AND t1.unique1 < 1000;', false);
 ----------------------------------------------------------------------------------------------
  Aggregate (actual rows=1.00 loops=N)
    ->  Nested Loop (actual rows=1000.00 loops=N)
-         ->  Seq Scan on tenk1 t1 (actual rows=1000.00 loops=N)
-               Filter: (unique1 < 1000)
-               Rows Removed by Filter: 9000
+         ->  Index Scan using tenk1_unique1 on tenk1 t1 (actual rows=1000.00 loops=N)
+               Index Cond: (unique1 < 1000)
+               Index Searches: N
          ->  Memoize (actual rows=1.00 loops=N)
                Cache Key: (t1.two + 1)
                Cache Mode: binary
@@ -177,9 +177,9 @@ WHERE s.c1 = s.c2 AND t1.unique1 < 1000;', false);
 ---------------------------------------------------------------------------------------
  Aggregate (actual rows=1.00 loops=N)
    ->  Nested Loop (actual rows=1000.00 loops=N)
-         ->  Seq Scan on tenk1 t1 (actual rows=1000.00 loops=N)
-               Filter: (unique1 < 1000)
-               Rows Removed by Filter: 9000
+         ->  Index Scan using tenk1_unique1 on tenk1 t1 (actual rows=1000.00 loops=N)
+               Index Cond: (unique1 < 1000)
+               Index Searches: N
          ->  Memoize (actual rows=1.00 loops=N)
                Cache Key: t1.two, t1.twenty
                Cache Mode: binary

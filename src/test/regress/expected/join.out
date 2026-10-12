@@ -2376,15 +2376,11 @@ order by t1.unique1;
    Sort Key: t1.unique1
    ->  Hash Join
          Hash Cond: ((t1.two = t2.two) AND (t1.unique1 = (SubPlan expr_1)))
-         ->  Bitmap Heap Scan on tenk1 t1
-               Recheck Cond: (unique1 < 10)
-               ->  Bitmap Index Scan on tenk1_unique1
-                     Index Cond: (unique1 < 10)
+         ->  Index Scan using tenk1_unique1 on tenk1 t1
+               Index Cond: (unique1 < 10)
          ->  Hash
-               ->  Bitmap Heap Scan on tenk1 t2
-                     Recheck Cond: (unique1 < 10)
-                     ->  Bitmap Index Scan on tenk1_unique1
-                           Index Cond: (unique1 < 10)
+               ->  Index Scan using tenk1_unique1 on tenk1 t2
+                     Index Cond: (unique1 < 10)
                SubPlan expr_1
                  ->  Result
                        Replaces: MinMaxAggregate
@@ -2392,7 +2388,7 @@ order by t1.unique1;
                          ->  Limit
                                ->  Index Only Scan using tenk1_unique1 on tenk1
                                      Index Cond: ((unique1 IS NOT NULL) AND (unique1 = t2.unique1))
-(20 rows)
+(16 rows)
 
 -- Ensure we get the expected result
 select t1.unique1,t2.unique1 from tenk1 t1
@@ -2810,12 +2806,13 @@ select count(*) from
    ->  Merge Left Join
          Merge Cond: (x.thousand = y.unique2)
          Join Filter: ((x.twothousand = y.hundred) AND (x.fivethous = y.unique2))
-         ->  Sort
+         ->  Incremental Sort
                Sort Key: x.thousand, x.twothousand, x.fivethous
-               ->  Seq Scan on tenk1 x
+               Presorted Key: x.thousand
+               ->  Index Scan using tenk1_thous_tenthous on tenk1 x
          ->  Materialize
                ->  Index Scan using tenk1_unique2 on tenk1 y
-(9 rows)
+(10 rows)
 
 select count(*) from
   (select * from tenk1 x order by x.thousand, x.twothousand, x.fivethous) x
@@ -2852,10 +2849,8 @@ order by x.thousand desc, x.twothousand;
                ->  Partial GroupAggregate
                      Group Key: y.thousand
                      ->  Index Only Scan Backward using tenk1_thous_tenthous on tenk1 y
-               ->  Sort
-                     Sort Key: x.thousand DESC
-                     ->  Seq Scan on tenk1 x
-(13 rows)
+               ->  Index Scan Backward using tenk1_thous_tenthous on tenk1 x
+(11 rows)
 
 reset enable_hashagg;
 reset enable_nestloop;
@@ -5073,42 +5068,38 @@ select * from
   tenk1 join int4_tbl on f1 = twothousand,
   q1, q2
 where q1 = thousand or q2 = thousand;
-                               QUERY PLAN                               
-------------------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Hash Join
    Hash Cond: (tenk1.twothousand = int4_tbl.f1)
    ->  Nested Loop
          ->  Nested Loop
                ->  Seq Scan on q1
                ->  Seq Scan on q2
-         ->  Bitmap Heap Scan on tenk1
-               Recheck Cond: ((q1.q1 = thousand) OR (q2.q2 = thousand))
-               ->  Bitmap Index Scan on tenk1_thous_tenthous
-                     Index Cond: (thousand = ANY (ARRAY[q1.q1, q2.q2]))
+         ->  Index Scan using tenk1_thous_tenthous on tenk1
+               Index Cond: (thousand = ANY (ARRAY[q1.q1, q2.q2]))
    ->  Hash
          ->  Seq Scan on int4_tbl
-(12 rows)
+(10 rows)
 
 explain (costs off)
 select * from
   tenk1 join int4_tbl on f1 = twothousand,
   q1, q2
 where thousand = (q1 + q2);
-                          QUERY PLAN                          
---------------------------------------------------------------
+                         QUERY PLAN                         
+------------------------------------------------------------
  Hash Join
    Hash Cond: (tenk1.twothousand = int4_tbl.f1)
    ->  Nested Loop
          ->  Nested Loop
                ->  Seq Scan on q1
                ->  Seq Scan on q2
-         ->  Bitmap Heap Scan on tenk1
-               Recheck Cond: (thousand = (q1.q1 + q2.q2))
-               ->  Bitmap Index Scan on tenk1_thous_tenthous
-                     Index Cond: (thousand = (q1.q1 + q2.q2))
+         ->  Index Scan using tenk1_thous_tenthous on tenk1
+               Index Cond: (thousand = (q1.q1 + q2.q2))
    ->  Hash
          ->  Seq Scan on int4_tbl
-(12 rows)
+(10 rows)
 
 --
 -- test ability to generate a suitable plan for a star-schema query

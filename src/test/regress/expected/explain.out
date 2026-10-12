@@ -386,13 +386,11 @@ select explain_filter_to_json('explain (settings, format json) select * from int
 rollback;
 -- GENERIC_PLAN option
 select explain_filter('explain (generic_plan) select unique1 from tenk1 where thousand = $1');
-                                 explain_filter                                  
----------------------------------------------------------------------------------
- Bitmap Heap Scan on tenk1  (cost=N.N..N.N rows=N width=N)
-   Recheck Cond: (thousand = $N)
-   ->  Bitmap Index Scan on tenk1_thous_tenthous  (cost=N.N..N.N rows=N width=N)
-         Index Cond: (thousand = $N)
-(4 rows)
+                                 explain_filter                                 
+--------------------------------------------------------------------------------
+ Index Scan using tenk1_thous_tenthous on tenk1  (cost=N.N..N.N rows=N width=N)
+   Index Cond: (thousand = $N)
+(2 rows)
 
 -- should fail
 select explain_filter('explain (analyze, generic_plan) select unique1 from tenk1 where thousand = $1');
