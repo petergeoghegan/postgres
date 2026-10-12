@@ -173,7 +173,8 @@ get_tablespace(Oid spcid)
 
 /*
  * get_tablespace_page_costs
- *		Return random and/or sequential page costs for a given tablespace.
+ *		Return random and/or sequential page costs for a given tablespace,
+ *		and/or its effective_io_concurrency.
  *
  *		This value is not locked by the transaction, so this value may
  *		be changed while a SELECT that has used these values for planning
@@ -182,7 +183,8 @@ get_tablespace(Oid spcid)
 void
 get_tablespace_page_costs(Oid spcid,
 						  double *spc_random_page_cost,
-						  double *spc_seq_page_cost)
+						  double *spc_seq_page_cost,
+						  int *spc_io_concurrency)
 {
 	TableSpaceCacheEntry *spc = get_tablespace(spcid);
 
@@ -202,6 +204,14 @@ get_tablespace_page_costs(Oid spcid,
 			*spc_seq_page_cost = seq_page_cost;
 		else
 			*spc_seq_page_cost = spc->opts->seq_page_cost;
+	}
+
+	if (spc_io_concurrency)
+	{
+		if (!spc->opts || spc->opts->effective_io_concurrency < 0)
+			*spc_io_concurrency = effective_io_concurrency;
+		else
+			*spc_io_concurrency = spc->opts->effective_io_concurrency;
 	}
 }
 
