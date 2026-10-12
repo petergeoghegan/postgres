@@ -665,6 +665,16 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 	 * We use the measured fraction of the entire heap that is all-visible,
 	 * which might not be particularly relevant to the subset of the heap
 	 * that this query will fetch; but it's not clear how to do better.
+	 *
+	 * The Mackert and Lohman formula assumes many tuples per page.  With
+	 * only a few per page (wide rows) it can return fewer pages than the
+	 * fetched tuples take up, i.e. fewer than even a perfectly correlated
+	 * scan would read.  The correlated estimate, selectivity * table_size,
+	 * is therefore a floor, up to the number of tuples fetched: a bloated
+	 * table has fewer live tuples than pages, and a scan never touches more
+	 * pages than tuples.  The correlated estimate itself is capped at the
+	 * tuples fetched for the same reason, which also keeps it at or below
+	 * the uncorrelated one, so that correlation never raises the cost.
 	 *----------
 	 */
 	if (loop_count > 1)
@@ -699,7 +709,8 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 		 * where such a plan is actually interesting, only one page would get
 		 * fetched per scan anyway, so it shouldn't matter much.)
 		 */
-		pages_fetched = ceil(indexSelectivity * (double) baserel->pages);
+		pages_fetched = Min(tuples_fetched,
+							ceil(indexSelectivity * (double) baserel->pages));
 
 		pages_fetched = index_pages_fetched(pages_fetched * loop_count,
 											baserel->pages,
@@ -721,6 +732,9 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 											baserel->pages,
 											(double) index->pages,
 											root);
+		pages_fetched = Max(pages_fetched,
+							Min(tuples_fetched,
+								ceil(indexSelectivity * (double) baserel->pages)));
 
 		if (indexonly)
 			pages_fetched = ceil(pages_fetched * (1.0 - baserel->allvisfrac));
@@ -731,7 +745,8 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 		max_IO_cost = pages_fetched * spc_random_page_cost;
 
 		/* min_IO_cost is for the perfectly correlated case (csquared=1) */
-		pages_fetched = ceil(indexSelectivity * (double) baserel->pages);
+		pages_fetched = Min(tuples_fetched,
+							ceil(indexSelectivity * (double) baserel->pages));
 
 		if (indexonly)
 			pages_fetched = ceil(pages_fetched * (1.0 - baserel->allvisfrac));
@@ -6797,9 +6812,14 @@ compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel,
 	/*
 	 * For a single scan, the number of heap pages that need to be fetched is
 	 * the same as the Mackert and Lohman formula for the case T <= b (ie, no
-	 * re-reads needed).
+	 * re-reads needed).  The formula assumes many tuples per page; with only
+	 * a few per page (wide rows) it can return fewer pages than the fetched
+	 * tuples take up, so selectivity * table_size is a floor, up to the
+	 * number of tuples fetched (a bloated table has fewer live tuples than
+	 * pages).
 	 */
 	pages_fetched = (2.0 * T * tuples_fetched) / (2.0 * T + tuples_fetched);
+	pages_fetched = Max(pages_fetched, Min(tuples_fetched, indexSelectivity * T));
 
 	/*
 	 * Calculate the number of pages fetched from the heap.  Then based on
