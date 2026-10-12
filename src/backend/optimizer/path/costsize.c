@@ -31,8 +31,9 @@
  *
  * seq_page_cost and random_page_cost can also be overridden for an individual
  * tablespace, in case some data is on a fast disk and other data is on a slow
- * disk.  Per-tablespace overrides never apply to temporary work files such as
- * an external sort or a materialize node that overflows work_mem.
+ * disk, as can effective_io_concurrency.  Per-tablespace overrides never
+ * apply to temporary work files such as an external sort or a materialize
+ * node that overflows work_mem.
  *
  * We compute two separate costs for each path:
  *		total_cost: total estimated cost to fetch all tuples
@@ -105,6 +106,7 @@
 #include "optimizer/plancat.h"
 #include "optimizer/restrictinfo.h"
 #include "parser/parsetree.h"
+#include "storage/aio.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 #include "utils/spccache.h"
@@ -173,6 +175,9 @@ typedef struct
 } cost_qual_eval_context;
 
 static List *extract_nonindex_conditions(List *qual_clauses, List *indexclauses);
+static double prefetched_random_penalty_fraction(double pages_fetched, int eic,
+												 double random_page_cost,
+												 double seq_page_cost);
 static MergeScanSelCache *cached_scansel(PlannerInfo *root,
 										 RestrictInfo *rinfo,
 										 PathKey *pathkey);
@@ -292,7 +297,8 @@ cost_seqscan(Path *path, PlannerInfo *root,
 	/* fetch estimated page cost for tablespace containing table */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  NULL,
-							  &spc_seq_page_cost);
+							  &spc_seq_page_cost,
+							  NULL);
 
 	/*
 	 * disk costs
@@ -379,7 +385,8 @@ cost_samplescan(Path *path, PlannerInfo *root,
 	/* fetch estimated page cost for tablespace containing table */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  &spc_random_page_cost,
-							  &spc_seq_page_cost);
+							  &spc_seq_page_cost,
+							  NULL);
 
 	/* if NextSampleBlock is used, assume random access, else sequential */
 	spc_page_cost = (tsm->NextSampleBlock != NULL) ?
@@ -525,6 +532,61 @@ cost_gather_merge(GatherMergePath *path, PlannerInfo *root,
 }
 
 /*
+ * prefetched_random_penalty_fraction
+ *	  Fraction of the random-access penalty (random_page_cost less
+ *	  seq_page_cost) that a scan fetching its heap pages through a read
+ *	  stream still pays: bitmap heap scans, and plain index scans and
+ *	  index-only scans of an index AM with the amgetbatch interface.
+ *
+ * random_page_cost describes a synchronous random read, on the assumption
+ * (see the documentation of the parameter) that most such reads hit cache.
+ * A read stream keeps up to effective_io_concurrency reads in flight, so the
+ * latency of a page that misses overlaps with that of the others, and the
+ * time spent waiting per page falls in proportion (Little's law).  Only the
+ * latency is hidden, and latency is what the random-access penalty
+ * (random_page_cost less seq_page_cost) stands for, so the penalty is all we
+ * scale.  The seq_page_cost share of each page, the transfer cost, is paid at
+ * any concurrency; leaving it alone also keeps a scan of most of a table from
+ * looking cheaper than a seq scan of the same pages.
+ *
+ * Not every page of a scan sees the full concurrency.  An index scan fetches
+ * its first few heap pages before its stream starts.  The stream then doubles
+ * its look-ahead distance at each stall, until the distance covers the
+ * effective_io_concurrency reads it may keep in flight, and only the pages
+ * after that ramp are read at full concurrency.  We charge the pages before
+ * the stream starts and one page per doubling the scan gets to at the full
+ * penalty, which leaves point lookups and other small scans undiscounted;
+ * the other pages consumed during the ramp are overlapped with the stalls.
+ * The doublings are counted continuously so that the fraction never grows
+ * with effective_io_concurrency.  A bitmap heap scan's stream starts with
+ * its first page; charging it the same way costs it a few pages.
+ */
+static double
+prefetched_random_penalty_fraction(double pages_fetched, int eic,
+								   double random_page_cost,
+								   double seq_page_cost)
+{
+	double		sync_pages;
+	double		rest;
+	double		full_cost_pages;
+
+	if (eic <= 1 || pages_fetched < 2.0 || random_page_cost <= seq_page_cost)
+		return 1.0;
+
+	/* pages fetched synchronously before the read stream starts */
+	sync_pages = Min(pages_fetched, 4.0);
+	rest = pages_fetched - sync_pages;
+
+	/* one full-penalty page per doubling of the look-ahead distance */
+	full_cost_pages = sync_pages + log2(1.0 + Min(rest, 2.0 * eic));
+
+	/* pages consumed while ramping up are overlapped with the stalls */
+	rest = Max(0.0, rest - 2.0 * eic);
+
+	return Min(1.0, (full_cost_pages + rest / eic) / pages_fetched);
+}
+
+/*
  * cost_index
  *	  Determines and returns the cost of scanning a relation using an index.
  *
@@ -561,6 +623,7 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 				csquared;
 	double		spc_seq_page_cost,
 				spc_random_page_cost;
+	int			spc_io_concurrency;
 	Cost		min_IO_cost,
 				max_IO_cost;
 	QualCost	qpqual_cost;
@@ -568,6 +631,7 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 	double		tuples_fetched;
 	double		pages_fetched;
 	double		rand_heap_pages;
+	double		block_switches;
 	double		index_pages;
 	uint64		enable_mask;
 
@@ -635,10 +699,18 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 	/* estimate number of main-table tuples fetched */
 	tuples_fetched = clamp_row_est(indexSelectivity * baserel->tuples);
 
-	/* fetch estimated page costs for tablespace containing table */
+	/* fetch estimated page costs, I/O concurrency for the table's tablespace */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  &spc_random_page_cost,
-							  &spc_seq_page_cost);
+							  &spc_seq_page_cost,
+							  &spc_io_concurrency);
+
+	/*
+	 * With io_method = sync, index scans don't perform any kind of readahead
+	 * whatsoever (not even posix_fadvise hints)
+	 */
+	if (io_method == IOMETHOD_SYNC)
+		spc_io_concurrency = 1;
 
 	/*----------
 	 * Estimate number of main-table pages fetched, and compute I/O cost.
@@ -665,6 +737,11 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 	 * We use the measured fraction of the entire heap that is all-visible,
 	 * which might not be particularly relevant to the subset of the heap
 	 * that this query will fetch; but it's not clear how to do better.
+	 *
+	 * Either way, an index AM with the amgetbatch interface has the heap
+	 * pages fetched through a read stream, and
+	 * prefetched_random_penalty_fraction() lowers the random-access penalty
+	 * of the pages the stream reads concurrently.
 	 *
 	 * The Mackert and Lohman formula assumes many tuples per page.  With
 	 * only a few per page (wide rows) it can return fewer pages than the
@@ -695,7 +772,15 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 
 		rand_heap_pages = pages_fetched;
 
+		/*
+		 * The read stream discount below does not apply here, although a
+		 * rescanned scan streams its heap pages in every loop: the formula
+		 * credits the caching of pages across loops, and the buffer lookups
+		 * of those cached pages, one per page and loop, are not free.  The
+		 * full random page cost covers both, as it always has.
+		 */
 		max_IO_cost = (pages_fetched * spc_random_page_cost) / loop_count;
+		block_switches = 0;
 
 		/*
 		 * In the perfectly correlated case, the number of pages touched by
@@ -740,6 +825,35 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 
 		/* max_IO_cost is for the perfectly uncorrelated case (csquared=0) */
 		max_IO_cost = pages_fetched * spc_random_page_cost;
+
+		/*
+		 * An amgetbatch index AM has the heap pages fetched through a read
+		 * stream, which hides part of their random-access penalty.
+		 */
+		if (index->amhasgetbatch)
+			max_IO_cost = pages_fetched *
+				(spc_seq_page_cost +
+				 (spc_random_page_cost - spc_seq_page_cost) *
+				 prefetched_random_penalty_fraction(pages_fetched,
+													spc_io_concurrency,
+													spc_random_page_cost,
+													spc_seq_page_cost));
+
+		/*
+		 * The formula above counts tuples_fetched random page accesses and
+		 * pages_fetched distinct pages, so it assumes that the other
+		 * tuples_fetched - pages_fetched accesses hit cache.  A plain index
+		 * scan still looks the buffer up for each of them (a lookup, pin and
+		 * unpin per heap block switch), where a bitmap heap scan or a seq
+		 * scan looks each page up once.  Count those lookups; they are
+		 * charged below, interpolated by correlation like the page cost.
+		 * (The TIDs of one key value are in heap order, so a scan of few
+		 * values switches less than this; we have no estimate of that.)
+		 */
+		block_switches = tuples_fetched;
+		if (indexonly)
+			block_switches *= (1.0 - baserel->allvisfrac);
+		block_switches = Max(0.0, block_switches - pages_fetched);
 
 		/* min_IO_cost is for the perfectly correlated case (csquared=1) */
 		pages_fetched = ceil(indexSelectivity * (double) baserel->pages);
@@ -809,6 +923,9 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 	cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
 
 	cpu_run_cost += cpu_per_tuple * tuples_fetched;
+
+	/* the buffer lookups of the pages assumed cached above */
+	cpu_run_cost += (1.0 - csquared) * block_switches * cpu_tuple_cost;
 
 	/* tlist eval costs are paid per output row, not per tuple scanned */
 	startup_cost += path->path.pathtarget->cost.startup;
@@ -1036,6 +1153,7 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 	double		pages_fetched;
 	double		spc_seq_page_cost,
 				spc_random_page_cost;
+	int			spc_io_concurrency;
 	double		T;
 	uint64		enable_mask = PGS_BITMAPSCAN;
 
@@ -1057,10 +1175,11 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 	startup_cost += indexTotalCost;
 	T = (baserel->pages > 1) ? (double) baserel->pages : 1.0;
 
-	/* Fetch estimated page costs for tablespace containing table. */
+	/* Fetch page costs and I/O concurrency for the table's tablespace. */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  &spc_random_page_cost,
-							  &spc_seq_page_cost);
+							  &spc_seq_page_cost,
+							  &spc_io_concurrency);
 
 	/*
 	 * For small numbers of pages we should charge spc_random_page_cost
@@ -1075,6 +1194,18 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 			* sqrt(pages_fetched / T);
 	else
 		cost_per_page = spc_random_page_cost;
+
+	/*
+	 * The read stream hides part of the penalty.  Not for repeated scans, for
+	 * the reason given in cost_index.
+	 */
+	if (loop_count <= 1)
+		cost_per_page = spc_seq_page_cost +
+			(cost_per_page - spc_seq_page_cost) *
+			prefetched_random_penalty_fraction(pages_fetched,
+											   spc_io_concurrency,
+											   spc_random_page_cost,
+											   spc_seq_page_cost);
 
 	run_cost += pages_fetched * cost_per_page;
 
@@ -1328,6 +1459,7 @@ cost_tidscan(Path *path, PlannerInfo *root,
 	/* fetch estimated page cost for tablespace containing table */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  &spc_random_page_cost,
+							  NULL,
 							  NULL);
 
 	/* disk costs --- assume each tuple on a different page */
@@ -1426,7 +1558,8 @@ cost_tidrangescan(Path *path, PlannerInfo *root,
 	/* fetch estimated page cost for tablespace containing table */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  &spc_random_page_cost,
-							  &spc_seq_page_cost);
+							  &spc_seq_page_cost,
+							  NULL);
 
 	/* disk costs; 1 random page and the remainder as seq pages */
 	disk_run_cost = spc_random_page_cost + spc_seq_page_cost * nseqpages;

@@ -2861,6 +2861,15 @@ include_dir 'conf.d'
         </para>
 
         <para>
+         The planner also uses this value.  It reduces the random-access
+         penalty it charges for the table pages that an index scan,
+         index-only scan or bitmap heap scan reads concurrently; see
+         <xref linkend="guc-random-page-cost"/>.  At <literal>0</literal> or
+         <literal>1</literal> the planner charges
+         <varname>random_page_cost</varname> for every such page.
+        </para>
+
+        <para>
          This value can be overridden for tables in a particular tablespace by
          setting the tablespace parameter of the same name (see <xref
          linkend="sql-altertablespace"/>).
@@ -6374,6 +6383,25 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         is likely to be completely in cache, such as when the database
         is smaller than the total server memory, or network latency is
         high, decreasing random_page_cost might be appropriate.
+       </para>
+
+       <para>
+        Index scans, index-only scans and bitmap heap scans read table pages
+        through a read stream that keeps up to
+        <xref linkend="guc-effective-io-concurrency"/> reads in flight, so the
+        latency of a read that misses the cache overlaps with that of the
+        other reads.  For the pages such a scan reads at full concurrency, the
+        planner charges <varname>seq_page_cost</varname> plus the difference
+        between <varname>random_page_cost</varname> and
+        <varname>seq_page_cost</varname> divided by
+        <varname>effective_io_concurrency</varname>.  The pages a scan reads
+        before its stream reaches full concurrency are charged
+        <varname>random_page_cost</varname>, so a scan of a few pages costs
+        the same at any setting.  Index scans of an index access method that
+        does not support batched scans (see
+        <xref linkend="index-scanning-batches"/>), and repeated scans such as
+        the inner side of a nested loop, are charged
+        <varname>random_page_cost</varname> per page.
        </para>
 
        <tip>
@@ -12850,7 +12878,11 @@ dynamic_library_path = '/usr/local/lib/postgresql:$libdir'
         (or the corresponding tablespace parameter) instead.  Setting
         <varname>effective_io_concurrency</varname> to <literal>0</literal>
         disables the issuance of asynchronous I/O requests without otherwise
-        changing how index scans are executed.
+        changing how index scans are executed, but it also changes the
+        planner's cost estimates for index scans and bitmap heap scans (see
+        <xref linkend="guc-random-page-cost"/>).
+        <varname>debug_disable_indexscan_prefetch</varname> does not affect
+        the planner, so plans stay the same when it is on.
        </para>
       </listitem>
      </varlistentry>

@@ -95,7 +95,10 @@ ALTER TABLESPACE <replaceable>name</replaceable> RESET ( <replaceable class="par
       <xref linkend="guc-effective-io-concurrency"/>,
       <xref linkend="guc-maintenance-io-concurrency"/>).  This may be useful if
       one tablespace is located on a disk which is faster or slower than the
-      remainder of the I/O subsystem.
+      remainder of the I/O subsystem.  The planner's estimate for index scans
+      and bitmap heap scans of tables in the tablespace also depends on its
+      <varname>effective_io_concurrency</varname>; see
+      <xref linkend="guc-random-page-cost"/>.
      </para>
     </listitem>
    </varlistentry>
