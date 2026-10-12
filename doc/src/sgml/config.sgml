@@ -6388,7 +6388,8 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        <para>
         Index scans, index-only scans and bitmap heap scans read table pages
         through a read stream that keeps up to
-        <xref linkend="guc-effective-io-concurrency"/> reads in flight, so the
+        <xref linkend="guc-effective-io-concurrency"/> reads in flight (at
+        most <xref linkend="guc-io-max-concurrency"/>), so the
         latency of a read that misses the cache overlaps with that of the
         other reads.  For the pages such a scan reads at full concurrency, the
         planner charges <varname>seq_page_cost</varname> plus the difference

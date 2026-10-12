@@ -2798,6 +2798,7 @@ select * from
 --
 -- a different check for handling of redundant sort keys in merge joins
 --
+set effective_io_concurrency = 1;
 explain (costs off)
 select count(*) from
   (select * from tenk1 x order by x.thousand, x.twothousand, x.fivethous) x
@@ -2810,13 +2811,12 @@ select count(*) from
    ->  Merge Left Join
          Merge Cond: (x.thousand = y.unique2)
          Join Filter: ((x.twothousand = y.hundred) AND (x.fivethous = y.unique2))
-         ->  Incremental Sort
+         ->  Sort
                Sort Key: x.thousand, x.twothousand, x.fivethous
-               Presorted Key: x.thousand
-               ->  Index Scan using tenk1_thous_tenthous on tenk1 x
+               ->  Seq Scan on tenk1 x
          ->  Materialize
                ->  Index Scan using tenk1_unique2 on tenk1 y
-(10 rows)
+(9 rows)
 
 select count(*) from
   (select * from tenk1 x order by x.thousand, x.twothousand, x.fivethous) x
@@ -2853,12 +2853,15 @@ order by x.thousand desc, x.twothousand;
                ->  Partial GroupAggregate
                      Group Key: y.thousand
                      ->  Index Only Scan Backward using tenk1_thous_tenthous on tenk1 y
-               ->  Index Scan Backward using tenk1_thous_tenthous on tenk1 x
-(11 rows)
+               ->  Sort
+                     Sort Key: x.thousand DESC
+                     ->  Seq Scan on tenk1 x
+(13 rows)
 
 reset enable_hashagg;
 reset enable_nestloop;
 reset enable_hashjoin;
+reset effective_io_concurrency;
 --
 -- Clean up
 --
