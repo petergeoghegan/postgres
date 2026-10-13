@@ -33,6 +33,10 @@ $$;
 -- Ensure we get a memoize node on the inner side of the nested loop
 SET enable_hashjoin TO off;
 SET enable_bitmapscan TO off;
+-- The outer scans below are near-ties between a seq scan and an index scan,
+-- and the winner differs between platforms with the table's page count; the
+-- Memoize statistics depend on the outer scan's row order.  Pin
+-- effective_io_concurrency, which keeps the seq scans.
 SET effective_io_concurrency = 1;
 SELECT explain_memoize('
 SELECT COUNT(*),AVG(t1.unique1) FROM tenk1 t1
