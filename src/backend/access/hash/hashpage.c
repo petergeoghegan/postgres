@@ -1256,6 +1256,8 @@ _hash_splitbucket(Relation rel,
 		oopaque = HashPageGetOpaque(opage);
 	}
 
+	INJECTION_POINT("hash-split-after-relocation", NULL);
+
 	/*
 	 * We're at the end of the old bucket chain, so we're done partitioning
 	 * the tuples.  Mark the old and new buckets to indicate split is

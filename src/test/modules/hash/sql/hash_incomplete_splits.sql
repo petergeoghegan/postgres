@@ -38,8 +38,16 @@ MOVE FORWARD ALL IN c;
 FETCH BACKWARD ALL FROM c;
 COMMIT;
 
--- An insert into bucket 0 (v = 5 hashes there) finishes the split.  The
--- scan must still find all 11 rows.
+-- An insert into bucket 0 (v = 5 hashes there) finishes the split, which
+-- first relocates the 10 older rows to the new bucket.  Error out after
+-- that, before the split is marked complete: the scan must skip the
+-- relocated copies, and read the originals that remain in bucket 0.
+SELECT injection_points_attach('hash-split-after-relocation', 'error');
+INSERT INTO hash_split_test VALUES (5);
+SELECT injection_points_detach('hash-split-after-relocation');
+SELECT count(*) FROM hash_split_test WHERE v = 1;
+
+-- Finish the split for real.  The scan must still find all 11 rows.
 INSERT INTO hash_split_test VALUES (5);
 SELECT count(*) FROM hash_split_test WHERE v = 1;
 
