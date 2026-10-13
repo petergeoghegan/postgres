@@ -1448,7 +1448,7 @@ typedef struct IndexOptInfo
 	bool		amcanmarkpos;
 	/* AM's cost estimator */
 	/* Rather than include amapi.h here, we declare amcostestimate like this */
-	void		(*amcostestimate) (struct PlannerInfo *, struct IndexPath *, double, Cost *, Cost *, Selectivity *, double *, double *) pg_node_attr(read_write_ignore);
+	void		(*amcostestimate) (struct PlannerInfo *, struct IndexPath *, double, Cost *, Cost *, Selectivity *, double *, double *, bool *) pg_node_attr(read_write_ignore);
 } IndexOptInfo;
 
 /*

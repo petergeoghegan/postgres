@@ -507,7 +507,8 @@ amcostestimate (PlannerInfo *root,
                 Cost *indexTotalCost,
                 Selectivity *indexSelectivity,
                 double *indexCorrelation,
-                double *indexPages);
+                double *indexPages,
+                bool *indexHeapOrdered);
 </programlisting>
    Estimate the costs of an index scan.  This function is described fully
    in <xref linkend="index-cost-estimation"/>, below.
@@ -2043,7 +2044,8 @@ amcostestimate (PlannerInfo *root,
                 Cost *indexTotalCost,
                 Selectivity *indexSelectivity,
                 double *indexCorrelation,
-                double *indexPages);
+                double *indexPages,
+                bool *indexHeapOrdered);
 </programlisting>
 
    The first three parameters are inputs:
@@ -2085,7 +2087,7 @@ amcostestimate (PlannerInfo *root,
   </para>
 
   <para>
-   The last five parameters are pass-by-reference outputs:
+   The last six parameters are pass-by-reference outputs:
 
    <variablelist>
     <varlistentry>
@@ -2130,6 +2132,16 @@ amcostestimate (PlannerInfo *root,
      <listitem>
       <para>
        Set to number of index leaf pages
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><parameter>*indexHeapOrdered</parameter></term>
+     <listitem>
+      <para>
+       Set to true if the scan returns the heap tuple identifiers in heap
+       order, else false
       </para>
      </listitem>
     </varlistentry>
@@ -2183,6 +2195,15 @@ amcostestimate (PlannerInfo *root,
   <para>
    The <parameter>indexPages</parameter> should be set to the number of leaf pages.
    This is used to estimate the number of workers for parallel index scan.
+  </para>
+
+  <para>
+   The <parameter>indexHeapOrdered</parameter> flag should be set to true when
+   the scan will return the heap tuple identifiers in heap order, so that the
+   parent-table pages are read in physical order, each once, as a B-tree
+   scan with a single equality or <literal>IS NULL</literal> qual on a
+   single-column index does.  The planner then costs the parent-table
+   accesses as it costs a bitmap heap scan's.
   </para>
 
   <para>

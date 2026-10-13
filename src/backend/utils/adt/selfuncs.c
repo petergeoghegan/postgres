@@ -7755,7 +7755,7 @@ void
 btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 			   Cost *indexStartupCost, Cost *indexTotalCost,
 			   Selectivity *indexSelectivity, double *indexCorrelation,
-			   double *indexPages)
+			   double *indexPages, bool *indexHeapOrdered)
 {
 	IndexOptInfo *index = path->indexinfo;
 	GenericCosts costs = {0};
@@ -8076,6 +8076,20 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	}
 
 	/*
+	 * A scan with an '=' or IS NULL qual on a single-column index returns its
+	 * heap TIDs in heap order: the index tuples of equal keys, NULLs
+	 * included, are stored in heap TID order, and any other qual on the
+	 * column is redundant with the equality (the scan drops it during
+	 * preprocessing, or proves it contradictory and returns nothing).  Not
+	 * with an array of values, each of which is its own run of TIDs, nor with
+	 * more index columns, whose tuples of equal leading keys are ordered by
+	 * the remaining columns.  cost_index then prices the heap accesses as a
+	 * bitmap heap scan's.
+	 */
+	*indexHeapOrdered = (index->nkeycolumns == 1 && eqQualHere &&
+						 !found_array);
+
+	/*
 	 * If index is unique and we found an '=' clause for each column, we can
 	 * just assume numIndexTuples = 1 and skip the expensive
 	 * clauselist_selectivity calculations.  However, an array or NullTest
@@ -8227,7 +8241,7 @@ void
 hashcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				 Cost *indexStartupCost, Cost *indexTotalCost,
 				 Selectivity *indexSelectivity, double *indexCorrelation,
-				 double *indexPages)
+				 double *indexPages, bool *indexHeapOrdered)
 {
 	GenericCosts costs = {0};
 
@@ -8266,13 +8280,14 @@ hashcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
 	*indexPages = costs.numIndexPages;
+	*indexHeapOrdered = false;
 }
 
 void
 gistcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				 Cost *indexStartupCost, Cost *indexTotalCost,
 				 Selectivity *indexSelectivity, double *indexCorrelation,
-				 double *indexPages)
+				 double *indexPages, bool *indexHeapOrdered)
 {
 	IndexOptInfo *index = path->indexinfo;
 	GenericCosts costs = {0};
@@ -8323,13 +8338,14 @@ gistcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
 	*indexPages = costs.numIndexPages;
+	*indexHeapOrdered = false;
 }
 
 void
 spgcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				Cost *indexStartupCost, Cost *indexTotalCost,
 				Selectivity *indexSelectivity, double *indexCorrelation,
-				double *indexPages)
+				double *indexPages, bool *indexHeapOrdered)
 {
 	IndexOptInfo *index = path->indexinfo;
 	GenericCosts costs = {0};
@@ -8381,6 +8397,7 @@ spgcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
 	*indexPages = costs.numIndexPages;
+	*indexHeapOrdered = false;
 }
 
 
@@ -8687,7 +8704,7 @@ void
 gincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				Cost *indexStartupCost, Cost *indexTotalCost,
 				Selectivity *indexSelectivity, double *indexCorrelation,
-				double *indexPages)
+				double *indexPages, bool *indexHeapOrdered)
 {
 	IndexOptInfo *index = path->indexinfo;
 	List	   *indexQuals = get_quals_from_indexclauses(path->indexclauses);
@@ -9069,6 +9086,7 @@ gincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	/* Now add a cpu cost per tuple in the posting lists / trees */
 	*indexTotalCost += (numTuples * *indexSelectivity) * (cpu_index_tuple_cost);
 	*indexPages = dataPagesFetched;
+	*indexHeapOrdered = false;
 }
 
 /*
@@ -9078,7 +9096,7 @@ void
 brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 				 Cost *indexStartupCost, Cost *indexTotalCost,
 				 Selectivity *indexSelectivity, double *indexCorrelation,
-				 double *indexPages)
+				 double *indexPages, bool *indexHeapOrdered)
 {
 	IndexOptInfo *index = path->indexinfo;
 	List	   *indexQuals = get_quals_from_indexclauses(path->indexclauses);
@@ -9291,4 +9309,5 @@ brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		statsData.pagesPerRange;
 
 	*indexPages = index->pages;
+	*indexHeapOrdered = false;
 }

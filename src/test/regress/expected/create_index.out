@@ -2210,16 +2210,12 @@ SELECT count(*) FROM tenk1, tenk2
  Aggregate
    ->  Nested Loop
          Join Filter: ((tenk2.thousand = 42) OR (tenk1.thousand = 41) OR (tenk2.tenthous = 2))
-         ->  Bitmap Heap Scan on tenk1
-               Recheck Cond: (hundred = 42)
-               ->  Bitmap Index Scan on tenk1_hundred
-                     Index Cond: (hundred = 42)
+         ->  Index Scan using tenk1_hundred on tenk1
+               Index Cond: (hundred = 42)
          ->  Materialize
-               ->  Bitmap Heap Scan on tenk2
-                     Recheck Cond: (hundred = 42)
-                     ->  Bitmap Index Scan on tenk2_hundred
-                           Index Cond: (hundred = 42)
-(12 rows)
+               ->  Index Scan using tenk2_hundred on tenk2
+                     Index Cond: (hundred = 42)
+(8 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM tenk1, tenk2
@@ -2229,14 +2225,12 @@ SELECT count(*) FROM tenk1, tenk2
 ------------------------------------------------------------------------------
  Aggregate
    ->  Nested Loop
-         ->  Bitmap Heap Scan on tenk2
-               Recheck Cond: (hundred = 42)
+         ->  Index Scan using tenk2_hundred on tenk2
+               Index Cond: (hundred = 42)
                Filter: ((thousand = 42) OR (thousand = 41) OR (tenthous = 2))
-               ->  Bitmap Index Scan on tenk2_hundred
-                     Index Cond: (hundred = 42)
          ->  Index Only Scan using tenk1_hundred on tenk1
                Index Cond: (hundred = 42)
-(9 rows)
+(7 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM tenk1 JOIN tenk2 ON
@@ -2246,14 +2240,12 @@ SELECT count(*) FROM tenk1 JOIN tenk2 ON
 ------------------------------------------------------------------------------
  Aggregate
    ->  Nested Loop
-         ->  Bitmap Heap Scan on tenk2
-               Recheck Cond: (hundred = 42)
+         ->  Index Scan using tenk2_hundred on tenk2
+               Index Cond: (hundred = 42)
                Filter: ((thousand = 42) OR (thousand = 41) OR (tenthous = 2))
-               ->  Bitmap Index Scan on tenk2_hundred
-                     Index Cond: (hundred = 42)
          ->  Index Only Scan using tenk1_hundred on tenk1
                Index Cond: (hundred = 42)
-(9 rows)
+(7 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM tenk1 LEFT JOIN tenk2 ON

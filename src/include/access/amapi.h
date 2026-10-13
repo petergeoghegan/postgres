@@ -152,7 +152,8 @@ typedef void (*amcostestimate_function) (PlannerInfo *root,
 										 Cost *indexTotalCost,
 										 Selectivity *indexSelectivity,
 										 double *indexCorrelation,
-										 double *indexPages);
+										 double *indexPages,
+										 bool *indexHeapOrdered);
 
 /*
  * estimate height of a tree-structured index

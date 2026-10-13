@@ -22,7 +22,7 @@ void
 blcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 			   Cost *indexStartupCost, Cost *indexTotalCost,
 			   Selectivity *indexSelectivity, double *indexCorrelation,
-			   double *indexPages)
+			   double *indexPages, bool *indexHeapOrdered)
 {
 	IndexOptInfo *index = path->indexinfo;
 	GenericCosts costs = {0};
@@ -41,4 +41,5 @@ blcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
 	*indexPages = costs.numIndexPages;
+	*indexHeapOrdered = false;
 }

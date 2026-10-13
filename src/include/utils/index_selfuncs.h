@@ -29,7 +29,8 @@ extern void brincostestimate(struct PlannerInfo *root,
 							 Cost *indexTotalCost,
 							 Selectivity *indexSelectivity,
 							 double *indexCorrelation,
-							 double *indexPages);
+							 double *indexPages,
+							 bool *indexHeapOrdered);
 extern void btcostestimate(struct PlannerInfo *root,
 						   struct IndexPath *path,
 						   double loop_count,
@@ -37,7 +38,8 @@ extern void btcostestimate(struct PlannerInfo *root,
 						   Cost *indexTotalCost,
 						   Selectivity *indexSelectivity,
 						   double *indexCorrelation,
-						   double *indexPages);
+						   double *indexPages,
+						   bool *indexHeapOrdered);
 extern void hashcostestimate(struct PlannerInfo *root,
 							 struct IndexPath *path,
 							 double loop_count,
@@ -45,7 +47,8 @@ extern void hashcostestimate(struct PlannerInfo *root,
 							 Cost *indexTotalCost,
 							 Selectivity *indexSelectivity,
 							 double *indexCorrelation,
-							 double *indexPages);
+							 double *indexPages,
+							 bool *indexHeapOrdered);
 extern void gistcostestimate(struct PlannerInfo *root,
 							 struct IndexPath *path,
 							 double loop_count,
@@ -53,7 +56,8 @@ extern void gistcostestimate(struct PlannerInfo *root,
 							 Cost *indexTotalCost,
 							 Selectivity *indexSelectivity,
 							 double *indexCorrelation,
-							 double *indexPages);
+							 double *indexPages,
+							 bool *indexHeapOrdered);
 extern void spgcostestimate(struct PlannerInfo *root,
 							struct IndexPath *path,
 							double loop_count,
@@ -61,7 +65,8 @@ extern void spgcostestimate(struct PlannerInfo *root,
 							Cost *indexTotalCost,
 							Selectivity *indexSelectivity,
 							double *indexCorrelation,
-							double *indexPages);
+							double *indexPages,
+							bool *indexHeapOrdered);
 extern void gincostestimate(struct PlannerInfo *root,
 							struct IndexPath *path,
 							double loop_count,
@@ -69,6 +74,7 @@ extern void gincostestimate(struct PlannerInfo *root,
 							Cost *indexTotalCost,
 							Selectivity *indexSelectivity,
 							double *indexCorrelation,
-							double *indexPages);
+							double *indexPages,
+							bool *indexHeapOrdered);
 
 #endif							/* INDEX_SELFUNCS_H */

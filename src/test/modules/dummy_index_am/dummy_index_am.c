@@ -219,7 +219,7 @@ static void
 dicostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 			   Cost *indexStartupCost, Cost *indexTotalCost,
 			   Selectivity *indexSelectivity, double *indexCorrelation,
-			   double *indexPages)
+			   double *indexPages, bool *indexHeapOrdered)
 {
 	/* Tell planner to never use this index! */
 	*indexStartupCost = 1.0e10;
@@ -229,6 +229,7 @@ dicostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	*indexSelectivity = 1;
 	*indexCorrelation = 0;
 	*indexPages = 1;
+	*indexHeapOrdered = false;
 }
 
 /*

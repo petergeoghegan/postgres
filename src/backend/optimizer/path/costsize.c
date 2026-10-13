@@ -175,6 +175,7 @@ typedef struct
 } cost_qual_eval_context;
 
 static List *extract_nonindex_conditions(List *qual_clauses, List *indexclauses);
+static double random_read_share(double pages_fetched, double T);
 static double prefetched_page_cost(double pages_fetched,
 								   double random_share, int eic,
 								   double spc_random_page_cost,
@@ -533,6 +534,26 @@ cost_gather_merge(GatherMergePath *path, PlannerInfo *root,
 }
 
 /*
+ * random_read_share
+ *	  Returns the share of pages_fetched of a table's T pages that are random
+ *	  reads when they are read in physical order; the rest are sequential.
+ *
+ * For small numbers of pages they are all random reads, while if nearly all
+ * the table's pages are being read, nearly all of them are sequential reads.
+ * The effect is nonlinear, too.  For lack of a better idea, interpolate like
+ * this.
+ */
+static double
+random_read_share(double pages_fetched, double T)
+{
+	if (T < 1.0)
+		T = 1.0;
+	if (pages_fetched >= 2.0)
+		return 1.0 - sqrt(pages_fetched / T);
+	return 1.0;
+}
+
+/*
  * prefetched_page_cost
  *	  Returns the cost per heap page of a scan that prefetches its heap pages.
  *
@@ -636,6 +657,8 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 	Selectivity indexSelectivity;
 	double		indexCorrelation,
 				csquared;
+	bool		indexHeapOrdered;
+	double		random_share;
 	double		spc_seq_page_cost,
 				spc_random_page_cost,
 				discounted_random_page_cost;
@@ -699,7 +722,7 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 	amcostestimate(root, path, loop_count,
 				   &indexStartupCost, &indexTotalCost,
 				   &indexSelectivity, &indexCorrelation,
-				   &index_pages);
+				   &index_pages, &indexHeapOrdered);
 
 	/*
 	 * Save amcostestimate's results for possible use in bitmap scan planning.
@@ -847,10 +870,24 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 		 * stream starts, INDEX_PREFETCH_BLKSWITCH_THRESHOLD of them in the
 		 * heap AM, are not charged.)  In the uncorrelated case every page is
 		 * a random read.
+		 *
+		 * Unless the index AM reports that the scan returns its heap TIDs in
+		 * heap order: it then reads the same pages as the bitmap heap scan of
+		 * the same quals, in the same order, each once, and its pages are
+		 * priced as cost_bitmap_heap_scan prices them, a share of them random
+		 * reads and the rest sequential.  It thus costs no more than the
+		 * bitmap heap scan, which is as it should be: it does the same work,
+		 * and it also sets LP_DEAD bits in the index, which a bitmap index
+		 * scan cannot.
 		 */
+		if (indexHeapOrdered)
+			random_share = random_read_share(pages_fetched,
+											 (double) baserel->pages);
+		else
+			random_share = 1.0;
 		if (index->amhasgetbatch)
 			discounted_random_page_cost =
-				prefetched_page_cost(pages_fetched, 1.0,
+				prefetched_page_cost(pages_fetched, random_share,
 									 spc_io_concurrency,
 									 spc_random_page_cost,
 									 spc_seq_page_cost);
@@ -866,9 +903,9 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 		 * above counts tuples_fetched heap accesses on pages_fetched distinct
 		 * pages, and in the uncorrelated case the heap block changes on
 		 * nearly every tuple, so a plain index scan visits a block per tuple;
-		 * in the correlated case it visits each page once, like the bitmap
-		 * heap scan.  Count the visits; they are charged below, interpolated
-		 * by correlation like the page cost.
+		 * in the correlated case, and for a heap-ordered scan, it visits each
+		 * page once, like the bitmap heap scan.  Count the visits; they are
+		 * charged below, interpolated by correlation like the page cost.
 		 *
 		 * Without this charge, a random-order scan with many matching tuples
 		 * per page would cost about the same as the bitmap heap scan of the
@@ -881,9 +918,14 @@ cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
 		 * does tuples_fetched buffer lookups to the bitmap heap scan's
 		 * pages_fetched.
 		 */
-		heap_visits_uncorr = tuples_fetched;
-		if (indexonly)
-			heap_visits_uncorr *= (1.0 - baserel->allvisfrac);
+		if (indexHeapOrdered)
+			heap_visits_uncorr = pages_fetched;
+		else
+		{
+			heap_visits_uncorr = tuples_fetched;
+			if (indexonly)
+				heap_visits_uncorr *= (1.0 - baserel->allvisfrac);
+		}
 
 		/* min_IO_cost is for the perfectly correlated case (csquared=1) */
 		pages_fetched = Min(tuples_fetched,
@@ -1189,7 +1231,6 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 	double		spc_seq_page_cost,
 				spc_random_page_cost;
 	int			spc_io_concurrency;
-	double		T;
 	uint64		enable_mask = PGS_BITMAPSCAN;
 
 	/* Should only be applied to base relations */
@@ -1208,7 +1249,6 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 										 &tuples_fetched);
 
 	startup_cost += indexTotalCost;
-	T = (baserel->pages > 1) ? (double) baserel->pages : 1.0;
 
 	/* Fetch page costs and I/O concurrency for the table's tablespace. */
 	get_tablespace_page_costs(baserel->reltablespace,
@@ -1216,17 +1256,8 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 							  &spc_seq_page_cost,
 							  &spc_io_concurrency);
 
-	/*
-	 * The pages are read in physical order.  For small numbers of pages they
-	 * are all random reads, while if nearly all the table's pages are being
-	 * read, nearly all of them are sequential reads.  The effect is
-	 * nonlinear, too.  For lack of a better idea, interpolate like this to
-	 * determine the share of the pages that are random reads.
-	 */
-	if (pages_fetched >= 2.0)
-		random_share = 1.0 - sqrt(pages_fetched / T);
-	else
-		random_share = 1.0;
+	/* The pages are read in physical order; a share of them are random reads. */
+	random_share = random_read_share(pages_fetched, (double) baserel->pages);
 
 	/*
 	 * The scan prefetches its heap pages, which hides part of the wait for

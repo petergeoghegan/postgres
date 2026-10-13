@@ -734,13 +734,12 @@ select * from btree_bpchar where f1 like 'foo%';
 -- these do match the index:
 explain (costs off)
 select * from btree_bpchar where f1::bpchar like 'foo';
-                     QUERY PLAN                     
-----------------------------------------------------
- Bitmap Heap Scan on btree_bpchar
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Index Only Scan using btree_bpchar_f1_idx on btree_bpchar
+   Index Cond: (f1 OPERATOR(pg_catalog.=) 'foo'::bpchar)
    Filter: ((f1)::bpchar ~~ 'foo'::text)
-   ->  Bitmap Index Scan on btree_bpchar_f1_idx
-         Index Cond: ((f1)::bpchar = 'foo'::bpchar)
-(4 rows)
+(3 rows)
 
 select * from btree_bpchar where f1::bpchar like 'foo';
  f1  

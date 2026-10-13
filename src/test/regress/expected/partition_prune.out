@@ -2862,8 +2862,8 @@ reset max_parallel_workers_per_gather;
 -- Test run-time partition pruning with an initplan
 explain (analyze, costs off, summary off, timing off, buffers off)
 select * from ab where a = (select max(a) from lprt_a) and b = (select max(a)-1 from lprt_a);
-                                 QUERY PLAN                                 
-----------------------------------------------------------------------------
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
  Append (actual rows=0.00 loops=1)
    InitPlan expr_1
      ->  Aggregate (actual rows=1.00 loops=1)
@@ -2871,89 +2871,65 @@ select * from ab where a = (select max(a) from lprt_a) and b = (select max(a)-1 
    InitPlan expr_2
      ->  Aggregate (actual rows=1.00 loops=1)
            ->  Seq Scan on lprt_a lprt_a_1 (actual rows=102.00 loops=1)
-   ->  Bitmap Heap Scan on ab_a1_b1 ab_1 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+   ->  Index Scan using ab_a1_b1_a_idx on ab_a1_b1 ab_1 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a1_b1_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-   ->  Bitmap Heap Scan on ab_a1_b2 ab_2 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 0
+   ->  Index Scan using ab_a1_b2_a_idx on ab_a1_b2 ab_2 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a1_b2_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-   ->  Bitmap Heap Scan on ab_a1_b3 ab_3 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 0
+   ->  Index Scan using ab_a1_b3_a_idx on ab_a1_b3 ab_3 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a1_b3_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-   ->  Bitmap Heap Scan on ab_a2_b1 ab_4 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 0
+   ->  Index Scan using ab_a2_b1_a_idx on ab_a2_b1 ab_4 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a2_b1_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-   ->  Bitmap Heap Scan on ab_a2_b2 ab_5 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 0
+   ->  Index Scan using ab_a2_b2_a_idx on ab_a2_b2 ab_5 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a2_b2_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-   ->  Bitmap Heap Scan on ab_a2_b3 ab_6 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 0
+   ->  Index Scan using ab_a2_b3_a_idx on ab_a2_b3 ab_6 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a2_b3_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-   ->  Bitmap Heap Scan on ab_a3_b1 ab_7 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 0
+   ->  Index Scan using ab_a3_b1_a_idx on ab_a3_b1 ab_7 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a3_b1_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-   ->  Bitmap Heap Scan on ab_a3_b2 ab_8 (actual rows=0.00 loops=1)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 0
+   ->  Index Scan using ab_a3_b2_a_idx on ab_a3_b2 ab_8 (actual rows=0.00 loops=1)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a3_b2_a_idx (actual rows=0.00 loops=1)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 1
-   ->  Bitmap Heap Scan on ab_a3_b3 ab_9 (never executed)
-         Recheck Cond: (a = (InitPlan expr_1).col1)
+         Index Searches: 1
+   ->  Index Scan using ab_a3_b3_a_idx on ab_a3_b3 ab_9 (never executed)
+         Index Cond: (a = (InitPlan expr_1).col1)
          Filter: (b = (InitPlan expr_2).col1)
-         ->  Bitmap Index Scan on ab_a3_b3_a_idx (never executed)
-               Index Cond: (a = (InitPlan expr_1).col1)
-               Index Searches: 0
-(61 rows)
+         Index Searches: 0
+(43 rows)
 
 -- Test run-time partition pruning with UNION ALL parents
 explain (analyze, costs off, summary off, timing off, buffers off)
 select * from (select * from ab where a = 1 union all select * from ab) ab where b = (select 1);
-                                    QUERY PLAN                                    
-----------------------------------------------------------------------------------
+                                        QUERY PLAN                                        
+------------------------------------------------------------------------------------------
  Append (actual rows=0.00 loops=1)
    InitPlan expr_1
      ->  Result (actual rows=1.00 loops=1)
    ->  Append (actual rows=0.00 loops=1)
-         ->  Bitmap Heap Scan on ab_a1_b1 ab_11 (actual rows=0.00 loops=1)
-               Recheck Cond: (a = 1)
+         ->  Index Scan using ab_a1_b1_a_idx on ab_a1_b1 ab_11 (actual rows=0.00 loops=1)
+               Index Cond: (a = 1)
                Filter: (b = (InitPlan expr_1).col1)
-               ->  Bitmap Index Scan on ab_a1_b1_a_idx (actual rows=0.00 loops=1)
-                     Index Cond: (a = 1)
-                     Index Searches: 1
-         ->  Bitmap Heap Scan on ab_a1_b2 ab_12 (never executed)
-               Recheck Cond: (a = 1)
+               Index Searches: 1
+         ->  Index Scan using ab_a1_b2_a_idx on ab_a1_b2 ab_12 (never executed)
+               Index Cond: (a = 1)
                Filter: (b = (InitPlan expr_1).col1)
-               ->  Bitmap Index Scan on ab_a1_b2_a_idx (never executed)
-                     Index Cond: (a = 1)
-                     Index Searches: 0
-         ->  Bitmap Heap Scan on ab_a1_b3 ab_13 (never executed)
-               Recheck Cond: (a = 1)
+               Index Searches: 0
+         ->  Index Scan using ab_a1_b3_a_idx on ab_a1_b3 ab_13 (never executed)
+               Index Cond: (a = 1)
                Filter: (b = (InitPlan expr_1).col1)
-               ->  Bitmap Index Scan on ab_a1_b3_a_idx (never executed)
-                     Index Cond: (a = 1)
-                     Index Searches: 0
+               Index Searches: 0
    ->  Seq Scan on ab_a1_b1 ab_1 (actual rows=0.00 loops=1)
          Filter: (b = (InitPlan expr_1).col1)
    ->  Seq Scan on ab_a1_b2 ab_2 (never executed)
@@ -2972,35 +2948,29 @@ select * from (select * from ab where a = 1 union all select * from ab) ab where
          Filter: (b = (InitPlan expr_1).col1)
    ->  Seq Scan on ab_a3_b3 ab_9 (never executed)
          Filter: (b = (InitPlan expr_1).col1)
-(40 rows)
+(34 rows)
 
 -- A case containing a UNION ALL with a non-partitioned child.
 explain (analyze, costs off, summary off, timing off, buffers off)
 select * from (select * from ab where a = 1 union all (values(10,5)) union all select * from ab) ab where b = (select 1);
-                                    QUERY PLAN                                    
-----------------------------------------------------------------------------------
+                                        QUERY PLAN                                        
+------------------------------------------------------------------------------------------
  Append (actual rows=0.00 loops=1)
    InitPlan expr_1
      ->  Result (actual rows=1.00 loops=1)
    ->  Append (actual rows=0.00 loops=1)
-         ->  Bitmap Heap Scan on ab_a1_b1 ab_11 (actual rows=0.00 loops=1)
-               Recheck Cond: (a = 1)
+         ->  Index Scan using ab_a1_b1_a_idx on ab_a1_b1 ab_11 (actual rows=0.00 loops=1)
+               Index Cond: (a = 1)
                Filter: (b = (InitPlan expr_1).col1)
-               ->  Bitmap Index Scan on ab_a1_b1_a_idx (actual rows=0.00 loops=1)
-                     Index Cond: (a = 1)
-                     Index Searches: 1
-         ->  Bitmap Heap Scan on ab_a1_b2 ab_12 (never executed)
-               Recheck Cond: (a = 1)
+               Index Searches: 1
+         ->  Index Scan using ab_a1_b2_a_idx on ab_a1_b2 ab_12 (never executed)
+               Index Cond: (a = 1)
                Filter: (b = (InitPlan expr_1).col1)
-               ->  Bitmap Index Scan on ab_a1_b2_a_idx (never executed)
-                     Index Cond: (a = 1)
-                     Index Searches: 0
-         ->  Bitmap Heap Scan on ab_a1_b3 ab_13 (never executed)
-               Recheck Cond: (a = 1)
+               Index Searches: 0
+         ->  Index Scan using ab_a1_b3_a_idx on ab_a1_b3 ab_13 (never executed)
+               Index Cond: (a = 1)
                Filter: (b = (InitPlan expr_1).col1)
-               ->  Bitmap Index Scan on ab_a1_b3_a_idx (never executed)
-                     Index Cond: (a = 1)
-                     Index Searches: 0
+               Index Searches: 0
    ->  Result (actual rows=0.00 loops=1)
          One-Time Filter: (5 = (InitPlan expr_1).col1)
    ->  Seq Scan on ab_a1_b1 ab_1 (actual rows=0.00 loops=1)
@@ -3021,7 +2991,7 @@ select * from (select * from ab where a = 1 union all (values(10,5)) union all s
          Filter: (b = (InitPlan expr_1).col1)
    ->  Seq Scan on ab_a3_b3 ab_9 (never executed)
          Filter: (b = (InitPlan expr_1).col1)
-(42 rows)
+(36 rows)
 
 -- Another UNION ALL test, but containing a mix of exec init and exec run-time pruning.
 create table xy_1 (x int, y int);
@@ -3080,52 +3050,36 @@ deallocate ab_q6;
 insert into ab values (1,2);
 select explain_analyze('
 update ab_a1 set b = 3 from ab where ab.a = 1 and ab.a = ab_a1.a;');
-                                       explain_analyze                                        
-----------------------------------------------------------------------------------------------
+                                           explain_analyze                                           
+-----------------------------------------------------------------------------------------------------
  Update on ab_a1 (actual rows=0.00 loops=1)
    Update on ab_a1_b1 ab_a1_1
    Update on ab_a1_b2 ab_a1_2
    Update on ab_a1_b3 ab_a1_3
    ->  Nested Loop (actual rows=1.00 loops=1)
          ->  Append (actual rows=1.00 loops=1)
-               ->  Bitmap Heap Scan on ab_a1_b1 ab_a1_1 (actual rows=0.00 loops=1)
-                     Recheck Cond: (a = 1)
-                     ->  Bitmap Index Scan on ab_a1_b1_a_idx (actual rows=0.00 loops=1)
-                           Index Cond: (a = 1)
-                           Index Searches: 1
-               ->  Bitmap Heap Scan on ab_a1_b2 ab_a1_2 (actual rows=1.00 loops=1)
-                     Recheck Cond: (a = 1)
-                     Heap Blocks: exact=1
-                     ->  Bitmap Index Scan on ab_a1_b2_a_idx (actual rows=1.00 loops=1)
-                           Index Cond: (a = 1)
-                           Index Searches: 1
-               ->  Bitmap Heap Scan on ab_a1_b3 ab_a1_3 (actual rows=0.00 loops=1)
-                     Recheck Cond: (a = 1)
-                     Heap Blocks: exact=1
-                     ->  Bitmap Index Scan on ab_a1_b3_a_idx (actual rows=1.00 loops=1)
-                           Index Cond: (a = 1)
-                           Index Searches: 1
+               ->  Index Scan using ab_a1_b1_a_idx on ab_a1_b1 ab_a1_1 (actual rows=0.00 loops=1)
+                     Index Cond: (a = 1)
+                     Index Searches: 1
+               ->  Index Scan using ab_a1_b2_a_idx on ab_a1_b2 ab_a1_2 (actual rows=1.00 loops=1)
+                     Index Cond: (a = 1)
+                     Index Searches: 1
+               ->  Index Scan using ab_a1_b3_a_idx on ab_a1_b3 ab_a1_3 (actual rows=0.00 loops=1)
+                     Index Cond: (a = 1)
+                     Index Searches: 1
          ->  Materialize (actual rows=1.00 loops=1)
                Storage: Memory  Maximum Storage: NkB
                ->  Append (actual rows=1.00 loops=1)
-                     ->  Bitmap Heap Scan on ab_a1_b1 ab_1 (actual rows=0.00 loops=1)
-                           Recheck Cond: (a = 1)
-                           ->  Bitmap Index Scan on ab_a1_b1_a_idx (actual rows=0.00 loops=1)
-                                 Index Cond: (a = 1)
-                                 Index Searches: 1
-                     ->  Bitmap Heap Scan on ab_a1_b2 ab_2 (actual rows=1.00 loops=1)
-                           Recheck Cond: (a = 1)
-                           Heap Blocks: exact=1
-                           ->  Bitmap Index Scan on ab_a1_b2_a_idx (actual rows=1.00 loops=1)
-                                 Index Cond: (a = 1)
-                                 Index Searches: 1
-                     ->  Bitmap Heap Scan on ab_a1_b3 ab_3 (actual rows=0.00 loops=1)
-                           Recheck Cond: (a = 1)
-                           Heap Blocks: exact=1
-                           ->  Bitmap Index Scan on ab_a1_b3_a_idx (actual rows=1.00 loops=1)
-                                 Index Cond: (a = 1)
-                                 Index Searches: 1
-(43 rows)
+                     ->  Index Scan using ab_a1_b1_a_idx on ab_a1_b1 ab_1 (actual rows=0.00 loops=1)
+                           Index Cond: (a = 1)
+                           Index Searches: 1
+                     ->  Index Scan using ab_a1_b2_a_idx on ab_a1_b2 ab_2 (actual rows=1.00 loops=1)
+                           Index Cond: (a = 1)
+                           Index Searches: 1
+                     ->  Index Scan using ab_a1_b3_a_idx on ab_a1_b3 ab_3 (actual rows=0.00 loops=1)
+                           Index Cond: (a = 1)
+                           Index Searches: 1
+(27 rows)
 
 table ab;
  a | b 
