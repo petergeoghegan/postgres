@@ -8885,6 +8885,7 @@ gincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		*indexStartupCost = 0;
 		*indexTotalCost = 0;
 		*indexSelectivity = 0;
+		*indexHeapOrdered = false;
 		return;
 	}
 

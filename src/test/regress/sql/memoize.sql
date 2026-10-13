@@ -35,6 +35,7 @@ $$;
 -- Ensure we get a memoize node on the inner side of the nested loop
 SET enable_hashjoin TO off;
 SET enable_bitmapscan TO off;
+SET effective_io_concurrency = 1;
 
 SELECT explain_memoize('
 SELECT COUNT(*),AVG(t1.unique1) FROM tenk1 t1
@@ -224,6 +225,7 @@ RESET enable_mergejoin;
 RESET work_mem;
 RESET hash_mem_multiplier;
 RESET enable_bitmapscan;
+RESET effective_io_concurrency;
 RESET enable_hashjoin;
 
 -- Test parallel plans with Memoize
