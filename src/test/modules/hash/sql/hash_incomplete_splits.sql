@@ -51,6 +51,19 @@ SELECT count(*) FROM hash_split_test WHERE v = 1;
 INSERT INTO hash_split_test VALUES (5);
 SELECT count(*) FROM hash_split_test WHERE v = 1;
 
+-- Bucket 2 now holds the 10 relocated rows, still marked as moved by split.
+-- Three more splits (of buckets 1, 0 and 1) make bucket 2 the next one to
+-- split, into bucket 6, which is where v = 1 hashes from then on.  Error
+-- out before that split relocates anything: a scan of bucket 6 must read
+-- all 11 rows in bucket 2, marked or not.
+SELECT injection_points_attach('hash-split-before-relocation', 'notice');
+INSERT INTO hash_split_test SELECT g FROM generate_series(2000001, 2001100) g;
+SELECT injection_points_detach('hash-split-before-relocation');
+SELECT injection_points_attach('hash-split-before-relocation', 'error');
+INSERT INTO hash_split_test SELECT g FROM generate_series(3000001, 3005000) g;
+SELECT injection_points_detach('hash-split-before-relocation');
+SELECT count(*) FROM hash_split_test WHERE v = 1;
+
 -- The heap agrees
 SET enable_seqscan = on;
 SET enable_indexscan = off;
