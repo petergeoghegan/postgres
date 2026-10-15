@@ -26,6 +26,14 @@ tests += {
   'name': 'pg_logicalinspect',
   'sd': meson.current_source_dir(),
   'bd': meson.current_build_dir(),
+  'regress': {
+    'sql': [
+      'pg_logicalinspect',
+    ],
+    # Disabled because these tests require "wal_level=logical", which
+    # typical runningcheck users do not have (e.g. buildfarm clients).
+    'runningcheck': false,
+  },
   'isolation': {
     'specs': [
       'logical_inspect',
