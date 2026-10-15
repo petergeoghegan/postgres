@@ -1330,7 +1330,7 @@ if not perlopt.disabled()
     # See comments for PGAC_CHECK_PERL_EMBED_CCFLAGS in perl.m4
     foreach flag : perl_ccflags_r.split(' ')
       if flag.startswith('-D') and \
-          (not flag.startswith('-D_') or flag == '_USE_32BIT_TIME_T')
+          (not flag.startswith('-D_') or flag.startswith('-D_USE_32BIT_TIME_T'))
         perl_ccflags += flag
       endif
     endforeach
