@@ -518,6 +518,23 @@ else
   segsize = (get_option('segsize') * 1024 * 1024 * 1024) / blocksize
 endif
 
+# Meson compiles our code with -D_FILE_OFFSET_BITS=64 where that matters.
+# Like configure's AC_SYS_LARGEFILE, also define it in pg_config.h when off_t
+# is narrower than 64 bits without it.  Otherwise code compiled outside this
+# build, such as extensions built with PGXS, would disagree with the server
+# about the width of off_t.
+if cc.get_define('_FILE_OFFSET_BITS', args: test_c_args) == '64' and \
+    not cc.compiles('''
+#undef _FILE_OFFSET_BITS
+#include <sys/types.h>
+typedef char off_t_is_64_bits[sizeof(off_t) >= 8 ? 1 : -1];
+''',
+      args: test_c_args,
+      name: 'off_t is 64 bits without _FILE_OFFSET_BITS')
+  cdata.set('_FILE_OFFSET_BITS', 64, description:
+    'Number of bits in a file offset, on hosts where this is settable.')
+endif
+
 # If we don't have largefile support, can't handle segment size >= 2GB.
 if cc.sizeof('off_t', args: test_c_args) < 8
   segsize_bytes = segsize * blocksize
