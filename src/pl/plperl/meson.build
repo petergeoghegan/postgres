@@ -76,28 +76,36 @@ install_headers(
   install_dir: dir_include_server,
 )
 
+plperl_regress = [
+  'plperl_setup',
+  'plperl',
+  'plperl_lc',
+  'plperl_trigger',
+  'plperl_shared',
+  'plperl_elog',
+  'plperl_unicode',
+  'plperl_util',
+  'plperl_init',
+  'plperlu',
+  'plperl_array',
+  'plperl_call',
+  'plperl_transaction',
+  'plperl_env',
+  'plperl_tied',
+]
+
+# if Perl can support two interpreters in one backend,
+# test plperl-and-plperlu cases
+if run_command(perl_conf_cmd, 'usemultiplicity', check: true).stdout() == 'define'
+  plperl_regress += 'plperl_plperlu'
+endif
+
 tests += {
   'name': 'plperl',
   'sd': meson.current_source_dir(),
   'bd': meson.current_build_dir(),
   'regress': {
-    'sql': [
-      'plperl_setup',
-      'plperl',
-      'plperl_lc',
-      'plperl_trigger',
-      'plperl_shared',
-      'plperl_elog',
-      'plperl_unicode',
-      'plperl_util',
-      'plperl_init',
-      'plperlu',
-      'plperl_array',
-      'plperl_call',
-      'plperl_transaction',
-      'plperl_env',
-      'plperl_tied',
-    ],
+    'sql': plperl_regress,
     'regress_args': ['--dlpath', meson.project_build_root() / 'src/test/regress'],
   },
 }
