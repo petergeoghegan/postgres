@@ -2142,7 +2142,10 @@ ninja
    <para>
     To run pg_regress and pg_isolation_regress tests against a running
     postgres instance, specify <userinput>--setup running</userinput> as an
-    argument to <userinput>meson test</userinput>.
+    argument to <userinput>meson test</userinput>.  Some of these tests
+    use modules that are not part of a normal installation; install them
+    with <userinput>ninja install-test-files</userinput> first.  It's not
+    recommended to do so with a production installation.
    </para>
   </step>
 

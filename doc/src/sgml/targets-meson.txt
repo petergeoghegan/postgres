@@ -35,6 +35,7 @@ Installation Targets:
   install-html                  Install documentation in multi-page HTML format
   install-man                   Install documentation in man page format
   install-quiet                 Like "install", but installed files are not displayed
+  install-test-files            Install modules and files that only tests need
   install-world                 Install postgres, including multi-page HTML and man page documentation
   uninstall                     Remove installed files
 

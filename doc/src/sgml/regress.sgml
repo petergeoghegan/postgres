@@ -421,7 +421,10 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance libpq_encryption'
    considered undesirable for a production installation.  You can
    use <literal>make install</literal> and <literal>make
    installcheck</literal> in one of those subdirectories if you wish,
-   but it's not recommended to do so with a non-test server.
+   but it's not recommended to do so with a non-test server.  In a
+   <application>meson</application> build, <literal>ninja
+   install-test-files</literal> installs all of those modules, for use with
+   <literal>meson test --setup running</literal>.
   </para>
   </sect2>
 
