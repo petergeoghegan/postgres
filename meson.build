@@ -506,6 +506,22 @@ meson_bin = find_program(meson_binpath, native: true)
 cdata.set('USE_ASSERT_CHECKING', get_option('cassert') ? 1 : false)
 cdata.set('USE_INJECTION_POINTS', get_option('injection_points') ? 1 : false)
 
+if get_option('profiling')
+  if cc.get_argument_syntax() != 'gcc'
+    error('profiling is supported only when using GCC')
+  endif
+  cdata.set('PROFILE_PID_DIR', 1, description:
+    'Define to 1 to allow profiling output to be saved separately for each process.')
+  profiling_flags = ['-pg']
+  if host_system == 'linux'
+    # Like PLATFORM_PROFILE_FLAGS in src/template/linux
+    profiling_flags += '-DLINUX_PROFILE'
+  endif
+  cflags += profiling_flags
+  cxxflags += profiling_flags
+  ldflags += '-pg'
+endif
+
 blocksize = get_option('blocksize').to_int() * 1024
 
 if get_option('segsize_blocks') != 0

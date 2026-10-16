@@ -46,6 +46,9 @@ option('tap_tests', type: 'feature', value: 'auto',
 option('injection_points', type: 'boolean', value: false,
   description: 'Enable injection points')
 
+option('profiling', type: 'boolean', value: false,
+  description: 'Build with profiling enabled (GCC only)')
+
 option('PG_TEST_EXTRA', type: 'string', value: '',
   description: 'Enable selected extra tests. Overridden by PG_TEST_EXTRA environment variable.')
 

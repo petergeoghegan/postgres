@@ -3210,6 +3210,19 @@ ninja install
       </listitem>
      </varlistentry>
 
+     <varlistentry id="configure-profiling-meson">
+      <term><option>-Dprofiling={ true | false }</option></term>
+      <listitem>
+       <para>
+        If using GCC, all programs and libraries are compiled so they
+        can be profiled.  On backend exit, a subdirectory will be created
+        that contains the <filename>gmon.out</filename> file containing
+        profile data.
+        This option is for use only with GCC and when doing development work.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="configure-dtrace-meson">
       <term><option>-Ddtrace={ auto | enabled | disabled }</option></term>
       <listitem>
