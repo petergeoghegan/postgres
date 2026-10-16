@@ -1436,6 +1436,11 @@ endif
 pyopt = get_option('plpython')
 python3_dep = not_found_dep
 python_includespec = ''
+python_majorversion = ''
+python_version = ''
+python_libdir = ''
+python_libspec = ''
+python_additional_libs = ''
 if not pyopt.disabled()
   pm = import('python')
   python3_inst = pm.find_installation(python.full_path(), required: pyopt)
@@ -1469,6 +1474,62 @@ if not pyopt.disabled()
   if python3_dep.found()
     command = [python, '-c', 'import sysconfig; print("-I" + sysconfig.get_config_var("INCLUDEPY"))']
     python_includespec = run_command(command, check: true).stdout().strip()
+
+    # PGXS makefiles (e.g. those of the PL/Python transform modules) need
+    # the same variables that configure computes.  This mirrors
+    # PGAC_CHECK_PYTHON_EMBED_SETUP in config/python.m4.
+    python_version = python3_inst.language_version()
+    python_majorversion = python_version.split('.')[0]
+    python_embed = run_command(python, '-c', '''
+import glob, os, sys, sysconfig
+
+dlsuffix, portname, python_version = sys.argv[1:4]
+
+def config_vars(*names):
+    return ' '.join(filter(None, sysconfig.get_config_vars(*names)))
+
+libdir = config_vars('LIBDIR')
+configdir = config_vars('LIBPL')
+python_ldlibrary = config_vars('LDLIBRARY')
+ldlibrary = python_ldlibrary
+for suffix in ('.so', '.dll', '.dylib', '.sl'):
+    if ldlibrary.endswith(suffix):
+        ldlibrary = ldlibrary[:-len(suffix)]
+if portname == 'aix' and ldlibrary.endswith('.a'):
+    ldlibrary = ldlibrary[:-2]
+
+if os.path.exists(libdir + '/' + python_ldlibrary) and python_ldlibrary != ldlibrary:
+    if ldlibrary.startswith('lib'):
+        ldlibrary = ldlibrary[3:]
+else:
+    ldversion = config_vars('LDVERSION')
+    version_var = config_vars('VERSION')
+    ldlibrary = 'python' + (ldversion or version_var or python_version)
+    dirs = [libdir, configdir, '/usr/lib64', '/usr/lib']
+    found = [d for d in dirs
+             if os.path.exists(d + '/lib' + ldlibrary + dlsuffix)]
+    if not found:
+        found = [d for d in dirs
+                 if glob.glob(d + '/lib' + ldlibrary + '.so.*')]
+    if not found and portname in ('win32', 'cygwin'):
+        found = [d for d in [libdir, configdir, 'c:/Windows/System32', '/usr/bin']
+                 if os.path.exists(d + '/lib' + ldlibrary + '.dll') or
+                    os.path.exists(d + '/' + ldlibrary + '.dll')]
+    if found:
+        libdir = found[0]
+
+print(libdir)
+print('-L' + libdir + ' -l' + ldlibrary)
+print(config_vars('LIBS', 'LIBC', 'LIBM', 'BASEMODLIBS'))
+''', dlsuffix, portname, python_version, check: false)
+    if python_embed.returncode() == 0
+      python_embed = python_embed.stdout().split('\n')
+      python_libdir = python_embed[0]
+      python_libspec = python_embed[1]
+      python_additional_libs = python_embed[2]
+    else
+      warning('could not determine how to link an embedded Python application, for PGXS: @0@'.format(python_embed.stderr()))
+    endif
   endif
 endif
 

@@ -79,6 +79,11 @@ pgxs_kv = {
 
   'perl_includespec': perl_includespec,
   'python_includespec': python_includespec,
+  'python_majorversion': python_majorversion,
+  'python_version': python_version,
+  'python_libdir': python_libdir,
+  'python_libspec': python_libspec,
+  'python_additional_libs': python_additional_libs,
 
   # these seem to be standard these days
   'MKDIR_P': 'mkdir -p',
@@ -189,7 +194,6 @@ pgxs_empty = [
   'DTRACEFLAGS', # only server has dtrace probes
 
   'perl_archlibexp', 'perl_embed_ccflags', 'perl_embed_ldflags', 'perl_privlibexp',
-  'python_additional_libs', 'python_libdir', 'python_libspec', 'python_majorversion', 'python_version',
 
   # possible that some of these are referenced explicitly in pgxs makefiles?
   # For now not worth it.
