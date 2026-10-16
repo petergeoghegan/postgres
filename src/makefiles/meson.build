@@ -78,6 +78,10 @@ pgxs_kv = {
   'STRIP_SHARED_LIB': ' '.join(strip_shared_cmd),
 
   'perl_includespec': perl_includespec,
+  'perl_archlibexp': perl_archlibexp,
+  'perl_privlibexp': perl_privlibexp,
+  'perl_embed_ccflags': ' '.join(perl_embed_ccflags),
+  'perl_embed_ldflags': perl_embed_ldflags,
   'python_includespec': python_includespec,
   'python_majorversion': python_majorversion,
   'python_version': python_version,
@@ -192,8 +196,6 @@ pgxs_empty = [
   'LIBOBJS', 'PG_CRC32C_OBJS',
   'PG_TEST_EXTRA',
   'DTRACEFLAGS', # only server has dtrace probes
-
-  'perl_archlibexp', 'perl_embed_ccflags', 'perl_embed_ldflags', 'perl_privlibexp',
 
   # possible that some of these are referenced explicitly in pgxs makefiles?
   # For now not worth it.

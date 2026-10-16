@@ -1288,6 +1288,10 @@ perlopt = get_option('plperl')
 perl_dep = not_found_dep
 perl_includespec = ''
 perlversion = ''
+perl_archlibexp = ''
+perl_privlibexp = ''
+perl_embed_ccflags = []
+perl_embed_ldflags = ''
 if not perlopt.disabled()
   perl_may_work = true
 
@@ -1349,6 +1353,7 @@ if not perlopt.disabled()
       if flag.startswith('-D') and \
           (not flag.startswith('-D_') or flag.startswith('-D_USE_32BIT_TIME_T'))
         perl_ccflags += flag
+        perl_embed_ccflags += flag
       endif
     endforeach
 
@@ -1418,6 +1423,16 @@ perl_alloc();
 
   if perl_may_work
     perl_dep = perl_dep_int
+
+    # PGXS makefiles (e.g. those of the PL/Perl transform modules) need the
+    # same variables that configure computes; see config/perl.m4.
+    perl_archlibexp = archlibexp
+    perl_privlibexp = privlibexp
+    if host_system == 'windows'
+      perl_archlibexp = perl_archlibexp.replace('\\', '/')
+      perl_privlibexp = perl_privlibexp.replace('\\', '/')
+    endif
+    perl_embed_ldflags = ' '.join(perl_ldopts)
   else
     if perlopt.enabled()
       error('dependency plperl failed: @0@'.format(perl_msg))
