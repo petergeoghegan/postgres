@@ -43,6 +43,22 @@ regress_module = shared_module('regress',
 )
 test_install_libs += regress_module
 
+# Like "make install-tests": install what's needed to run these tests from
+# an installation, without a build tree.  (pg_regress itself, and the
+# contrib/spi modules that the tests use, are part of the normal install.)
+run_target('install-tests',
+  command: [
+    python, install_files,
+    '--prefix', dir_prefix,
+    '--install', dir_lib_pkg, regress_module,
+    '--install', dir_lib_pkg / 'regress', files('parallel_schedule', 'resultmap'),
+    '--install-dirs', dir_lib_pkg / 'regress',
+      meson.current_source_dir() / 'sql',
+      meson.current_source_dir() / 'expected',
+      meson.current_source_dir() / 'data',
+  ],
+)
+
 
 tests += {
   'name': 'regress',

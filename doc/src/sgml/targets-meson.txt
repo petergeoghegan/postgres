@@ -36,6 +36,7 @@ Installation Targets:
   install-man                   Install documentation in man page format
   install-quiet                 Like "install", but installed files are not displayed
   install-test-files            Install modules and files that only tests need
+  install-tests                 Install what's needed to run the regression tests from an installation
   install-world                 Install postgres, including multi-page HTML and man page documentation
   uninstall                     Remove installed files
 
