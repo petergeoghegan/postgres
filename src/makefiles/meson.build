@@ -169,8 +169,6 @@ pgxs_bins = {
 }
 
 pgxs_empty = [
-  'ICU_CFLAGS', # needs to be added, included by public server headers
-
   # hard to see why we'd need these ones?
   'ZIC',
   'TCLSH',
@@ -211,9 +209,9 @@ pgxs_empty = [
 
   'ICU_LIBS',
 
-  'LIBNUMA_CFLAGS', 'LIBNUMA_LIBS',
+  'LIBNUMA_LIBS',
 
-  'LIBURING_CFLAGS', 'LIBURING_LIBS',
+  'LIBURING_LIBS',
 
   'LIBCURL_CPPFLAGS', 'LIBCURL_LDFLAGS', 'LIBCURL_LDLIBS',
 ]
@@ -265,6 +263,32 @@ pgxs_deps = {
   'zstd': zstd,
 }
 
+
+# configure gets these from PKG_CHECK_MODULES(), and Makefile.global adds
+# them to CPPFLAGS.  Ask pkg-config the same question, if meson found the
+# dependency that way.
+pgxs_pkg_config = find_program('pkg-config', 'pkgconf', native: true,
+  required: false)
+pgxs_pkg_config_env = environment()
+if get_option('pkg_config_path').length() > 0
+  pgxs_pkg_config_env.prepend('PKG_CONFIG_PATH', get_option('pkg_config_path'))
+endif
+foreach var, dep_modules : {
+    'ICU_CFLAGS': [icu, ['icu-uc', 'icu-i18n']],
+    'LIBNUMA_CFLAGS': [libnuma, ['numa']],
+    'LIBURING_CFLAGS': [liburing, ['liburing']],
+  }
+  dep = dep_modules[0]
+  value = ''
+  if dep.found() and dep.type_name() == 'pkgconfig' and pgxs_pkg_config.found()
+    r = run_command(pgxs_pkg_config, '--cflags', dep_modules[1],
+      env: pgxs_pkg_config_env, check: false)
+    if r.returncode() == 0
+      value = r.stdout().strip()
+    endif
+  endif
+  pgxs_kv += {var: value}
+endforeach
 
 pgxs_cdata = configuration_data(pgxs_kv)
 
