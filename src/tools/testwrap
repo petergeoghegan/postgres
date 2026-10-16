@@ -69,6 +69,15 @@ if is_pg_regress and env_dict.get("TEMP_CONFIG") and \
         "--temp-instance" in args.test_command:
     pre_opts.append("--temp-config=" + env_dict["TEMP_CONFIG"])
 
+# Likewise ENCODING, NO_LOCALE and EXTRA_REGRESS_OPTS, for all pg_regress
+# based tests (see pg_regress_locale_flags in Makefile.global).
+if is_pg_regress:
+    if env_dict.get("ENCODING"):
+        pre_opts.append("--encoding=" + env_dict["ENCODING"])
+    if env_dict.get("NO_LOCALE"):
+        pre_opts.append("--no-locale")
+    pre_opts += env_dict.get("EXTRA_REGRESS_OPTS", "").split()
+
 args.test_command[1:1] = pre_opts
 
 if "TESTS" in env_dict:
@@ -78,6 +87,12 @@ else:
         args.test_command += ['--schedule', ' '.join(args.schedule)]
     if args.tests:
         args.test_command.extend(args.tests)
+
+# As in src/test/regress's makefile, run the tests named in EXTRA_TESTS after
+# the others.  Only the main regression tests do this.
+if args.testgroup in ("regress", "regress-running") and \
+        env_dict.get("EXTRA_TESTS"):
+    args.test_command += env_dict["EXTRA_TESTS"].split()
 
 sp = subprocess.Popen(args.test_command, env=env_dict, stdout=subprocess.PIPE)
 # Meson categorizes a passing TODO test point as bad
