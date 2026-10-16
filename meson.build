@@ -268,6 +268,12 @@ elif host_system == 'cygwin'
   mod_link_with_name = 'lib@0@.a'
   mod_link_with_dir = 'libdir'
 
+  # As in src/template/cygwin: --allow-multiple-definition is required to
+  # link pg_dump, because it finds pg_toupper() etc. in both libpq and
+  # pgport.  We'd prefer --disable-auto-import to match MSVC linking
+  # behavior, but support for it in Cygwin is too haphazard.
+  ldflags += ['-Wl,--allow-multiple-definition', '-Wl,--enable-auto-import']
+
 elif host_system == 'darwin'
   dlsuffix = '.dylib'
   library_path_var = 'DYLD_LIBRARY_PATH'
