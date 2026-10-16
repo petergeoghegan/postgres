@@ -1811,12 +1811,18 @@ endif
 ###############################################################
 
 uuidopt = get_option('uuid')
+# The library to link to, in the form of configure's UUID_LIBS, for PGXS
+uuid_libs = ''
 if uuidopt != 'none'
   uuidname = uuidopt.to_upper()
   if uuidopt == 'e2fs'
     uuid = dependency('uuid', required: true)
     uuidfunc = 'uuid_generate'
     uuidheader = 'uuid/uuid.h'
+    # On macOS, the UUID functions are in libc
+    if not cc.has_function(uuidfunc, args: test_c_args)
+      uuid_libs = '-luuid'
+    endif
   elif uuidopt == 'bsd'
     # libc should have uuid function
     uuid = declare_dependency()
@@ -1826,8 +1832,10 @@ if uuidopt != 'none'
     # In upstream, the package and library is called just 'uuid', but many
     # distros change it to 'ossp-uuid'.
     uuid = dependency('ossp-uuid', required: false)
+    uuid_libs = '-lossp-uuid'
     if not uuid.found()
       uuid = dependency('uuid', required: false)
+      uuid_libs = '-luuid'
     endif
     uuidfunc = 'uuid_export'
     uuidheader = 'uuid.h'
@@ -1840,11 +1848,13 @@ if uuidopt != 'none'
       uuid = cc.find_library('ossp-uuid',
         required: false, dirs: test_lib_d,
         has_headers: uuidheader, header_include_directories: postgres_inc)
+      uuid_libs = '-lossp-uuid'
     endif
     if not uuid.found()
       uuid = cc.find_library('uuid',
         required: true, dirs: test_lib_d,
         has_headers: uuidheader, header_include_directories: postgres_inc)
+      uuid_libs = '-luuid'
     endif
   else
     error('unknown uuid build option value: @0@'.format(uuidopt))

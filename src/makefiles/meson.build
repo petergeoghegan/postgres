@@ -89,6 +89,8 @@ pgxs_kv = {
   'python_libspec': python_libspec,
   'python_additional_libs': python_additional_libs,
 
+  'UUID_LIBS': uuid_libs,
+
   # these seem to be standard these days
   'MKDIR_P': 'mkdir -p',
   'LN_S': 'ln -s',
@@ -204,8 +206,6 @@ pgxs_empty = [
   'LLVM_CFLAGS', 'LLVM_CPPFLAGS', 'LLVM_CXXFLAGS', 'LLVM_LIBS',
 
   'LDAP_LIBS_BE', 'LDAP_LIBS_FE',
-
-  'UUID_LIBS',
 
   'PTHREAD_CFLAGS', 'PTHREAD_LIBS',
 
